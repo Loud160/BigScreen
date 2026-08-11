@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "BigScreen/DownloadManager.hpp"
@@ -19,12 +20,17 @@
 #include "GlobalNamespace/BeatmapLevelPack.hpp"
 #include "GlobalNamespace/BeatmapLevelsModel.hpp"
 #include "GlobalNamespace/BeatmapLevelsRepository.hpp"
+#include "GlobalNamespace/IPreviewMediaData.hpp"
+#include "GlobalNamespace/LevelListTableCell.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "HMUI/InputFieldView.hpp"
 #include "HMUI/ImageView.hpp"
+#include "HMUI/TableCell.hpp"
 #include "HMUI/TableView.hpp"
+#include "System/Threading/CancellationToken.hpp"
+#include "System/Threading/Tasks/Task_1.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
@@ -38,6 +44,7 @@
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
+#include "UnityEngine/UI/Image.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/VerticalLayoutGroup.hpp"
 #include "bsml/shared/BSML.hpp"
@@ -63,6 +70,17 @@ namespace BigScreen {
             "Show All Maps", "Custom Maps", "WIP Maps",
             "OST Maps", "DLC Maps", "Maps With Video"
         };
+
+        using CoverTask =
+            System::Threading::Tasks::Task_1<UnityW<UnityEngine::Sprite>>;
+
+        // Cover sprites belong to Beat Saber's preview-media system; Big
+        // Screen only retains pointers while this menu scene is alive. Tasks
+        // are requested lazily for visible rows instead of decoding artwork
+        // for the complete 500+ song catalog at menu startup.
+        std::unordered_map<std::string, CoverTask*> CoverTasks;
+        std::unordered_map<std::string, UnityEngine::Sprite*> CoverSprites;
+        std::unordered_set<std::string> FailedCoverLoads;
 
         std::string Lower(std::string value)
         {
@@ -167,10 +185,36 @@ namespace BigScreen {
             std::uint64_t free)
         {
             std::ostringstream text;
-            text << count << " maps  |  " << std::fixed << std::setprecision(1)
+            text << count << " songs  |  " << std::fixed << std::setprecision(1)
                  << used / 1073741824.0 << " GB videos  |  "
                  << free / 1073741824.0 << " GB free";
             return text.str();
+        }
+
+        std::size_t DistinctSongCount(
+            const std::vector<SongLibraryItem*>& rows)
+        {
+            std::unordered_set<std::string> songs;
+            for(const auto* item : rows)
+            {
+                const auto* level = item ? item->level : nullptr;
+                if(!level) continue;
+
+                // Beat Saber can expose more than one repository row for the
+                // same musical work (for example, difficulty-specific data).
+                // Count by normalized title/artist rather than those rows.
+                const std::string name = level->songName
+                    ? Lower(std::string(level->songName))
+                    : std::string{};
+                const std::string author = level->songAuthorName
+                    ? Lower(std::string(level->songAuthorName))
+                    : std::string{};
+                if(!name.empty())
+                    songs.emplace(name + "\x1f" + author);
+                else if(level->levelID)
+                    songs.emplace(std::string(level->levelID));
+            }
+            return songs.size();
         }
 
         bool ExplicitAllowed()
@@ -418,10 +462,11 @@ namespace BigScreen {
         if(list_)
         {
             list_->set_listStyle(BSML::CustomListTableData::ListStyle::List);
-            list_->expandCell = true;
-            // Reserve eight units after the table itself for the native
-            // right-edge scrollbar installed by show-scrollbar.
-            ConfigureLayout(list_, 38.0f, 50.0f, 0.0f, 1.0f);
+            list_->expandCell = false;
+            // Alphabet rail + spacing + 42-unit list matches the full-width
+            // filter control above. The list's own right edge still contains
+            // Beat Saber's native scrollbar and page arrows.
+            ConfigureLayout(list_, 42.0f, 50.0f, 0.0f, 1.0f);
             if(listObject)
             {
                 list_->tableView->add_didSelectCellWithIdxEvent(
@@ -629,20 +674,36 @@ namespace BigScreen {
             const std::string videoState = descriptor.hasUserOverride ? "User video" :
                 descriptor.CanPlay() ? "Video ready" :
                 descriptor.CanDownload() ? "Download available" : "No video";
+
+            UnityEngine::Sprite* cover = nullptr;
+            if(level->levelID)
+            {
+                const auto foundCover = CoverSprites.find(std::string(level->levelID));
+                if(foundCover != CoverSprites.end())
+                    cover = foundCover->second;
+            }
             list_->data->Add(BSML::CustomCellInfo::construct(
-                name, author.empty() ? videoState : author + " | " + videoState));
+                name,
+                author.empty() ? videoState : author + " | " + videoState,
+                cover));
         }
         if(browserTitle_)
             browserTitle_->set_text("Video Library");
         if(browserStorage_)
             browserStorage_->set_text(BrowserSummary(
-                visible_.size(),
+                DistinctSongCount(visible_),
                 VideoLibrary::Instance().LibraryBytes(),
                 VideoLibrary::Instance().FreeBytes()));
         if(list_->tableView)
         {
+            // A TableView retains its selected index even when its data is
+            // rebuilt. Clear it before reloading so returning from the child
+            // editor leaves every row clickable, including the song the user
+            // just edited.
+            list_->tableView->ClearSelection();
             list_->tableView->ReloadData();
             list_->tableView->ScrollToCellWithIdx(0, HMUI::TableView::ScrollPositionType::Beginning, false);
+            RefreshVisibleRowArtwork();
         }
     }
 
@@ -661,18 +722,7 @@ namespace BigScreen {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
         selected_ = visible_[row]->level;
         transientStatus_.clear();
-        loadedThumbnailPath_.clear();
-        if(loadedThumbnailSprite_)
-        {
-            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
-            loadedThumbnailSprite_ = nullptr;
-        }
-        if(urlThumbnail_)
-        {
-            urlThumbnail_->set_sprite(
-                BSML::Utilities::ImageResources::GetBlankSprite());
-            urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
-        }
+        ClearThumbnail();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig ? descriptor.playableConfig->offsetSeconds : 0.0;
@@ -742,18 +792,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::BeginUrlProbe()
     {
-        loadedThumbnailPath_.clear();
-        if(loadedThumbnailSprite_)
-        {
-            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
-            loadedThumbnailSprite_ = nullptr;
-        }
-        if(urlThumbnail_)
-        {
-            urlThumbnail_->set_sprite(
-                BSML::Utilities::ImageResources::GetBlankSprite());
-            urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
-        }
+        ClearThumbnail();
         if(!selected_)
         {
             transientStatus_ = "Select a song before checking a video URL.";
@@ -893,7 +932,35 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride()
     {
         if(!selected_) return;
-        VideoLibrary::Instance().RemoveUserOverride(std::string(selected_->levelID), true);
+        if(!VideoLibrary::Instance().RemoveUserOverride(
+            std::string(selected_->levelID), true))
+        {
+            transientStatus_ = "No user video was available to remove.";
+            RefreshDetails();
+            return;
+        }
+
+        // The thumbnail sprite is UI-owned and independent of the downloaded
+        // MP4. Delete the probe image associated with this song as well, then
+        // release the Unity texture and restore the placeholder. Removing the
+        // file also prevents the periodic refresh from recreating the sprite
+        // from a stale completed-probe snapshot.
+        const auto download = DownloadManager::Instance().Snapshot();
+        if(download.levelId == std::string(selected_->levelID) &&
+           !download.thumbnailPath.empty())
+        {
+            std::error_code thumbnailError;
+            std::filesystem::remove(download.thumbnailPath, thumbnailError);
+            if(thumbnailError)
+            {
+                PaperLogger.warn(
+                    "Could not delete removed video's thumbnail '{}': {}",
+                    download.thumbnailPath,
+                    thumbnailError.message());
+            }
+        }
+        ClearThumbnail();
+        transientStatus_ = "User video removed.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig
@@ -912,6 +979,143 @@ namespace BigScreen {
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         RefreshDetails();
         StartSelectedPreview();
+    }
+
+    void VideoLibraryMenu::ClearThumbnail()
+    {
+        loadedThumbnailPath_.clear();
+        if(loadedThumbnailSprite_)
+        {
+            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+            loadedThumbnailSprite_ = nullptr;
+        }
+        if(urlThumbnail_)
+        {
+            // Keep the reserved layout space stable so Paste and Download do
+            // not jump sideways merely because a thumbnail was cleared.
+            urlThumbnail_->set_sprite(
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        }
+    }
+
+    void VideoLibraryMenu::RefreshVisibleRowArtwork()
+    {
+        if(!list_ || !list_->tableView || !list_->data)
+            return;
+
+        auto* cells = list_->tableView->__cordl_internal_get__visibleCells();
+        if(!cells) return;
+
+        bool artworkChanged = false;
+        for(int cellIndex = 0; cellIndex < cells->get_Count(); ++cellIndex)
+        {
+            auto cell = cells->get_Item(cellIndex);
+            auto levelCell = cell
+                .try_cast<GlobalNamespace::LevelListTableCell>()
+                .value_or(nullptr);
+            if(!levelCell) continue;
+
+            const int row = levelCell->get_idx();
+            if(row < 0 || row >= static_cast<int>(visible_.size()) ||
+               row >= list_->data->get_Count())
+                continue;
+
+            // The standard Beat Saber cell places cover art on the left. Move
+            // it to the requested right edge and reserve the remaining width
+            // for the song and artist text. Reused cells are restyled here as
+            // the user scrolls, so no global Beat Saber prefab is modified.
+            if(auto coverImage = levelCell->__cordl_internal_get__coverImage())
+            {
+                coverImage->set_preserveAspect(true);
+                auto coverRect = coverImage->get_rectTransform();
+                coverRect->set_anchorMin({1.0f, 0.5f});
+                coverRect->set_anchorMax({1.0f, 0.5f});
+                coverRect->set_pivot({1.0f, 0.5f});
+                coverRect->set_anchoredPosition({-1.0f, 0.0f});
+                coverRect->set_sizeDelta({7.2f, 7.2f});
+            }
+            if(auto nameText = levelCell->__cordl_internal_get__songNameText())
+            {
+                auto rect = nameText->get_rectTransform();
+                rect->set_anchorMin({0.0f, 0.5f});
+                rect->set_anchorMax({1.0f, 0.5f});
+                rect->set_pivot({0.0f, 0.5f});
+                rect->set_anchoredPosition({1.2f, 1.7f});
+                rect->set_sizeDelta({-11.0f, 3.5f});
+            }
+            if(auto authorText = levelCell->__cordl_internal_get__songAuthorText())
+            {
+                auto rect = authorText->get_rectTransform();
+                rect->set_anchorMin({0.0f, 0.5f});
+                rect->set_anchorMax({1.0f, 0.5f});
+                rect->set_pivot({0.0f, 0.5f});
+                rect->set_anchoredPosition({1.2f, -1.8f});
+                rect->set_sizeDelta({-11.0f, 3.0f});
+            }
+
+            auto* item = visible_[row];
+            auto* level = item ? item->level : nullptr;
+            if(!level || !level->levelID) continue;
+            const std::string levelId(level->levelID);
+            auto* cellInfo = list_->data[row];
+
+            const auto loaded = CoverSprites.find(levelId);
+            if(loaded != CoverSprites.end())
+            {
+                if(cellInfo->icon != loaded->second)
+                {
+                    cellInfo->icon = loaded->second;
+                    if(auto image = levelCell->__cordl_internal_get__coverImage())
+                        image->set_sprite(loaded->second);
+                }
+                continue;
+            }
+            if(FailedCoverLoads.contains(levelId))
+                continue;
+
+            const auto requested = CoverTasks.find(levelId);
+            if(requested == CoverTasks.end())
+            {
+                auto* media = level->__cordl_internal_get_previewMediaData();
+                if(!media)
+                {
+                    FailedCoverLoads.emplace(levelId);
+                    continue;
+                }
+                if(auto* task = media->GetCoverSpriteAsync(
+                    System::Threading::CancellationToken::get_None()))
+                    CoverTasks.emplace(levelId, task);
+                else
+                    FailedCoverLoads.emplace(levelId);
+                continue;
+            }
+
+            auto* task = requested->second;
+            if(!task || !task->get_IsCompleted())
+                continue;
+            CoverTasks.erase(requested);
+            if(!task->get_IsCompletedSuccessfully())
+            {
+                FailedCoverLoads.emplace(levelId);
+                continue;
+            }
+
+            UnityEngine::Sprite* sprite = task->get_Result();
+            if(!sprite)
+            {
+                FailedCoverLoads.emplace(levelId);
+                continue;
+            }
+            CoverSprites.emplace(levelId, sprite);
+            cellInfo->icon = sprite;
+            if(auto image = levelCell->__cordl_internal_get__coverImage())
+                image->set_sprite(sprite);
+            artworkChanged = true;
+        }
+
+        if(artworkChanged)
+            list_->tableView->RefreshCellsContent();
     }
 
     void VideoLibraryMenu::FitToSong()
@@ -1103,6 +1307,8 @@ namespace BigScreen {
     void VideoLibraryMenu::Tick()
     {
         if(!active_) return;
+        if(!editorVisible_)
+            RefreshVisibleRowArtwork();
         if(++tickCounter_ >= 30)
         {
             tickCounter_ = 0;

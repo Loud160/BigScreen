@@ -54,6 +54,8 @@ namespace BigScreen {
         void RemoveOverride();
         void FitToSong();
         void RefreshDetails();
+        void ClearThumbnail();
+        void RefreshVisibleRowArtwork();
         void StartSelectedPreview();
         void JumpToLetter(char letter);
         VideoOrigin SelectedVideoOrigin() const;
