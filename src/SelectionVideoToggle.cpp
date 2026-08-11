@@ -16,22 +16,32 @@
 
 namespace BigScreen {
     namespace {
-        void PlaceTopBarToggle(
+        void PlaceRightSideToggle(
             BSML::ToggleSetting* setting,
             std::string_view objectName,
-            float labelX,
-            float switchX)
+            float verticalPosition)
         {
             if(!setting)
                 return;
 
             setting->get_gameObject()->set_name(objectName);
             if(auto* layout = setting->GetComponent<UnityEngine::UI::LayoutElement*>())
-                layout->set_preferredWidth(90.0f);
+                layout->set_preferredWidth(50.0f);
 
             auto rect = setting->get_transform().cast<UnityEngine::RectTransform>();
             if(rect)
-                rect->set_anchoredPosition({0.0f, 28.0f});
+            {
+                // The BSML toggle template normally stretches across the full
+                // song-detail view. Two such roots at the same position overlap
+                // and the upper one intercepts pointer events for both visible
+                // switches. Give each control its own compact right-side hit
+                // area and a separate vertical row below Solo Play instead.
+                rect->set_anchorMin({0.5f, 0.5f});
+                rect->set_anchorMax({0.5f, 0.5f});
+                rect->set_pivot({0.5f, 0.5f});
+                rect->set_anchoredPosition({20.0f, verticalPosition});
+                rect->set_sizeDelta({50.0f, 8.0f});
+            }
 
             if(setting->text)
             {
@@ -40,13 +50,12 @@ namespace BigScreen {
                     setting->text->get_transform().cast<UnityEngine::RectTransform>();
                 if(labelRect)
                 {
-                    // Both labels and switches share Beat Saber's top row. The
-                    // coordinates are relative to the same full-width detail
-                    // view, which keeps each label directly beside its switch.
+                    // Each label occupies the left portion of its compact row,
+                    // with the switch immediately to its right.
                     labelRect->set_anchorMin({0.5f, 0.5f});
                     labelRect->set_anchorMax({0.5f, 0.5f});
                     labelRect->set_pivot({0.5f, 0.5f});
-                    labelRect->set_anchoredPosition({labelX, 0.0f});
+                    labelRect->set_anchoredPosition({0.0f, 0.0f});
                     labelRect->set_sizeDelta({24.0f, 8.0f});
                 }
             }
@@ -59,7 +68,7 @@ namespace BigScreen {
                     switchRect->set_anchorMin({0.5f, 0.5f});
                     switchRect->set_anchorMax({0.5f, 0.5f});
                     switchRect->set_pivot({0.5f, 0.5f});
-                    switchRect->set_anchoredPosition({switchX, 0.0f});
+                    switchRect->set_anchoredPosition({19.0f, 0.0f});
                 }
             }
         }
@@ -89,14 +98,15 @@ namespace BigScreen {
         const auto& settings = Settings::Instance();
         inMapEnabled_ = settings.VideoEnabled();
 
-        // StandardLevelDetailView spans the complete song screen. Both toggle
-        // templates retain that full-width root, while their visible labels and
-        // switches occupy separate portions of Beat Saber's top-right row.
+        // The controls are global preferences rather than properties of the
+        // selected song. Create both unconditionally and keep them in separate
+        // right-side rows so scrolling between any built-in or custom song
+        // never changes their visibility or makes their hit areas overlap.
         previewUi_ = BSML::Lite::CreateToggle(
             detailView,
             "Preview Video",
             settings.MenuPreviewEnabled(),
-            UnityEngine::Vector2{0.0f, 28.0f},
+            UnityEngine::Vector2{20.0f, 19.0f},
             [this](bool value)
             {
                 PreviewToggleChanged(value);
@@ -105,7 +115,7 @@ namespace BigScreen {
             detailView,
             "Video In Map",
             inMapEnabled_,
-            UnityEngine::Vector2{0.0f, 28.0f},
+            UnityEngine::Vector2{20.0f, 10.0f},
             [this](bool value)
             {
                 InMapToggleChanged(value);
@@ -117,8 +127,8 @@ namespace BigScreen {
             return;
         }
 
-        PlaceTopBarToggle(previewUi_, "Big Screen Preview Video Toggle", -24.0f, -9.0f);
-        PlaceTopBarToggle(inMapUi_, "Big Screen Video In Map Toggle", 20.0f, 39.0f);
+        PlaceRightSideToggle(previewUi_, "Big Screen Preview Video Toggle", 19.0f);
+        PlaceRightSideToggle(inMapUi_, "Big Screen Video In Map Toggle", 10.0f);
         BSML::Lite::AddHoverHint(
             previewUi_,
             "Plays the selected song's video on the song-selection screen.");
@@ -126,7 +136,7 @@ namespace BigScreen {
             inMapUi_,
             "Shows the selected song's video while playing the map.");
         RefreshUi();
-        PaperLogger.info("Created Preview Video and Video In Map song-selection toggles");
+        PaperLogger.info("Created stacked Preview Video and Video In Map controls");
     }
 
     void SelectionVideoToggle::ForgetUi()
@@ -288,8 +298,9 @@ namespace BigScreen {
         if(previewUi_)
             previewUi_->set_interactable(inMapEnabled_);
 
-        // These are gameplay-facing controls, so a disabled master mod removes
-        // them entirely rather than leaving inert switches on Beat Saber's UI.
+        // Visibility deliberately does not inspect selectedLevelHasVideo_: both
+        // switches control all songs the user subsequently browses. Only the
+        // master mod switch removes them from Beat Saber's song screen.
         if(inMapUi_)
             inMapUi_->get_gameObject()->SetActive(settings.ModEnabled());
         if(previewUi_)
