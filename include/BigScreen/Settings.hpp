@@ -30,6 +30,7 @@ namespace BigScreen {
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
         int ResolutionHeight() const { return resolutionHeight_; }
+        bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
         void SetModEnabled(bool value);
         void SetVideoEnabled(bool value);
@@ -46,6 +47,7 @@ namespace BigScreen {
         void SetEnvironmentOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
         void SetResolutionHeight(int value);
+        void SetNightlyDownloaderUpdates(bool value);
 
     private:
         Settings() = default;
@@ -67,5 +69,6 @@ namespace BigScreen {
         bool environmentOverrideEnabled_ = true;
         bool environmentMotionEnabled_ = true;
         int resolutionHeight_ = 720;
+        bool nightlyDownloaderUpdates_ = false;
     };
 }

@@ -123,6 +123,7 @@ namespace BigScreen {
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
+        nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
 
         // Preview decoding is an avoidable performance cost when videos are
         // globally switched off. Persist the dependency so the disabled state
@@ -150,6 +151,7 @@ namespace BigScreen {
         environmentOverrideEnabled_ = true;
         environmentMotionEnabled_ = true;
         resolutionHeight_ = 720;
+        nightlyDownloaderUpdates_ = false;
         Save();
     }
 
@@ -247,6 +249,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetNightlyDownloaderUpdates(bool value)
+    {
+        nightlyDownloaderUpdates_ = value;
+        Save();
+    }
+
     void Settings::Save()
     {
         auto& configuration = GetConfiguration();
@@ -273,6 +281,7 @@ namespace BigScreen {
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
         Replace(document, "resolutionHeight", resolutionHeight_);
+        Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         configuration.Write();
     }
 }

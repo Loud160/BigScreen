@@ -303,6 +303,12 @@ namespace {
             return;
 
         BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
+        static int downloaderUiFrame = 0;
+        if(++downloaderUiFrame >= 30)
+        {
+            downloaderUiFrame = 0;
+            BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
+        }
 
         auto& session = BigScreen::PlaybackSession::Instance();
         if(!session.IsMenuPreviewActive())
@@ -374,6 +380,9 @@ MOD_EXTERN_FUNC void late_load() noexcept
     std::string downloaderError;
     if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
         PaperLogger.error("Downloader unavailable: {}", downloaderError);
+    else
+        BigScreen::DownloadManager::Instance().StartScheduledUpdaterCheck(
+            BigScreen::Settings::Instance().NightlyDownloaderUpdates());
 
     // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view
     // visibility owns menu preview lifetime, scene transition owns gameplay

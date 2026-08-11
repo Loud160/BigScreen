@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
@@ -119,6 +120,9 @@ namespace BigScreen {
         environmentOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
         resolutionDropdown_ = nullptr;
+        nightlyUpdatesToggle_ = nullptr;
+        updaterButton_ = nullptr;
+        updaterStatus_ = nullptr;
         resetButton_ = nullptr;
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
@@ -435,6 +439,31 @@ namespace BigScreen {
             resolutionDropdown_,
             "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
+        nightlyUpdatesToggle_ = BSML::Lite::CreateToggle(
+            container,
+            "Use Nightly yt-dlp Updates",
+            settings.NightlyDownloaderUpdates(),
+            [](bool enabled) { Settings::Instance().SetNightlyDownloaderUpdates(enabled); });
+        BSML::Lite::AddHoverHint(
+            nightlyUpdatesToggle_,
+            "Warning: nightly builds may contain new bugs. Stable releases are recommended unless video downloads have stopped working.");
+        updaterButton_ = BSML::Lite::CreateUIButton(
+            container,
+            "Check yt-dlp Update",
+            UnityEngine::Vector2{0, 0},
+            UnityEngine::Vector2{42, 8},
+            [this]() {
+                auto& downloader = DownloadManager::Instance();
+                const bool install = downloader.Snapshot().state == DownloadState::UpdateAvailable;
+                std::string error;
+                if(!downloader.StartUpdaterCheck(
+                       Settings::Instance().NightlyDownloaderUpdates(), install, error) && updaterStatus_)
+                    updaterStatus_->set_text(error);
+                RefreshDownloaderStatus();
+            });
+        updaterStatus_ = BSML::Lite::CreateText(container, "Stable updates only", 2.5f);
+        if(updaterStatus_) updaterStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+
         resetButton_ = BSML::Lite::CreateUIButton(
             container,
             "Reset to Defaults",
@@ -476,6 +505,9 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             environmentMotionToggle_,
             settings.EnvironmentMotionEnabled());
+        SetToggleWithoutNotification(
+            nightlyUpdatesToggle_,
+            settings.NightlyDownloaderUpdates());
 
         if(distanceSetting_)
             distanceSetting_->set_Value(settings.ScreenDistanceOffset());
@@ -539,6 +571,10 @@ namespace BigScreen {
             environmentMotionToggle_->set_interactable(enabled);
         if(resolutionDropdown_)
             resolutionDropdown_->set_interactable(enabled);
+        if(nightlyUpdatesToggle_)
+            nightlyUpdatesToggle_->set_interactable(enabled);
+        if(updaterButton_)
+            updaterButton_->set_interactable(enabled && DownloadManager::Instance().IsReady());
     }
 
     void SettingsMenu::RefreshCurvatureControl()
@@ -570,5 +606,20 @@ namespace BigScreen {
         ScreenPreview::Instance().SetEnabled(true);
         RefreshControls();
         PaperLogger.info("Reset all Big Screen settings to defaults");
+    }
+
+    void SettingsMenu::RefreshDownloaderStatus()
+    {
+        if(!updaterButton_ || !updaterStatus_) return;
+        const auto snapshot = DownloadManager::Instance().Snapshot();
+        if(snapshot.levelId != "__updater__") return;
+        updaterStatus_->set_text(snapshot.message);
+        BSML::Lite::SetButtonText(
+            updaterButton_,
+            snapshot.state == DownloadState::UpdateAvailable
+                ? "Install yt-dlp Update"
+                : snapshot.Active() ? "Checking..." : "Check yt-dlp Update");
+        updaterButton_->set_interactable(
+            Settings::Instance().ModEnabled() && !snapshot.Active());
     }
 }

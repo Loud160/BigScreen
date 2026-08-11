@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -26,6 +27,8 @@ namespace BigScreen {
                 case DownloadState::Preparing: return "preparing";
                 case DownloadState::Downloading: return "downloading";
                 case DownloadState::Completed: return "completed";
+                case DownloadState::UpdateAvailable: return "update_available";
+                case DownloadState::UpToDate: return "up_to_date";
                 case DownloadState::Cancelled: return "cancelled";
                 case DownloadState::Failed: return "failed";
                 default: return "idle";
@@ -37,6 +40,8 @@ namespace BigScreen {
             if(state == "preparing") return DownloadState::Preparing;
             if(state == "downloading") return DownloadState::Downloading;
             if(state == "completed") return DownloadState::Completed;
+            if(state == "update_available") return DownloadState::UpdateAvailable;
+            if(state == "up_to_date") return DownloadState::UpToDate;
             if(state == "cancelled") return DownloadState::Cancelled;
             if(state == "failed") return DownloadState::Failed;
             return DownloadState::Idle;
@@ -203,6 +208,61 @@ except BaseException as error:
     state, message = classify(error)
     publish(state, message)
 )PY";
+
+        constexpr const char* UpdaterScript = R"PY(
+import hashlib, json, os, urllib.request, zipfile
+job = json.loads(BIGSCREEN_JOB)
+def publish(state, message='', **extra):
+    value = {'state': state, 'message': message}; value.update(extra)
+    temporary = job['statusPath'] + '.tmp'
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())
+    os.replace(temporary, job['statusPath'])
+try:
+    publish('preparing', 'Checking yt-dlp releases')
+    repository = 'yt-dlp/yt-dlp-nightly-builds' if job['nightly'] else 'yt-dlp/yt-dlp'
+    request = urllib.request.Request(
+        'https://api.github.com/repos/' + repository + '/releases/latest',
+        headers={'User-Agent': 'Big-Screen-Beat-Saber'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        release = json.load(response)
+    version = str(release.get('tag_name') or '')
+    current = job['currentVersion']
+    if version == current and not job['install']:
+        publish('up_to_date', 'yt-dlp ' + current + ' is current', version=version)
+    elif not job['install']:
+        publish('update_available', 'yt-dlp ' + version + ' is available. Select Install Update to download it.', version=version)
+    else:
+        assets = {asset['name']: asset['browser_download_url'] for asset in release.get('assets', [])}
+        package_url = assets.get('yt-dlp')
+        sums_url = assets.get('SHA2-256SUMS')
+        if not package_url or not sums_url:
+            raise RuntimeError('The selected release does not contain signed release checksum files.')
+        with urllib.request.urlopen(urllib.request.Request(sums_url, headers={'User-Agent':'Big-Screen-Beat-Saber'}), timeout=30) as response:
+            sums = response.read().decode('utf-8')
+        expected = next((line.split()[0] for line in sums.splitlines() if line.rstrip().endswith('yt-dlp')), '')
+        if not expected:
+            raise RuntimeError('yt-dlp checksum list did not include the Android-compatible Python package.')
+        temporary = job['nextPath'] + '.part'
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(urllib.request.Request(package_url, headers={'User-Agent':'Big-Screen-Beat-Saber'}), timeout=60) as response, open(temporary, 'wb') as output:
+            while True:
+                block = response.read(262144)
+                if not block: break
+                output.write(block); digest.update(block)
+        if digest.hexdigest().lower() != expected.lower():
+            os.remove(temporary)
+            raise RuntimeError('Downloaded yt-dlp SHA-256 did not match the official release checksum.')
+        with zipfile.ZipFile(temporary) as package:
+            if package.testzip() is not None or 'yt_dlp/__init__.py' not in package.namelist():
+                raise RuntimeError('The downloaded yt-dlp package failed its compatibility self-test.')
+        os.replace(temporary, job['nextPath'])
+        with open(job['nextPath'] + '.version', 'w', encoding='utf-8') as version_file:
+            version_file.write(version)
+        publish('completed', 'yt-dlp ' + version + ' verified. Restart Beat Saber to activate it.', version=version)
+except BaseException as error:
+    publish('failed', 'yt-dlp update failed: ' + str(error)[-700:])
+)PY";
     }
 
     DownloadManager& DownloadManager::Instance()
@@ -221,6 +281,25 @@ except BaseException as error:
     {
         if(initialized_) return true;
         const auto runtime = VideoLibrary::Instance().RuntimePath();
+        const auto next = runtime / "yt-dlp-next";
+        const auto active = runtime / "yt-dlp-active";
+        const auto previous = runtime / "yt-dlp-previous";
+        if(std::filesystem::is_regular_file(next))
+        {
+            std::filesystem::remove(previous);
+            std::filesystem::remove(previous.string() + ".version");
+            if(std::filesystem::is_regular_file(active))
+            {
+                std::filesystem::rename(active, previous);
+                if(std::filesystem::is_regular_file(active.string() + ".version"))
+                    std::filesystem::rename(active.string() + ".version", previous.string() + ".version");
+            }
+            std::filesystem::rename(next, active);
+            if(std::filesystem::is_regular_file(next.string() + ".version"))
+                std::filesystem::rename(next.string() + ".version", active.string() + ".version");
+        }
+        std::ifstream activeVersion(active.string() + ".version");
+        if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
         const auto modLibraries = std::filesystem::path(
             "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs");
         if(!LoadGlobalLibrary(modLibraries / "libcrypto_python.so", error) ||
@@ -308,6 +387,39 @@ except BaseException as error:
         return true;
     }
 
+    bool DownloadManager::StartUpdaterCheck(bool nightly, bool install, std::string& error)
+    {
+        if(!initialized_) { error = "The embedded downloader runtime is unavailable."; return false; }
+        {
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            if(snapshot_.Active()) { error = "A downloader task is already running."; return false; }
+        }
+        if(worker_.joinable()) worker_.join();
+        std::scoped_lock lock(mutex_);
+        statusPath_ = VideoLibrary::Instance().RuntimePath() / "update-status.json";
+        cancelPath_ = VideoLibrary::Instance().RuntimePath() / "update.cancel";
+        std::filesystem::remove(statusPath_);
+        snapshot_ = {DownloadState::Preparing, "__updater__", "Checking yt-dlp releases"};
+        worker_ = std::thread([this, nightly, install]() { RunUpdater(nightly, install); });
+        return true;
+    }
+
+    void DownloadManager::StartScheduledUpdaterCheck(bool nightly)
+    {
+        const auto status = VideoLibrary::Instance().RuntimePath() / "update-status.json";
+        std::error_code errorCode;
+        const auto modified = std::filesystem::last_write_time(status, errorCode);
+        if(!errorCode)
+        {
+            const auto age = std::filesystem::file_time_type::clock::now() - modified;
+            if(age < std::chrono::hours(24 * 7)) return;
+        }
+        std::string error;
+        if(!StartUpdaterCheck(nightly, false, error))
+            PaperLogger.warn("Scheduled yt-dlp update check skipped: {}", error);
+    }
+
     void DownloadManager::Cancel()
     {
         std::scoped_lock lock(mutex_);
@@ -392,6 +504,37 @@ except BaseException as error:
         {
             SetFailure(std::string("Downloader stopped: ") + exception.what());
         }
+    }
+
+    void DownloadManager::RunUpdater(bool nightly, bool install)
+    {
+        const auto runtime = VideoLibrary::Instance().RuntimePath();
+        rapidjson::Document document(rapidjson::kObjectType);
+        auto& allocator = document.GetAllocator();
+        AddString(document, "statusPath", statusPath_.string(), allocator);
+        AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
+        AddString(document, "currentVersion", currentUpdateVersion_, allocator);
+        document.AddMember("nightly", nightly, allocator);
+        document.AddMember("install", install, allocator);
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        document.Accept(writer);
+        const auto gil = PyGILState_Ensure();
+        PyObject* globals = PyDict_New();
+        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+        auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
+        PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
+        Py_DECREF(job);
+        auto* result = PyRun_String(UpdaterScript, Py_file_input, globals, globals);
+        if(!result) { PyErr_Print(); PyErr_Clear(); } else Py_DECREF(result);
+        Py_DECREF(globals);
+        PyGILState_Release(gil);
+        std::scoped_lock lock(mutex_);
+        RefreshSnapshotFromDiskLocked();
+        std::ifstream stream(statusPath_, std::ios::binary);
+        const std::string json{std::istreambuf_iterator<char>(stream), {}};
+        rapidjson::Document status; status.Parse(json.data(), json.size());
+        availableUpdateVersion_ = ReadString(status, "version");
     }
 
     void DownloadManager::RefreshSnapshotFromDiskLocked()

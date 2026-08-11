@@ -14,6 +14,8 @@ namespace BigScreen {
         Preparing,
         Downloading,
         Completed,
+        UpdateAvailable,
+        UpToDate,
         Cancelled,
         Failed
     };
@@ -53,9 +55,12 @@ namespace BigScreen {
 
         bool Initialize(std::string& error);
         bool Start(DownloadRequest request, std::string& error);
+        bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
+        void StartScheduledUpdaterCheck(bool nightly);
         void Cancel();
         DownloadSnapshot Snapshot();
         bool IsReady() const { return initialized_; }
+        const std::string& AvailableUpdateVersion() const { return availableUpdateVersion_; }
 
     private:
         DownloadManager() = default;
@@ -64,6 +69,7 @@ namespace BigScreen {
         DownloadManager& operator=(const DownloadManager&) = delete;
 
         void Run(DownloadRequest request, std::filesystem::path finalPath);
+        void RunUpdater(bool nightly, bool install);
         void RefreshSnapshotFromDiskLocked();
         void SetFailure(std::string message);
 
@@ -74,5 +80,7 @@ namespace BigScreen {
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
         std::atomic<bool> initialized_{false};
+        std::string availableUpdateVersion_;
+        std::string currentUpdateVersion_ = "2026.07.04";
     };
 }
