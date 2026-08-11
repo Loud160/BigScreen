@@ -74,6 +74,36 @@ if ($Force -or -not (Test-Path -LiteralPath $certifiPackage)) {
 }
 Assert-Sha256 $certifiPackage $certifiSha256
 
+# OpenSSL cannot read a PEM file through Python's zipimport path. Extract the
+# small production certifi package from the already hash-verified wheel while
+# staging the QMOD. Its normal where() function will then return a physical
+# on-device path without runtime monkey-patching.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$certifiStage = Join-Path $stageRoot "certifi"
+if (Test-Path -LiteralPath $certifiStage) {
+    if ((Split-Path -Parent $certifiStage) -ne $stageRoot) {
+        throw "Refusing to replace unexpected certifi staging path $certifiStage"
+    }
+    Remove-Item -LiteralPath $certifiStage -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $certifiStage | Out-Null
+$certifiArchive = [System.IO.Compression.ZipFile]::OpenRead($certifiPackage)
+try {
+    foreach ($name in @("__init__.py", "__main__.py", "core.py", "py.typed", "cacert.pem")) {
+        $entry = $certifiArchive.GetEntry("certifi/$name")
+        if ($null -eq $entry) {
+            throw "The verified certifi wheel does not contain certifi/$name."
+        }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+            $entry,
+            (Join-Path $certifiStage $name))
+    }
+}
+finally {
+    $certifiArchive.Dispose()
+}
+
 # Link-time/native-loader files remain ordinary QMOD libraries. Pure Python is
 # kept in one zip and yt-dlp in its upstream zipimport form, which means a
 # downloader update replaces roughly 3 MB rather than another Python runtime.
@@ -92,8 +122,6 @@ $stdlibZip = Join-Path $stageRoot "python314.zip"
 if ($Force -or
     -not (Test-Path -LiteralPath $stdlibZip) -or
     (Get-Item -LiteralPath $stdlibZip).Length -lt 1024) {
-    Add-Type -AssemblyName System.IO.Compression
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
     if (Test-Path -LiteralPath $stdlibZip) {
         Remove-Item -LiteralPath $stdlibZip -Force
     }

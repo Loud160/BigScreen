@@ -63,6 +63,15 @@ foreach ($name in $runtimeFiles) {
     }
     $runtimeSourcePaths += Join-Path $runtimeStage $name
 }
+Get-ChildItem -LiteralPath (Join-Path $runtimeStage "certifi") -File |
+    Sort-Object Name |
+    ForEach-Object {
+        $copies += [PSCustomObject]@{
+            name = $_.Name
+            destination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/certifi/$($_.Name)"
+        }
+        $runtimeSourcePaths += $_.FullName
+    }
 Get-ChildItem -LiteralPath (Join-Path $runtimeStage "lib-dynload") -File -Filter "*.so" |
     Sort-Object Name |
     ForEach-Object {

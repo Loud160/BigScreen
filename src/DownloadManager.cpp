@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -215,32 +216,6 @@ namespace BigScreen {
             }
             return true;
         }
-
-        constexpr const char* CertificateBootstrapScript = R"PY(
-import os, zipfile
-
-# certifi is intentionally shipped as its signed/pinned wheel. Python can
-# import modules directly from that archive, but OpenSSL's C API requires a
-# real filesystem path for its PEM bundle. Materialize only that data file.
-with zipfile.ZipFile(BIGSCREEN_CERTIFI_WHEEL) as wheel:
-    certificate_data = wheel.read('certifi/cacert.pem')
-if not certificate_data.startswith(b'-----BEGIN CERTIFICATE-----'):
-    raise RuntimeError('The packaged certifi CA bundle is invalid.')
-temporary = BIGSCREEN_CA_PATH + '.tmp'
-with open(temporary, 'wb') as stream:
-    stream.write(certificate_data)
-    stream.flush()
-    os.fsync(stream.fileno())
-os.replace(temporary, BIGSCREEN_CA_PATH)
-
-# urllib/OpenSSL honors SSL_CERT_FILE. yt-dlp intentionally calls
-# certifi.where() itself, so point both paths at the same verified PEM file.
-os.environ['SSL_CERT_FILE'] = BIGSCREEN_CA_PATH
-os.environ['REQUESTS_CA_BUNDLE'] = BIGSCREEN_CA_PATH
-os.environ['CURL_CA_BUNDLE'] = BIGSCREEN_CA_PATH
-import certifi
-certifi.where = lambda path=BIGSCREEN_CA_PATH: path
-)PY";
 
         constexpr const char* DownloaderScript = R"PY(
 import json, os, re, shutil, traceback
@@ -569,6 +544,7 @@ except BaseException as error:
         const std::array paths{
             runtime / "python314.zip",
             InternalNativeRuntime / "lib-dynload",
+            runtime,
             runtime / "certifi.whl",
             runtime / "yt-dlp-active",
             runtime / "yt-dlp-shipped"
@@ -599,44 +575,30 @@ except BaseException as error:
             return false;
         }
 
-        // Configure certificate trust before releasing the interpreter lock
-        // or starting any downloader worker. This keeps verification enabled
-        // while avoiding Android's incomplete process-wide CA search paths.
-        const auto certificateWheel = runtime / "certifi.whl";
-        const auto certificateBundle = runtime / "cacert.pem";
-        PyObject* certificateGlobals = PyDict_New();
-        PyDict_SetItemString(
-            certificateGlobals,
-            "__builtins__",
-            PyEval_GetBuiltins());
-        auto* wheelPath = PyUnicode_FromString(certificateWheel.c_str());
-        auto* bundlePath = PyUnicode_FromString(certificateBundle.c_str());
-        PyDict_SetItemString(
-            certificateGlobals,
-            "BIGSCREEN_CERTIFI_WHEEL",
-            wheelPath);
-        PyDict_SetItemString(
-            certificateGlobals,
-            "BIGSCREEN_CA_PATH",
-            bundlePath);
-        Py_DECREF(wheelPath);
-        Py_DECREF(bundlePath);
-        auto* certificateResult = PyRun_String(
-            CertificateBootstrapScript,
-            Py_file_input,
-            certificateGlobals,
-            certificateGlobals);
-        if(!certificateResult)
+        // certifi is installed as a physical package so yt-dlp's unmodified
+        // certifi.where() returns this same real PEM path. The environment
+        // variables cover urllib and any future downloader networking backend
+        // without running a fallible Python bootstrap during initialization.
+        const auto certificateBundle = runtime / "certifi" / "cacert.pem";
+        std::ifstream certificateStream(certificateBundle, std::ios::binary);
+        std::string certificateHeader(4096, '\0');
+        certificateStream.read(certificateHeader.data(), certificateHeader.size());
+        certificateHeader.resize(static_cast<std::size_t>(certificateStream.gcount()));
+        if(certificateHeader.find("-----BEGIN CERTIFICATE-----") == std::string::npos)
         {
-            PyErr_Print();
-            PyErr_Clear();
-            Py_DECREF(certificateGlobals);
-            error = "Could not prepare the embedded certificate authority bundle.";
+            error = "The packaged certificate authority bundle is missing or invalid.";
             PyEval_SaveThread();
             return false;
         }
-        Py_DECREF(certificateResult);
-        Py_DECREF(certificateGlobals);
+        const auto bundlePath = certificateBundle.string();
+        if(setenv("SSL_CERT_FILE", bundlePath.c_str(), 1) != 0 ||
+           setenv("REQUESTS_CA_BUNDLE", bundlePath.c_str(), 1) != 0 ||
+           setenv("CURL_CA_BUNDLE", bundlePath.c_str(), 1) != 0)
+        {
+            error = "Could not configure the embedded certificate authority bundle.";
+            PyEval_SaveThread();
+            return false;
+        }
         PyEval_SaveThread();
         initialized_ = true;
         PaperLogger.info(
