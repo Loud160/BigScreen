@@ -49,6 +49,7 @@
 #include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/UI/ContentSizeFitter.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/Image.hpp"
@@ -546,20 +547,40 @@ namespace BigScreen {
                 editorContent->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>();
             ConfigureGroup(contentLayout, true);
             if(contentLayout)
-            {
                 contentLayout->set_childForceExpandWidth(true);
-                // ScrollViewTag's returned content container has no preferred
-                // width of its own. Give it the editor's former full control
-                // width so the template cannot collapse it around short labels.
-                ConfigureLayout(contentLayout, 50.0f, -1.0f, 0.0f, 0.0f);
+
+            // ScrollViewTag normally sizes this hierarchy to the preferred
+            // width of its children. That is useful for modal text, but it
+            // causes a side-screen form to collapse around its shortest rows.
+            // Leave vertical sizing content-driven while stretching both
+            // content transforms across the complete viewport width.
+            if(auto contentRect =
+                   editorContent->get_transform().cast<UnityEngine::RectTransform>())
+            {
+                contentRect->set_anchorMin({0.0f, 1.0f});
+                contentRect->set_anchorMax({1.0f, 1.0f});
+                contentRect->set_pivot({0.5f, 1.0f});
+                contentRect->set_sizeDelta({0.0f, -1.0f});
+            }
+            if(auto scrollContent = editorContent->get_transform()->get_parent())
+            {
+                if(auto* fitter = scrollContent->get_gameObject()
+                       ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
+                    fitter->set_horizontalFit(
+                        UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
             }
             if(auto* external = editorContent->GetComponent<BSML::ExternalComponents*>())
             {
                 if(auto* scrollLayout = external->Get<UnityEngine::UI::LayoutElement*>())
                 {
-                    scrollLayout->set_preferredWidth(50.0f);
                     scrollLayout->set_flexibleWidth(1.0f);
                     scrollLayout->set_flexibleHeight(1.0f);
+                }
+                if(auto* viewport = external->Get<UnityEngine::RectTransform*>())
+                {
+                    viewport->set_anchorMin({0.0f, 0.0f});
+                    viewport->set_anchorMax({1.0f, 1.0f});
+                    viewport->set_sizeDelta({0.0f, 0.0f});
                 }
             }
         }
