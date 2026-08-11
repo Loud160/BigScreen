@@ -13,6 +13,12 @@ namespace GlobalNamespace {
 }
 
 namespace BigScreen {
+    enum class PlaybackContext {
+        None,
+        MenuPreview,
+        Gameplay
+    };
+
     /// Coordinates one selected map, one decoder, and one Unity screen.
     ///
     /// The transition hook prepares ordinary file metadata. The gameplay clock
@@ -24,11 +30,12 @@ namespace BigScreen {
         static PlaybackSession& Instance();
 
         void Prepare(GlobalNamespace::BeatmapLevel* level);
-        void Start();
+        void Start(PlaybackContext context);
         void Tick(double songTimeSeconds);
         void Stop();
 
         bool HasPreparedVideo() const { return config_.has_value(); }
+        bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         const std::optional<std::string>& RequestedEnvironment() const;
 
     private:
@@ -40,5 +47,6 @@ namespace BigScreen {
         ScreenSurface surface_;
         bool started_ = false;
         bool firstFrameUploaded_ = false;
+        PlaybackContext context_ = PlaybackContext::None;
     };
 }

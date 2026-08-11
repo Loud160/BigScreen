@@ -7,11 +7,73 @@
 #include "GlobalNamespace/LevelCompletionResults.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
+#include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
+#include "UnityEngine/AudioSource.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
+#include "songcore/shared/SongCore.hpp"
+#include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
+static bool showMenuPreview = true;
+
+namespace {
+    Configuration& GetConfiguration()
+    {
+        static Configuration configuration(modInfo);
+        return configuration;
+    }
+
+    void LoadSettings()
+    {
+        auto& configuration = GetConfiguration();
+        configuration.Load();
+
+        // Configuration::Load guarantees an object document for a valid file.
+        // Be defensive around malformed user edits and restore only our own
+        // field, leaving unrelated future settings untouched.
+        auto& document = configuration.config;
+        if(!document.IsObject())
+            document.SetObject();
+
+        const auto existing = document.FindMember("showMenuPreview");
+        if(existing != document.MemberEnd() && existing->value.IsBool())
+        {
+            showMenuPreview = existing->value.GetBool();
+            return;
+        }
+
+        document.RemoveMember("showMenuPreview");
+        document.AddMember("showMenuPreview", true, document.GetAllocator());
+        configuration.Write();
+        showMenuPreview = true;
+    }
+
+    void HandleLevelWasSelected(
+        SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& eventArgs)
+    {
+        auto& session = BigScreen::PlaybackSession::Instance();
+
+        // A built-in song, a level without video metadata, or a disabled
+        // preference must immediately remove any preview left by the previous
+        // selection. Gameplay preparation will create its own fresh session.
+        if(!showMenuPreview || !eventArgs.isCustom || !eventArgs.customBeatmapLevel)
+        {
+            session.Stop();
+            return;
+        }
+
+        session.Prepare(eventArgs.customBeatmapLevel);
+        if(session.HasPreparedVideo())
+            session.Start(BigScreen::PlaybackContext::MenuPreview);
+    }
+}
+
+bool IsMenuPreviewEnabled()
+{
+    return showMenuPreview;
+}
 
 namespace {
     MAKE_HOOK_MATCH(
@@ -63,7 +125,36 @@ namespace {
         // StartSong runs after the gameplay scene and environment have loaded,
         // so Unity objects created here belong to the correct scene. The screen
         // remains hidden until the worker publishes its first decoded frame.
-        BigScreen::PlaybackSession::Instance().Start();
+        BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
+    }
+
+    MAKE_HOOK_MATCH(
+        SongPreviewPlayer_Update,
+        &GlobalNamespace::SongPreviewPlayer::Update,
+        void,
+        GlobalNamespace::SongPreviewPlayer* self)
+    {
+        SongPreviewPlayer_Update(self);
+
+        auto& session = BigScreen::PlaybackSession::Instance();
+        if(!session.IsMenuPreviewActive())
+            return;
+
+        // SongPreviewPlayer crossfades between a small bank of AudioSources.
+        // Reading its active source after the original Update gives Big Screen
+        // the exact clip position heard by the user, including preview start,
+        // pause, resume, and crossfade channel changes.
+        const int activeChannel = self->__cordl_internal_get__activeChannel();
+        auto controllers = self->__cordl_internal_get__audioSourceControllers();
+        if(!controllers || activeChannel < 0 || activeChannel >= controllers.size())
+            return;
+
+        auto* controller = controllers[activeChannel];
+        if(!controller)
+            return;
+        auto audioSource = controller->__cordl_internal_get_audioSource();
+        if(audioSource)
+            session.Tick(audioSource->get_time());
     }
 
     MAKE_HOOK_MATCH(
@@ -98,6 +189,7 @@ namespace {
 MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
+    LoadSettings();
     Paper::Logger::RegisterFileContextId(PaperLogger.tag);
     PaperLogger.info("Big Screen {} initialized", VERSION);
 }
@@ -112,6 +204,12 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
+    INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
+
+    // SongCore publishes selections after its custom-level details are ready,
+    // including WIP songs. A plain native callback keeps this path independent
+    // of Beat Saber's private view-controller field layout.
+    SongCore::API::LevelSelect::GetLevelWasSelectedEvent().addCallback(HandleLevelWasSelected);
     PaperLogger.info("Big Screen hooks installed");
 }

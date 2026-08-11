@@ -68,9 +68,9 @@ namespace BigScreen {
         }
     }
 
-    void PlaybackSession::Start()
+    void PlaybackSession::Start(PlaybackContext context)
     {
-        if(!config_ || started_)
+        if(!config_ || started_ || context == PlaybackContext::None)
             return;
 
         std::string error;
@@ -89,10 +89,12 @@ namespace BigScreen {
 
         started_ = true;
         firstFrameUploaded_ = false;
+        context_ = context;
         PaperLogger.info(
-            "Started {}x{} video screen (duration {:.3f}s)",
+            "Started {}x{} {} video screen (duration {:.3f}s)",
             decoder_.Width(),
             decoder_.Height(),
+            context == PlaybackContext::MenuPreview ? "menu-preview" : "gameplay",
             decoder_.DurationSeconds());
     }
 
@@ -139,5 +141,6 @@ namespace BigScreen {
         decoder_.Close();
         started_ = false;
         firstFrameUploaded_ = false;
+        context_ = PlaybackContext::None;
     }
 }
