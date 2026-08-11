@@ -54,6 +54,14 @@ if (-not $cmakeExe) {
     throw "CMake was not found in PATH or the latest Visual Studio installation."
 }
 
+# Fetch the pinned FFmpeg headers and link-time Android libraries only when
+# they are absent. Runtime copies are supplied by Big Screen's Hollywood
+# dependency; this step never packages a second, potentially conflicting set.
+& (Join-Path $PSScriptRoot "fetch-ffmpeg.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 & $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

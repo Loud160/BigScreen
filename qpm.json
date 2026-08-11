@@ -1,7 +1,8 @@
 {
+  "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.schema.json",
+  "version": "0.1.0",
   "sharedDir": "shared",
   "dependenciesDir": "extern",
-  "version": "0.1.0",
   "info": {
     "name": "Big Screen",
     "id": "bigscreen",
@@ -17,7 +18,9 @@
       "build": [
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1"
       ],
-      "clean": ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean"],
+      "clean": [
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean"
+      ],
       "copy": [
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1 $0:?"
       ],
@@ -38,7 +41,11 @@
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/pull-tombstone.ps1"
       ]
     },
-    "qmodIncludeDirs": ["./build", "./extern/libs"],
+    "qmodIncludeDirs": [
+      "./build",
+      "./extern/libs"
+    ],
+    "qmodIncludeFiles": [],
     "qmodOutput": "./Big Screen.qmod"
   },
   "dependencies": [
@@ -72,6 +79,11 @@
     {
       "id": "hollywood",
       "versionRange": "=1.0.1",
+      "additionalData": {}
+    },
+    {
+      "id": "rapidjson",
+      "versionRange": "^0.1.20250205132808",
       "additionalData": {}
     }
   ]

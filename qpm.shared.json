@@ -81,6 +81,11 @@
         "id": "hollywood",
         "versionRange": "=1.0.1",
         "additionalData": {}
+      },
+      {
+        "id": "rapidjson",
+        "versionRange": "^0.1.20250205132808",
+        "additionalData": {}
       }
     ]
   },
@@ -151,6 +156,22 @@
         }
       },
       "version": "0.3.2"
+    },
+    {
+      "dependency": {
+        "id": "rapidjson",
+        "versionRange": "=0.1.20250205132808",
+        "additionalData": {
+          "headersOnly": true,
+          "branchName": "version/v0_1_20250205132808+24b5e7a8",
+          "compileOptions": {
+            "systemIncludes": [
+              "rapidjson/include"
+            ]
+          }
+        }
+      },
+      "version": "0.1.20250205132808+24b5e7a8"
     },
     {
       "dependency": {

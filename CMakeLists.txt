@@ -65,6 +65,30 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
+        ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
+
+# FFmpeg is a dynamic runtime dependency supplied by Hollywood. These pinned
+# headers and Android libraries are downloaded by scripts/fetch-ffmpeg.ps1 so
+# Big Screen compiles against the exact ABI present on Beat Saber 1.37 Quests.
+set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg)
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${BIGSCREEN_FFMPEG_DIR}/include)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavformat.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavcodec.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavutil.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale.so
+)
+
+# Hollywood installs the matching avformat/avcodec/avutil runtime libraries,
+# but its public package does not include swscale. Copy the exact pinned
+# companion library beside our build so the qmod can install that one missing
+# runtime dependency without duplicating Hollywood's other FFmpeg libraries.
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale.so
+                $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/libswscale.so
+        COMMENT "Stage Big Screen's pinned libswscale runtime")
 
 # beatsaber hook inline hook
 
