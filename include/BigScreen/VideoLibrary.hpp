@@ -26,6 +26,8 @@ namespace BigScreen {
         std::string codec;
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
+        bool fitToSong = false;
+        bool blackDuringLeadIn = false;
         double durationSeconds = 0.0;
         std::uint64_t bytes = 0;
         int width = 0;
@@ -35,6 +37,8 @@ namespace BigScreen {
     struct StoredTiming {
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
+        bool fitToSong = false;
+        bool blackDuringLeadIn = false;
     };
 
     struct LevelVideoRecords {
@@ -103,7 +107,9 @@ namespace BigScreen {
             const std::string& levelId,
             VideoOrigin origin,
             double offsetSeconds,
-            double playbackRate);
+            double playbackRate,
+            bool fitToSong,
+            bool blackDuringLeadIn);
 
         std::vector<std::pair<std::string, LevelVideoRecords>> Records() const;
         std::uint64_t LibraryBytes() const;

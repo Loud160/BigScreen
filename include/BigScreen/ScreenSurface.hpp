@@ -28,6 +28,9 @@ namespace BigScreen {
         bool Create(const MapVideoConfig& config, int videoWidth, int videoHeight);
         void Destroy();
         void SetVisible(bool visible);
+        /// Shows an opaque black surface during negative video time, or hides
+        /// the surface entirely when transparent lead-in is selected.
+        void ShowLeadIn(bool black);
         bool Upload(const VideoFrame& frame);
 
         bool IsCreated() const { return gameObject_ != nullptr; }
@@ -42,6 +45,7 @@ namespace BigScreen {
         UnityEngine::Texture2D* texture_ = nullptr;
         int textureWidth_ = 0;
         int textureHeight_ = 0;
+        bool transparent_ = false;
         bool visible_ = false;
     };
 }

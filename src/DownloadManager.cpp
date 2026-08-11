@@ -902,6 +902,8 @@ os.replace(temporary, job['destination'])
                 stored.codec = ReadString(status, "codec");
                 stored.offsetSeconds = request.offsetSeconds;
                 stored.playbackRate = request.playbackRate;
+                stored.fitToSong = request.fitToSong;
+                stored.blackDuringLeadIn = request.blackDuringLeadIn;
                 stored.durationSeconds = ReadNumber(status, "duration");
                 stored.bytes = static_cast<std::uint64_t>(ReadNumber(status, "bytes"));
                 stored.width = static_cast<int>(ReadNumber(status, "width"));

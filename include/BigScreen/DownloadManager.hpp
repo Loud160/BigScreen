@@ -34,6 +34,8 @@ namespace BigScreen {
         bool explicitContentAllowed = false;
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
+        bool fitToSong = false;
+        bool blackDuringLeadIn = false;
     };
 
     struct DownloadSnapshot {

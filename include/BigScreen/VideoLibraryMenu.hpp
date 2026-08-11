@@ -11,6 +11,7 @@ namespace BSML {
     class CustomListTableData;
     class IncrementSetting;
     class SliderSetting;
+    class ToggleSetting;
 }
 namespace GlobalNamespace {
     class BeatmapLevel;
@@ -60,7 +61,8 @@ namespace BigScreen {
         void StartOrCancelDownload();
         void PasteUrlFromClipboard();
         void RemoveOverride();
-        void FitToSong();
+        bool ApplyFitToSong(bool reportStatus);
+        bool SaveTiming();
         void RefreshDetails();
         void ClearThumbnail();
         void RefreshVisibleVideoThumbnails();
@@ -83,6 +85,8 @@ namespace BigScreen {
         BSML::IncrementSetting* offsetSetting_ = nullptr;
         BSML::IncrementSetting* rateSetting_ = nullptr;
         BSML::SliderSetting* playbackScrubber_ = nullptr;
+        BSML::ToggleSetting* fitToggle_ = nullptr;
+        BSML::ToggleSetting* blackLeadInToggle_ = nullptr;
         TMPro::TextMeshProUGUI* browserTitle_ = nullptr;
         TMPro::TextMeshProUGUI* browserStorage_ = nullptr;
         TMPro::TextMeshProUGUI* filterText_ = nullptr;
@@ -98,7 +102,6 @@ namespace BigScreen {
         UnityEngine::UI::Button* backToListButton_ = nullptr;
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
-        UnityEngine::UI::Button* fitButton_ = nullptr;
         UnityEngine::UI::Button* playPauseButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
         std::vector<BSML::ClickableText*> alphabetButtons_;
@@ -122,11 +125,14 @@ namespace BigScreen {
         double offset_ = 0.0;
         double rate_ = 1.0;
         double previewSongTime_ = 0.0;
+        bool fitToSong_ = false;
+        bool blackDuringLeadIn_ = false;
         bool active_ = false;
         bool editorVisible_ = false;
         bool previewPlaying_ = false;
         bool playWhenAudioReady_ = false;
         bool suppressScrubberCallback_ = false;
+        bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;
     };

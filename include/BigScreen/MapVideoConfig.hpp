@@ -38,6 +38,8 @@ namespace BigScreen {
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
         double declaredDurationSeconds = 0.0;
+        bool fitToSong = false;
+        bool blackDuringLeadIn = false;
         std::optional<double> stopAtVideoSecond;
         bool loop = false;
 

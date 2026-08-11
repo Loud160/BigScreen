@@ -180,6 +180,7 @@ namespace BigScreen {
 
         textureWidth_ = width;
         textureHeight_ = height;
+        transparent_ = transparent;
         material_->set_mainTexture(texture_);
         if(transparent)
         {
@@ -207,6 +208,14 @@ namespace BigScreen {
             return false;
         }
 
+        // A black lead-in temporarily replaces the material's texture and
+        // opacity. Restore the actual video appearance before publishing the
+        // first non-negative frame.
+        material_->set_mainTexture(texture_);
+        material_->set_color(transparent_
+            ? UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f}
+            : UnityEngine::Color::get_white());
+
         // LoadRawTextureData copies into Unity's CPU-side texture buffer. Apply
         // performs the GPU upload on the main thread, as required by Unity.
         texture_->LoadRawTextureData(
@@ -214,6 +223,23 @@ namespace BigScreen {
             static_cast<std::int32_t>(frame.rgba.size()));
         texture_->Apply(false, false);
         return true;
+    }
+
+    void ScreenSurface::ShowLeadIn(bool black)
+    {
+        if(!black)
+        {
+            SetVisible(false);
+            return;
+        }
+        if(!material_)
+            return;
+
+        // Unity owns this shared 2x2 texture, so it costs no per-video upload
+        // or allocation and must not be destroyed with the screen surface.
+        material_->set_mainTexture(UnityEngine::Texture2D::get_blackTexture());
+        material_->set_color(UnityEngine::Color::get_white());
+        SetVisible(true);
     }
 
     void ScreenSurface::SetVisible(bool visible)
@@ -244,6 +270,7 @@ namespace BigScreen {
         texture_ = nullptr;
         textureWidth_ = 0;
         textureHeight_ = 0;
+        transparent_ = false;
         visible_ = false;
     }
 }

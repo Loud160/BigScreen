@@ -42,6 +42,12 @@ namespace BigScreen {
             return member && member->IsNumber() ? member->GetDouble() : fallback;
         }
 
+        bool BoolOr(const rapidjson::Value& value, const char* name, bool fallback)
+        {
+            const auto* member = Member(value, name);
+            return member && member->IsBool() ? member->GetBool() : fallback;
+        }
+
         StoredVideo ParseStoredVideo(const rapidjson::Value& value)
         {
             StoredVideo video;
@@ -54,6 +60,8 @@ namespace BigScreen {
                 NumberOr(value, "playbackRate", 1.0),
                 0.05,
                 8.0);
+            video.fitToSong = BoolOr(value, "fitToSong", false);
+            video.blackDuringLeadIn = BoolOr(value, "blackDuringLeadIn", false);
             video.durationSeconds = std::max(
                 0.0,
                 NumberOr(value, "durationSeconds", 0.0));
@@ -72,6 +80,8 @@ namespace BigScreen {
                 NumberOr(value, "offsetSeconds", 0.0), -60.0, 60.0);
             timing.playbackRate = std::clamp(
                 NumberOr(value, "playbackRate", 1.0), 0.05, 8.0);
+            timing.fitToSong = BoolOr(value, "fitToSong", false);
+            timing.blackDuringLeadIn = BoolOr(value, "blackDuringLeadIn", false);
             return timing;
         }
 
@@ -95,6 +105,8 @@ namespace BigScreen {
             addString("codec", video.codec);
             object.AddMember("offsetSeconds", video.offsetSeconds, allocator);
             object.AddMember("playbackRate", video.playbackRate, allocator);
+            object.AddMember("fitToSong", video.fitToSong, allocator);
+            object.AddMember("blackDuringLeadIn", video.blackDuringLeadIn, allocator);
             object.AddMember("durationSeconds", video.durationSeconds, allocator);
             object.AddMember("bytes", static_cast<std::uint64_t>(video.bytes), allocator);
             object.AddMember("width", video.width, allocator);
@@ -197,6 +209,8 @@ namespace BigScreen {
             effective.videoPath = videoPath_ / record.fileName;
             effective.offsetSeconds = record.offsetSeconds;
             effective.playbackRate = record.playbackRate;
+            effective.fitToSong = record.fitToSong;
+            effective.blackDuringLeadIn = record.blackDuringLeadIn;
             effective.declaredDurationSeconds = record.durationSeconds;
             effective.title = record.title.empty()
                 ? std::optional<std::string>{}
@@ -213,6 +227,8 @@ namespace BigScreen {
             {
                 effective.offsetSeconds = saved->mapperTiming->offsetSeconds;
                 effective.playbackRate = saved->mapperTiming->playbackRate;
+                effective.fitToSong = saved->mapperTiming->fitToSong;
+                effective.blackDuringLeadIn = saved->mapperTiming->blackDuringLeadIn;
             }
             descriptor.thumbnailPath = AllocateThumbnailPath(
                 descriptor.levelId, VideoOrigin::Mapper);
@@ -224,6 +240,8 @@ namespace BigScreen {
             effective.videoPath = videoPath_ / record.fileName;
             effective.offsetSeconds = record.offsetSeconds;
             effective.playbackRate = record.playbackRate;
+            effective.fitToSong = record.fitToSong;
+            effective.blackDuringLeadIn = record.blackDuringLeadIn;
             effective.declaredDurationSeconds = record.durationSeconds;
             descriptor.thumbnailPath = AllocateThumbnailPath(
                 descriptor.levelId, VideoOrigin::Mapper);
@@ -330,7 +348,9 @@ namespace BigScreen {
         const std::string& levelId,
         VideoOrigin origin,
         double offsetSeconds,
-        double playbackRate)
+        double playbackRate,
+        bool fitToSong,
+        bool blackDuringLeadIn)
     {
         std::scoped_lock lock(mutex_);
         auto found = FindRecord(records_, levelId);
@@ -346,23 +366,39 @@ namespace BigScreen {
         const auto clampedRate = std::clamp(playbackRate, 0.05, 8.0);
         if(origin == VideoOrigin::Mapper)
         {
-            found->second.mapperTiming = StoredTiming{clampedOffset, clampedRate};
+            found->second.mapperTiming = StoredTiming{
+                clampedOffset,
+                clampedRate,
+                fitToSong,
+                blackDuringLeadIn};
             if(target)
             {
                 target->offsetSeconds = clampedOffset;
                 target->playbackRate = clampedRate;
+                target->fitToSong = fitToSong;
+                target->blackDuringLeadIn = blackDuringLeadIn;
             }
         }
         else if(target)
         {
             target->offsetSeconds = clampedOffset;
             target->playbackRate = clampedRate;
+            target->fitToSong = fitToSong;
+            target->blackDuringLeadIn = blackDuringLeadIn;
         }
         else
         {
             return false;
         }
         SaveLocked();
+        PaperLogger.info(
+            "Saved {} video timing for '{}': offset {:.2f}s, speed {:.4f}x, fit {}, lead-in {}",
+            origin == VideoOrigin::User ? "user" : "mapper",
+            levelId,
+            clampedOffset,
+            clampedRate,
+            fitToSong ? "on" : "off",
+            blackDuringLeadIn ? "black" : "transparent");
         return true;
     }
 
@@ -468,6 +504,10 @@ namespace BigScreen {
                     "offsetSeconds", record.mapperTiming->offsetSeconds, allocator);
                 timing.AddMember(
                     "playbackRate", record.mapperTiming->playbackRate, allocator);
+                timing.AddMember(
+                    "fitToSong", record.mapperTiming->fitToSong, allocator);
+                timing.AddMember(
+                    "blackDuringLeadIn", record.mapperTiming->blackDuringLeadIn, allocator);
                 level.AddMember("mapperTiming", timing.Move(), allocator);
             }
             levels.AddMember(

@@ -386,6 +386,8 @@ namespace BigScreen {
         {
             request.offsetSeconds = descriptor.mapperDefinition->offsetSeconds;
             request.playbackRate = descriptor.mapperDefinition->playbackRate;
+            request.fitToSong = descriptor.mapperDefinition->fitToSong;
+            request.blackDuringLeadIn = descriptor.mapperDefinition->blackDuringLeadIn;
         }
         std::string error;
         if(!downloader.Start(std::move(request), error) && downloadStatus_)

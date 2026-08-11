@@ -175,12 +175,15 @@ namespace BigScreen {
             songTimeSeconds,
             decoder_.DurationSeconds());
 
-        // Negative media time means a mapper intentionally delayed the video.
-        // Keeping the last texture hidden avoids displaying frame zero early.
-        const bool withinConfiguredRange =
-            mediaTime >= 0.0 &&
-            (!config_->stopAtVideoSecond || mediaTime <= *config_->stopAtVideoSecond);
-        if(!withinConfiguredRange)
+        // Negative media time is deliberate lead-in created by a negative
+        // Start Offset. The per-video choice either shows an intentional solid
+        // black screen or removes the surface completely until frame zero.
+        if(mediaTime < 0.0)
+        {
+            surface_.ShowLeadIn(config_->blackDuringLeadIn);
+            return;
+        }
+        if(config_->stopAtVideoSecond && mediaTime > *config_->stopAtVideoSecond)
         {
             surface_.SetVisible(false);
             return;

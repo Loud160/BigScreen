@@ -65,6 +65,7 @@
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
+#include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "bsml/shared/Helpers/delegates.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
@@ -357,6 +358,16 @@ namespace BigScreen {
             layout->set_flexibleHeight(flexibleHeight);
         }
 
+        void SetToggleWithoutNotification(
+            BSML::ToggleSetting* setting,
+            bool value)
+        {
+            if(!setting) return;
+            setting->currentValue = value;
+            if(setting->toggle)
+                setting->toggle->SetIsOnWithoutNotify(value);
+        }
+
         template<class TLayout>
         void ConfigureGroup(TLayout* group, bool vertical)
         {
@@ -614,33 +625,105 @@ namespace BigScreen {
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
 
-        // Timing tools are ordered by intent: apply the automatic fit first,
-        // then make precise offset and speed changes, then audition the result
-        // with the transport controls immediately below them.
-        fitButton_ = BSML::Lite::CreateUIButton(
-            editorBody, "Fit to Song", {0.0f, 0.0f}, {31.0f, 6.5f},
-            [this]() { FitToSong(); });
-        ConfigureLayout(fitButton_, -1.0f, 6.5f, 1.0f);
-        BSML::Lite::SetButtonTextSize(fitButton_, 2.8f);
+        // Automatic fit and lead-in appearance are persistent per-video
+        // choices. Keeping them side by side avoids increasing the editor's
+        // height while placing both policies before the numeric timing fields.
+        auto* timingToggleRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(timingToggleRow, false);
+        timingToggleRow->set_spacing(0.6f);
+        ConfigureLayout(timingToggleRow, -1.0f, 8.0f, 1.0f);
+        fitToggle_ = BSML::Lite::CreateToggle(
+            timingToggleRow,
+            "Fit to Song",
+            false,
+            [this](bool enabled)
+            {
+                if(suppressTimingCallbacks_) return;
+                fitToSong_ = enabled;
+                if(enabled)
+                {
+                    if(!ApplyFitToSong(true))
+                    {
+                        fitToSong_ = false;
+                        suppressTimingCallbacks_ = true;
+                        SetToggleWithoutNotification(fitToggle_, false);
+                        suppressTimingCallbacks_ = false;
+                    }
+                }
+                else if(SaveTiming())
+                {
+                    transientStatus_ = "Automatic song fitting disabled; playback speed is now manual.";
+                    StartSelectedPreview();
+                    RefreshDetails();
+                }
+            });
+        ConfigureLayout(fitToggle_, -1.0f, 8.0f, 1.0f);
+        BSML::Lite::AddHoverHint(
+            fitToggle_,
+            "Continuously adjusts playback speed so the video ends with the song after applying Start Offset.");
+        blackLeadInToggle_ = BSML::Lite::CreateToggle(
+            timingToggleRow,
+            "Black Lead-In",
+            false,
+            [this](bool enabled)
+            {
+                if(suppressTimingCallbacks_) return;
+                blackDuringLeadIn_ = enabled;
+                if(SaveTiming())
+                {
+                    transientStatus_ = enabled
+                        ? "Negative offset lead-in will use a solid black screen."
+                        : "Negative offset lead-in will remain transparent.";
+                    StartSelectedPreview();
+                    RefreshDetails();
+                }
+            });
+        ConfigureLayout(blackLeadInToggle_, -1.0f, 8.0f, 1.0f);
+        BSML::Lite::AddHoverHint(
+            blackLeadInToggle_,
+            "Off keeps the screen fully transparent until video time reaches zero. On shows solid black during that delay.");
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Start Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
+                if(suppressTimingCallbacks_) return;
                 offset_ = value;
-                if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
-                   VideoLibrary::Instance().UpdateTiming(
-                    std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+                if(fitToSong_)
+                    ApplyFitToSong(false);
+                else if(SaveTiming())
+                {
+                    std::ostringstream status;
+                    status << std::fixed << std::setprecision(2);
+                    if(offset_ < 0.0)
+                        status << "Video delayed by " << -offset_ << " seconds; lead-in is "
+                               << (blackDuringLeadIn_ ? "black" : "transparent") << ".";
+                    else if(offset_ > 0.0)
+                        status << "Video skips forward " << offset_ << " seconds at song start.";
+                    else
+                        status << "Video starts at frame zero with the song.";
+                    transientStatus_ = status.str();
                     StartSelectedPreview();
+                    RefreshDetails();
+                }
             });
         ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
+        BSML::Lite::AddHoverHint(
+            offsetSetting_,
+            "Negative values delay video frame zero; positive values skip forward into the video.");
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Playback Speed", 2, 0.05f, 1.0f,
             0.05f, 8.0f, {0, 0}, [this](float value) {
+                if(suppressTimingCallbacks_) return;
                 rate_ = value;
-                if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
-                   VideoLibrary::Instance().UpdateTiming(
-                    std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+                if(SaveTiming())
+                {
+                    std::ostringstream status;
+                    status << std::fixed << std::setprecision(2)
+                           << "Manual playback speed saved at " << rate_ << "x.";
+                    transientStatus_ = status.str();
                     StartSelectedPreview();
+                    RefreshDetails();
+                }
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
 
@@ -835,14 +918,24 @@ namespace BigScreen {
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig ? descriptor.playableConfig->offsetSeconds : 0.0;
         rate_ = descriptor.playableConfig ? descriptor.playableConfig->playbackRate : 1.0;
+        fitToSong_ = descriptor.playableConfig
+            ? descriptor.playableConfig->fitToSong
+            : false;
+        blackDuringLeadIn_ = descriptor.playableConfig
+            ? descriptor.playableConfig->blackDuringLeadIn
+            : false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
         }
+        suppressTimingCallbacks_ = true;
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
+        SetToggleWithoutNotification(fitToggle_, fitToSong_);
+        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
+        suppressTimingCallbacks_ = false;
         ShowEditor();
         RequestSelectedAudio();
         RefreshDetails();
@@ -986,7 +1079,8 @@ namespace BigScreen {
             std::string(selected_->levelID),
             std::string(selected_->songName),
             selected_->songAuthorName ? std::string(selected_->songAuthorName) : std::string{},
-            url_, VideoOrigin::User, ExplicitAllowed(), offset_, rate_};
+            url_, VideoOrigin::User, ExplicitAllowed(), offset_, rate_,
+            fitToSong_, blackDuringLeadIn_};
         std::string error;
         PaperLogger.info("Download button pressed for {}", selectedLevelId);
         if(!downloader.Start(std::move(request), error))
@@ -1089,14 +1183,24 @@ namespace BigScreen {
         rate_ = descriptor.playableConfig
             ? descriptor.playableConfig->playbackRate
             : 1.0;
+        fitToSong_ = descriptor.playableConfig
+            ? descriptor.playableConfig->fitToSong
+            : false;
+        blackDuringLeadIn_ = descriptor.playableConfig
+            ? descriptor.playableConfig->blackDuringLeadIn
+            : false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
         }
+        suppressTimingCallbacks_ = true;
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
+        SetToggleWithoutNotification(fitToggle_, fitToSong_);
+        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
+        suppressTimingCallbacks_ = false;
         RefreshDetails();
         StartSelectedPreview();
     }
@@ -1237,52 +1341,73 @@ namespace BigScreen {
         }
     }
 
-    void VideoLibraryMenu::FitToSong()
+    bool VideoLibraryMenu::SaveTiming()
+    {
+        if(!selected_ || !selected_->levelID)
+            return false;
+        return VideoLibrary::Instance().UpdateTiming(
+            std::string(selected_->levelID),
+            SelectedVideoOrigin(),
+            offset_,
+            rate_,
+            fitToSong_,
+            blackDuringLeadIn_);
+    }
+
+    bool VideoLibraryMenu::ApplyFitToSong(bool reportStatus)
     {
         if(!selected_)
         {
-            transientStatus_ = "Select a song before using Fit to Song.";
+            transientStatus_ = "Select a song before enabling Fit to Song.";
             RefreshDetails();
-            return;
+            return false;
         }
         if(selected_->songDuration <= 0.0f)
         {
             transientStatus_ = "Song duration is unavailable, so Fit to Song could not run.";
             RefreshDetails();
-            return;
+            return false;
         }
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         if(!descriptor.playableConfig || descriptor.playableConfig->declaredDurationSeconds <= 0.0)
         {
             transientStatus_ = "Video duration is unavailable, so Fit to Song could not run.";
             RefreshDetails();
-            return;
+            return false;
         }
 
+        // Media time is songTime * rate + offset. Solving that expression for
+        // the rate that reaches the last video frame at the last song frame
+        // gives (videoDuration - offset) / songDuration. A -2 second offset
+        // therefore adds two seconds of lead-in to the fitted timeline exactly
+        // as the user expects, while preserving the common end point.
         const auto requestedRate =
-            descriptor.playableConfig->declaredDurationSeconds / selected_->songDuration;
+            (descriptor.playableConfig->declaredDurationSeconds - offset_) /
+            selected_->songDuration;
         rate_ = std::clamp(requestedRate, 0.05, 8.0);
-        if(!VideoLibrary::Instance().UpdateTiming(
-            std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+        if(!SaveTiming())
         {
             transientStatus_ = "Fit to Song could not save the new playback speed.";
             RefreshDetails();
-            return;
+            return false;
         }
+        suppressTimingCallbacks_ = true;
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
+        SetToggleWithoutNotification(fitToggle_, fitToSong_);
+        suppressTimingCallbacks_ = false;
         StartSelectedPreview();
 
-        // Report the concrete result so the button never appears inert. Include
-        // the limit when an unusually mismatched video requires a speed outside
-        // the range supported by the playback controls.
         std::ostringstream status;
         status << std::fixed << std::setprecision(2)
-               << "Fit applied: playback speed set to " << rate_ << "x";
+               << (reportStatus ? "Automatic fit enabled: " : "Automatic fit updated: ")
+               << "playback speed " << rate_
+               << "x with " << offset_ << "s offset";
         if(std::abs(requestedRate - rate_) > 0.0001)
             status << " (limited from " << requestedRate << "x)";
         status << ".";
         transientStatus_ = status.str();
         RefreshDetails();
+        return true;
     }
 
     void VideoLibraryMenu::RefreshDetails()
@@ -1424,11 +1549,13 @@ namespace BigScreen {
                     download.state != DownloadState::Probing) ||
                 (!download.Active() && !url_.empty()));
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
-        if(rateSetting_) rateSetting_->set_interactable(descriptor.CanPlay());
+        if(rateSetting_) rateSetting_->set_interactable(
+            descriptor.CanPlay() && !fitToSong_);
+        if(fitToggle_) fitToggle_->set_interactable(descriptor.CanPlay());
+        if(blackLeadInToggle_) blackLeadInToggle_->set_interactable(descriptor.CanPlay());
         if(playbackScrubber_) playbackScrubber_->set_interactable(descriptor.CanPlay());
         if(playPauseButton_) playPauseButton_->set_interactable(descriptor.CanPlay());
         if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);
-        if(fitButton_) fitButton_->set_interactable(descriptor.CanPlay());
         if(thisDownload && download.state == DownloadState::Completed)
         {
             const auto completedIdentity =
