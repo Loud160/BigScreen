@@ -15,12 +15,11 @@ namespace SongCore::SongLoader {
 }
 
 namespace BigScreen {
-    /// Owns the small, contextual Video switch shown beside a song's normal
-    /// difficulty controls.
+    /// Owns the persistent Video switch shown at the top-right of Beat Saber's
+    /// song-selection screen.
     ///
-    /// This is intentionally selection state, not a global mod preference. A
-    /// mapper-provided video starts enabled whenever the user selects a new
-    /// song, and the choice survives difficulty changes for that same song.
+    /// Its state is global rather than per-song: scrolling the song list never
+    /// changes the switch or unexpectedly starts a sequence of new previews.
     class SelectionVideoToggle final {
     public:
         static SelectionVideoToggle& Instance();
@@ -33,9 +32,9 @@ namespace BigScreen {
             const std::string& levelId,
             SongCore::SongLoader::CustomBeatmapLevel* customLevel);
 
-        /// Applies a changed global default to the currently selected song.
-        /// Future selections read the same value directly from Settings.
-        void ApplyDefaultVideoEnabled(bool enabled);
+        /// Mirrors a changed global state into this control and immediately
+        /// applies it to the currently selected video map, if there is one.
+        void ApplyGlobalVideoEnabled(bool enabled);
 
         /// Tears down all selection/video state when the master mod switch is
         /// off and restores normal selection handling when it is turned on.

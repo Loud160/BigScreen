@@ -22,8 +22,11 @@ namespace BigScreen {
         (void)addedToHierarchy;
         (void)screenSystemEnabling;
 
-        SetTitle("Big Screen", HMUI::ViewController::AnimationType::None);
-        set_showBackButton(true);
+        // The standard title and Back strip spans the center screen and partly
+        // covers the world-space placement preview. SettingsMenu recreates both
+        // controls inside the left panel, so leave the center header empty.
+        SetTitle("", HMUI::ViewController::AnimationType::None);
+        set_showBackButton(false);
 
         if(firstActivation)
         {
@@ -32,7 +35,12 @@ namespace BigScreen {
             settingsViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
-            SettingsMenu::Instance().CreateUi(settingsViewController);
+            SettingsMenu::Instance().CreateUi(
+                settingsViewController,
+                [this]()
+                {
+                    BackButtonWasPressed(centerViewController);
+                });
 
             // Main, left, right, bottom, and top are supplied in that order.
             // Keeping main empty leaves the user's forward view clear while
@@ -57,8 +65,8 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
-        // A hidden camera would continue rendering every menu frame. Releasing
-        // it here keeps the optional preview at zero GPU cost outside this page.
+        // The world screen only belongs to this page. Releasing it here keeps
+        // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();
 
         // The generated base wrapper has the same virtual-dispatch behavior as

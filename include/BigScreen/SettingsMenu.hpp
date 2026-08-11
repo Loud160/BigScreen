@@ -1,12 +1,20 @@
 #pragma once
 
+#include <functional>
+
 namespace BSML {
+    class DropdownListSetting;
+    class IncrementSetting;
     class SliderSetting;
     class ToggleSetting;
 }
 
 namespace HMUI {
     class ViewController;
+}
+
+namespace UnityEngine::UI {
+    class Button;
 }
 
 namespace BigScreen {
@@ -16,18 +24,35 @@ namespace BigScreen {
         static SettingsMenu& Instance();
 
         void Register();
-        void CreateUi(HMUI::ViewController* viewController);
+        void CreateUi(
+            HMUI::ViewController* viewController,
+            std::function<void()> onBack);
         void RefreshControls();
 
     private:
         SettingsMenu() = default;
 
-        void RefreshPreviewControl();
+        void RefreshValues();
+        void RefreshEnabledState();
         void RefreshCurvatureControl();
+        void ResetToDefaults();
 
         HMUI::ViewController* settingsViewController_ = nullptr;
+        BSML::ToggleSetting* modEnabledToggle_ = nullptr;
+        BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
-        BSML::ToggleSetting* screenPreviewToggle_ = nullptr;
+        BSML::IncrementSetting* distanceSetting_ = nullptr;
+        BSML::IncrementSetting* horizontalSetting_ = nullptr;
+        BSML::IncrementSetting* verticalSetting_ = nullptr;
+        BSML::IncrementSetting* tiltSetting_ = nullptr;
+        BSML::IncrementSetting* sizeSetting_ = nullptr;
+        BSML::ToggleSetting* curvedScreenToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
+        BSML::ToggleSetting* transparencyToggle_ = nullptr;
+        BSML::ToggleSetting* lightShowToggle_ = nullptr;
+        BSML::ToggleSetting* environmentOverrideToggle_ = nullptr;
+        BSML::ToggleSetting* environmentMotionToggle_ = nullptr;
+        BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
+        UnityEngine::UI::Button* resetButton_ = nullptr;
     };
 }

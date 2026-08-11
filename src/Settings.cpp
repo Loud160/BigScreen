@@ -84,13 +84,30 @@ namespace BigScreen {
             document.SetObject();
 
         modEnabled_ = ReadBool(document, "modEnabled", true);
-        videoEnabledByDefault_ = ReadBool(document, "videoEnabledByDefault", true);
+        // v0.6 promotes the former per-selection default to one persistent,
+        // game-wide Video switch. Read the old key as a migration fallback so
+        // an upgrade preserves the user's existing choice.
+        videoEnabled_ = ReadBool(
+            document,
+            "videoEnabled",
+            ReadBool(document, "videoEnabledByDefault", true));
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
-        menuScreenPreviewEnabled_ = ReadBool(document, "menuScreenPreviewEnabled", false);
         screenDistanceOffset_ = std::clamp(
             ReadFloat(document, "screenDistanceOffset", 0.0f),
             -40.0f,
             40.0f);
+        screenHorizontalOffset_ = std::clamp(
+            ReadFloat(document, "screenHorizontalOffset", 0.0f),
+            -40.0f,
+            40.0f);
+        screenVerticalOffset_ = std::clamp(
+            ReadFloat(document, "screenVerticalOffset", 0.0f),
+            -40.0f,
+            40.0f);
+        screenTiltOffset_ = std::clamp(
+            ReadFloat(document, "screenTiltOffset", 0.0f),
+            -30.0f,
+            30.0f);
         screenScale_ = std::clamp(
             ReadFloat(document, "screenScale", 1.0f),
             0.5f,
@@ -108,9 +125,9 @@ namespace BigScreen {
             ReadInt(document, "resolutionHeight", 720));
 
         // Preview decoding is an avoidable performance cost when videos are
-        // globally defaulted off. Persist the dependency so the disabled state
+        // globally switched off. Persist the dependency so the disabled state
         // is also honored on the next launch, before any menu exists.
-        if(!videoEnabledByDefault_)
+        if(!videoEnabled_)
             menuPreviewEnabled_ = false;
 
         Save();
@@ -119,10 +136,12 @@ namespace BigScreen {
     void Settings::Reset()
     {
         modEnabled_ = true;
-        videoEnabledByDefault_ = true;
+        videoEnabled_ = true;
         menuPreviewEnabled_ = true;
-        menuScreenPreviewEnabled_ = false;
         screenDistanceOffset_ = 0.0f;
+        screenHorizontalOffset_ = 0.0f;
+        screenVerticalOffset_ = 0.0f;
+        screenTiltOffset_ = 0.0f;
         screenScale_ = 1.0f;
         curvedScreenEnabled_ = false;
         screenCurvature_ = 0.35f;
@@ -140,9 +159,9 @@ namespace BigScreen {
         Save();
     }
 
-    void Settings::SetVideoEnabledByDefault(bool value)
+    void Settings::SetVideoEnabled(bool value)
     {
-        videoEnabledByDefault_ = value;
+        videoEnabled_ = value;
         if(!value)
             menuPreviewEnabled_ = false;
         Save();
@@ -151,20 +170,32 @@ namespace BigScreen {
     void Settings::SetMenuPreviewEnabled(bool value)
     {
         // Do not permit a stale UI callback or hand-authored config to enable
-        // a decoder while the master video default is disabled.
-        menuPreviewEnabled_ = videoEnabledByDefault_ && value;
-        Save();
-    }
-
-    void Settings::SetMenuScreenPreviewEnabled(bool value)
-    {
-        menuScreenPreviewEnabled_ = value;
+        // a decoder while the global video switch is disabled.
+        menuPreviewEnabled_ = videoEnabled_ && value;
         Save();
     }
 
     void Settings::SetScreenDistanceOffset(float value)
     {
         screenDistanceOffset_ = std::clamp(value, -40.0f, 40.0f);
+        Save();
+    }
+
+    void Settings::SetScreenHorizontalOffset(float value)
+    {
+        screenHorizontalOffset_ = std::clamp(value, -40.0f, 40.0f);
+        Save();
+    }
+
+    void Settings::SetScreenVerticalOffset(float value)
+    {
+        screenVerticalOffset_ = std::clamp(value, -40.0f, 40.0f);
+        Save();
+    }
+
+    void Settings::SetScreenTiltOffset(float value)
+    {
+        screenTiltOffset_ = std::clamp(value, -30.0f, 30.0f);
         Save();
     }
 
@@ -224,10 +255,16 @@ namespace BigScreen {
             document.SetObject();
 
         Replace(document, "modEnabled", modEnabled_);
-        Replace(document, "videoEnabledByDefault", videoEnabledByDefault_);
+        // Remove superseded keys after migration so the configuration has one
+        // unambiguous source of truth on all later launches.
+        document.RemoveMember("videoEnabledByDefault");
+        document.RemoveMember("menuScreenPreviewEnabled");
+        Replace(document, "videoEnabled", videoEnabled_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
-        Replace(document, "menuScreenPreviewEnabled", menuScreenPreviewEnabled_);
         Replace(document, "screenDistanceOffset", screenDistanceOffset_);
+        Replace(document, "screenHorizontalOffset", screenHorizontalOffset_);
+        Replace(document, "screenVerticalOffset", screenVerticalOffset_);
+        Replace(document, "screenTiltOffset", screenTiltOffset_);
         Replace(document, "screenScale", screenScale_);
         Replace(document, "curvedScreenEnabled", curvedScreenEnabled_);
         Replace(document, "screenCurvature", screenCurvature_);

@@ -4,8 +4,8 @@
 #include "HMUI/ViewController.hpp"
 #include "custom-types/shared/macros.hpp"
 
-/// Places Big Screen's settings on Beat Saber's left panel and keeps an empty
-/// center view so the optional full-size world preview remains unobstructed.
+/// Places Big Screen's settings and navigation on Beat Saber's left panel and
+/// keeps an empty center view so the full-size world preview is unobstructed.
 DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, centerViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, settingsViewController);

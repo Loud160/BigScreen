@@ -27,19 +27,17 @@ namespace BigScreen {
         if(!detailView || ui_)
             return;
 
-        // StandardLevelDetailView owns the characteristic, difficulty, level
-        // statistics, and Play controls. Parenting here keeps Video adjacent to
-        // the choice it affects instead of hiding it in a separate mod screen.
-        // Keep the control centered horizontally within the detail view. The
-        // first 1.37 build placed its center near the panel's right edge; that
-        // left the Video label visible but clipped the actual switch. A centered
-        // anchor keeps the complete BSML control inside the panel at every
-        // supported UI scale while remaining below the difficulty controls.
+        enabled_ = Settings::Instance().VideoEnabled();
+
+        // StandardLevelDetailView spans the complete song screen. Keep the
+        // template's full-width root so neither child can be clipped, then move
+        // its label and switch together into the top-right corner at the same
+        // height as Beat Saber's mode/Back navigation row.
         ui_ = BSML::Lite::CreateToggle(
             detailView,
             "Video",
             enabled_,
-            UnityEngine::Vector2{0.0f, -24.0f},
+            UnityEngine::Vector2{0.0f, 28.0f},
             [this](bool value)
             {
                 ToggleChanged(value);
@@ -53,31 +51,42 @@ namespace BigScreen {
 
         ui_->get_gameObject()->set_name("Big Screen Video Toggle");
 
-        // BSML's settings toggle template is designed for a full settings
-        // page and therefore requests a 90-unit row: its label hugs the left
-        // edge while its switch hugs the right edge. On the song-detail panel
-        // that made the two halves look unrelated and pushed the switch into
-        // the lower-right statistics area. Reduce both the preferred and
-        // concrete width so "Video" and its switch read as one compact control
-        // centered directly above Beat Saber's difficulty selector.
-        constexpr float CompactToggleWidth = 32.0f;
         if(auto* layout = ui_->GetComponent<UnityEngine::UI::LayoutElement*>())
-            layout->set_preferredWidth(CompactToggleWidth);
+            layout->set_preferredWidth(90.0f);
         auto rect = ui_->get_transform().cast<UnityEngine::RectTransform>();
         if(rect)
-        {
-            const auto size = rect->get_sizeDelta();
-            rect->set_sizeDelta({CompactToggleWidth, size.y});
-            rect->set_anchoredPosition({0.0f, -24.0f});
-        }
+            rect->set_anchoredPosition({0.0f, 28.0f});
 
         if(ui_->text)
+        {
             ui_->text->set_fontSize(3.5f);
+            auto labelRect = ui_->text->get_transform().cast<UnityEngine::RectTransform>();
+            if(labelRect)
+            {
+                labelRect->set_anchorMin({0.5f, 0.5f});
+                labelRect->set_anchorMax({0.5f, 0.5f});
+                labelRect->set_pivot({0.5f, 0.5f});
+                labelRect->set_anchoredPosition({25.0f, 0.0f});
+                labelRect->set_sizeDelta({16.0f, 8.0f});
+            }
+        }
+
+        if(auto switchTransform = ui_->get_transform()->Find("SwitchView"))
+        {
+            auto switchRect = switchTransform.cast<UnityEngine::RectTransform>();
+            if(switchRect)
+            {
+                switchRect->set_anchorMin({0.5f, 0.5f});
+                switchRect->set_anchorMax({0.5f, 0.5f});
+                switchRect->set_pivot({0.5f, 0.5f});
+                switchRect->set_anchoredPosition({39.0f, 0.0f});
+            }
+        }
         BSML::Lite::AddHoverHint(
             ui_,
-            "Show this song's map video in the menu and during play.");
+            "Global Big Screen video switch. Its state stays fixed while you scroll songs.");
         RefreshUi();
-        PaperLogger.info("Created compact song-detail Video toggle above difficulty selection");
+        PaperLogger.info("Created global Video toggle at the top-right of song selection");
     }
 
     void SelectionVideoToggle::ForgetUi()
@@ -99,15 +108,15 @@ namespace BigScreen {
         {
             selectedLevelId_ = levelId;
             selectedLevelHasVideo_ = false;
-            enabled_ = Settings::Instance().VideoEnabledByDefault();
+            enabled_ = Settings::Instance().VideoEnabled();
             playback.Prepare(nullptr);
             RefreshUi();
             return;
         }
 
         // SongCore also raises its selection event when difficulty changes.
-        // Preserve the user's switch choice and the active preview for that
-        // case; only a genuinely different level resets Video to on.
+        // Preserve the prepared decoder for a difficulty-only change. The
+        // global switch itself never depends on which level is selected.
         if(levelId == selectedLevelId_)
         {
             RefreshUi();
@@ -115,7 +124,7 @@ namespace BigScreen {
         }
 
         selectedLevelId_ = levelId;
-        enabled_ = Settings::Instance().VideoEnabledByDefault();
+        enabled_ = Settings::Instance().VideoEnabled();
         playback.Prepare(customLevel);
         selectedLevelHasVideo_ = playback.HasPreparedVideo();
         RefreshUi();
@@ -124,7 +133,7 @@ namespace BigScreen {
             playback.Start(PlaybackContext::MenuPreview);
     }
 
-    void SelectionVideoToggle::ApplyDefaultVideoEnabled(bool enabled)
+    void SelectionVideoToggle::ApplyGlobalVideoEnabled(bool enabled)
     {
         enabled_ = enabled;
         RefreshUi();
@@ -150,7 +159,7 @@ namespace BigScreen {
             // user changes selection before re-enabling Big Screen.
             selectedLevelId_.clear();
             selectedLevelHasVideo_ = false;
-            enabled_ = Settings::Instance().VideoEnabledByDefault();
+            enabled_ = Settings::Instance().VideoEnabled();
             playback.Prepare(nullptr);
         }
         else if(selectedLevelHasVideo_ && enabled_ && IsMenuPreviewEnabled())
@@ -183,13 +192,17 @@ namespace BigScreen {
 
     void SelectionVideoToggle::ToggleChanged(bool enabled)
     {
+        Settings::Instance().SetVideoEnabled(enabled);
+        enabled_ = enabled;
+        PaperLogger.info(
+            "Global song video switch changed to {}",
+            enabled_ ? "on" : "off");
+
+        // The switch remains useful even when the current song has no video;
+        // in that case it simply controls the next video map the user selects.
         if(!selectedLevelHasVideo_)
             return;
 
-        enabled_ = enabled;
-        PaperLogger.info(
-            "Selected song video switched {}",
-            enabled_ ? "on" : "off");
         auto& playback = PlaybackSession::Instance();
         if(!enabled_)
         {
@@ -215,7 +228,6 @@ namespace BigScreen {
         ui_->currentValue = enabled_;
         if(ui_->toggle)
             ui_->toggle->SetIsOnWithoutNotify(enabled_);
-        ui_->get_gameObject()->SetActive(
-            Settings::Instance().ModEnabled() && selectedLevelHasVideo_);
+        ui_->get_gameObject()->SetActive(Settings::Instance().ModEnabled());
     }
 }

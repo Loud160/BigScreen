@@ -16,10 +16,12 @@ namespace BigScreen {
         void Reset();
 
         bool ModEnabled() const { return modEnabled_; }
-        bool VideoEnabledByDefault() const { return videoEnabledByDefault_; }
+        bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
-        bool MenuScreenPreviewEnabled() const { return menuScreenPreviewEnabled_; }
         float ScreenDistanceOffset() const { return screenDistanceOffset_; }
+        float ScreenHorizontalOffset() const { return screenHorizontalOffset_; }
+        float ScreenVerticalOffset() const { return screenVerticalOffset_; }
+        float ScreenTiltOffset() const { return screenTiltOffset_; }
         float ScreenScale() const { return screenScale_; }
         bool CurvedScreenEnabled() const { return curvedScreenEnabled_; }
         float ScreenCurvature() const { return screenCurvature_; }
@@ -30,10 +32,12 @@ namespace BigScreen {
         int ResolutionHeight() const { return resolutionHeight_; }
 
         void SetModEnabled(bool value);
-        void SetVideoEnabledByDefault(bool value);
+        void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
-        void SetMenuScreenPreviewEnabled(bool value);
         void SetScreenDistanceOffset(float value);
+        void SetScreenHorizontalOffset(float value);
+        void SetScreenVerticalOffset(float value);
+        void SetScreenTiltOffset(float value);
         void SetScreenScale(float value);
         void SetCurvedScreenEnabled(bool value);
         void SetScreenCurvature(float value);
@@ -49,10 +53,12 @@ namespace BigScreen {
         void Save();
 
         bool modEnabled_ = true;
-        bool videoEnabledByDefault_ = true;
+        bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
-        bool menuScreenPreviewEnabled_ = false;
         float screenDistanceOffset_ = 0.0f;
+        float screenHorizontalOffset_ = 0.0f;
+        float screenVerticalOffset_ = 0.0f;
+        float screenTiltOffset_ = 0.0f;
         float screenScale_ = 1.0f;
         bool curvedScreenEnabled_ = false;
         float screenCurvature_ = 0.35f;

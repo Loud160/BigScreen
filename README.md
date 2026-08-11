@@ -2,15 +2,16 @@
 
 Quest-native synchronized video screens for Beat Saber maps.
 
-Big Screen provides synchronized gameplay and song-selection video playback,
-an inline per-song Video switch, and a dedicated main-menu settings page. The
-global settings control the default video state, previews, screen distance and
-size and curvature, transparency, map lighting, environment override and motion, and the
-480p/720p/1080p output tier. The settings page occupies Beat Saber's left menu
-panel, leaving the center view open for an optional full-size world screen that
-uses the selected map's placement and the same rendering path as gameplay. A persistent master switch disables all playback and Beat Saber
-effects while leaving the Big Screen menu available for configuration and
-re-enabling the mod.
+Big Screen provides synchronized gameplay and song-selection video playback, a
+persistent game-wide Video switch, and a dedicated main-menu settings page. The
+global settings control video playback, song previews, screen X/Y/Z position,
+tilt, size and curvature, transparency, map lighting, environment override and
+motion, and the 480p/720p/1080p output tier. The settings page occupies Beat
+Saber's left menu panel, including its title and Back control, leaving the center
+view open for an always-visible full-size world screen that uses the selected
+map's placement and the same rendering path as gameplay. A persistent master
+switch disables all playback and Beat Saber effects while leaving the Big Screen
+menu and Reset to Defaults available.
 
 Use `qpm s build` to build
 Same goes for `qpm s copy` and `qpm s qmod`

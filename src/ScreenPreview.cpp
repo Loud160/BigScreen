@@ -90,7 +90,7 @@ namespace BigScreen {
         PlaybackSession::Instance().Stop();
 
         const auto& settings = Settings::Instance();
-        if(settings.ModEnabled() && settings.MenuScreenPreviewEnabled())
+        if(settings.ModEnabled())
             Refresh();
     }
 
@@ -111,7 +111,7 @@ namespace BigScreen {
     void ScreenPreview::Refresh()
     {
         const auto& settings = Settings::Instance();
-        if(!settings.ModEnabled() || !settings.MenuScreenPreviewEnabled())
+        if(!settings.ModEnabled())
         {
             surface_.Destroy();
             return;
@@ -142,13 +142,15 @@ namespace BigScreen {
         const auto& prepared = PlaybackSession::Instance().PreparedConfig();
         baseConfig_ = prepared ? *prepared : MapVideoConfig{};
 
-        // PlaybackSession stores a configuration after global distance and
-        // scale have already been applied. Undo only those two adjustments so
-        // subsequent slider changes are always recalculated from the selected
-        // map's mapper-authored baseline rather than accumulating repeatedly.
+        // PlaybackSession stores a configuration after every global placement
+        // adjustment has already been applied. Undo them before retaining the
+        // baseline so subsequent control changes never accumulate repeatedly.
         if(prepared)
         {
+            baseConfig_->screenPosition.x -= settings.ScreenHorizontalOffset();
+            baseConfig_->screenPosition.y -= settings.ScreenVerticalOffset();
             baseConfig_->screenPosition.z -= settings.ScreenDistanceOffset();
+            baseConfig_->screenRotation.x -= settings.ScreenTiltOffset();
             baseConfig_->screenHeight /= std::max(0.01f, settings.ScreenScale());
         }
     }
@@ -160,7 +162,10 @@ namespace BigScreen {
 
         const auto& settings = Settings::Instance();
         auto config = *baseConfig_;
+        config.screenPosition.x += settings.ScreenHorizontalOffset();
+        config.screenPosition.y += settings.ScreenVerticalOffset();
         config.screenPosition.z += settings.ScreenDistanceOffset();
+        config.screenRotation.x += settings.ScreenTiltOffset();
         config.screenHeight *= settings.ScreenScale();
         config.screenCurvature = settings.CurvedScreenEnabled()
             ? settings.ScreenCurvature()
@@ -178,10 +183,11 @@ namespace BigScreen {
 
         surface_.SetVisible(true);
         PaperLogger.info(
-            "Showing full-size settings preview at ({:.2f}, {:.2f}, {:.2f}), height {:.2f}",
+            "Showing full-size settings preview at ({:.2f}, {:.2f}, {:.2f}), tilt {:.1f}, height {:.2f}",
             config.screenPosition.x,
             config.screenPosition.y,
             config.screenPosition.z,
+            config.screenRotation.x,
             config.screenHeight);
         return true;
     }

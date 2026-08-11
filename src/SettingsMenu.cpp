@@ -3,17 +3,26 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "HMUI/ViewController.hpp"
+#include "TMPro/TextAlignmentOptions.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/UI/Button.hpp"
 #include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Text.hpp"
+#include "bsml/shared/BSML/Components/ExternalComponents.hpp"
+#include "bsml/shared/BSML/Components/Settings/DropdownListSetting.hpp"
+#include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "main.hpp"
@@ -40,6 +49,15 @@ namespace BigScreen {
                 return 1080;
             return 720;
         }
+
+        void SetToggleWithoutNotification(BSML::ToggleSetting* setting, bool value)
+        {
+            if(!setting)
+                return;
+            setting->currentValue = value;
+            if(setting->toggle)
+                setting->toggle->SetIsOnWithoutNotify(value);
+        }
     }
 
     SettingsMenu& SettingsMenu::Instance()
@@ -50,15 +68,18 @@ namespace BigScreen {
 
     void SettingsMenu::Register()
     {
-        // A flow coordinator rather than the one-panel callback registration
-        // gives Big Screen a proper optional right-side preview screen.
+        // A flow coordinator gives Big Screen a dedicated left settings panel
+        // while leaving the center view available for real world-scale screen
+        // placement instead of a misleading thumbnail.
         BSML::Register::RegisterMainMenuFlowCoordinator(
             "Big Screen",
             "Configure video playback, screen appearance, and environments.",
             csTypeOf(MenuFlowCoordinator*));
     }
 
-    void SettingsMenu::CreateUi(HMUI::ViewController* viewController)
+    void SettingsMenu::CreateUi(
+        HMUI::ViewController* viewController,
+        std::function<void()> onBack)
     {
         if(!viewController)
             return;
@@ -69,11 +90,49 @@ namespace BigScreen {
         }
 
         // MenuCore restarts replace the controller and all of its children.
-        // Clear native UI references before constructing the new scene's page.
+        // Clear every cached component before constructing the new scene's UI.
         settingsViewController_ = viewController;
+        modEnabledToggle_ = nullptr;
+        videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
-        screenPreviewToggle_ = nullptr;
+        distanceSetting_ = nullptr;
+        horizontalSetting_ = nullptr;
+        verticalSetting_ = nullptr;
+        tiltSetting_ = nullptr;
+        sizeSetting_ = nullptr;
+        curvedScreenToggle_ = nullptr;
         curvatureSlider_ = nullptr;
+        transparencyToggle_ = nullptr;
+        lightShowToggle_ = nullptr;
+        environmentOverrideToggle_ = nullptr;
+        environmentMotionToggle_ = nullptr;
+        resolutionDropdown_ = nullptr;
+        resetButton_ = nullptr;
+
+        // Hide the FlowCoordinator's center title strip and recreate its useful
+        // navigation inside this left panel. This keeps the actual placement
+        // preview completely clear in the user's forward view.
+        auto* title = BSML::Lite::CreateText(
+            viewController,
+            "Big Screen",
+            5.0f,
+            UnityEngine::Vector2{5.0f, 31.0f},
+            UnityEngine::Vector2{52.0f, 8.0f});
+        if(title)
+            title->set_alignment(TMPro::TextAlignmentOptions::Center);
+
+        auto* backButton = BSML::Lite::CreateUIButton(
+            viewController,
+            "< Back",
+            UnityEngine::Vector2{-31.0f, 31.0f},
+            UnityEngine::Vector2{18.0f, 8.0f},
+            [callback = std::move(onBack)]()
+            {
+                if(callback)
+                    callback();
+            });
+        if(backButton)
+            BSML::Lite::SetButtonTextSize(backButton, 3.2f);
 
         auto& settings = Settings::Instance();
         auto* container = BSML::Lite::CreateScrollableSettingsContainer(viewController);
@@ -83,46 +142,54 @@ namespace BigScreen {
             return;
         }
 
-        auto* modEnabled = BSML::Lite::CreateToggle(
+        // The stock settings container reserves only enough room for the
+        // FlowCoordinator header. Reserve a larger top margin for the custom
+        // title and Back button now living in this same left panel.
+        if(auto* external = container->GetComponent<BSML::ExternalComponents*>())
+        {
+            if(auto* scroll = external->Get<UnityEngine::RectTransform*>())
+            {
+                scroll->set_anchoredPosition({2.0f, -2.0f});
+                scroll->set_sizeDelta({0.0f, -32.0f});
+            }
+        }
+
+        modEnabledToggle_ = BSML::Lite::CreateToggle(
             container,
             "Big Screen Enabled",
             settings.ModEnabled(),
             [this](bool enabled)
             {
-                auto& current = Settings::Instance();
-                current.SetModEnabled(enabled);
+                Settings::Instance().SetModEnabled(enabled);
 
-                // The hooks remain installed so this menu can still be
-                // reached, but disabling immediately removes every Big Screen
-                // object, decoder, selection state, and optional preview.
+                // Hooks remain installed so the menu stays reachable, but
+                // disabling immediately tears down every screen and decoder.
                 SelectionVideoToggle::Instance().ModEnabledChanged(enabled);
-                ScreenPreview::Instance().SetEnabled(
-                    enabled && current.MenuScreenPreviewEnabled());
+                ScreenPreview::Instance().SetEnabled(enabled);
                 RefreshControls();
                 PaperLogger.info("Big Screen switched {}", enabled ? "on" : "off");
             });
         BSML::Lite::AddHoverHint(
-            modEnabled,
+            modEnabledToggle_,
             "Disables all Big Screen effects while keeping this settings menu available.");
 
-        auto* defaultVideo = BSML::Lite::CreateToggle(
+        videoEnabledToggle_ = BSML::Lite::CreateToggle(
             container,
-            "Videos On by Default",
-            settings.VideoEnabledByDefault(),
+            "Song Videos Enabled",
+            settings.VideoEnabled(),
             [this](bool enabled)
             {
                 auto& current = Settings::Instance();
-                current.SetVideoEnabledByDefault(enabled);
+                current.SetVideoEnabled(enabled);
 
-                // Apply the new default to the song already selected as well as
-                // future selections. Turning it off also tears down a running
-                // preview immediately and forces the preview preference off.
-                SelectionVideoToggle::Instance().ApplyDefaultVideoEnabled(enabled);
-                RefreshPreviewControl();
+                // This is one persistent game-wide state shared with the song
+                // selection control; changing songs never resets it.
+                SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(enabled);
+                RefreshControls();
             });
         BSML::Lite::AddHoverHint(
-            defaultVideo,
-            "Sets the initial Video switch state whenever a video map is selected.");
+            videoEnabledToggle_,
+            "Global video switch shared with the control at the top-right of song selection.");
 
         previewToggle_ = BSML::Lite::CreateToggle(
             container,
@@ -135,22 +202,9 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             previewToggle_,
-            "Controls song-selection previews separately from video during gameplay.");
+            "Controls song-selection playback separately from video during gameplay.");
 
-        screenPreviewToggle_ = BSML::Lite::CreateToggle(
-            container,
-            "Settings Screen Preview",
-            settings.MenuScreenPreviewEnabled(),
-            [](bool enabled)
-            {
-                Settings::Instance().SetMenuScreenPreviewEnabled(enabled);
-                ScreenPreview::Instance().SetEnabled(enabled);
-            });
-        BSML::Lite::AddHoverHint(
-            screenPreviewToggle_,
-            "Shows a full-size screen in the menu at the selected map's real placement, or Big Screen's default placement when no video map is selected.");
-
-        auto* distance = BSML::Lite::CreateIncrementSetting(
+        distanceSetting_ = BSML::Lite::CreateIncrementSetting(
             container,
             "Screen Distance Offset",
             0,
@@ -164,10 +218,61 @@ namespace BigScreen {
                 ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
-            distance,
+            distanceSetting_,
             "Adds meters to the map position. Negative is closer; positive is farther away.");
 
-        auto* size = BSML::Lite::CreateIncrementSetting(
+        horizontalSetting_ = BSML::Lite::CreateIncrementSetting(
+            container,
+            "Screen X Offset",
+            0,
+            1.0f,
+            settings.ScreenHorizontalOffset(),
+            -40.0f,
+            40.0f,
+            [](float value)
+            {
+                Settings::Instance().SetScreenHorizontalOffset(value);
+                ScreenPreview::Instance().Refresh();
+            });
+        BSML::Lite::AddHoverHint(
+            horizontalSetting_,
+            "Moves the screen left with negative values and right with positive values.");
+
+        verticalSetting_ = BSML::Lite::CreateIncrementSetting(
+            container,
+            "Screen Y Offset",
+            0,
+            1.0f,
+            settings.ScreenVerticalOffset(),
+            -40.0f,
+            40.0f,
+            [](float value)
+            {
+                Settings::Instance().SetScreenVerticalOffset(value);
+                ScreenPreview::Instance().Refresh();
+            });
+        BSML::Lite::AddHoverHint(
+            verticalSetting_,
+            "Moves the screen down with negative values and up with positive values.");
+
+        tiltSetting_ = BSML::Lite::CreateIncrementSetting(
+            container,
+            "Screen Tilt Offset",
+            0,
+            1.0f,
+            settings.ScreenTiltOffset(),
+            -30.0f,
+            30.0f,
+            [](float value)
+            {
+                Settings::Instance().SetScreenTiltOffset(value);
+                ScreenPreview::Instance().Refresh();
+            });
+        BSML::Lite::AddHoverHint(
+            tiltSetting_,
+            "Adds degrees to the map's vertical tilt. Positive values lift the screen face upward.");
+
+        sizeSetting_ = BSML::Lite::CreateIncrementSetting(
             container,
             "Screen Size Multiplier",
             1,
@@ -181,10 +286,10 @@ namespace BigScreen {
                 ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
-            size,
+            sizeSetting_,
             "Multiplies the map-authored screen size. 1.0 keeps the original size.");
 
-        auto* curvedScreen = BSML::Lite::CreateToggle(
+        curvedScreenToggle_ = BSML::Lite::CreateToggle(
             container,
             "Curved Screen",
             settings.CurvedScreenEnabled(),
@@ -195,13 +300,11 @@ namespace BigScreen {
                 ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
-            curvedScreen,
+            curvedScreenToggle_,
             "Off uses a flat screen. On reveals the signed screen-curve adjustment below.");
 
-        // This control is created immediately after its parent toggle so the
-        // vertical settings layout always places it directly underneath. It is
-        // only active in curved mode, avoiding an irrelevant adjustment while
-        // the screen is explicitly flat.
+        // Keeping this directly after Curved Screen makes the vertical layout
+        // collapse cleanly when the signed curve control is irrelevant.
         curvatureSlider_ = BSML::Lite::CreateSliderSetting(
             container,
             "Screen Curve",
@@ -218,7 +321,7 @@ namespace BigScreen {
             curvatureSlider_,
             "Positive values wrap the edges toward you; negative values bend them away.");
 
-        auto* transparency = BSML::Lite::CreateToggle(
+        transparencyToggle_ = BSML::Lite::CreateToggle(
             container,
             "Video Transparency",
             settings.TransparencyEnabled(),
@@ -228,10 +331,10 @@ namespace BigScreen {
                 ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
-            transparency,
+            transparencyToggle_,
             "Lets environment lights and objects remain partially visible through the video.");
 
-        auto* lightShow = BSML::Lite::CreateToggle(
+        lightShowToggle_ = BSML::Lite::CreateToggle(
             container,
             "Map Light Show",
             settings.MapLightShowEnabled(),
@@ -240,10 +343,10 @@ namespace BigScreen {
                 Settings::Instance().SetMapLightShowEnabled(enabled);
             });
         BSML::Lite::AddHoverHint(
-            lightShow,
+            lightShowToggle_,
             "Keeps the selected map's lighting events active while its video plays.");
 
-        auto* environmentOverride = BSML::Lite::CreateToggle(
+        environmentOverrideToggle_ = BSML::Lite::CreateToggle(
             container,
             "Use Big Mirror Override",
             settings.EnvironmentOverrideEnabled(),
@@ -252,10 +355,10 @@ namespace BigScreen {
                 Settings::Instance().SetEnvironmentOverrideEnabled(enabled);
             });
         BSML::Lite::AddHoverHint(
-            environmentOverride,
+            environmentOverrideToggle_,
             "When disabled, the map's intended background is used and may partially block the video.");
 
-        auto* environmentMotion = BSML::Lite::CreateToggle(
+        environmentMotionToggle_ = BSML::Lite::CreateToggle(
             container,
             "Environment Rotation and Motion",
             settings.EnvironmentMotionEnabled(),
@@ -264,10 +367,10 @@ namespace BigScreen {
                 Settings::Instance().SetEnvironmentMotionEnabled(enabled);
             });
         BSML::Lite::AddHoverHint(
-            environmentMotion,
+            environmentMotionToggle_,
             "Turns rotating and moving background scenery on or off for video maps.");
 
-        auto* resolution = BSML::Lite::CreateDropdown(
+        resolutionDropdown_ = BSML::Lite::CreateDropdown(
             container,
             "Video Resolution",
             ResolutionLabel(settings.ResolutionHeight()),
@@ -277,31 +380,113 @@ namespace BigScreen {
                 Settings::Instance().SetResolutionHeight(ResolutionValue(value));
             });
         BSML::Lite::AddHoverHint(
-            resolution,
+            resolutionDropdown_,
             "720p is recommended. 1080p may cause performance issues and decrease battery life.");
+
+        resetButton_ = BSML::Lite::CreateUIButton(
+            container,
+            "Reset to Defaults",
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{42.0f, 8.0f},
+            [this]()
+            {
+                ResetToDefaults();
+            });
+        BSML::Lite::AddHoverHint(
+            resetButton_,
+            "Restores every Big Screen option, including placement, to its original value.");
 
         RefreshControls();
     }
 
     void SettingsMenu::RefreshControls()
     {
-        RefreshPreviewControl();
+        const auto& settings = Settings::Instance();
+        SetToggleWithoutNotification(modEnabledToggle_, settings.ModEnabled());
+        SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
+        SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+        RefreshEnabledState();
         RefreshCurvatureControl();
     }
 
-    void SettingsMenu::RefreshPreviewControl()
+    void SettingsMenu::RefreshValues()
     {
         const auto& settings = Settings::Instance();
+        SetToggleWithoutNotification(modEnabledToggle_, settings.ModEnabled());
+        SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
+        SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+        SetToggleWithoutNotification(curvedScreenToggle_, settings.CurvedScreenEnabled());
+        SetToggleWithoutNotification(transparencyToggle_, settings.TransparencyEnabled());
+        SetToggleWithoutNotification(lightShowToggle_, settings.MapLightShowEnabled());
+        SetToggleWithoutNotification(
+            environmentOverrideToggle_,
+            settings.EnvironmentOverrideEnabled());
+        SetToggleWithoutNotification(
+            environmentMotionToggle_,
+            settings.EnvironmentMotionEnabled());
+
+        if(distanceSetting_)
+            distanceSetting_->set_Value(settings.ScreenDistanceOffset());
+        if(horizontalSetting_)
+            horizontalSetting_->set_Value(settings.ScreenHorizontalOffset());
+        if(verticalSetting_)
+            verticalSetting_->set_Value(settings.ScreenVerticalOffset());
+        if(tiltSetting_)
+            tiltSetting_->set_Value(settings.ScreenTiltOffset());
+        if(sizeSetting_)
+            sizeSetting_->set_Value(settings.ScreenScale());
+        if(curvatureSlider_)
+            curvatureSlider_->set_Value(settings.ScreenCurvature());
+        if(resolutionDropdown_)
+        {
+            const int index = settings.ResolutionHeight() == 480
+                ? 0
+                : settings.ResolutionHeight() == 1080 ? 2 : 1;
+            resolutionDropdown_->index = index;
+            if(resolutionDropdown_->dropdown)
+                resolutionDropdown_->dropdown->SelectCellWithIdx(index);
+            resolutionDropdown_->UpdateState();
+        }
+    }
+
+    void SettingsMenu::RefreshEnabledState()
+    {
+        const auto& settings = Settings::Instance();
+        const bool enabled = settings.ModEnabled();
+
+        // The master switch and Reset remain usable. Every setting capable of
+        // affecting Beat Saber is explicitly locked while the mod is off.
+        if(videoEnabledToggle_)
+            videoEnabledToggle_->set_interactable(enabled);
         if(previewToggle_)
         {
-            previewToggle_->currentValue = settings.MenuPreviewEnabled();
-            if(previewToggle_->toggle)
-                previewToggle_->toggle->SetIsOnWithoutNotify(settings.MenuPreviewEnabled());
-            previewToggle_->set_interactable(
-                settings.ModEnabled() && settings.VideoEnabledByDefault());
+            SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+            previewToggle_->set_interactable(enabled && settings.VideoEnabled());
         }
-        if(screenPreviewToggle_)
-            screenPreviewToggle_->set_interactable(settings.ModEnabled());
+        if(distanceSetting_)
+            distanceSetting_->set_interactable(enabled);
+        if(horizontalSetting_)
+            horizontalSetting_->set_interactable(enabled);
+        if(verticalSetting_)
+            verticalSetting_->set_interactable(enabled);
+        if(tiltSetting_)
+            tiltSetting_->set_interactable(enabled);
+        if(sizeSetting_)
+            sizeSetting_->set_interactable(enabled);
+        if(curvedScreenToggle_)
+            curvedScreenToggle_->set_interactable(enabled);
+        if(curvatureSlider_)
+            curvatureSlider_->set_interactable(enabled);
+        if(transparencyToggle_)
+            transparencyToggle_->set_interactable(enabled);
+        if(lightShowToggle_)
+            lightShowToggle_->set_interactable(enabled);
+        if(environmentOverrideToggle_)
+            environmentOverrideToggle_->set_interactable(enabled);
+        if(environmentMotionToggle_)
+            environmentMotionToggle_->set_interactable(enabled);
+        if(resolutionDropdown_)
+            resolutionDropdown_->set_interactable(enabled);
     }
 
     void SettingsMenu::RefreshCurvatureControl()
@@ -313,5 +498,21 @@ namespace BigScreen {
         // slider also closes its row instead of leaving an empty menu gap.
         curvatureSlider_->get_gameObject()->SetActive(
             Settings::Instance().CurvedScreenEnabled());
+    }
+
+    void SettingsMenu::ResetToDefaults()
+    {
+        auto& settings = Settings::Instance();
+        settings.Reset();
+
+        // Reset changes persistent values first, then mirrors those values into
+        // the already-open controls without generating a chain of fake clicks.
+        RefreshValues();
+        SelectionVideoToggle::Instance().ModEnabledChanged(true);
+        SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(true);
+        SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
+        ScreenPreview::Instance().SetEnabled(true);
+        RefreshControls();
+        PaperLogger.info("Reset all Big Screen settings to defaults");
     }
 }

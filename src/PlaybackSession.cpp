@@ -69,7 +69,10 @@ namespace BigScreen {
             // metadata. Position and size remain relative to the mapper's
             // baseline instead of replacing carefully authored placement.
             const auto& settings = Settings::Instance();
+            config_->screenPosition.x += settings.ScreenHorizontalOffset();
+            config_->screenPosition.y += settings.ScreenVerticalOffset();
             config_->screenPosition.z += settings.ScreenDistanceOffset();
+            config_->screenRotation.x += settings.ScreenTiltOffset();
             config_->screenHeight *= settings.ScreenScale();
             config_->screenCurvature = settings.CurvedScreenEnabled()
                 ? settings.ScreenCurvature()
