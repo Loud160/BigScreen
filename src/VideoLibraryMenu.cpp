@@ -35,6 +35,7 @@
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/VerticalLayoutGroup.hpp"
+#include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Lists.hpp"
@@ -43,6 +44,7 @@
 #include "bsml/shared/BSML/Components/ClickableText.hpp"
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
+#include "bsml/shared/Helpers/delegates.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "main.hpp"
 #include "songcore/shared/SongCore.hpp"
@@ -218,6 +220,17 @@ namespace BigScreen {
             transform->set_anchoredPosition({0.0f, 0.0f});
             transform->set_sizeDelta({-4.0f, -3.0f});
         }
+
+        UnityEngine::GameObject* ConstructLayout(
+            std::string_view markup,
+            UnityEngine::Transform* parent,
+            const std::string& id)
+        {
+            auto parser = BSML::parse_and_construct(markup, parent, nullptr);
+            if(!parser || !parser->parserParams) return nullptr;
+            const auto& matches = parser->parserParams->GetObjectsWithTag(id);
+            return matches.empty() ? nullptr : matches.front();
+        }
     }
 
     VideoLibraryMenu& VideoLibraryMenu::Instance()
@@ -256,7 +269,17 @@ namespace BigScreen {
             });
         ConfigureLayout(searchInput_, -1.0f, 8.0f, 1.0f);
 
-        auto* filterRow = BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
+        // A rounded panel visually binds the arrows and value into one
+        // selector. This is the same BSML background treatment used for
+        // grouped controls elsewhere in Beat Saber's mod menus.
+        auto* filterPanel = ConstructLayout(
+            "<horizontal id='big-screen-filter' bg='round-rect-panel' "
+            "pad-left='1' pad-right='1'/>",
+            browserRoot->get_transform(),
+            "big-screen-filter");
+        auto* filterRow = filterPanel
+            ? filterPanel->GetComponent<UnityEngine::UI::HorizontalLayoutGroup*>()
+            : BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
         ConfigureGroup(filterRow, false);
         ConfigureLayout(filterRow, -1.0f, 7.0f, 1.0f);
         filterPreviousButton_ = BSML::Lite::CreateUIButton(
@@ -264,7 +287,7 @@ namespace BigScreen {
         ConfigureLayout(filterPreviousButton_, 8.0f, 7.0f);
         BSML::Lite::SetButtonTextSize(filterPreviousButton_, 3.4f);
         filterText_ = BSML::Lite::CreateText(
-            filterRow, "Showing: Show All Maps", 3.0f);
+            filterRow, "Filter: Show All Maps", 3.0f);
         ConfigureLayout(filterText_, 33.0f, 7.0f, 1.0f);
         filterNextButton_ = BSML::Lite::CreateUIButton(
             filterRow, ">", {0.0f, 0.0f}, {8.0f, 7.0f}, [this]() { ChangeFilter(1); });
@@ -275,19 +298,9 @@ namespace BigScreen {
         ConfigureGroup(listRow, false);
         listRow->set_spacing(0.8f);
         ConfigureLayout(listRow, -1.0f, -1.0f, 1.0f, 1.0f);
-        list_ = BSML::Lite::CreateScrollableList(
-            listRow, {0.0f, 0.0f}, {46.0f, 50.0f}, [this](int row) { SelectRow(row); });
-        if(list_)
-        {
-            list_->set_listStyle(BSML::CustomListTableData::ListStyle::List);
-            list_->expandCell = true;
-            ConfigureLayout(list_, 46.0f, 50.0f, 1.0f, 1.0f);
-        }
-
-        // The compact two-column rail preserves a readable hit area for every
-        // letter without shrinking the native song cells. Its order is A/N,
-        // B/O, ... M/Z, followed by # for titles beginning with punctuation or
-        // numbers.
+        // The compact two-column rail is deliberately the first child in this
+        // row, placing it to the left of the songs. Its order is A/N, B/O, ...
+        // M/Z, followed by # for titles beginning with punctuation or numbers.
         auto* alphabet = BSML::Lite::CreateGridLayoutGroup(listRow);
         alphabet->set_constraint(UnityEngine::UI::GridLayoutGroup::Constraint::FixedColumnCount);
         alphabet->set_constraintCount(2);
@@ -316,6 +329,43 @@ namespace BigScreen {
             {0.0f, 0.0f}, {3.5f, 3.35f}, [this]() { JumpToLetter('#'); });
         numericButton->set_alignment(TMPro::TextAlignmentOptions::Center);
         alphabetButtons_.push_back(numericButton);
+
+        // Construct the list through BSML's standard show-scrollbar path.
+        // Unlike CreateScrollableList's detached top/bottom carets, this uses
+        // Beat Saber's native right-edge scroll indicator and page arrows.
+        auto* listObject = ConstructLayout(
+            "<list id='big-screen-song-list' show-scrollbar='true' "
+            "stick-scrolling='true' list-style='List'/>",
+            listRow->get_transform(),
+            "big-screen-song-list");
+        list_ = listObject
+            ? listObject->GetComponent<BSML::CustomListTableData*>()
+            : nullptr;
+        if(!list_)
+        {
+            PaperLogger.error("Could not construct the native video library list");
+            list_ = BSML::Lite::CreateScrollableList(
+                listRow, {0.0f, 0.0f}, {46.0f, 50.0f},
+                [this](int row) { SelectRow(row); });
+        }
+        if(list_)
+        {
+            list_->set_listStyle(BSML::CustomListTableData::ListStyle::List);
+            list_->expandCell = true;
+            // Reserve eight units after the table itself for the native
+            // right-edge scrollbar installed by show-scrollbar.
+            ConfigureLayout(list_, 38.0f, 50.0f, 0.0f, 1.0f);
+            if(listObject)
+            {
+                list_->tableView->add_didSelectCellWithIdxEvent(
+                    BSML::MakeSystemAction(
+                        std::function<void(UnityW<HMUI::TableView>, int)>(
+                        [this](UnityW<HMUI::TableView>, int row)
+                        {
+                            SelectRow(row);
+                        })));
+            }
+        }
 
         auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
         ConfigureGroup(editorRoot, true);
@@ -490,7 +540,7 @@ namespace BigScreen {
         const int next = (static_cast<int>(filter_) + direction + count) % count;
         filter_ = static_cast<SongLibraryFilter>(next);
         if(filterText_) filterText_->set_text(
-            "Showing: " + std::string(FilterNames[next]));
+            "Filter: " + std::string(FilterNames[next]));
         RebuildVisibleRows();
     }
 
