@@ -3,6 +3,7 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/VideoLibraryMenu.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 
 DEFINE_TYPE(BigScreen, MenuFlowCoordinator);
@@ -34,6 +35,8 @@ namespace BigScreen {
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             settingsViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            libraryViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(
                 settingsViewController,
@@ -41,6 +44,7 @@ namespace BigScreen {
                 {
                     BackButtonWasPressed(centerViewController);
                 });
+            VideoLibraryMenu::Instance().CreateUi(libraryViewController);
 
             // Main, left, right, bottom, and top are supplied in that order.
             // Keeping main empty leaves the user's forward view clear while
@@ -48,7 +52,7 @@ namespace BigScreen {
             ProvideInitialViewControllers(
                 centerViewController,
                 settingsViewController,
-                nullptr,
+                libraryViewController,
                 nullptr,
                 nullptr);
             ScreenPreview::Instance().ActivateCurrentState();
@@ -58,6 +62,7 @@ namespace BigScreen {
         // BSML retains flow coordinators between visits, while the world-space
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
+        VideoLibraryMenu::Instance().Refresh();
         ScreenPreview::Instance().ActivateCurrentState();
     }
 
@@ -68,6 +73,7 @@ namespace BigScreen {
         // The world screen only belongs to this page. Releasing it here keeps
         // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();
+        VideoLibraryMenu::Instance().Deactivate();
 
         // The generated base wrapper has the same virtual-dispatch behavior as
         // DidActivate, so this override must not call it directly either.
