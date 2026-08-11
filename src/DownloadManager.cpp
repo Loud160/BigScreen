@@ -218,7 +218,7 @@ namespace BigScreen {
         }
 
         constexpr const char* DownloaderScript = R"PY(
-import json, os, re, shutil, traceback
+import json, os, re, shutil, traceback, urllib.request
 
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
@@ -333,6 +333,36 @@ try:
         result = downloader.extract_info(job['sourceUrl'], download=True)
     cancelled()
     size = os.path.getsize(job['finalPath'])
+
+    # Keep the video's own YouTube artwork beside Big Screen's durable video
+    # library. Thumbnail failure must not discard a successfully downloaded
+    # video, but an older thumbnail must never be left behind after replacing
+    # a video with a different URL.
+    thumbnail_path = job['thumbnailPath']
+    published_thumbnail = ''
+    try:
+        thumbnail_url = str(result.get('thumbnail') or info.get('thumbnail') or '')
+        if thumbnail_url:
+            request = urllib.request.Request(
+                thumbnail_url,
+                headers={'User-Agent': 'Big-Screen-Beat-Saber'})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                image = response.read(4 * 1024 * 1024 + 1)
+            if len(image) > 4 * 1024 * 1024:
+                raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
+            temporary_thumbnail = thumbnail_path + '.tmp'
+            with open(temporary_thumbnail, 'wb') as stream:
+                stream.write(image)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_thumbnail, thumbnail_path)
+            published_thumbnail = thumbnail_path
+        elif os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+    except BaseException:
+        if os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+
     publish(
         'completed',
         'Video downloaded',
@@ -341,6 +371,7 @@ try:
         width=chosen.get('width') or 0,
         height=chosen.get('height') or 0,
         codec=chosen.get('vcodec') or 'h264',
+        thumbnailPath=published_thumbnail,
         bytes=size,
         downloadedBytes=size,
         totalBytes=size)
@@ -492,6 +523,44 @@ try:
 except BaseException as error:
     publish('failed', 'yt-dlp update failed: ' + str(error)[-700:])
 )PY";
+
+        // Video-library rows use the video's YouTube artwork, never Beat
+        // Saber's album art. This small worker accepts only recognizable
+        // YouTube URLs, derives the stable video id locally, and downloads the
+        // standard JPEG without running a full yt-dlp metadata extraction for
+        // every visible row.
+        constexpr const char* ThumbnailScript = R"PY(
+import json, os, re, urllib.parse, urllib.request
+
+job = json.loads(BIGSCREEN_JOB)
+parsed = urllib.parse.urlparse(job['sourceUrl'])
+host = (parsed.hostname or '').lower()
+video_id = ''
+if host in ('youtu.be', 'www.youtu.be'):
+    video_id = parsed.path.strip('/').split('/')[0]
+elif host == 'youtube.com' or host == 'www.youtube.com' or host.endswith('.youtube.com'):
+    video_id = (urllib.parse.parse_qs(parsed.query).get('v') or [''])[0]
+    if not video_id:
+        parts = [part for part in parsed.path.split('/') if part]
+        if len(parts) >= 2 and parts[0] in ('embed', 'shorts', 'live'):
+            video_id = parts[1]
+if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
+    raise RuntimeError('The configured URL does not contain a YouTube video id.')
+
+request = urllib.request.Request(
+    'https://i.ytimg.com/vi/' + video_id + '/hqdefault.jpg',
+    headers={'User-Agent': 'Big-Screen-Beat-Saber'})
+with urllib.request.urlopen(request, timeout=20) as response:
+    image = response.read(4 * 1024 * 1024 + 1)
+if len(image) > 4 * 1024 * 1024:
+    raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
+temporary = job['destination'] + '.tmp'
+with open(temporary, 'wb') as stream:
+    stream.write(image)
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, job['destination'])
+)PY";
     }
 
     DownloadManager& DownloadManager::Instance()
@@ -504,6 +573,13 @@ except BaseException as error:
     {
         Cancel();
         if(worker_.joinable()) worker_.join();
+        {
+            std::scoped_lock lock(thumbnailMutex_);
+            stopThumbnailWorker_ = true;
+            thumbnailQueue_.clear();
+        }
+        thumbnailWake_.notify_all();
+        if(thumbnailWorker_.joinable()) thumbnailWorker_.join();
     }
 
     bool DownloadManager::Initialize(std::string& error)
@@ -727,6 +803,31 @@ except BaseException as error:
             PaperLogger.warn("Scheduled yt-dlp update check skipped: {}", error);
     }
 
+    void DownloadManager::QueueVideoThumbnail(
+        std::string levelId,
+        std::string sourceUrl,
+        std::filesystem::path destination)
+    {
+        if(!initialized_ || levelId.empty() || sourceUrl.empty() ||
+           destination.empty() || std::filesystem::is_regular_file(destination))
+            return;
+
+        const auto key = destination.string();
+        {
+            std::scoped_lock lock(thumbnailMutex_);
+            // One attempt per destination per game session prevents a broken
+            // or private URL from continuously generating network traffic as
+            // the table refreshes and scrolls.
+            if(!requestedThumbnails_.emplace(key).second)
+                return;
+            thumbnailQueue_.push_back({
+                std::move(levelId), std::move(sourceUrl), std::move(destination)});
+            if(!thumbnailWorker_.joinable())
+                thumbnailWorker_ = std::thread([this]() { RunThumbnailQueue(); });
+        }
+        thumbnailWake_.notify_one();
+    }
+
     void DownloadManager::Cancel()
     {
         std::scoped_lock lock(mutex_);
@@ -747,10 +848,14 @@ except BaseException as error:
     {
         try
         {
+            const auto thumbnailPath =
+                VideoLibrary::Instance().AllocateThumbnailPath(
+                    request.levelId, request.origin);
             rapidjson::Document document(rapidjson::kObjectType);
             auto& allocator = document.GetAllocator();
             AddString(document, "sourceUrl", request.sourceUrl, allocator);
             AddString(document, "finalPath", finalPath.string(), allocator);
+            AddString(document, "thumbnailPath", thumbnailPath.string(), allocator);
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "cancelPath", cancelPath_.string(), allocator);
             document.AddMember("explicitContentAllowed", request.explicitContentAllowed, allocator);
@@ -894,6 +999,68 @@ except BaseException as error:
         const std::string json{std::istreambuf_iterator<char>(stream), {}};
         rapidjson::Document status; status.Parse(json.data(), json.size());
         availableUpdateVersion_ = ReadString(status, "version");
+    }
+
+    void DownloadManager::RunThumbnailQueue()
+    {
+        while(true)
+        {
+            ThumbnailRequest request;
+            {
+                std::unique_lock lock(thumbnailMutex_);
+                thumbnailWake_.wait(lock, [this]() {
+                    return stopThumbnailWorker_ || !thumbnailQueue_.empty();
+                });
+                if(stopThumbnailWorker_ && thumbnailQueue_.empty())
+                    return;
+                request = std::move(thumbnailQueue_.front());
+                thumbnailQueue_.pop_front();
+            }
+
+            try
+            {
+                rapidjson::Document document(rapidjson::kObjectType);
+                auto& allocator = document.GetAllocator();
+                AddString(document, "sourceUrl", request.sourceUrl, allocator);
+                AddString(document, "destination", request.destination.string(), allocator);
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                document.Accept(writer);
+
+                const auto gil = PyGILState_Ensure();
+                PyObject* globals = PyDict_New();
+                PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+                auto* job = PyUnicode_FromStringAndSize(
+                    buffer.GetString(), buffer.GetSize());
+                PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
+                Py_DECREF(job);
+                auto* result = PyRun_String(
+                    ThumbnailScript, Py_file_input, globals, globals);
+                if(!result)
+                {
+                    PyErr_Clear();
+                    PaperLogger.warn(
+                        "Could not fetch video thumbnail for {}",
+                        request.levelId);
+                }
+                else
+                {
+                    Py_DECREF(result);
+                    PaperLogger.debug(
+                        "Cached video thumbnail for {}",
+                        request.levelId);
+                }
+                Py_DECREF(globals);
+                PyGILState_Release(gil);
+            }
+            catch(const std::exception& error)
+            {
+                PaperLogger.warn(
+                    "Video thumbnail worker failed for {}: {}",
+                    request.levelId,
+                    error.what());
+            }
+        }
     }
 
     void DownloadManager::RefreshSnapshotFromDiskLocked()

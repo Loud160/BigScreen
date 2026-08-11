@@ -7,6 +7,7 @@
 #include <exception>
 #include <filesystem>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,7 +21,6 @@
 #include "GlobalNamespace/BeatmapLevelPack.hpp"
 #include "GlobalNamespace/BeatmapLevelsModel.hpp"
 #include "GlobalNamespace/BeatmapLevelsRepository.hpp"
-#include "GlobalNamespace/IPreviewMediaData.hpp"
 #include "GlobalNamespace/LevelListTableCell.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
@@ -29,8 +29,6 @@
 #include "HMUI/ImageView.hpp"
 #include "HMUI/TableCell.hpp"
 #include "HMUI/TableView.hpp"
-#include "System/Threading/CancellationToken.hpp"
-#include "System/Threading/Tasks/Task_1.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
@@ -71,16 +69,30 @@ namespace BigScreen {
             "OST Maps", "DLC Maps", "Maps With Video"
         };
 
-        using CoverTask =
-            System::Threading::Tasks::Task_1<UnityW<UnityEngine::Sprite>>;
+        // These sprites are created only from the configured video's cached
+        // YouTube thumbnail. Beat Saber's song/album cover is deliberately not
+        // consulted: a blank row therefore means that song has no video.
+        std::unordered_map<std::string, UnityEngine::Sprite*> VideoThumbnailSprites;
+        std::unordered_set<std::string> FailedVideoThumbnailLoads;
 
-        // Cover sprites belong to Beat Saber's preview-media system; Big
-        // Screen only retains pointers while this menu scene is alive. Tasks
-        // are requested lazily for visible rows instead of decoding artwork
-        // for the complete 500+ song catalog at menu startup.
-        std::unordered_map<std::string, CoverTask*> CoverTasks;
-        std::unordered_map<std::string, UnityEngine::Sprite*> CoverSprites;
-        std::unordered_set<std::string> FailedCoverLoads;
+        struct RowVideoThumbnail {
+            bool hasVideo = false;
+            std::optional<std::string> sourceUrl;
+            std::optional<std::filesystem::path> path;
+        };
+        std::unordered_map<std::string, RowVideoThumbnail> RowVideoThumbnails;
+
+        void EvictVideoThumbnail(const std::string& path)
+        {
+            if(const auto cached = VideoThumbnailSprites.find(path);
+               cached != VideoThumbnailSprites.end())
+            {
+                if(cached->second)
+                    UnityEngine::Object::Destroy(cached->second);
+                VideoThumbnailSprites.erase(cached);
+            }
+            FailedVideoThumbnailLoads.erase(path);
+        }
 
         std::string Lower(std::string value)
         {
@@ -659,6 +671,7 @@ namespace BigScreen {
         visible_.clear();
         if(!list_) return;
         list_->data->Clear();
+        RowVideoThumbnails.clear();
         const auto query = Lower(search_);
         for(auto& item : catalog_)
         {
@@ -675,17 +688,26 @@ namespace BigScreen {
                 descriptor.CanPlay() ? "Video ready" :
                 descriptor.CanDownload() ? "Download available" : "No video";
 
-            UnityEngine::Sprite* cover = nullptr;
+            UnityEngine::Sprite* videoThumbnail = nullptr;
             if(level->levelID)
             {
-                const auto foundCover = CoverSprites.find(std::string(level->levelID));
-                if(foundCover != CoverSprites.end())
-                    cover = foundCover->second;
+                RowVideoThumbnails[std::string(level->levelID)] = {
+                    descriptor.CanPlay() || descriptor.CanDownload(),
+                    descriptor.downloadUrl,
+                    descriptor.thumbnailPath};
+            }
+            if((descriptor.CanPlay() || descriptor.CanDownload()) &&
+               descriptor.thumbnailPath)
+            {
+                const auto found = VideoThumbnailSprites.find(
+                    descriptor.thumbnailPath->string());
+                if(found != VideoThumbnailSprites.end())
+                    videoThumbnail = found->second;
             }
             list_->data->Add(BSML::CustomCellInfo::construct(
                 name,
                 author.empty() ? videoState : author + " | " + videoState,
-                cover));
+                videoThumbnail));
         }
         if(browserTitle_)
             browserTitle_->set_text("Video Library");
@@ -703,7 +725,7 @@ namespace BigScreen {
             list_->tableView->ClearSelection();
             list_->tableView->ReloadData();
             list_->tableView->ScrollToCellWithIdx(0, HMUI::TableView::ScrollPositionType::Beginning, false);
-            RefreshVisibleRowArtwork();
+            RefreshVisibleVideoThumbnails();
         }
     }
 
@@ -932,13 +954,22 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride()
     {
         if(!selected_) return;
-        if(!VideoLibrary::Instance().RemoveUserOverride(
-            std::string(selected_->levelID), true))
+        auto& library = VideoLibrary::Instance();
+        const auto levelId = std::string(selected_->levelID);
+        const auto thumbnailPath = library.AllocateThumbnailPath(
+            levelId, VideoOrigin::User).string();
+        if(!library.RemoveUserOverride(levelId, true))
         {
             transientStatus_ = "No user video was available to remove.";
             RefreshDetails();
             return;
         }
+
+        // The row sprite outlives the file it was decoded from, so explicitly
+        // evict and destroy it when its user video is removed. If the song has
+        // a mapper video underneath, that separate mapper thumbnail will be
+        // selected the next time the browser is rebuilt.
+        EvictVideoThumbnail(thumbnailPath);
 
         // The thumbnail sprite is UI-owned and independent of the downloaded
         // MP4. Delete the probe image associated with this song as well, then
@@ -999,7 +1030,7 @@ namespace BigScreen {
         }
     }
 
-    void VideoLibraryMenu::RefreshVisibleRowArtwork()
+    void VideoLibraryMenu::RefreshVisibleVideoThumbnails()
     {
         if(!list_ || !list_->tableView || !list_->data)
             return;
@@ -1007,7 +1038,6 @@ namespace BigScreen {
         auto* cells = list_->tableView->__cordl_internal_get__visibleCells();
         if(!cells) return;
 
-        bool artworkChanged = false;
         for(int cellIndex = 0; cellIndex < cells->get_Count(); ++cellIndex)
         {
             auto cell = cells->get_Item(cellIndex);
@@ -1021,12 +1051,21 @@ namespace BigScreen {
                row >= list_->data->get_Count())
                 continue;
 
-            // The standard Beat Saber cell places cover art on the left. Move
-            // it to the requested right edge and reserve the remaining width
-            // for the song and artist text. Reused cells are restyled here as
-            // the user scrolls, so no global Beat Saber prefab is modified.
-            if(auto coverImage = levelCell->__cordl_internal_get__coverImage())
+            auto* item = visible_[row];
+            auto* level = item ? item->level : nullptr;
+            if(!level || !level->levelID) continue;
+            const std::string levelId(level->levelID);
+            const auto metadata = RowVideoThumbnails.find(levelId);
+            const bool hasVideo = metadata != RowVideoThumbnails.end() &&
+                metadata->second.hasVideo;
+            auto coverImage = levelCell->__cordl_internal_get__coverImage();
+
+            // Reused Beat Saber cells may still contain the icon from a prior
+            // row. Hide that image object completely for songs without video,
+            // which also guarantees album art can never leak into this list.
+            if(coverImage)
             {
+                coverImage->get_gameObject()->SetActive(hasVideo);
                 coverImage->set_preserveAspect(true);
                 auto coverRect = coverImage->get_rectTransform();
                 coverRect->set_anchorMin({1.0f, 0.5f});
@@ -1034,6 +1073,9 @@ namespace BigScreen {
                 coverRect->set_pivot({1.0f, 0.5f});
                 coverRect->set_anchoredPosition({-1.0f, 0.0f});
                 coverRect->set_sizeDelta({7.2f, 7.2f});
+                coverImage->set_sprite(
+                    BSML::Utilities::ImageResources::GetBlankSprite());
+                coverImage->set_color({1.0f, 1.0f, 1.0f, 0.0f});
             }
             if(auto nameText = levelCell->__cordl_internal_get__songNameText())
             {
@@ -1042,7 +1084,7 @@ namespace BigScreen {
                 rect->set_anchorMax({1.0f, 0.5f});
                 rect->set_pivot({0.0f, 0.5f});
                 rect->set_anchoredPosition({1.2f, 1.7f});
-                rect->set_sizeDelta({-11.0f, 3.5f});
+                rect->set_sizeDelta({hasVideo ? -11.0f : -2.0f, 3.5f});
             }
             if(auto authorText = levelCell->__cordl_internal_get__songAuthorText())
             {
@@ -1051,71 +1093,59 @@ namespace BigScreen {
                 rect->set_anchorMax({1.0f, 0.5f});
                 rect->set_pivot({0.0f, 0.5f});
                 rect->set_anchoredPosition({1.2f, -1.8f});
-                rect->set_sizeDelta({-11.0f, 3.0f});
+                rect->set_sizeDelta({hasVideo ? -11.0f : -2.0f, 3.0f});
             }
 
-            auto* item = visible_[row];
-            auto* level = item ? item->level : nullptr;
-            if(!level || !level->levelID) continue;
-            const std::string levelId(level->levelID);
             auto* cellInfo = list_->data[row];
-
-            const auto loaded = CoverSprites.find(levelId);
-            if(loaded != CoverSprites.end())
+            if(!hasVideo || !metadata->second.path)
             {
-                if(cellInfo->icon != loaded->second)
+                cellInfo->icon = nullptr;
+                continue;
+            }
+
+            const std::string path = metadata->second.path->string();
+            UnityEngine::Sprite* sprite = nullptr;
+            if(const auto loaded = VideoThumbnailSprites.find(path);
+               loaded != VideoThumbnailSprites.end())
+            {
+                sprite = loaded->second;
+            }
+            else if(std::filesystem::is_regular_file(*metadata->second.path) &&
+                    !FailedVideoThumbnailLoads.contains(path))
+            {
+                try
                 {
-                    cellInfo->icon = loaded->second;
-                    if(auto image = levelCell->__cordl_internal_get__coverImage())
-                        image->set_sprite(loaded->second);
+                    sprite = BSML::Lite::FileToSprite(path);
+                    if(sprite)
+                        VideoThumbnailSprites.emplace(path, sprite);
+                    else
+                        FailedVideoThumbnailLoads.emplace(path);
                 }
-                continue;
-            }
-            if(FailedCoverLoads.contains(levelId))
-                continue;
-
-            const auto requested = CoverTasks.find(levelId);
-            if(requested == CoverTasks.end())
-            {
-                auto* media = level->__cordl_internal_get_previewMediaData();
-                if(!media)
+                catch(const std::exception& error)
                 {
-                    FailedCoverLoads.emplace(levelId);
-                    continue;
+                    FailedVideoThumbnailLoads.emplace(path);
+                    PaperLogger.warn(
+                        "Could not display video thumbnail '{}': {}",
+                        path,
+                        error.what());
                 }
-                if(auto* task = media->GetCoverSpriteAsync(
-                    System::Threading::CancellationToken::get_None()))
-                    CoverTasks.emplace(levelId, task);
-                else
-                    FailedCoverLoads.emplace(levelId);
-                continue;
+            }
+            else if(metadata->second.sourceUrl &&
+                    Settings::Instance().ModEnabled())
+            {
+                DownloadManager::Instance().QueueVideoThumbnail(
+                    levelId,
+                    *metadata->second.sourceUrl,
+                    *metadata->second.path);
             }
 
-            auto* task = requested->second;
-            if(!task || !task->get_IsCompleted())
-                continue;
-            CoverTasks.erase(requested);
-            if(!task->get_IsCompletedSuccessfully())
-            {
-                FailedCoverLoads.emplace(levelId);
-                continue;
-            }
-
-            UnityEngine::Sprite* sprite = task->get_Result();
-            if(!sprite)
-            {
-                FailedCoverLoads.emplace(levelId);
-                continue;
-            }
-            CoverSprites.emplace(levelId, sprite);
             cellInfo->icon = sprite;
-            if(auto image = levelCell->__cordl_internal_get__coverImage())
-                image->set_sprite(sprite);
-            artworkChanged = true;
+            if(sprite && coverImage)
+            {
+                coverImage->set_sprite(sprite);
+                coverImage->set_color(UnityEngine::Color::get_white());
+            }
         }
-
-        if(artworkChanged)
-            list_->tableView->RefreshCellsContent();
     }
 
     void VideoLibraryMenu::FitToSong()
@@ -1183,37 +1213,61 @@ namespace BigScreen {
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
         if(transientStatus_ == "Stopping download..." && !download.Active())
             transientStatus_.clear();
-        // The background probe writes a complete JPEG before publishing its
-        // path. Decode it only after that terminal status, and retain the
-        // sprite until another URL or song is selected so periodic UI ticks
-        // never allocate duplicate Unity textures.
-        if(thisDownload && download.state == DownloadState::ProbeCompleted &&
-           !download.thumbnailPath.empty() && urlThumbnail_)
+        // A replacement can reuse the same deterministic file name. Evict the
+        // prior decoded sprite once the new download publishes its thumbnail,
+        // otherwise Unity would continue showing the old video's pixels even
+        // though the JPEG on disk has changed.
+        if(thisDownload && download.state == DownloadState::Completed &&
+           !download.thumbnailPath.empty())
         {
-            const auto thumbnailIdentity =
-                download.thumbnailPath + "|" + download.title;
-            if(loadedThumbnailPath_ != thumbnailIdentity &&
-               std::filesystem::is_regular_file(download.thumbnailPath))
+            const auto completedIdentity =
+                download.levelId + "|" + download.thumbnailPath + "|" + download.title;
+            if(completedVideoThumbnailIdentity_ != completedIdentity)
             {
-                try
+                EvictVideoThumbnail(download.thumbnailPath);
+                completedVideoThumbnailIdentity_ = completedIdentity;
+            }
+        }
+
+        // Prefer a just-probed thumbnail while the user is choosing a URL;
+        // otherwise show the durable thumbnail belonging to the active video.
+        // This gives the child editor the same video identity as the browser
+        // after restarting the game, without ever falling back to album art.
+        std::string detailThumbnailPath;
+        std::string detailThumbnailIdentity;
+        if(thisDownload && download.state == DownloadState::ProbeCompleted &&
+           !download.thumbnailPath.empty())
+        {
+            detailThumbnailPath = download.thumbnailPath;
+            detailThumbnailIdentity = download.thumbnailPath + "|" + download.title;
+        }
+        else if(descriptor.thumbnailPath &&
+                std::filesystem::is_regular_file(*descriptor.thumbnailPath))
+        {
+            detailThumbnailPath = descriptor.thumbnailPath->string();
+            detailThumbnailIdentity = detailThumbnailPath;
+        }
+        if(urlThumbnail_ && !detailThumbnailPath.empty() &&
+           loadedThumbnailPath_ != detailThumbnailIdentity)
+        {
+            try
+            {
+                auto* sprite = BSML::Lite::FileToSprite(detailThumbnailPath);
+                if(sprite)
                 {
-                    auto* sprite = BSML::Lite::FileToSprite(download.thumbnailPath);
-                    if(sprite)
-                    {
-                        if(loadedThumbnailSprite_)
-                            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
-                        loadedThumbnailSprite_ = sprite;
-                        loadedThumbnailPath_ = thumbnailIdentity;
-                        urlThumbnail_->set_sprite(sprite);
-                        urlThumbnail_->set_color(UnityEngine::Color::get_white());
-                    }
+                    if(loadedThumbnailSprite_)
+                        UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+                    loadedThumbnailSprite_ = sprite;
+                    loadedThumbnailPath_ = detailThumbnailIdentity;
+                    urlThumbnail_->set_sprite(sprite);
+                    urlThumbnail_->set_color(UnityEngine::Color::get_white());
                 }
-                catch(const std::exception& error)
-                {
-                    PaperLogger.warn(
-                        "Could not display the YouTube thumbnail: {}",
-                        error.what());
-                }
+            }
+            catch(const std::exception& error)
+            {
+                PaperLogger.warn(
+                    "Could not display the video thumbnail: {}",
+                    error.what());
             }
         }
         detailText_->set_text(!transientStatus_.empty()
@@ -1308,7 +1362,7 @@ namespace BigScreen {
     {
         if(!active_) return;
         if(!editorVisible_)
-            RefreshVisibleRowArtwork();
+            RefreshVisibleVideoThumbnails();
         if(++tickCounter_ >= 30)
         {
             tickCounter_ = 0;

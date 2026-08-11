@@ -142,9 +142,11 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         rootPath_ = LibraryRoot;
         videoPath_ = rootPath_ / "Videos";
+        thumbnailPath_ = rootPath_ / "Thumbnails";
         runtimePath_ = rootPath_ / "Runtime";
         manifestPath_ = rootPath_ / "library.json";
         std::filesystem::create_directories(videoPath_);
+        std::filesystem::create_directories(thumbnailPath_);
         std::filesystem::create_directories(runtimePath_);
         LoadLocked();
         PaperLogger.info(
@@ -201,6 +203,8 @@ namespace BigScreen {
                 : std::optional<std::string>{record.title};
             descriptor.downloadUrl = record.sourceUrl;
             descriptor.downloadOrigin = VideoOrigin::User;
+            descriptor.thumbnailPath = AllocateThumbnailPath(
+                descriptor.levelId, VideoOrigin::User);
             descriptor.playableConfig = effective;
         }
         else if(descriptor.hasMapperLocalFile)
@@ -210,6 +214,8 @@ namespace BigScreen {
                 effective.offsetSeconds = saved->mapperTiming->offsetSeconds;
                 effective.playbackRate = saved->mapperTiming->playbackRate;
             }
+            descriptor.thumbnailPath = AllocateThumbnailPath(
+                descriptor.levelId, VideoOrigin::Mapper);
             descriptor.playableConfig = effective;
         }
         else if(descriptor.hasMapperDownload)
@@ -219,7 +225,15 @@ namespace BigScreen {
             effective.offsetSeconds = record.offsetSeconds;
             effective.playbackRate = record.playbackRate;
             effective.declaredDurationSeconds = record.durationSeconds;
+            descriptor.thumbnailPath = AllocateThumbnailPath(
+                descriptor.levelId, VideoOrigin::Mapper);
             descriptor.playableConfig = effective;
+        }
+        else if(descriptor.hasMapperDownload || descriptor.hasMapperLocalFile ||
+                descriptor.downloadUrl)
+        {
+            descriptor.thumbnailPath = AllocateThumbnailPath(
+                descriptor.levelId, VideoOrigin::Mapper);
         }
 
         return descriptor;
@@ -238,6 +252,19 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         const auto suffix = origin == VideoOrigin::User ? "-user.mp4" : "-mapper.mp4";
         return videoPath_ / (StableKey(levelId) + suffix);
+    }
+
+    std::filesystem::path VideoLibrary::AllocateThumbnailPath(
+        const std::string& levelId,
+        VideoOrigin origin) const
+    {
+        // Library paths are assigned once during startup and remain immutable.
+        // This helper is also used while Describe already holds mutex_, so it
+        // must not attempt to acquire that non-recursive lock again.
+        const auto suffix = origin == VideoOrigin::User
+            ? "-user.jpg"
+            : "-mapper.jpg";
+        return thumbnailPath_ / (StableKey(levelId) + suffix);
     }
 
     void VideoLibrary::CommitDownload(
@@ -278,6 +305,8 @@ namespace BigScreen {
             return false;
         if(deleteFile)
             std::filesystem::remove(videoPath_ / found->second.user->fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         found->second.user.reset();
         SaveLocked();
         return true;
@@ -290,6 +319,8 @@ namespace BigScreen {
         if(found == records_.end() || !found->second.mapper)
             return false;
         std::filesystem::remove(videoPath_ / found->second.mapper->fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
         found->second.mapper.reset();
         SaveLocked();
         return true;

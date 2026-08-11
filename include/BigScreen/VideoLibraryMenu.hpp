@@ -55,7 +55,7 @@ namespace BigScreen {
         void FitToSong();
         void RefreshDetails();
         void ClearThumbnail();
-        void RefreshVisibleRowArtwork();
+        void RefreshVisibleVideoThumbnails();
         void StartSelectedPreview();
         void JumpToLetter(char letter);
         VideoOrigin SelectedVideoOrigin() const;
@@ -93,6 +93,7 @@ namespace BigScreen {
         std::string url_;
         std::string transientStatus_;
         std::string loadedThumbnailPath_;
+        std::string completedVideoThumbnailIdentity_;
         UnityEngine::Sprite* loadedThumbnailSprite_ = nullptr;
         double offset_ = 0.0;
         double rate_ = 1.0;

@@ -56,6 +56,11 @@ namespace BigScreen {
         std::optional<MapVideoConfig> mapperDefinition;
         std::optional<MapVideoConfig> playableConfig;
         std::optional<std::string> downloadUrl;
+        // This is the deterministic cache location for the active video's
+        // own artwork. It is intentionally independent from Beat Saber's song
+        // cover so the library browser never implies that a song has a video
+        // merely because it has album art.
+        std::optional<std::filesystem::path> thumbnailPath;
         VideoOrigin downloadOrigin = VideoOrigin::Mapper;
         bool hasMapperLocalFile = false;
         bool hasMapperDownload = false;
@@ -81,6 +86,9 @@ namespace BigScreen {
             GlobalNamespace::BeatmapLevel* level) const;
 
         std::filesystem::path AllocateVideoPath(
+            const std::string& levelId,
+            VideoOrigin origin) const;
+        std::filesystem::path AllocateThumbnailPath(
             const std::string& levelId,
             VideoOrigin origin) const;
         void CommitDownload(
@@ -115,6 +123,7 @@ namespace BigScreen {
         mutable std::mutex mutex_;
         std::filesystem::path rootPath_;
         std::filesystem::path videoPath_;
+        std::filesystem::path thumbnailPath_;
         std::filesystem::path runtimePath_;
         std::filesystem::path manifestPath_;
         std::vector<std::pair<std::string, LevelVideoRecords>> records_;

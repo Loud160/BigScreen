@@ -1,10 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 
 #include "BigScreen/VideoLibrary.hpp"
 
@@ -67,6 +70,10 @@ namespace BigScreen {
         bool Start(DownloadRequest request, std::string& error);
         bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
         void StartScheduledUpdaterCheck(bool nightly);
+        void QueueVideoThumbnail(
+            std::string levelId,
+            std::string sourceUrl,
+            std::filesystem::path destination);
         void Cancel();
         DownloadSnapshot Snapshot();
         bool IsReady() const { return initialized_; }
@@ -81,11 +88,24 @@ namespace BigScreen {
         void Run(DownloadRequest request, std::filesystem::path finalPath);
         void RunProbe(std::string levelId, std::string sourceUrl);
         void RunUpdater(bool nightly, bool install);
+        void RunThumbnailQueue();
         void RefreshSnapshotFromDiskLocked();
         void SetFailure(std::string message);
 
+        struct ThumbnailRequest {
+            std::string levelId;
+            std::string sourceUrl;
+            std::filesystem::path destination;
+        };
+
         mutable std::mutex mutex_;
         std::thread worker_;
+        std::thread thumbnailWorker_;
+        std::mutex thumbnailMutex_;
+        std::condition_variable thumbnailWake_;
+        std::deque<ThumbnailRequest> thumbnailQueue_;
+        std::unordered_set<std::string> requestedThumbnails_;
+        bool stopThumbnailWorker_ = false;
         DownloadSnapshot snapshot_;
         std::filesystem::path jobPath_;
         std::filesystem::path statusPath_;
