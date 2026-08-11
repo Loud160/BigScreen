@@ -30,6 +30,9 @@ namespace BigScreen {
         static PlaybackSession& Instance();
 
         void Prepare(GlobalNamespace::BeatmapLevel* level);
+        /// Rebuilds the selected map's effective display configuration from
+        /// mapper-authored metadata and the latest global settings.
+        void RefreshDisplaySettings();
         void Start(PlaybackContext context);
         void Tick(double songTimeSeconds);
         void Stop();
@@ -37,12 +40,17 @@ namespace BigScreen {
         bool HasPreparedVideo() const { return config_.has_value(); }
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
+        const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;
 
     private:
         PlaybackSession() = default;
 
         std::filesystem::path levelDirectory_;
+        // Keep the mapper-authored configuration immutable. Reapplying global
+        // offsets to an already-adjusted config would accumulate scale and
+        // placement changes, especially after Reset to Defaults.
+        std::optional<MapVideoConfig> baseConfig_;
         std::optional<MapVideoConfig> config_;
         FrameDecoder decoder_;
         ScreenSurface surface_;

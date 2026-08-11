@@ -29,6 +29,7 @@ namespace BigScreen {
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
     {
         Stop();
+        baseConfig_.reset();
         config_.reset();
         levelDirectory_.clear();
 
@@ -55,29 +56,18 @@ namespace BigScreen {
 
         levelDirectory_ = std::filesystem::path(customLevel->get_customLevelPath());
         std::string error;
-        config_ = MapVideoConfig::LoadFromLevel(levelDirectory_, error);
+        baseConfig_ = MapVideoConfig::LoadFromLevel(levelDirectory_, error);
         if(!error.empty())
         {
             PaperLogger.error("Big Screen metadata rejected for '{}': {}", levelDirectory_.string(), error);
+            baseConfig_.reset();
             config_.reset();
             return;
         }
 
-        if(config_)
+        if(baseConfig_)
         {
-            // Apply headset-wide display preferences after normalizing mapper
-            // metadata. Position and size remain relative to the mapper's
-            // baseline instead of replacing carefully authored placement.
-            const auto& settings = Settings::Instance();
-            config_->screenPosition.x += settings.ScreenHorizontalOffset();
-            config_->screenPosition.y += settings.ScreenVerticalOffset();
-            config_->screenPosition.z += settings.ScreenDistanceOffset();
-            config_->screenRotation.x += settings.ScreenTiltOffset();
-            config_->screenHeight *= settings.ScreenScale();
-            config_->screenCurvature = settings.CurvedScreenEnabled()
-                ? settings.ScreenCurvature()
-                : 0.0f;
-            config_->transparent = settings.TransparencyEnabled();
+            RefreshDisplaySettings();
 
             PaperLogger.info(
                 "Prepared video '{}' from '{}'",
@@ -88,6 +78,37 @@ namespace BigScreen {
         {
             PaperLogger.debug("No supported video metadata in '{}'", levelDirectory_.string());
         }
+    }
+
+    void PlaybackSession::RefreshDisplaySettings()
+    {
+        // A surface must never outlive the effective configuration that
+        // created it. Menu setting changes normally arrive after the preview
+        // stopped playback, but this guard keeps future callers safe as well.
+        if(started_)
+            Stop();
+
+        if(!baseConfig_)
+        {
+            config_.reset();
+            return;
+        }
+
+        config_ = *baseConfig_;
+
+        // Always derive from the immutable mapper baseline. This makes Reset
+        // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
+        // scale adjustments from accumulating on the selected song.
+        const auto& settings = Settings::Instance();
+        config_->screenPosition.x += settings.ScreenHorizontalOffset();
+        config_->screenPosition.y += settings.ScreenVerticalOffset();
+        config_->screenPosition.z += settings.ScreenDistanceOffset();
+        config_->screenRotation.x += settings.ScreenTiltOffset();
+        config_->screenHeight *= settings.ScreenScale();
+        config_->screenCurvature = settings.CurvedScreenEnabled()
+            ? settings.ScreenCurvature()
+            : 0.0f;
+        config_->transparent = settings.TransparencyEnabled();
     }
 
     void PlaybackSession::Start(PlaybackContext context)

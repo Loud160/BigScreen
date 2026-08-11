@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
@@ -59,6 +60,15 @@ namespace BigScreen {
             setting->currentValue = value;
             if(setting->toggle)
                 setting->toggle->SetIsOnWithoutNotify(value);
+        }
+
+        void ApplyDisplaySettingsAndRefreshPreview()
+        {
+            // The playback session keeps an effective configuration for the
+            // selected song. Rebuild it as well as the visible settings screen
+            // so leaving this menu cannot resurrect stale size or placement.
+            PlaybackSession::Instance().RefreshDisplaySettings();
+            ScreenPreview::Instance().Refresh();
         }
     }
 
@@ -257,7 +267,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenDistanceOffset(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             distanceSetting_,
@@ -274,7 +284,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenHorizontalOffset(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             horizontalSetting_,
@@ -291,7 +301,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenVerticalOffset(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             verticalSetting_,
@@ -308,7 +318,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenTiltOffset(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             tiltSetting_,
@@ -325,7 +335,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenScale(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             sizeSetting_,
@@ -339,7 +349,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetCurvedScreenEnabled(enabled);
                 RefreshCurvatureControl();
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             curvedScreenToggle_,
@@ -357,7 +367,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenCurvature(value);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             curvatureSlider_,
@@ -370,7 +380,7 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetTransparencyEnabled(enabled);
-                ScreenPreview::Instance().Refresh();
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             transparencyToggle_,
@@ -443,10 +453,10 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshControls()
     {
-        const auto& settings = Settings::Instance();
-        SetToggleWithoutNotification(modEnabledToggle_, settings.ModEnabled());
-        SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
-        SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+        // Every reactivation and state-changing callback uses the same complete
+        // synchronization path. Previously this refreshed only three toggles,
+        // allowing numeric and appearance controls to retain stale UI values.
+        RefreshValues();
         RefreshEnabledState();
         RefreshCurvatureControl();
     }
@@ -547,9 +557,13 @@ namespace BigScreen {
         auto& settings = Settings::Instance();
         settings.Reset();
 
+        // Rebuild the selected song config before recreating the world screen.
+        // This is the missing live-effect step that left the displayed screen
+        // at its previous size even though the control correctly showed 1.0.
+        PlaybackSession::Instance().RefreshDisplaySettings();
+
         // Reset changes persistent values first, then mirrors those values into
         // the already-open controls without generating a chain of fake clicks.
-        RefreshValues();
         SelectionVideoToggle::Instance().ModEnabledChanged(true);
         SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(true);
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();

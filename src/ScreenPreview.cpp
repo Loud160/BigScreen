@@ -138,21 +138,8 @@ namespace BigScreen {
         if(baseConfig_)
             return;
 
-        const auto& settings = Settings::Instance();
-        const auto& prepared = PlaybackSession::Instance().PreparedConfig();
+        const auto& prepared = PlaybackSession::Instance().PreparedBaseConfig();
         baseConfig_ = prepared ? *prepared : MapVideoConfig{};
-
-        // PlaybackSession stores a configuration after every global placement
-        // adjustment has already been applied. Undo them before retaining the
-        // baseline so subsequent control changes never accumulate repeatedly.
-        if(prepared)
-        {
-            baseConfig_->screenPosition.x -= settings.ScreenHorizontalOffset();
-            baseConfig_->screenPosition.y -= settings.ScreenVerticalOffset();
-            baseConfig_->screenPosition.z -= settings.ScreenDistanceOffset();
-            baseConfig_->screenRotation.x -= settings.ScreenTiltOffset();
-            baseConfig_->screenHeight /= std::max(0.01f, settings.ScreenScale());
-        }
     }
 
     bool ScreenPreview::CreateWorldScreen()
