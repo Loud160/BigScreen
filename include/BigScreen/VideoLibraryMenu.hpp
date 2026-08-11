@@ -10,8 +10,9 @@ namespace BSML {
     class IncrementSetting;
 }
 namespace GlobalNamespace { class BeatmapLevel; }
-namespace HMUI { class InputFieldView; class ViewController; }
+namespace HMUI { class ImageView; class InputFieldView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
+namespace UnityEngine { class Sprite; }
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
@@ -47,6 +48,7 @@ namespace BigScreen {
         void ShowBrowser();
         void ShowEditor();
         void ChangeFilter(int direction);
+        void BeginUrlProbe();
         void StartOrCancelDownload();
         void PasteUrlFromClipboard();
         void RemoveOverride();
@@ -70,6 +72,9 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* detailTitle_ = nullptr;
         TMPro::TextMeshProUGUI* detailText_ = nullptr;
         TMPro::TextMeshProUGUI* detailStorage_ = nullptr;
+        HMUI::ImageView* downloadProgressTrack_ = nullptr;
+        HMUI::ImageView* downloadProgressFill_ = nullptr;
+        HMUI::ImageView* urlThumbnail_ = nullptr;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
@@ -84,11 +89,15 @@ namespace BigScreen {
         SongLibraryFilter filter_ = SongLibraryFilter::All;
         std::string search_;
         std::string url_;
+        std::string transientStatus_;
+        std::string loadedThumbnailPath_;
+        UnityEngine::Sprite* loadedThumbnailSprite_ = nullptr;
         double offset_ = 0.0;
         double rate_ = 1.0;
         float previewStartedAt_ = 0.0f;
         bool active_ = false;
         bool editorVisible_ = false;
+        bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;
     };
 }

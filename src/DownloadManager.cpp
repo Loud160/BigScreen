@@ -19,12 +19,16 @@
 namespace BigScreen {
     namespace {
         constexpr std::uint64_t RequiredReserve = 512ull * 1024ull * 1024ull;
+        const std::filesystem::path InternalNativeRuntime{
+            "/data/user/0/com.beatgames.beatsaber/code_cache/BigScreen"};
 
         const char* StateName(DownloadState state)
         {
             switch(state)
             {
                 case DownloadState::Preparing: return "preparing";
+                case DownloadState::Probing: return "probing";
+                case DownloadState::ProbeCompleted: return "probe_completed";
                 case DownloadState::Downloading: return "downloading";
                 case DownloadState::Completed: return "completed";
                 case DownloadState::UpdateAvailable: return "update_available";
@@ -38,6 +42,8 @@ namespace BigScreen {
         DownloadState ParseState(const std::string& state)
         {
             if(state == "preparing") return DownloadState::Preparing;
+            if(state == "probing") return DownloadState::Probing;
+            if(state == "probe_completed") return DownloadState::ProbeCompleted;
             if(state == "downloading") return DownloadState::Downloading;
             if(state == "completed") return DownloadState::Completed;
             if(state == "update_available") return DownloadState::UpdateAvailable;
@@ -94,6 +100,122 @@ namespace BigScreen {
             return true;
         }
 
+        bool CopyNativeLibrary(
+            const std::filesystem::path& source,
+            const std::filesystem::path& destination,
+            std::string& error)
+        {
+            std::error_code fileError;
+            if(!std::filesystem::is_regular_file(source, fileError))
+            {
+                error = "Missing runtime library: " + source.filename().string();
+                return false;
+            }
+
+            std::filesystem::create_directories(destination.parent_path(), fileError);
+            if(fileError)
+            {
+                error = "Could not create the private native runtime folder: " +
+                        fileError.message();
+                return false;
+            }
+
+            // Android deliberately refuses to map executable pages directly
+            // from /sdcard. QMOD files have to arrive through shared storage,
+            // so copy native dependencies into the app's private code cache
+            // before CPython or dlopen attempts to load them.
+            const auto sourceSize = std::filesystem::file_size(source, fileError);
+            if(fileError)
+            {
+                error = "Could not read " + source.filename().string() + ": " +
+                        fileError.message();
+                return false;
+            }
+            const auto destinationSize = std::filesystem::file_size(destination, fileError);
+            if(!fileError && destinationSize == sourceSize)
+                return true;
+
+            fileError.clear();
+            auto temporary = destination;
+            temporary += ".next";
+            std::filesystem::remove(temporary, fileError);
+            fileError.clear();
+            std::filesystem::copy_file(
+                source,
+                temporary,
+                std::filesystem::copy_options::overwrite_existing,
+                fileError);
+            if(fileError)
+            {
+                error = "Could not stage " + source.filename().string() + ": " +
+                        fileError.message();
+                return false;
+            }
+            std::filesystem::permissions(
+                temporary,
+                std::filesystem::perms::owner_all |
+                    std::filesystem::perms::group_read |
+                    std::filesystem::perms::group_exec,
+                std::filesystem::perm_options::replace,
+                fileError);
+            if(fileError)
+            {
+                error = "Could not make " + source.filename().string() +
+                        " executable: " + fileError.message();
+                return false;
+            }
+            std::filesystem::remove(destination, fileError);
+            fileError.clear();
+            std::filesystem::rename(temporary, destination, fileError);
+            if(fileError)
+            {
+                error = "Could not activate " + source.filename().string() + ": " +
+                        fileError.message();
+                return false;
+            }
+            return true;
+        }
+
+        bool StageNativeRuntime(
+            const std::filesystem::path& externalRuntime,
+            const std::filesystem::path& modLibraries,
+            std::string& error)
+        {
+            for(const char* name : {
+                    "libcrypto_python.so",
+                    "libssl_python.so",
+                    "libsqlite3_python.so"})
+            {
+                if(!CopyNativeLibrary(
+                    modLibraries / name,
+                    InternalNativeRuntime / name,
+                    error))
+                    return false;
+            }
+
+            const auto sourceExtensions = externalRuntime / "lib-dynload";
+            const auto privateExtensions = InternalNativeRuntime / "lib-dynload";
+            std::error_code iteratorError;
+            std::filesystem::directory_iterator entries(sourceExtensions, iteratorError);
+            if(iteratorError)
+            {
+                error = "Could not read the CPython extension folder: " +
+                        iteratorError.message();
+                return false;
+            }
+            for(const auto& entry : entries)
+            {
+                if(entry.path().extension() != ".so")
+                    continue;
+                if(!CopyNativeLibrary(
+                    entry.path(),
+                    privateExtensions / entry.path().filename(),
+                    error))
+                    return false;
+            }
+            return true;
+        }
+
         constexpr const char* DownloaderScript = R"PY(
 import json, os, re, shutil, traceback
 
@@ -135,10 +257,29 @@ def classify(value):
     lower = text.lower()
     if 'bigscreen_cancelled' in lower:
         return 'cancelled', 'Download paused. Select Resume to continue it.'
-    if 'sign in to confirm your age' in lower or 'age-restricted' in lower:
+    if ('sign in to confirm your age' in lower or
+            'confirm your age' in lower or
+            'age-restricted' in lower):
         return 'failed', 'YouTube requires a signed-in account for this age-restricted video; Big Screen cannot download logged-in videos.'
     if 'private video' in lower:
         return 'failed', 'This YouTube video is private and cannot be downloaded.'
+    if ('members-only' in lower or 'members only' in lower or
+            'join this channel' in lower):
+        return 'failed', 'This is a members-only YouTube video and requires a signed-in account with channel access.'
+    if ('sign in to confirm you' in lower or
+            'login required' in lower or
+            'log in' in lower and 'required' in lower or
+            'authentication' in lower and 'required' in lower or
+            'cookies-from-browser' in lower):
+        return 'failed', 'YouTube requires a signed-in account to view this video; Big Screen does not use or store YouTube login credentials.'
+    if 'premium' in lower and ('required' in lower or 'only' in lower):
+        return 'failed', 'This video requires a YouTube Premium account and cannot be downloaded without signing in.'
+    if ('removed by the uploader' in lower or
+            'video has been removed' in lower or
+            'video unavailable' in lower):
+        return 'failed', 'This YouTube video is unavailable or has been removed.'
+    if 'copyright' in lower and ('blocked' in lower or 'claim' in lower):
+        return 'failed', 'YouTube has blocked this video because of a copyright restriction.'
     if 'not available in your country' in lower or 'geo' in lower and 'restricted' in lower:
         return 'failed', 'This video is not available in your region.'
     if 'requested format is not available' in lower or 'no video formats' in lower:
@@ -207,6 +348,91 @@ except PermissionError as error:
 except BaseException as error:
     state, message = classify(error)
     publish(state, message)
+)PY";
+
+        constexpr const char* ProbeScript = R"PY(
+import json, os, re, urllib.request
+
+job = json.loads(BIGSCREEN_JOB)
+status_path = job['statusPath']
+
+def publish(state, message='', **values):
+    data = {'state': state, 'message': message}
+    data.update(values)
+    temporary = status_path + '.tmp'
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        json.dump(data, stream, ensure_ascii=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, status_path)
+
+def clean_error(value):
+    return re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()[-700:]
+
+def classify(value):
+    text = clean_error(value)
+    lower = text.lower()
+    if 'private video' in lower:
+        return 'This YouTube video is private and cannot be downloaded.'
+    if ('sign in to confirm your age' in lower or 'confirm your age' in lower or
+            'age-restricted' in lower):
+        return 'YouTube requires a signed-in account for this age-restricted video; Big Screen cannot download logged-in videos.'
+    if ('members-only' in lower or 'members only' in lower or
+            'join this channel' in lower):
+        return 'This is a members-only YouTube video and requires a signed-in account with channel access.'
+    if ('sign in to confirm you' in lower or 'login required' in lower or
+            ('log in' in lower and 'required' in lower) or
+            ('authentication' in lower and 'required' in lower) or
+            'cookies-from-browser' in lower):
+        return 'YouTube requires a signed-in account to view this video; Big Screen does not use or store YouTube login credentials.'
+    if 'not available in your country' in lower or ('geo' in lower and 'restricted' in lower):
+        return 'This video is not available in your region.'
+    if ('removed by the uploader' in lower or 'video has been removed' in lower or
+            'video unavailable' in lower):
+        return 'This YouTube video is unavailable or has been removed.'
+    if 'http error 429' in lower or 'too many requests' in lower:
+        return 'YouTube is temporarily rate-limiting this headset. Try again later.'
+    if 'network is unreachable' in lower or 'timed out' in lower:
+        return 'The Quest could not reach YouTube: ' + text
+    return 'YouTube could not recognize this URL: ' + text
+
+try:
+    publish('probing', 'Checking YouTube URL')
+    import yt_dlp
+    with yt_dlp.YoutubeDL({
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+            'skip_download': True}) as probe:
+        info = probe.extract_info(job['sourceUrl'], download=False)
+    video_id = str(info.get('id') or '')
+    title = str(info.get('title') or 'YouTube video')
+    if not video_id:
+        raise RuntimeError('YouTube did not return a video identifier.')
+
+    # The standard YouTube thumbnail endpoint is consistently JPEG, which
+    # Unity can decode directly without bundling another image codec.
+    thumbnail_url = 'https://i.ytimg.com/vi/' + video_id + '/hqdefault.jpg'
+    request = urllib.request.Request(
+        thumbnail_url,
+        headers={'User-Agent': 'Big-Screen-Beat-Saber'})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        image = response.read(4 * 1024 * 1024 + 1)
+    if len(image) > 4 * 1024 * 1024:
+        raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
+    temporary = job['thumbnailPath'] + '.tmp'
+    with open(temporary, 'wb') as stream:
+        stream.write(image)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, job['thumbnailPath'])
+    publish(
+        'probe_completed',
+        'Recognized: ' + title,
+        title=title,
+        thumbnailPath=job['thumbnailPath'])
+except BaseException as error:
+    publish('failed', classify(error))
 )PY";
 
         constexpr const char* UpdaterScript = R"PY(
@@ -302,9 +528,11 @@ except BaseException as error:
         if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
         const auto modLibraries = std::filesystem::path(
             "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs");
-        if(!LoadGlobalLibrary(modLibraries / "libcrypto_python.so", error) ||
-           !LoadGlobalLibrary(modLibraries / "libssl_python.so", error) ||
-           !LoadGlobalLibrary(modLibraries / "libsqlite3_python.so", error))
+        if(!StageNativeRuntime(runtime, modLibraries, error))
+            return false;
+        if(!LoadGlobalLibrary(InternalNativeRuntime / "libcrypto_python.so", error) ||
+           !LoadGlobalLibrary(InternalNativeRuntime / "libssl_python.so", error) ||
+           !LoadGlobalLibrary(InternalNativeRuntime / "libsqlite3_python.so", error))
             return false;
 
         PyConfig config;
@@ -312,7 +540,7 @@ except BaseException as error:
         config.module_search_paths_set = 1;
         const std::array paths{
             runtime / "python314.zip",
-            runtime / "lib-dynload",
+            InternalNativeRuntime / "lib-dynload",
             runtime / "certifi.whl",
             runtime / "yt-dlp-active",
             runtime / "yt-dlp-shipped"
@@ -381,8 +609,56 @@ except BaseException as error:
         std::filesystem::remove(cancelPath_);
         std::filesystem::remove(statusPath_);
         snapshot_ = {DownloadState::Preparing, request.levelId, "Checking video information"};
+        PaperLogger.info(
+            "Starting video download for '{}' ({})",
+            request.songName,
+            request.levelId);
         worker_ = std::thread([this, request = std::move(request), finalPath]() mutable {
             Run(std::move(request), finalPath);
+        });
+        return true;
+    }
+
+    bool DownloadManager::StartProbe(
+        std::string levelId,
+        std::string sourceUrl,
+        std::string& error)
+    {
+        if(!initialized_)
+        {
+            error = "The embedded downloader runtime is not available.";
+            return false;
+        }
+        {
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            if(snapshot_.Active())
+            {
+                error = "Another downloader task is already running.";
+                return false;
+            }
+        }
+        if(levelId.empty() || sourceUrl.empty())
+        {
+            error = "A song and YouTube URL are required.";
+            return false;
+        }
+        if(worker_.joinable()) worker_.join();
+        std::scoped_lock lock(mutex_);
+        const auto runtime = VideoLibrary::Instance().RuntimePath();
+        statusPath_ = runtime / "url-probe-status.json";
+        cancelPath_ = runtime / "url-probe.cancel";
+        std::filesystem::remove(statusPath_);
+        std::filesystem::remove(cancelPath_);
+        snapshot_ = {DownloadState::Probing, levelId, "Checking YouTube URL"};
+        snapshot_.metadataOnly = true;
+        PaperLogger.info("Checking a YouTube URL for {}", levelId);
+        worker_ = std::thread([
+            this,
+            levelId = std::move(levelId),
+            sourceUrl = std::move(sourceUrl)]() mutable
+        {
+            RunProbe(std::move(levelId), std::move(sourceUrl));
         });
         return true;
     }
@@ -425,6 +701,8 @@ except BaseException as error:
         std::scoped_lock lock(mutex_);
         if(!snapshot_.Active()) return;
         std::ofstream(cancelPath_, std::ios::binary | std::ios::trunc) << "cancel";
+        snapshot_.message = "Stopping download";
+        PaperLogger.info("Downloader cancellation requested for {}", snapshot_.levelId);
     }
 
     DownloadSnapshot DownloadManager::Snapshot()
@@ -499,10 +777,60 @@ except BaseException as error:
                     request.origin,
                     std::move(stored));
             }
+            PaperLogger.info(
+                "Downloader finished for {} with state '{}': {}",
+                request.levelId,
+                StateName(snapshot_.state),
+                snapshot_.message);
         }
         catch(const std::exception& exception)
         {
             SetFailure(std::string("Downloader stopped: ") + exception.what());
+        }
+    }
+
+    void DownloadManager::RunProbe(std::string levelId, std::string sourceUrl)
+    {
+        try
+        {
+            const auto thumbnailPath =
+                VideoLibrary::Instance().RuntimePath() / "url-thumbnail.jpg";
+            rapidjson::Document document(rapidjson::kObjectType);
+            auto& allocator = document.GetAllocator();
+            AddString(document, "sourceUrl", sourceUrl, allocator);
+            AddString(document, "statusPath", statusPath_.string(), allocator);
+            AddString(document, "thumbnailPath", thumbnailPath.string(), allocator);
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            document.Accept(writer);
+
+            const auto gil = PyGILState_Ensure();
+            PyObject* globals = PyDict_New();
+            PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+            auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
+            PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
+            Py_DECREF(job);
+            auto* result = PyRun_String(ProbeScript, Py_file_input, globals, globals);
+            if(!result)
+            {
+                PyErr_Print();
+                PyErr_Clear();
+            }
+            else Py_DECREF(result);
+            Py_DECREF(globals);
+            PyGILState_Release(gil);
+
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            PaperLogger.info(
+                "URL check finished for {} with state '{}': {}",
+                levelId,
+                StateName(snapshot_.state),
+                snapshot_.message);
+        }
+        catch(const std::exception& exception)
+        {
+            SetFailure(std::string("URL check stopped: ") + exception.what());
         }
     }
 
@@ -551,6 +879,10 @@ except BaseException as error:
         snapshot_.totalBytes = static_cast<std::uint64_t>(ReadNumber(document, "totalBytes"));
         snapshot_.speedBytesPerSecond = ReadNumber(document, "speed");
         snapshot_.etaSeconds = ReadNumber(document, "eta");
+        const auto title = ReadString(document, "title");
+        const auto thumbnailPath = ReadString(document, "thumbnailPath");
+        if(!title.empty()) snapshot_.title = title;
+        if(!thumbnailPath.empty()) snapshot_.thumbnailPath = thumbnailPath;
     }
 
     void DownloadManager::SetFailure(std::string message)

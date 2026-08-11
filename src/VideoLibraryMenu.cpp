@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -22,13 +23,17 @@
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "HMUI/InputFieldView.hpp"
+#include "HMUI/ImageView.hpp"
 #include "HMUI/TableView.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/GUIUtility.hpp"
+#include "UnityEngine/Color.hpp"
+#include "UnityEngine/Object.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
@@ -37,6 +42,7 @@
 #include "UnityEngine/UI/VerticalLayoutGroup.hpp"
 #include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Lists.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -46,6 +52,7 @@
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/Helpers/delegates.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
+#include "bsml/shared/Helpers/utilities.hpp"
 #include "main.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -83,6 +90,66 @@ namespace BigScreen {
         {
             const auto lowered = Lower(value);
             return lowered.starts_with("https://") || lowered.starts_with("http://");
+        }
+
+        bool IsYouTubeUrl(const std::string& value)
+        {
+            const auto lowered = Lower(Trim(value));
+            const auto scheme = lowered.find("://");
+            if(scheme == std::string::npos ||
+               (lowered.substr(0, scheme) != "http" &&
+                lowered.substr(0, scheme) != "https"))
+                return false;
+            const auto hostStart = scheme + 3;
+            const auto hostEnd = lowered.find_first_of("/:?#", hostStart);
+            auto host = lowered.substr(hostStart, hostEnd - hostStart);
+            const auto at = host.rfind('@');
+            if(at != std::string::npos) host.erase(0, at + 1);
+            const auto isDomain = [&host](std::string_view domain) {
+                return host == domain ||
+                    (host.size() > domain.size() &&
+                     host.ends_with(std::string(".") + std::string(domain)));
+            };
+            return isDomain("youtube.com") ||
+                   isDomain("youtu.be") ||
+                   isDomain("youtube-nocookie.com");
+        }
+
+        std::string Megabytes(std::uint64_t bytes)
+        {
+            std::ostringstream text;
+            text << std::fixed << std::setprecision(1)
+                 << bytes / 1048576.0 << " MB";
+            return text.str();
+        }
+
+        std::string DownloadStatus(const DownloadSnapshot& download)
+        {
+            if(download.state != DownloadState::Downloading)
+                return download.message;
+
+            std::ostringstream text;
+            text << "Downloading  " << Megabytes(download.downloadedBytes);
+            if(download.totalBytes)
+            {
+                const auto percent = static_cast<int>(std::clamp(
+                    100.0 * download.downloadedBytes / download.totalBytes,
+                    0.0,
+                    100.0));
+                text << " / " << Megabytes(download.totalBytes)
+                     << "  (" << percent << "%)";
+            }
+            if(download.speedBytesPerSecond > 0.0)
+                text << "  |  " << std::fixed << std::setprecision(1)
+                     << download.speedBytesPerSecond / 1048576.0 << " MB/s";
+            if(download.etaSeconds > 0.0)
+            {
+                const auto seconds = static_cast<int>(download.etaSeconds);
+                text << "  |  " << seconds / 60 << ':'
+                     << std::setfill('0') << std::setw(2) << seconds % 60
+                     << " left";
+            }
+            return text.str();
         }
 
         std::string StorageLabel(std::uint64_t used, std::uint64_t free)
@@ -273,7 +340,7 @@ namespace BigScreen {
         // selector. This is the same BSML background treatment used for
         // grouped controls elsewhere in Beat Saber's mod menus.
         auto* filterPanel = ConstructLayout(
-            "<horizontal id='big-screen-filter' bg='round-rect-panel' "
+            "<horizontal tags='big-screen-filter' bg='round-rect-panel' "
             "pad-left='1' pad-right='1'/>",
             browserRoot->get_transform(),
             "big-screen-filter");
@@ -334,7 +401,7 @@ namespace BigScreen {
         // Unlike CreateScrollableList's detached top/bottom carets, this uses
         // Beat Saber's native right-edge scroll indicator and page arrows.
         auto* listObject = ConstructLayout(
-            "<list id='big-screen-song-list' show-scrollbar='true' "
+            "<list tags='big-screen-song-list' show-scrollbar='true' "
             "stick-scrolling='true' list-style='List'/>",
             listRow->get_transform(),
             "big-screen-song-list");
@@ -378,23 +445,63 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
         detailTitle_ = BSML::Lite::CreateText(
             editorRoot, "", 3.6f);
-        ConfigureLayout(detailTitle_, -1.0f, 9.5f, 1.0f);
+        ConfigureLayout(detailTitle_, -1.0f, 8.5f, 1.0f);
         detailText_ = BSML::Lite::CreateText(
-            editorRoot, "", 2.6f);
-        ConfigureLayout(detailText_, -1.0f, 5.0f, 1.0f);
+            editorRoot, "", 2.35f);
+        ConfigureLayout(detailText_, -1.0f, 7.0f, 1.0f);
+        downloadProgressTrack_ = BSML::Lite::CreateImage(
+            editorRoot,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ConfigureLayout(downloadProgressTrack_, -1.0f, 2.2f, 1.0f);
+        downloadProgressTrack_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        downloadProgressTrack_->set_preserveAspect(false);
+        downloadProgressFill_ = BSML::Lite::CreateImage(
+            downloadProgressTrack_->get_transform(),
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        downloadProgressFill_->set_color({0.10f, 0.75f, 1.0f, 1.0f});
+        downloadProgressFill_->set_preserveAspect(false);
+        if(auto fillRect = downloadProgressFill_->get_transform().cast<UnityEngine::RectTransform>())
+        {
+            fillRect->set_anchorMin({0.0f, 0.0f});
+            fillRect->set_anchorMax({0.0f, 1.0f});
+            fillRect->set_pivot({0.0f, 0.5f});
+            fillRect->set_anchoredPosition({0.0f, 0.0f});
+            fillRect->set_sizeDelta({0.0f, -0.35f});
+        }
+        downloadProgressTrack_->get_gameObject()->SetActive(false);
+        auto* urlRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        ConfigureGroup(urlRow, false);
+        urlRow->set_spacing(0.8f);
+        ConfigureLayout(urlRow, -1.0f, 15.5f, 1.0f);
+        urlThumbnail_ = BSML::Lite::CreateImage(
+            urlRow,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ConfigureLayout(urlThumbnail_, 18.0f, 12.0f, 0.0f);
+        urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        urlThumbnail_->set_preserveAspect(true);
+
+        auto* urlControls = BSML::Lite::CreateVerticalLayoutGroup(urlRow);
+        ConfigureGroup(urlControls, true);
+        ConfigureLayout(urlControls, 31.0f, 15.5f, 1.0f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            editorRoot, "YouTube URL", "", [this](StringW value) {
-                url_ = std::string(value);
+            urlControls, "YouTube URL", "", [this](StringW value) {
+                url_ = Trim(std::string(value));
+                transientStatus_.clear();
+                if(!suppressUrlCallback_)
+                    BeginUrlProbe();
             });
         ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
-            editorRoot,
+            urlControls,
             "Paste URL from Clipboard",
             {0.0f, 0.0f},
             {40.0f, 6.5f},
             [this]() { PasteUrlFromClipboard(); });
         ConfigureLayout(pasteUrlButton_, -1.0f, 6.5f, 1.0f);
         BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.8f);
+        BSML::Lite::AddHoverHint(
+            urlInput_,
+            "Accepts youtube.com links and youtu.be Share links.");
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorRoot, "Start Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
@@ -435,7 +542,7 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
         detailStorage_ = BSML::Lite::CreateText(
             editorRoot, "", 2.3f);
-        ConfigureLayout(detailStorage_, -1.0f, 4.0f, 1.0f);
+        ConfigureLayout(detailStorage_, -1.0f, 3.5f, 1.0f);
 
         for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
@@ -548,11 +655,29 @@ namespace BigScreen {
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
         selected_ = visible_[row]->level;
+        transientStatus_.clear();
+        loadedThumbnailPath_.clear();
+        if(loadedThumbnailSprite_)
+        {
+            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+            loadedThumbnailSprite_ = nullptr;
+        }
+        if(urlThumbnail_)
+        {
+            urlThumbnail_->set_sprite(
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        }
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig ? descriptor.playableConfig->offsetSeconds : 0.0;
         rate_ = descriptor.playableConfig ? descriptor.playableConfig->playbackRate : 1.0;
-        if(urlInput_) urlInput_->SetText(url_);
+        if(urlInput_)
+        {
+            suppressUrlCallback_ = true;
+            urlInput_->SetText(url_);
+            suppressUrlCallback_ = false;
+        }
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         ShowEditor();
@@ -610,13 +735,96 @@ namespace BigScreen {
             : VideoOrigin::Mapper;
     }
 
+    void VideoLibraryMenu::BeginUrlProbe()
+    {
+        loadedThumbnailPath_.clear();
+        if(loadedThumbnailSprite_)
+        {
+            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+            loadedThumbnailSprite_ = nullptr;
+        }
+        if(urlThumbnail_)
+        {
+            urlThumbnail_->set_sprite(
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        }
+        if(!selected_)
+        {
+            transientStatus_ = "Select a song before checking a video URL.";
+            RefreshDetails();
+            return;
+        }
+        url_ = Trim(url_);
+        if(!IsYouTubeUrl(url_))
+        {
+            transientStatus_ = url_.empty()
+                ? "Paste a youtube.com or youtu.be URL first."
+                : "That is not a recognized YouTube URL. Use youtube.com or youtu.be.";
+            RefreshDetails();
+            return;
+        }
+
+        std::string error;
+        if(!DownloadManager::Instance().StartProbe(
+            std::string(selected_->levelID),
+            url_,
+            error))
+        {
+            transientStatus_ = error.empty()
+                ? "The YouTube URL could not be checked."
+                : error;
+        }
+        else
+        {
+            transientStatus_.clear();
+        }
+        RefreshDetails();
+    }
+
     void VideoLibraryMenu::StartOrCancelDownload()
     {
         auto& downloader = DownloadManager::Instance();
-        if(downloader.Snapshot().Active()) { downloader.Cancel(); return; }
-        if(!selected_ || url_.empty())
+        const auto current = downloader.Snapshot();
+        if(!selected_)
         {
-            if(detailText_) detailText_->set_text("Enter a YouTube URL first.");
+            transientStatus_ = "Select a song before downloading a video.";
+            RefreshDetails();
+            return;
+        }
+        const auto selectedLevelId = std::string(selected_->levelID);
+        if(current.metadataOnly && current.levelId == selectedLevelId &&
+           current.state == DownloadState::Failed)
+        {
+            BeginUrlProbe();
+            return;
+        }
+        if(current.Active())
+        {
+            if(current.levelId == selectedLevelId)
+            {
+                downloader.Cancel();
+                transientStatus_ = "Stopping download...";
+            }
+            else
+            {
+                transientStatus_ = "Another downloader task is already running.";
+            }
+            RefreshDetails();
+            return;
+        }
+        url_ = Trim(url_);
+        if(url_.empty())
+        {
+            transientStatus_ = "Paste a youtube.com or youtu.be URL first.";
+            RefreshDetails();
+            return;
+        }
+        if(!IsYouTubeUrl(url_))
+        {
+            transientStatus_ =
+                "That is not a recognized YouTube URL. Use youtube.com or youtu.be.";
+            RefreshDetails();
             return;
         }
         DownloadRequest request{
@@ -625,8 +833,21 @@ namespace BigScreen {
             selected_->songAuthorName ? std::string(selected_->songAuthorName) : std::string{},
             url_, VideoOrigin::User, ExplicitAllowed(), offset_, rate_};
         std::string error;
-        if(!downloader.Start(std::move(request), error) && detailText_)
-            detailText_->set_text(error);
+        PaperLogger.info("Download button pressed for {}", selectedLevelId);
+        if(!downloader.Start(std::move(request), error))
+        {
+            transientStatus_ = error.empty()
+                ? "The download could not be started."
+                : error;
+            PaperLogger.error(
+                "Could not start download for {}: {}",
+                selectedLevelId,
+                transientStatus_);
+        }
+        else
+        {
+            transientStatus_.clear();
+        }
         RefreshDetails();
     }
 
@@ -652,10 +873,10 @@ namespace BigScreen {
             }
 
             url_ = clipboard;
+            suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
-            RefreshDetails();
-            detailText_->set_text(
-                "URL pasted. Select Download Video to add it to this map.");
+            suppressUrlCallback_ = false;
+            BeginUrlProbe();
         }
         catch(const std::exception& error)
         {
@@ -676,7 +897,12 @@ namespace BigScreen {
         rate_ = descriptor.playableConfig
             ? descriptor.playableConfig->playbackRate
             : 1.0;
-        if(urlInput_) urlInput_->SetText(url_);
+        if(urlInput_)
+        {
+            suppressUrlCallback_ = true;
+            urlInput_->SetText(url_);
+            suppressUrlCallback_ = false;
+        }
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         RefreshDetails();
@@ -717,17 +943,105 @@ namespace BigScreen {
         const auto download = DownloadManager::Instance().Snapshot();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
-        detailText_->set_text(thisDownload && download.state != DownloadState::Idle
-            ? download.message
+        if(transientStatus_ == "Stopping download..." && !download.Active())
+            transientStatus_.clear();
+        // The background probe writes a complete JPEG before publishing its
+        // path. Decode it only after that terminal status, and retain the
+        // sprite until another URL or song is selected so periodic UI ticks
+        // never allocate duplicate Unity textures.
+        if(thisDownload && download.state == DownloadState::ProbeCompleted &&
+           !download.thumbnailPath.empty() && urlThumbnail_)
+        {
+            const auto thumbnailIdentity =
+                download.thumbnailPath + "|" + download.title;
+            if(loadedThumbnailPath_ != thumbnailIdentity &&
+               std::filesystem::is_regular_file(download.thumbnailPath))
+            {
+                try
+                {
+                    auto* sprite = BSML::Lite::FileToSprite(download.thumbnailPath);
+                    if(sprite)
+                    {
+                        if(loadedThumbnailSprite_)
+                            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+                        loadedThumbnailSprite_ = sprite;
+                        loadedThumbnailPath_ = thumbnailIdentity;
+                        urlThumbnail_->set_sprite(sprite);
+                        urlThumbnail_->set_color(UnityEngine::Color::get_white());
+                    }
+                }
+                catch(const std::exception& error)
+                {
+                    PaperLogger.warn(
+                        "Could not display the YouTube thumbnail: {}",
+                        error.what());
+                }
+            }
+        }
+        detailText_->set_text(!transientStatus_.empty()
+            ? transientStatus_
+            : thisDownload && download.state != DownloadState::Idle
+                ? DownloadStatus(download)
             : descriptor.hasUserOverride ? "User video active" :
               descriptor.CanPlay() ? "Mapper video ready" :
               descriptor.CanDownload() ? "Mapper video available to download" :
-              "Paste a YouTube URL to add a video");
+              "Paste a youtube.com or youtu.be URL to add a video");
+        if(downloadProgressTrack_ && downloadProgressFill_)
+        {
+            // Metadata lookup has no byte total, so it uses a pulsing fill.
+            // Once yt-dlp starts transferring the MP4, the same bar switches
+            // to an exact byte ratio and changes color for terminal outcomes.
+            const bool showProgress = thisDownload &&
+                download.state != DownloadState::Idle;
+            downloadProgressTrack_->get_gameObject()->SetActive(showProgress);
+            if(showProgress)
+            {
+                float progress = 0.0f;
+                if(download.state == DownloadState::Completed ||
+                   download.state == DownloadState::ProbeCompleted)
+                    progress = 1.0f;
+                else if(download.state == DownloadState::Failed ||
+                        download.state == DownloadState::Cancelled)
+                    progress = 0.04f;
+                else if(download.Active() && download.totalBytes)
+                    progress = std::clamp(
+                        static_cast<float>(download.downloadedBytes) /
+                            static_cast<float>(download.totalBytes),
+                        0.0f,
+                        1.0f);
+                else if(download.Active())
+                    progress = 0.12f + 0.68f * std::abs(std::sin(
+                        UnityEngine::Time::get_realtimeSinceStartup() * 1.8f));
+
+                downloadProgressFill_->set_color(
+                    (download.state == DownloadState::Completed ||
+                     download.state == DownloadState::ProbeCompleted)
+                        ? UnityEngine::Color{0.20f, 0.90f, 0.42f, 1.0f}
+                        : download.state == DownloadState::Failed
+                            ? UnityEngine::Color{0.95f, 0.22f, 0.20f, 1.0f}
+                            : download.state == DownloadState::Cancelled
+                                ? UnityEngine::Color{0.95f, 0.65f, 0.12f, 1.0f}
+                                : UnityEngine::Color{0.10f, 0.75f, 1.0f, 1.0f});
+                if(auto fillRect = downloadProgressFill_->get_transform().cast<UnityEngine::RectTransform>())
+                    fillRect->set_anchorMax({progress, 1.0f});
+            }
+        }
         if(downloadButton_) BSML::Lite::SetButtonText(
-            downloadButton_, download.Active() ? "Cancel Download" :
+            downloadButton_, thisDownload && download.state == DownloadState::Probing
+                ? "Checking URL..." :
+            thisDownload && download.Active() ? "Cancel Download" :
+            thisDownload && download.metadataOnly && download.state == DownloadState::Failed
+                ? "Check URL Again" :
+            thisDownload && download.state == DownloadState::Failed
+                ? "Retry Download" :
+            thisDownload && download.state == DownloadState::Cancelled
+                ? "Resume Download" :
             descriptor.hasUserOverride ? "Replace Video" : "Download Video");
         if(downloadButton_)
-            downloadButton_->set_interactable(download.Active() || !url_.empty());
+            downloadButton_->set_interactable(
+                (thisDownload && download.Active() &&
+                    download.state != DownloadState::Probing) ||
+                (!download.Active() && !url_.empty()));
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
         if(rateSetting_) rateSetting_->set_interactable(descriptor.CanPlay());
         if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);

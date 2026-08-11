@@ -11,6 +11,8 @@
 namespace BigScreen {
     enum class DownloadState {
         Idle,
+        Probing,
+        ProbeCompleted,
         Preparing,
         Downloading,
         Completed,
@@ -39,9 +41,13 @@ namespace BigScreen {
         std::uint64_t totalBytes = 0;
         double speedBytesPerSecond = 0.0;
         double etaSeconds = 0.0;
+        std::string title;
+        std::string thumbnailPath;
+        bool metadataOnly = false;
 
         bool Active() const {
-            return state == DownloadState::Preparing ||
+            return state == DownloadState::Probing ||
+                   state == DownloadState::Preparing ||
                    state == DownloadState::Downloading;
         }
     };
@@ -54,6 +60,10 @@ namespace BigScreen {
         static DownloadManager& Instance();
 
         bool Initialize(std::string& error);
+        bool StartProbe(
+            std::string levelId,
+            std::string sourceUrl,
+            std::string& error);
         bool Start(DownloadRequest request, std::string& error);
         bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
         void StartScheduledUpdaterCheck(bool nightly);
@@ -69,6 +79,7 @@ namespace BigScreen {
         DownloadManager& operator=(const DownloadManager&) = delete;
 
         void Run(DownloadRequest request, std::filesystem::path finalPath);
+        void RunProbe(std::string levelId, std::string sourceUrl);
         void RunUpdater(bool nightly, bool install);
         void RefreshSnapshotFromDiskLocked();
         void SetFailure(std::string message);
