@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -58,6 +59,10 @@ namespace BigScreen {
         ScreenSurface surface_;
         bool started_ = false;
         bool firstFrameUploaded_ = false;
+        // The presentation limiter lives above FFmpeg so decoder timestamps
+        // remain untouched. Native-rate gating still occurs inside FrameDecoder.
+        std::optional<std::int64_t> lastPresentationSlot_;
+        double lastTickSongTime_ = 0.0;
         PlaybackContext context_ = PlaybackContext::None;
     };
 }

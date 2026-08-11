@@ -32,7 +32,6 @@ namespace BigScreen {
     bool FrameDecoder::Open(
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
-        int maximumOutputFps,
         std::string& error)
     {
         Close();
@@ -126,12 +125,6 @@ namespace BigScreen {
         const AVRational frameRate = av_guess_frame_rate(format_, stream, nullptr);
         if(frameRate.num > 0 && frameRate.den > 0)
             nominalFrameSeconds_ = av_q2d(av_inv_q(frameRate));
-        // Treat the setting as a ceiling. Taking the longer interval preserves
-        // native cadence for a 24 FPS source under a 30/60 FPS limit, while a
-        // 60 FPS source presents at most 15 or 30 images when requested.
-        outputFrameSeconds_ = std::max(
-            nominalFrameSeconds_,
-            1.0 / std::max(1, maximumOutputFps));
 
         if(stream->duration > 0)
             durationSeconds_ = stream->duration * streamTimeBase_;
@@ -169,7 +162,6 @@ namespace BigScreen {
         height_ = 0;
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
-        outputFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
 
         {
@@ -230,20 +222,12 @@ namespace BigScreen {
                 targetVersion = requestVersion_;
             }
 
-            // Quantize the external song clock to the configured presentation
-            // ceiling. The decoder still consumes any intervening H.264
-            // dependency frames, but costly RGBA conversion and Unity uploads
-            // occur only at this cadence.
-            target = std::floor(
-                (std::max(0.0, target) + 0.000001) / outputFrameSeconds_) *
-                outputFrameSeconds_;
-
-            // A video does not need a new decode request for every 90 Hz
+            // A normal 30 fps video does not need a new decode for every 90 Hz
             // Unity update. If the last decoded image still covers the target
-            // presentation interval, wait for song time to cross the next slot.
+            // interval, mark the request handled and wait for song time to move.
             if(std::isfinite(lastDecodedTime) &&
                target >= lastDecodedTime &&
-               target < lastDecodedTime + outputFrameSeconds_)
+               target < lastDecodedTime + nominalFrameSeconds_)
             {
                 handledVersion = targetVersion;
                 continue;
@@ -273,7 +257,7 @@ namespace BigScreen {
                 }
 
                 lastDecodedTime = CurrentFrameTime();
-                if(lastDecodedTime + nominalFrameSeconds_ * 0.5 < target)
+                if(lastDecodedTime + nominalFrameSeconds_ < target)
                     continue;
 
                 VideoFrame output;

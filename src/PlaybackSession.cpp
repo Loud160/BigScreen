@@ -1,5 +1,7 @@
 #include "BigScreen/PlaybackSession.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "BigScreen/Settings.hpp"
@@ -105,7 +107,6 @@ namespace BigScreen {
         if(!decoder_.Open(
                config_->videoPath,
                Settings::Instance().ResolutionHeight(),
-               Settings::Instance().PlaybackFpsLimit(),
                error))
         {
             PaperLogger.error("Could not start video playback: {}", error);
@@ -121,6 +122,8 @@ namespace BigScreen {
 
         started_ = true;
         firstFrameUploaded_ = false;
+        lastPresentationSlot_.reset();
+        lastTickSongTime_ = 0.0;
         context_ = context;
         PaperLogger.info(
             "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s)",
@@ -152,7 +155,26 @@ namespace BigScreen {
             return;
         }
 
-        decoder_.Request(mediaTime);
+        // Limit how often the main thread asks for a presented image without
+        // altering the timestamp FFmpeg decodes toward. Quantizing the decoder
+        // target itself caused irregular source-frame boundaries and visible
+        // stalls. A song-clock slot simply skips redundant requests; the
+        // selected request retains its exact audio-synchronized media time.
+        const int fpsLimit = std::max(1, Settings::Instance().PlaybackFpsLimit());
+        const auto presentationSlot = static_cast<std::int64_t>(std::floor(
+            std::max(0.0, songTimeSeconds) * fpsLimit + 0.000001));
+        const bool clockDiscontinuity =
+            lastPresentationSlot_.has_value() &&
+            (songTimeSeconds + 0.01 < lastTickSongTime_ ||
+             songTimeSeconds - lastTickSongTime_ > 0.75);
+        if(!lastPresentationSlot_ ||
+           clockDiscontinuity ||
+           presentationSlot != *lastPresentationSlot_)
+        {
+            decoder_.Request(mediaTime);
+            lastPresentationSlot_ = presentationSlot;
+        }
+        lastTickSongTime_ = songTimeSeconds;
 
         VideoFrame frame;
         if(!decoder_.TryTake(frame))
@@ -175,6 +197,8 @@ namespace BigScreen {
         decoder_.Close();
         started_ = false;
         firstFrameUploaded_ = false;
+        lastPresentationSlot_.reset();
+        lastTickSongTime_ = 0.0;
         context_ = PlaybackContext::None;
     }
 }
