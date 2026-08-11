@@ -546,11 +546,18 @@ namespace BigScreen {
                 editorContent->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>();
             ConfigureGroup(contentLayout, true);
             if(contentLayout)
+            {
                 contentLayout->set_childForceExpandWidth(true);
+                // ScrollViewTag's returned content container has no preferred
+                // width of its own. Give it the editor's former full control
+                // width so the template cannot collapse it around short labels.
+                ConfigureLayout(contentLayout, 50.0f, -1.0f, 0.0f, 0.0f);
+            }
             if(auto* external = editorContent->GetComponent<BSML::ExternalComponents*>())
             {
                 if(auto* scrollLayout = external->Get<UnityEngine::UI::LayoutElement*>())
                 {
+                    scrollLayout->set_preferredWidth(50.0f);
                     scrollLayout->set_flexibleWidth(1.0f);
                     scrollLayout->set_flexibleHeight(1.0f);
                 }
