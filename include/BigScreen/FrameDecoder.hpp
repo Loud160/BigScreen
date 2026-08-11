@@ -39,7 +39,12 @@ namespace BigScreen {
         FrameDecoder(const FrameDecoder&) = delete;
         FrameDecoder& operator=(const FrameDecoder&) = delete;
 
-        bool Open(const std::filesystem::path& videoPath, std::string& error);
+        /// Opens the source and converts decoded frames to no more than the
+        /// requested output height. Sources below that tier are never upscaled.
+        bool Open(
+            const std::filesystem::path& videoPath,
+            int maximumOutputHeight,
+            std::string& error);
         void Close();
 
         void Request(double mediaSeconds);

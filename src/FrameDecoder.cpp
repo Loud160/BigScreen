@@ -29,7 +29,10 @@ namespace BigScreen {
         Close();
     }
 
-    bool FrameDecoder::Open(const std::filesystem::path& videoPath, std::string& error)
+    bool FrameDecoder::Open(
+        const std::filesystem::path& videoPath,
+        int maximumOutputHeight,
+        std::string& error)
     {
         Close();
         error.clear();
@@ -99,8 +102,24 @@ namespace BigScreen {
             return false;
         }
 
-        width_ = codec_->width;
-        height_ = codec_->height;
+        // Decoding must still read the encoded source, but scaling before the
+        // RGBA mailbox substantially reduces CPU memory traffic and Unity GPU
+        // upload cost. Never upscale a smaller file merely because the user
+        // selected a higher tier.
+        if(codec_->width <= 0 || codec_->height <= 0)
+        {
+            error = "The MP4 reports an invalid video size";
+            Close();
+            return false;
+        }
+
+        const int sourceHeight = codec_->height;
+        height_ = maximumOutputHeight > 0
+            ? std::min(sourceHeight, maximumOutputHeight)
+            : sourceHeight;
+        width_ = static_cast<int>(std::lround(
+            codec_->width * (height_ / static_cast<double>(sourceHeight))));
+        width_ = std::max(width_, 1);
         streamTimeBase_ = av_q2d(stream->time_base);
 
         const AVRational frameRate = av_guess_frame_rate(format_, stream, nullptr);

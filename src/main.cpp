@@ -2,56 +2,34 @@
 
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
+#include "BigScreen/Settings.hpp"
+#include "BigScreen/SettingsMenu.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
+#include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
+#include "GlobalNamespace/EnvironmentEffectsFilterPreset.hpp"
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
+#include "GlobalNamespace/Rotate.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
+#include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
+#include "GlobalNamespace/TrackLaneRingsRotationEffect.hpp"
+#include "GlobalNamespace/TrackLaneRingsRotationEffectSpawner.hpp"
+#include "System/Nullable_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "UnityEngine/Object.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
-static bool showMenuPreview = true;
 
 namespace {
-    Configuration& GetConfiguration()
-    {
-        static Configuration configuration(modInfo);
-        return configuration;
-    }
-
-    void LoadSettings()
-    {
-        auto& configuration = GetConfiguration();
-        configuration.Load();
-
-        // Configuration::Load guarantees an object document for a valid file.
-        // Be defensive around malformed user edits and restore only our own
-        // field, leaving unrelated future settings untouched.
-        auto& document = configuration.config;
-        if(!document.IsObject())
-            document.SetObject();
-
-        const auto existing = document.FindMember("showMenuPreview");
-        if(existing != document.MemberEnd() && existing->value.IsBool())
-        {
-            showMenuPreview = existing->value.GetBool();
-            return;
-        }
-
-        document.RemoveMember("showMenuPreview");
-        document.AddMember("showMenuPreview", true, document.GetAllocator());
-        configuration.Write();
-        showMenuPreview = true;
-    }
-
     void HandleLevelWasSelected(
         SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& eventArgs)
     {
@@ -64,10 +42,72 @@ namespace {
 
 bool IsMenuPreviewEnabled()
 {
-    return showMenuPreview;
+    return BigScreen::Settings::Instance().MenuPreviewEnabled();
 }
 
 namespace {
+    template<typename T>
+    int DisableLoadedComponents()
+    {
+        int disabled = 0;
+        for(auto* component : UnityEngine::Object::FindObjectsOfType<T*>(false))
+        {
+            if(component && component->get_enabled())
+            {
+                component->set_enabled(false);
+                ++disabled;
+            }
+        }
+        return disabled;
+    }
+
+    void DisableEnvironmentMotion()
+    {
+        // These are scenery-only components used by Beat Saber's tunnel rings
+        // and continuously rotating background props. Gameplay spawn rotation,
+        // note movement, sabers, and cameras use different component types and
+        // are deliberately left untouched.
+        int disabled = 0;
+        disabled += DisableLoadedComponents<GlobalNamespace::TrackLaneRingsRotationEffect>();
+        disabled += DisableLoadedComponents<GlobalNamespace::Rotate>();
+        PaperLogger.info("Disabled {} rotating or moving environment components", disabled);
+    }
+
+    bool ShouldSuppressEnvironmentMotion()
+    {
+        return BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+               !BigScreen::Settings::Instance().EnvironmentMotionEnabled();
+    }
+
+    MAKE_HOOK_MATCH(
+        TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent,
+        &GlobalNamespace::TrackLaneRingsRotationEffectSpawner::HandleBeatmapEvent,
+        void,
+        GlobalNamespace::TrackLaneRingsRotationEffectSpawner* self,
+        GlobalNamespace::BasicBeatmapEventData* eventData)
+    {
+        // Beat map callbacks are ordinary delegates and can invoke a disabled
+        // MonoBehaviour. Suppress the callback itself so no new ring rotation
+        // effects accumulate while the visual effect component is frozen.
+        if(ShouldSuppressEnvironmentMotion())
+            return;
+        TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent(self, eventData);
+    }
+
+    MAKE_HOOK_MATCH(
+        TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent,
+        &GlobalNamespace::TrackLaneRingsPositionStepEffectSpawner::HandleBeatmapEvent,
+        void,
+        GlobalNamespace::TrackLaneRingsPositionStepEffectSpawner* self,
+        GlobalNamespace::BasicBeatmapEventData* eventData)
+    {
+        // Position-step callbacks move the same tunnel scenery directly, so
+        // component.enabled alone would not stop them once they subscribed.
+        if(ShouldSuppressEnvironmentMotion())
+            return;
+        TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent(self, eventData);
+    }
+
     MAKE_HOOK_MATCH(
         StandardLevelDetailView_Awake,
         &GlobalNamespace::StandardLevelDetailView::Awake,
@@ -110,6 +150,13 @@ namespace {
             environmentsListModel);
 
         const auto& requested = playback.RequestedEnvironment();
+        if(!BigScreen::Settings::Instance().EnvironmentOverrideEnabled())
+        {
+            if(requested)
+                PaperLogger.info("Map environment override suppressed by user setting");
+            return;
+        }
+
         if(!requested || !environmentsListModel)
             return;
 
@@ -130,6 +177,43 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
+        StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes,
+        &GlobalNamespace::StandardLevelScenesTransitionSetupDataSO::InitAndSetupScenes,
+        void,
+        GlobalNamespace::StandardLevelScenesTransitionSetupDataSO* self,
+        GlobalNamespace::PlayerSpecificSettings* playerSpecificSettings,
+        StringW backButtonText,
+        bool startPaused)
+    {
+        auto* effectiveSettings = playerSpecificSettings;
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           !BigScreen::Settings::Instance().MapLightShowEnabled() &&
+           playerSpecificSettings)
+        {
+            // CopyWith preserves every player preference while replacing only
+            // the two difficulty-dependent environment filters. Passing a copy
+            // avoids mutating Beat Saber's saved setting or affecting non-video
+            // songs after this scene transition.
+            using OptionalEffects =
+                System::Nullable_1<GlobalNamespace::EnvironmentEffectsFilterPreset>;
+            const OptionalEffects noEffects{
+                true,
+                GlobalNamespace::EnvironmentEffectsFilterPreset::NoEffects
+            };
+            effectiveSettings = playerSpecificSettings->CopyWith(
+                {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+                {}, {}, {}, {}, {}, {}, {}, noEffects, noEffects, {});
+            PaperLogger.info("Map light show disabled for this video level");
+        }
+
+        StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes(
+            self,
+            effectiveSettings,
+            backButtonText,
+            startPaused);
+    }
+
+    MAKE_HOOK_MATCH(
         AudioTimeSyncController_StartSong,
         &GlobalNamespace::AudioTimeSyncController::StartSong,
         void,
@@ -141,6 +225,11 @@ namespace {
         // StartSong runs after the gameplay scene and environment have loaded,
         // so Unity objects created here belong to the correct scene. The screen
         // remains hidden until the worker publishes its first decoded frame.
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           !BigScreen::Settings::Instance().EnvironmentMotionEnabled())
+        {
+            DisableEnvironmentMotion();
+        }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }
 
@@ -205,7 +294,7 @@ namespace {
 MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
-    LoadSettings();
+    BigScreen::Settings::Instance().Load();
     Paper::Logger::RegisterFileContextId(PaperLogger.tag);
     PaperLogger.info("Big Screen {} initialized", VERSION);
 }
@@ -218,8 +307,11 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // and select the environment at transition, create on song start, follow
     // the authoritative song clock, and clean up when the level finishes.
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
+    INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_Awake);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
+    INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
@@ -229,5 +321,6 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // including WIP songs. A plain native callback keeps this path independent
     // of Beat Saber's private view-controller field layout.
     SongCore::API::LevelSelect::GetLevelWasSelectedEvent().addCallback(HandleLevelWasSelected);
+    BigScreen::SettingsMenu::Instance().Register();
     PaperLogger.info("Big Screen hooks installed");
 }

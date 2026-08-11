@@ -1,6 +1,7 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 
 #include "BigScreen/PlaybackSession.hpp"
+#include "BigScreen/Settings.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
@@ -27,13 +28,16 @@ namespace BigScreen {
         // StandardLevelDetailView owns the characteristic, difficulty, level
         // statistics, and Play controls. Parenting here keeps Video adjacent to
         // the choice it affects instead of hiding it in a separate mod screen.
-        // The anchored location sits at the lower-right edge of the parameter
-        // area in Beat Saber 1.37 and leaves the Play/Practice buttons clear.
+        // Keep the control centered horizontally within the detail view. The
+        // first 1.37 build placed its center near the panel's right edge; that
+        // left the Video label visible but clipped the actual switch. A centered
+        // anchor keeps the complete BSML control inside the panel at every
+        // supported UI scale while remaining below the difficulty controls.
         ui_ = BSML::Lite::CreateToggle(
             detailView,
             "Video",
             enabled_,
-            UnityEngine::Vector2{36.0f, -24.0f},
+            UnityEngine::Vector2{0.0f, -24.0f},
             [this](bool value)
             {
                 ToggleChanged(value);
@@ -52,6 +56,7 @@ namespace BigScreen {
             ui_,
             "Show this song's map video in the menu and during play.");
         RefreshUi();
+        PaperLogger.info("Created complete song-detail Video toggle at centered anchor");
     }
 
     void SelectionVideoToggle::ForgetUi()
@@ -73,7 +78,7 @@ namespace BigScreen {
         {
             selectedLevelId_ = levelId;
             selectedLevelHasVideo_ = false;
-            enabled_ = true;
+            enabled_ = Settings::Instance().VideoEnabledByDefault();
             playback.Prepare(nullptr);
             RefreshUi();
             return;
@@ -89,12 +94,43 @@ namespace BigScreen {
         }
 
         selectedLevelId_ = levelId;
-        enabled_ = true;
+        enabled_ = Settings::Instance().VideoEnabledByDefault();
         playback.Prepare(customLevel);
         selectedLevelHasVideo_ = playback.HasPreparedVideo();
         RefreshUi();
 
-        if(selectedLevelHasVideo_ && IsMenuPreviewEnabled())
+        if(selectedLevelHasVideo_ && enabled_ && IsMenuPreviewEnabled())
+            playback.Start(PlaybackContext::MenuPreview);
+    }
+
+    void SelectionVideoToggle::ApplyDefaultVideoEnabled(bool enabled)
+    {
+        enabled_ = enabled;
+        RefreshUi();
+
+        if(!selectedLevelHasVideo_)
+            return;
+
+        auto& playback = PlaybackSession::Instance();
+        if(!enabled_)
+            playback.Stop();
+        else if(IsMenuPreviewEnabled())
+            playback.Start(PlaybackContext::MenuPreview);
+    }
+
+    void SelectionVideoToggle::MenuPreviewPreferenceChanged()
+    {
+        auto& playback = PlaybackSession::Instance();
+        if(!IsMenuPreviewEnabled())
+        {
+            // A preview preference change must never stop gameplay if a mod
+            // menu is opened by another mod while a replay is active.
+            if(playback.IsMenuPreviewActive())
+                playback.Stop();
+            return;
+        }
+
+        if(selectedLevelHasVideo_ && enabled_ && playback.HasPreparedVideo())
             playback.Start(PlaybackContext::MenuPreview);
     }
 
@@ -109,6 +145,9 @@ namespace BigScreen {
             return;
 
         enabled_ = enabled;
+        PaperLogger.info(
+            "Selected song video switched {}",
+            enabled_ ? "on" : "off");
         auto& playback = PlaybackSession::Instance();
         if(!enabled_)
         {

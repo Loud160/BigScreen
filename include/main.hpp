@@ -11,7 +11,6 @@
 /// debugger to the headset.
 constexpr auto PaperLogger = Paper::ConstLoggerContext("bigscreen");
 
-/// Returns the persisted menu-preview preference. Keeping the query behind a
-/// function lets a future BSML settings screen change its storage without
-/// coupling the playback code to a particular UI framework.
+/// Returns the effective persisted menu-preview preference. Selection UI uses
+/// this small boundary rather than depending on settings storage details.
 bool IsMenuPreviewEnabled();

@@ -33,6 +33,14 @@ namespace BigScreen {
             const std::string& levelId,
             SongCore::SongLoader::CustomBeatmapLevel* customLevel);
 
+        /// Applies a changed global default to the currently selected song.
+        /// Future selections read the same value directly from Settings.
+        void ApplyDefaultVideoEnabled(bool enabled);
+
+        /// Starts or stops only menu-preview playback after its independent
+        /// preference changes; gameplay playback is intentionally untouched.
+        void MenuPreviewPreferenceChanged();
+
         bool IsEnabledForSelectedLevel() const;
 
     private:

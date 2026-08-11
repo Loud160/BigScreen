@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "BigScreen/Settings.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -57,6 +58,14 @@ namespace BigScreen {
 
         if(config_)
         {
+            // Apply headset-wide display preferences after normalizing mapper
+            // metadata. Position and size remain relative to the mapper's
+            // baseline instead of replacing carefully authored placement.
+            const auto& settings = Settings::Instance();
+            config_->screenPosition.z += settings.ScreenDistanceOffset();
+            config_->screenHeight *= settings.ScreenScale();
+            config_->transparent = settings.TransparencyEnabled();
+
             PaperLogger.info(
                 "Prepared video '{}' from '{}'",
                 config_->videoPath.filename().string(),
@@ -74,7 +83,10 @@ namespace BigScreen {
             return;
 
         std::string error;
-        if(!decoder_.Open(config_->videoPath, error))
+        if(!decoder_.Open(
+               config_->videoPath,
+               Settings::Instance().ResolutionHeight(),
+               error))
         {
             PaperLogger.error("Could not start video playback: {}", error);
             return;

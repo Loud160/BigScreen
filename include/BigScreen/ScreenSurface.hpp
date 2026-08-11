@@ -34,7 +34,7 @@ namespace BigScreen {
 
     private:
         bool CreateMesh(const MapVideoConfig& config, float aspectRatio);
-        bool CreateMaterialAndTexture(int width, int height);
+        bool CreateMaterialAndTexture(int width, int height, bool transparent);
 
         UnityEngine::GameObject* gameObject_ = nullptr;
         UnityEngine::Mesh* mesh_ = nullptr;

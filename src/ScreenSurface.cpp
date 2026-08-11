@@ -5,6 +5,7 @@
 
 #include "BigScreen/FrameDecoder.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Color.hpp"
 #include "UnityEngine/LayerMask.hpp"
 #include "UnityEngine/Material.hpp"
 #include "UnityEngine/Mesh.hpp"
@@ -57,7 +58,7 @@ namespace BigScreen {
 
         const float aspectRatio = static_cast<float>(videoWidth) / videoHeight;
         if(!CreateMesh(config, aspectRatio) ||
-           !CreateMaterialAndTexture(videoWidth, videoHeight))
+           !CreateMaterialAndTexture(videoWidth, videoHeight, config.transparent))
         {
             Destroy();
             return false;
@@ -147,9 +148,19 @@ namespace BigScreen {
         return true;
     }
 
-    bool ScreenSurface::CreateMaterialAndTexture(int width, int height)
+    bool ScreenSurface::CreateMaterialAndTexture(
+        int width,
+        int height,
+        bool transparent)
     {
-        const auto shader = UnityEngine::Shader::Find("Unlit/Texture");
+        // Unity's transparent unlit shader performs normal alpha blending, so
+        // Beat Saber lights and background geometry remain visible through the
+        // video without changing the decoded pixels. A fixed 75% opacity keeps
+        // lyrics and motion readable while still revealing the light show.
+        auto shader = UnityEngine::Shader::Find(
+            transparent ? "Unlit/Transparent" : "Unlit/Texture");
+        if(!shader && transparent)
+            shader = UnityEngine::Shader::Find("Unlit/Texture");
         if(!shader)
             return false;
 
@@ -166,6 +177,19 @@ namespace BigScreen {
         textureWidth_ = width;
         textureHeight_ = height;
         material_->set_mainTexture(texture_);
+        if(transparent)
+        {
+            material_->set_color(UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f});
+            // These standard Unity blend properties also make the fallback
+            // Unlit/Texture material transparent on builds where the named
+            // Unlit/Transparent shader was stripped from the player.
+            material_->SetInt("_SrcBlend", 5);  // SrcAlpha
+            material_->SetInt("_DstBlend", 10); // OneMinusSrcAlpha
+            material_->SetInt("_ZWrite", 0);
+            material_->DisableKeyword("_ALPHATEST_ON");
+            material_->EnableKeyword("_ALPHABLEND_ON");
+            material_->set_renderQueue(3000);
+        }
         return true;
     }
 
