@@ -4,6 +4,8 @@
 #include <string>
 #include <string_view>
 
+#include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "HMUI/ViewController.hpp"
@@ -48,32 +50,29 @@ namespace BigScreen {
 
     void SettingsMenu::Register()
     {
-        // This registration produces the familiar left-side main-menu button
-        // used by major Quest mods, then lets BSML own navigation/back behavior.
-        BSML::Register::RegisterMainMenu(
-            "Big Screen Settings",
+        // A flow coordinator rather than the one-panel callback registration
+        // gives Big Screen a proper optional right-side preview screen.
+        BSML::Register::RegisterMainMenuFlowCoordinator(
             "Big Screen",
             "Configure video playback, screen appearance, and environments.",
-            [this](HMUI::ViewController* controller, bool first, bool added, bool enabling)
-            {
-                DidActivate(controller, first, added, enabling);
-            });
+            csTypeOf(MenuFlowCoordinator*));
     }
 
-    void SettingsMenu::DidActivate(
-        HMUI::ViewController* viewController,
-        bool firstActivation,
-        bool addedToHierarchy,
-        bool screenSystemEnabling)
+    void SettingsMenu::CreateUi(HMUI::ViewController* viewController)
     {
-        (void)addedToHierarchy;
-        (void)screenSystemEnabling;
-        if(!viewController || !firstActivation)
+        if(!viewController)
+            return;
+        if(settingsViewController_ == viewController)
         {
-            RefreshPreviewControl();
-            RefreshCurvatureControl();
+            RefreshControls();
             return;
         }
+
+        // MenuCore restarts replace the controller and all of its children.
+        // Clear native UI references before constructing the new scene's page.
+        settingsViewController_ = viewController;
+        previewToggle_ = nullptr;
+        curvatureSlider_ = nullptr;
 
         auto& settings = Settings::Instance();
         auto* container = BSML::Lite::CreateScrollableSettingsContainer(viewController);
@@ -115,6 +114,19 @@ namespace BigScreen {
             previewToggle_,
             "Controls song-selection previews separately from video during gameplay.");
 
+        auto* screenPreview = BSML::Lite::CreateToggle(
+            container,
+            "Settings Screen Preview",
+            settings.MenuScreenPreviewEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetMenuScreenPreviewEnabled(enabled);
+                ScreenPreview::Instance().SetEnabled(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            screenPreview,
+            "Shows a live right-side preview using Big Screen's Big Mirror reference stage.");
+
         auto* distance = BSML::Lite::CreateIncrementSetting(
             container,
             "Screen Distance Offset",
@@ -126,6 +138,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenDistanceOffset(value);
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             distance,
@@ -142,6 +155,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenScale(value);
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             size,
@@ -155,6 +169,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetCurvedScreenEnabled(enabled);
                 RefreshCurvatureControl();
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             curvedScreen,
@@ -174,6 +189,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetScreenCurvature(value);
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             curvatureSlider_,
@@ -186,6 +202,7 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetTransparencyEnabled(enabled);
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             transparency,
@@ -235,11 +252,17 @@ namespace BigScreen {
             [](StringW value)
             {
                 Settings::Instance().SetResolutionHeight(ResolutionValue(value));
+                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             resolution,
             "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
+        RefreshControls();
+    }
+
+    void SettingsMenu::RefreshControls()
+    {
         RefreshPreviewControl();
         RefreshCurvatureControl();
     }

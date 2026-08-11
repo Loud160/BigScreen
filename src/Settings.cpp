@@ -85,6 +85,7 @@ namespace BigScreen {
 
         videoEnabledByDefault_ = ReadBool(document, "videoEnabledByDefault", true);
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
+        menuScreenPreviewEnabled_ = ReadBool(document, "menuScreenPreviewEnabled", false);
         screenDistanceOffset_ = std::clamp(
             ReadFloat(document, "screenDistanceOffset", 0.0f),
             -40.0f,
@@ -118,6 +119,7 @@ namespace BigScreen {
     {
         videoEnabledByDefault_ = true;
         menuPreviewEnabled_ = true;
+        menuScreenPreviewEnabled_ = false;
         screenDistanceOffset_ = 0.0f;
         screenScale_ = 1.0f;
         curvedScreenEnabled_ = false;
@@ -143,6 +145,12 @@ namespace BigScreen {
         // Do not permit a stale UI callback or hand-authored config to enable
         // a decoder while the master video default is disabled.
         menuPreviewEnabled_ = videoEnabledByDefault_ && value;
+        Save();
+    }
+
+    void Settings::SetMenuScreenPreviewEnabled(bool value)
+    {
+        menuScreenPreviewEnabled_ = value;
         Save();
     }
 
@@ -209,6 +217,7 @@ namespace BigScreen {
 
         Replace(document, "videoEnabledByDefault", videoEnabledByDefault_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
+        Replace(document, "menuScreenPreviewEnabled", menuScreenPreviewEnabled_);
         Replace(document, "screenDistanceOffset", screenDistanceOffset_);
         Replace(document, "screenScale", screenScale_);
         Replace(document, "curvedScreenEnabled", curvedScreenEnabled_);

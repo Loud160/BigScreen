@@ -17,6 +17,7 @@ namespace BigScreen {
 
         bool VideoEnabledByDefault() const { return videoEnabledByDefault_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
+        bool MenuScreenPreviewEnabled() const { return menuScreenPreviewEnabled_; }
         float ScreenDistanceOffset() const { return screenDistanceOffset_; }
         float ScreenScale() const { return screenScale_; }
         bool CurvedScreenEnabled() const { return curvedScreenEnabled_; }
@@ -29,6 +30,7 @@ namespace BigScreen {
 
         void SetVideoEnabledByDefault(bool value);
         void SetMenuPreviewEnabled(bool value);
+        void SetMenuScreenPreviewEnabled(bool value);
         void SetScreenDistanceOffset(float value);
         void SetScreenScale(float value);
         void SetCurvedScreenEnabled(bool value);
@@ -46,6 +48,7 @@ namespace BigScreen {
 
         bool videoEnabledByDefault_ = true;
         bool menuPreviewEnabled_ = true;
+        bool menuScreenPreviewEnabled_ = false;
         float screenDistanceOffset_ = 0.0f;
         float screenScale_ = 1.0f;
         bool curvedScreenEnabled_ = false;

@@ -24,6 +24,7 @@
 #include "UnityEngine/Object.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
+#include "custom-types/shared/register.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 
@@ -302,6 +303,7 @@ MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 MOD_EXTERN_FUNC void late_load() noexcept
 {
     il2cpp_functions::Init();
+    custom_types::Register::AutoRegister();
 
     // These four hooks form a deliberately small public-API boundary: prepare
     // and select the environment at transition, create on song start, follow

@@ -16,18 +16,16 @@ namespace BigScreen {
         static SettingsMenu& Instance();
 
         void Register();
+        void CreateUi(HMUI::ViewController* viewController);
+        void RefreshControls();
 
     private:
         SettingsMenu() = default;
 
-        void DidActivate(
-            HMUI::ViewController* viewController,
-            bool firstActivation,
-            bool addedToHierarchy,
-            bool screenSystemEnabling);
         void RefreshPreviewControl();
         void RefreshCurvatureControl();
 
+        HMUI::ViewController* settingsViewController_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
     };
