@@ -4,15 +4,23 @@
 #include <string>
 #include <vector>
 
+#include "beatsaber-hook/shared/utils/typedefs.h"
+
 namespace BSML {
     class ClickableText;
     class CustomListTableData;
     class IncrementSetting;
+    class SliderSetting;
 }
-namespace GlobalNamespace { class BeatmapLevel; }
+namespace GlobalNamespace {
+    class BeatmapLevel;
+    class IPreviewMediaData;
+    class SongPreviewPlayer;
+}
 namespace HMUI { class ImageView; class InputFieldView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
-namespace UnityEngine { class Sprite; }
+namespace System::Threading::Tasks { template<class TResult> class Task_1; }
+namespace UnityEngine { class AudioClip; class AudioSource; class Sprite; }
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
@@ -37,7 +45,7 @@ namespace BigScreen {
             HMUI::ViewController* editorController,
             std::function<void(bool showEditor)> navigate);
         void Refresh();
-        void Tick();
+        void Tick(GlobalNamespace::SongPreviewPlayer* songPreviewPlayer);
         void Deactivate();
 
     private:
@@ -57,6 +65,12 @@ namespace BigScreen {
         void ClearThumbnail();
         void RefreshVisibleVideoThumbnails();
         void StartSelectedPreview();
+        void RequestSelectedAudio();
+        void TogglePreviewPlayback();
+        void SeekPreview(float songTimeSeconds);
+        void StartPreviewAudio();
+        void StopPreviewAudio(bool returnToMenuMusic);
+        void RefreshPlaybackControls();
         void JumpToLetter(char letter);
         VideoOrigin SelectedVideoOrigin() const;
 
@@ -68,12 +82,14 @@ namespace BigScreen {
         HMUI::InputFieldView* urlInput_ = nullptr;
         BSML::IncrementSetting* offsetSetting_ = nullptr;
         BSML::IncrementSetting* rateSetting_ = nullptr;
+        BSML::SliderSetting* playbackScrubber_ = nullptr;
         TMPro::TextMeshProUGUI* browserTitle_ = nullptr;
         TMPro::TextMeshProUGUI* browserStorage_ = nullptr;
         TMPro::TextMeshProUGUI* filterText_ = nullptr;
         TMPro::TextMeshProUGUI* detailTitle_ = nullptr;
         TMPro::TextMeshProUGUI* detailText_ = nullptr;
         TMPro::TextMeshProUGUI* detailStorage_ = nullptr;
+        TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
@@ -83,23 +99,34 @@ namespace BigScreen {
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::UI::Button* fitButton_ = nullptr;
+        UnityEngine::UI::Button* playPauseButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
         std::vector<BSML::ClickableText*> alphabetButtons_;
         std::vector<SongLibraryItem> catalog_;
         std::vector<SongLibraryItem*> visible_;
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;
+        GlobalNamespace::IPreviewMediaData* previewMediaData_ = nullptr;
+        GlobalNamespace::SongPreviewPlayer* songPreviewPlayer_ = nullptr;
+        System::Threading::Tasks::Task_1<UnityW<UnityEngine::AudioClip>>* audioLoadTask_ = nullptr;
+        UnityEngine::AudioClip* previewAudioClip_ = nullptr;
+        UnityEngine::AudioSource* previewAudioSource_ = nullptr;
         SongLibraryFilter filter_ = SongLibraryFilter::All;
         std::string search_;
         std::string url_;
         std::string transientStatus_;
         std::string loadedThumbnailPath_;
         std::string completedVideoThumbnailIdentity_;
+        std::string audioLoadLevelId_;
+        std::string autoPlayedDownloadIdentity_;
         UnityEngine::Sprite* loadedThumbnailSprite_ = nullptr;
         double offset_ = 0.0;
         double rate_ = 1.0;
-        float previewStartedAt_ = 0.0f;
+        double previewSongTime_ = 0.0;
         bool active_ = false;
         bool editorVisible_ = false;
+        bool previewPlaying_ = false;
+        bool playWhenAudioReady_ = false;
+        bool suppressScrubberCallback_ = false;
         bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;
     };

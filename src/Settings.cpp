@@ -67,6 +67,13 @@ namespace BigScreen {
             // Quest default instead of silently selecting an arbitrary size.
             return value == 480 || value == 720 || value == 1080 ? value : 720;
         }
+
+        int NormalizePlaybackFps(int value)
+        {
+            // These are presentation ceilings, not forced rates. A 24 FPS
+            // source remains 24 FPS even when the selected ceiling is 30 or 60.
+            return value == 15 || value == 30 || value == 60 ? value : 30;
+        }
     }
 
     Settings& Settings::Instance()
@@ -121,6 +128,8 @@ namespace BigScreen {
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
+        playbackFpsLimit_ = NormalizePlaybackFps(
+            ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
@@ -150,6 +159,7 @@ namespace BigScreen {
         mapLightShowEnabled_ = true;
         environmentOverrideEnabled_ = true;
         environmentMotionEnabled_ = true;
+        playbackFpsLimit_ = 30;
         resolutionHeight_ = 720;
         nightlyDownloaderUpdates_ = false;
         Save();
@@ -243,6 +253,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetPlaybackFpsLimit(int value)
+    {
+        playbackFpsLimit_ = NormalizePlaybackFps(value);
+        Save();
+    }
+
     void Settings::SetResolutionHeight(int value)
     {
         resolutionHeight_ = NormalizeResolution(value);
@@ -280,6 +296,7 @@ namespace BigScreen {
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
+        Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         configuration.Write();

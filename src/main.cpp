@@ -306,7 +306,7 @@ namespace {
             return;
 
         BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
-        BigScreen::VideoLibraryMenu::Instance().Tick();
+        BigScreen::VideoLibraryMenu::Instance().Tick(self);
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
         {

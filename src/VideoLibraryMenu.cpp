@@ -17,22 +17,31 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "GlobalNamespace/AudioHelpers.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "GlobalNamespace/BeatmapLevelPack.hpp"
 #include "GlobalNamespace/BeatmapLevelsModel.hpp"
 #include "GlobalNamespace/BeatmapLevelsRepository.hpp"
 #include "GlobalNamespace/LevelListTableCell.hpp"
+#include "GlobalNamespace/IPreviewMediaData.hpp"
+#include "GlobalNamespace/PerceivedLoudnessPerLevelModel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
+#include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "HMUI/InputFieldView.hpp"
 #include "HMUI/ImageView.hpp"
 #include "HMUI/TableCell.hpp"
 #include "HMUI/TableView.hpp"
+#include "HMUI/RangeValuesTextSlider.hpp"
+#include "System/Threading/CancellationToken.hpp"
+#include "System/Threading/Tasks/Task_1.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/AudioClip.hpp"
+#include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/GUIUtility.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/Object.hpp"
@@ -54,7 +63,9 @@
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/ClickableText.hpp"
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
+#include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
+#include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/Helpers/delegates.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
@@ -114,6 +125,30 @@ namespace BigScreen {
                 std::find_if_not(value.rbegin(), value.rend(), isWhitespace).base(),
                 value.end());
             return value;
+        }
+
+        std::string PlaybackTime(double seconds)
+        {
+            const auto wholeSeconds = static_cast<int>(std::max(0.0, seconds));
+            const int minutes = wholeSeconds / 60;
+            const int remainder = wholeSeconds % 60;
+            std::ostringstream text;
+            text << minutes << ':' << std::setw(2) << std::setfill('0') << remainder;
+            return text.str();
+        }
+
+        UnityEngine::AudioSource* ActiveSongAudioSource(
+            GlobalNamespace::SongPreviewPlayer* player)
+        {
+            if(!player) return nullptr;
+            const int channel = player->__cordl_internal_get__activeChannel();
+            auto controllers = player->__cordl_internal_get__audioSourceControllers();
+            if(!controllers || channel < 0 || channel >= controllers.size())
+                return nullptr;
+            auto* controller = controllers[channel];
+            return controller
+                ? controller->__cordl_internal_get_audioSource().ptr()
+                : nullptr;
         }
 
         bool IsWebUrl(const std::string& value)
@@ -500,11 +535,36 @@ namespace BigScreen {
             editorRoot, "< Back to Song List", {0.0f, 0.0f}, {45.0f, 7.0f}, [this]() { ShowBrowser(); });
         ConfigureLayout(backToListButton_, -1.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
+
+        // Keep navigation fixed while the denser download and synchronization
+        // editor scrolls below it. BSML returns the content object while its
+        // ExternalComponents owns the actual viewport LayoutElement.
+        auto* editorContent = BSML::Lite::CreateScrollView(editorRoot);
+        if(editorContent)
+        {
+            auto* contentLayout =
+                editorContent->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>();
+            ConfigureGroup(contentLayout, true);
+            if(contentLayout)
+                contentLayout->set_childForceExpandWidth(true);
+            if(auto* external = editorContent->GetComponent<BSML::ExternalComponents*>())
+            {
+                if(auto* scrollLayout = external->Get<UnityEngine::UI::LayoutElement*>())
+                {
+                    scrollLayout->set_flexibleWidth(1.0f);
+                    scrollLayout->set_flexibleHeight(1.0f);
+                }
+            }
+        }
+        const BSML::Lite::TransformWrapper editorBody = editorContent
+            ? BSML::Lite::TransformWrapper(editorContent)
+            : BSML::Lite::TransformWrapper(editorRoot);
+
         detailTitle_ = BSML::Lite::CreateText(
-            editorRoot, "", 3.6f);
+            editorBody, "", 3.6f);
         ConfigureLayout(detailTitle_, -1.0f, 7.5f, 1.0f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            editorRoot, "YouTube URL", "", [this](StringW value) {
+            editorBody, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
                 transientStatus_.clear();
                 if(!suppressUrlCallback_)
@@ -515,7 +575,7 @@ namespace BigScreen {
         // Keep the address field at the panel's full width. Recognition art
         // belongs in the following action row, where it cannot reduce the
         // amount of the pasted URL that remains visible and editable.
-        auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlPreviewRow, false);
         urlPreviewRow->set_spacing(0.45f);
         ConfigureLayout(urlPreviewRow, -1.0f, 9.5f, 1.0f);
@@ -549,10 +609,10 @@ namespace BigScreen {
         // This keeps recognition errors and active download feedback visually
         // attached to the thumbnail/download row instead of the song heading.
         detailText_ = BSML::Lite::CreateText(
-            editorRoot, "", 2.35f);
+            editorBody, "", 2.35f);
         ConfigureLayout(detailText_, -1.0f, 7.0f, 1.0f);
         downloadProgressTrack_ = BSML::Lite::CreateImage(
-            editorRoot,
+            editorBody,
             BSML::Utilities::ImageResources::GetBlankSprite());
         ConfigureLayout(downloadProgressTrack_, -1.0f, 2.2f, 1.0f);
         downloadProgressTrack_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
@@ -571,8 +631,18 @@ namespace BigScreen {
             fillRect->set_sizeDelta({0.0f, -0.35f});
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
+
+        // Timing tools are ordered by intent: apply the automatic fit first,
+        // then make precise offset and speed changes, then audition the result
+        // with the transport controls immediately below them.
+        fitButton_ = BSML::Lite::CreateUIButton(
+            editorBody, "Fit to Song", {0.0f, 0.0f}, {31.0f, 6.5f},
+            [this]() { FitToSong(); });
+        ConfigureLayout(fitButton_, -1.0f, 6.5f, 1.0f);
+        BSML::Lite::SetButtonTextSize(fitButton_, 2.8f);
+
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorRoot, "Start Offset", 2, 0.25f, 0.0f,
+            editorBody, "Start Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
                 offset_ = value;
                 if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
@@ -582,7 +652,7 @@ namespace BigScreen {
             });
         ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorRoot, "Playback Speed", 2, 0.05f, 1.0f,
+            editorBody, "Playback Speed", 2, 0.05f, 1.0f,
             0.05f, 8.0f, {0, 0}, [this](float value) {
                 rate_ = value;
                 if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
@@ -592,21 +662,51 @@ namespace BigScreen {
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
 
-        fitButton_ = BSML::Lite::CreateUIButton(
-            editorRoot, "Fit to Song", {0.0f, 0.0f}, {31.0f, 7.0f},
-            [this]() { FitToSong(); });
-        ConfigureLayout(fitButton_, -1.0f, 7.0f, 1.0f);
-        BSML::Lite::SetButtonTextSize(fitButton_, 2.8f);
+        playbackScrubber_ = BSML::Lite::CreateSliderSetting(
+            editorBody,
+            "Preview Position",
+            0.1f,
+            0.0f,
+            0.0f,
+            1.0f,
+            0.0f,
+            false,
+            {0.0f, 0.0f},
+            [this](float value) {
+                if(!suppressScrubberCallback_)
+                    SeekPreview(value);
+            });
+        ConfigureLayout(playbackScrubber_, -1.0f, 8.0f, 1.0f);
+
+        auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(playbackRow, false);
+        playbackRow->set_spacing(0.6f);
+        ConfigureLayout(playbackRow, -1.0f, 7.0f, 1.0f);
+        playPauseButton_ = BSML::Lite::CreateUIButton(
+            playbackRow,
+            "Play",
+            {0.0f, 0.0f},
+            {17.0f, 6.5f},
+            [this]() { TogglePreviewPlayback(); });
+        ConfigureLayout(playPauseButton_, 17.0f, 6.5f, 0.0f);
+        BSML::Lite::SetButtonTextSize(playPauseButton_, 2.8f);
+        playbackTimeText_ = BSML::Lite::CreateText(
+            playbackRow,
+            "0:00 / 0:00",
+            2.8f);
+        ConfigureLayout(playbackTimeText_, 29.0f, 6.5f, 1.0f);
+        playbackTimeText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+
         removeButton_ = BSML::Lite::CreateUIButton(
-            editorRoot, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
+            editorBody, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
             [this]() { RemoveOverride(); });
         ConfigureLayout(removeButton_, -1.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
         detailStorage_ = BSML::Lite::CreateText(
-            editorRoot, "", 2.3f);
+            editorBody, "", 2.3f);
         ConfigureLayout(detailStorage_, -1.0f, 3.0f, 1.0f);
 
-        for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_})
+        for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_, playbackTimeText_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         RebuildCatalog();
@@ -742,7 +842,11 @@ namespace BigScreen {
     void VideoLibraryMenu::SelectRow(int row)
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
+        StopPreviewAudio(true);
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Stop();
         selected_ = visible_[row]->level;
+        previewSongTime_ = 0.0;
         transientStatus_.clear();
         ClearThumbnail();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
@@ -758,13 +862,16 @@ namespace BigScreen {
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         ShowEditor();
+        RequestSelectedAudio();
         RefreshDetails();
         StartSelectedPreview();
+        RefreshPlaybackControls();
     }
 
     void VideoLibraryMenu::ShowBrowser()
     {
         editorVisible_ = false;
+        StopPreviewAudio(true);
         if(navigate_) navigate_(false);
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
@@ -1336,11 +1443,27 @@ namespace BigScreen {
                 (!download.Active() && !url_.empty()));
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
         if(rateSetting_) rateSetting_->set_interactable(descriptor.CanPlay());
+        if(playbackScrubber_) playbackScrubber_->set_interactable(descriptor.CanPlay());
+        if(playPauseButton_) playPauseButton_->set_interactable(descriptor.CanPlay());
         if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);
         if(fitButton_) fitButton_->set_interactable(descriptor.CanPlay());
-        if(thisDownload && download.state == DownloadState::Completed &&
-           !PlaybackSession::Instance().IsLibraryPreviewActive())
-            StartSelectedPreview();
+        if(thisDownload && download.state == DownloadState::Completed)
+        {
+            const auto completedIdentity =
+                download.levelId + "|" + download.title + "|" +
+                std::to_string(download.totalBytes);
+            if(autoPlayedDownloadIdentity_ != completedIdentity)
+            {
+                autoPlayedDownloadIdentity_ = completedIdentity;
+                previewSongTime_ = 0.0;
+                playWhenAudioReady_ = true;
+                RequestSelectedAudio();
+                StartSelectedPreview();
+                if(previewAudioClip_)
+                    StartPreviewAudio();
+            }
+        }
+        RefreshPlaybackControls();
     }
 
     void VideoLibraryMenu::StartSelectedPreview()
@@ -1355,26 +1478,272 @@ namespace BigScreen {
         ScreenPreview::Instance().Suspend();
         playback.Prepare(selected_);
         playback.Start(PlaybackContext::LibraryPreview);
-        previewStartedAt_ = UnityEngine::Time::get_realtimeSinceStartup();
+        if(playback.IsLibraryPreviewActive())
+            playback.Tick(previewSongTime_);
     }
 
-    void VideoLibraryMenu::Tick()
+    void VideoLibraryMenu::RequestSelectedAudio()
+    {
+        if(!selected_ || !selected_->levelID)
+            return;
+        const std::string levelId(selected_->levelID);
+        if(previewAudioClip_ && audioLoadLevelId_ == levelId)
+            return;
+        if(audioLoadTask_ && audioLoadLevelId_ == levelId)
+            return;
+
+        previewAudioClip_ = nullptr;
+        previewAudioSource_ = nullptr;
+        previewMediaData_ = selected_->__cordl_internal_get_previewMediaData();
+        audioLoadLevelId_ = levelId;
+        if(!previewMediaData_)
+        {
+            transientStatus_ = "This song does not expose preview audio.";
+            return;
+        }
+
+        audioLoadTask_ = previewMediaData_->GetPreviewAudioClip(
+            System::Threading::CancellationToken::get_None());
+        if(!audioLoadTask_)
+            transientStatus_ = "Beat Saber could not start loading this song's audio.";
+    }
+
+    void VideoLibraryMenu::TogglePreviewPlayback()
+    {
+        if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
+            return;
+
+        if(previewPlaying_)
+        {
+            if(songPreviewPlayer_ && previewAudioClip_ &&
+               songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+                songPreviewPlayer_->PauseCurrentChannel();
+            previewPlaying_ = false;
+            playWhenAudioReady_ = false;
+            RefreshPlaybackControls();
+            return;
+        }
+
+        const double duration = std::max(0.0f, selected_->songDuration);
+        if(duration > 0.0 && previewSongTime_ >= duration - 0.01)
+            previewSongTime_ = 0.0;
+
+        RequestSelectedAudio();
+        if(!previewAudioClip_ || !songPreviewPlayer_)
+        {
+            playWhenAudioReady_ = true;
+            transientStatus_ = "Loading song audio for synchronized preview...";
+            RefreshDetails();
+            return;
+        }
+
+        // Resume the paused Beat Saber channel when it is still ours. If the
+        // menu music or another preview reclaimed the channel, rebuild the
+        // crossfade at the requested scrub position instead.
+        if(previewAudioSource_ &&
+           previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+           songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+        {
+            previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
+            songPreviewPlayer_->UnPauseCurrentChannel();
+            previewPlaying_ = true;
+            playWhenAudioReady_ = false;
+            StartSelectedPreview();
+            RefreshPlaybackControls();
+            return;
+        }
+        StartPreviewAudio();
+    }
+
+    void VideoLibraryMenu::StartPreviewAudio()
+    {
+        if(!selected_ || !previewAudioClip_ || !songPreviewPlayer_)
+        {
+            playWhenAudioReady_ = true;
+            return;
+        }
+
+        const double songDuration = std::max(0.0f, selected_->songDuration);
+        const double clipDuration = std::max(0.0f, previewAudioClip_->get_length());
+        const double availableDuration = songDuration > 0.0
+            ? std::min(songDuration, clipDuration)
+            : clipDuration;
+        previewSongTime_ = std::clamp(
+            previewSongTime_,
+            0.0,
+            std::max(0.0, availableDuration - 0.01));
+
+        // Use Beat Saber's perceived-loudness model and SongPreviewPlayer so
+        // this audition follows the user's music-volume/mixer settings rather
+        // than creating an unregulated AudioSource of our own.
+        float musicVolume = 1.0f;
+        try
+        {
+            auto* container = BSML::Helpers::GetDiContainer();
+            auto* loudness = container
+                ? container->Resolve<GlobalNamespace::PerceivedLoudnessPerLevelModel*>()
+                : nullptr;
+            if(loudness)
+                musicVolume = GlobalNamespace::AudioHelpers::DBToNormalizedVolume(
+                    loudness->GetLoudnessCorrectionByLevelId(selected_->levelID));
+        }
+        catch(const std::exception& error)
+        {
+            PaperLogger.warn(
+                "Could not resolve Beat Saber's preview loudness for '{}': {}",
+                std::string(selected_->levelID),
+                error.what());
+        }
+
+        songPreviewPlayer_->CrossfadeTo(
+            previewAudioClip_,
+            musicVolume,
+            static_cast<float>(previewSongTime_),
+            static_cast<float>(std::max(0.1, availableDuration - previewSongTime_)),
+            nullptr);
+        previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
+        if(previewAudioSource_)
+            previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
+        previewPlaying_ = true;
+        playWhenAudioReady_ = false;
+        transientStatus_.clear();
+        StartSelectedPreview();
+        RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)
+    {
+        playWhenAudioReady_ = false;
+        previewPlaying_ = false;
+        if(returnToMenuMusic && songPreviewPlayer_ && previewAudioClip_ &&
+           songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+            songPreviewPlayer_->CrossfadeToDefault();
+        previewAudioSource_ = nullptr;
+        previewAudioClip_ = nullptr;
+        audioLoadTask_ = nullptr;
+        previewMediaData_ = nullptr;
+        audioLoadLevelId_.clear();
+        RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::SeekPreview(float songTimeSeconds)
+    {
+        if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
+            return;
+        const double duration = std::max(0.0f, selected_->songDuration);
+        previewSongTime_ = std::clamp(
+            static_cast<double>(songTimeSeconds),
+            0.0,
+            duration);
+
+        if(previewAudioSource_ && previewAudioClip_ &&
+           previewAudioSource_->get_clip().ptr() == previewAudioClip_)
+        {
+            const double clipEnd = std::max(
+                0.0f,
+                previewAudioClip_->get_length() - 0.01f);
+            previewAudioSource_->set_time(static_cast<float>(
+                std::min(previewSongTime_, clipEnd)));
+        }
+        else if(previewPlaying_)
+        {
+            StartPreviewAudio();
+        }
+
+        auto& playback = PlaybackSession::Instance();
+        if(!playback.IsLibraryPreviewActive())
+            StartSelectedPreview();
+        else
+            playback.Tick(previewSongTime_);
+        RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::RefreshPlaybackControls()
+    {
+        const double duration = selected_
+            ? std::max(0.0f, selected_->songDuration)
+            : 0.0;
+        if(playbackTimeText_)
+            playbackTimeText_->set_text(
+                PlaybackTime(previewSongTime_) + " / " + PlaybackTime(duration));
+        if(playPauseButton_)
+            BSML::Lite::SetButtonText(
+                playPauseButton_,
+                playWhenAudioReady_ ? "Loading..." :
+                    previewPlaying_ ? "Pause" : "Play");
+        if(playbackScrubber_)
+        {
+            if(auto* slider = playbackScrubber_->get_gameObject()
+                    ->GetComponentInChildren<HMUI::RangeValuesTextSlider*>())
+            {
+                slider->set_maxValue(static_cast<float>(std::max(0.1, duration)));
+            }
+            if(std::abs(playbackScrubber_->get_Value() - previewSongTime_) > 0.04)
+            {
+                suppressScrubberCallback_ = true;
+                playbackScrubber_->set_Value(static_cast<float>(previewSongTime_));
+                suppressScrubberCallback_ = false;
+            }
+        }
+    }
+
+    void VideoLibraryMenu::Tick(
+        GlobalNamespace::SongPreviewPlayer* songPreviewPlayer)
     {
         if(!active_) return;
+        songPreviewPlayer_ = songPreviewPlayer;
         if(!editorVisible_)
             RefreshVisibleVideoThumbnails();
+
+        if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
+        {
+            auto* completedTask = audioLoadTask_;
+            audioLoadTask_ = nullptr;
+            if(completedTask->get_IsCompletedSuccessfully() && selected_ &&
+               selected_->levelID &&
+               audioLoadLevelId_ == std::string(selected_->levelID))
+            {
+                auto clip = completedTask->get_Result();
+                previewAudioClip_ = clip ? clip.ptr() : nullptr;
+                if(!previewAudioClip_)
+                    transientStatus_ = "Beat Saber returned no audio for this song.";
+                else if(playWhenAudioReady_)
+                    StartPreviewAudio();
+            }
+            else
+            {
+                transientStatus_ = "Beat Saber could not load this song's audio.";
+                playWhenAudioReady_ = false;
+            }
+            RefreshDetails();
+        }
+
+        if(editorVisible_ && previewPlaying_ && previewAudioClip_)
+        {
+            if(!previewAudioSource_ ||
+               previewAudioSource_->get_clip().ptr() != previewAudioClip_)
+                previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
+
+            if(previewAudioSource_ &&
+               previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+               previewAudioSource_->get_isPlaying())
+            {
+                previewSongTime_ = previewAudioSource_->get_time();
+                if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                    PlaybackSession::Instance().Tick(previewSongTime_);
+            }
+            else
+            {
+                previewPlaying_ = false;
+                playWhenAudioReady_ = false;
+            }
+            RefreshPlaybackControls();
+        }
         if(++tickCounter_ >= 30)
         {
             tickCounter_ = 0;
             if(editorVisible_) RefreshDetails();
         }
-        auto& playback = PlaybackSession::Instance();
-        if(editorVisible_ && selected_ &&
-           VideoLibrary::Instance().Describe(selected_).CanPlay() &&
-           !playback.IsLibraryPreviewActive())
-            StartSelectedPreview();
-        if(playback.IsLibraryPreviewActive())
-            playback.Tick(UnityEngine::Time::get_realtimeSinceStartup() - previewStartedAt_);
     }
 
     void VideoLibraryMenu::Refresh()
@@ -1384,13 +1753,19 @@ namespace BigScreen {
         RebuildCatalog();
         if(editorVisible_) RefreshDetails();
         if(!Settings::Instance().ModEnabled())
+        {
             DownloadManager::Instance().Cancel();
+            StopPreviewAudio(true);
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                PlaybackSession::Instance().Stop();
+        }
     }
 
     void VideoLibraryMenu::Deactivate()
     {
         active_ = false;
         editorVisible_ = false;
+        StopPreviewAudio(true);
         DownloadManager::Instance().Cancel();
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();

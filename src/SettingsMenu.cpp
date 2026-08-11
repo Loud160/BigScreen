@@ -39,6 +39,12 @@ namespace BigScreen {
             "1080p"
         };
 
+        std::array<std::string_view, 3> PlaybackFpsChoices{
+            "15 FPS",
+            "30 FPS",
+            "60 FPS"
+        };
+
         std::string ResolutionLabel(int height)
         {
             return std::to_string(height) + "p";
@@ -52,6 +58,21 @@ namespace BigScreen {
             if(text == "1080p")
                 return 1080;
             return 720;
+        }
+
+        std::string PlaybackFpsLabel(int fps)
+        {
+            return std::to_string(fps) + " FPS";
+        }
+
+        int PlaybackFpsValue(StringW label)
+        {
+            const std::string text(label);
+            if(text == "15 FPS")
+                return 15;
+            if(text == "60 FPS")
+                return 60;
+            return 30;
         }
 
         void SetToggleWithoutNotification(BSML::ToggleSetting* setting, bool value)
@@ -119,6 +140,7 @@ namespace BigScreen {
         lightShowToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
+        playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         updaterButton_ = nullptr;
@@ -426,6 +448,19 @@ namespace BigScreen {
             environmentMotionToggle_,
             "Turns rotating and moving background scenery on or off for video maps.");
 
+        playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
+            container,
+            "Video Frame Rate Limit",
+            PlaybackFpsLabel(settings.PlaybackFpsLimit()),
+            PlaybackFpsChoices,
+            [](StringW value)
+            {
+                Settings::Instance().SetPlaybackFpsLimit(PlaybackFpsValue(value));
+            });
+        BSML::Lite::AddHoverHint(
+            playbackFpsDropdown_,
+            "Maximum displayed video frame rate. Lower values reduce software conversion and texture-upload load; videos below the limit retain their native frame rate.");
+
         resolutionDropdown_ = BSML::Lite::CreateDropdown(
             container,
             "Video Resolution",
@@ -521,6 +556,16 @@ namespace BigScreen {
             sizeSetting_->set_Value(settings.ScreenScale());
         if(curvatureSlider_)
             curvatureSlider_->set_Value(settings.ScreenCurvature());
+        if(playbackFpsDropdown_)
+        {
+            const int index = settings.PlaybackFpsLimit() == 15
+                ? 0
+                : settings.PlaybackFpsLimit() == 60 ? 2 : 1;
+            playbackFpsDropdown_->index = index;
+            if(playbackFpsDropdown_->dropdown)
+                playbackFpsDropdown_->dropdown->SelectCellWithIdx(index);
+            playbackFpsDropdown_->UpdateState();
+        }
         if(resolutionDropdown_)
         {
             const int index = settings.ResolutionHeight() == 480
@@ -569,6 +614,8 @@ namespace BigScreen {
             environmentOverrideToggle_->set_interactable(enabled);
         if(environmentMotionToggle_)
             environmentMotionToggle_->set_interactable(enabled);
+        if(playbackFpsDropdown_)
+            playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)
             resolutionDropdown_->set_interactable(enabled);
         if(nightlyUpdatesToggle_)

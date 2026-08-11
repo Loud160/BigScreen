@@ -105,6 +105,7 @@ namespace BigScreen {
         if(!decoder_.Open(
                config_->videoPath,
                Settings::Instance().ResolutionHeight(),
+               Settings::Instance().PlaybackFpsLimit(),
                error))
         {
             PaperLogger.error("Could not start video playback: {}", error);
@@ -122,11 +123,12 @@ namespace BigScreen {
         firstFrameUploaded_ = false;
         context_ = context;
         PaperLogger.info(
-            "Started {}x{} {} video screen (duration {:.3f}s)",
+            "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s)",
             decoder_.Width(),
             decoder_.Height(),
             context == PlaybackContext::MenuPreview ? "song-menu" :
                 context == PlaybackContext::LibraryPreview ? "library-preview" : "gameplay",
+            Settings::Instance().PlaybackFpsLimit(),
             decoder_.DurationSeconds());
     }
 

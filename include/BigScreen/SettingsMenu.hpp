@@ -54,6 +54,7 @@ namespace BigScreen {
         BSML::ToggleSetting* lightShowToggle_ = nullptr;
         BSML::ToggleSetting* environmentOverrideToggle_ = nullptr;
         BSML::ToggleSetting* environmentMotionToggle_ = nullptr;
+        BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;

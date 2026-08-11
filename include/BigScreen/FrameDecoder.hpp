@@ -40,10 +40,12 @@ namespace BigScreen {
         FrameDecoder& operator=(const FrameDecoder&) = delete;
 
         /// Opens the source and converts decoded frames to no more than the
-        /// requested output height. Sources below that tier are never upscaled.
+        /// requested output height or presentation rate. Sources below either
+        /// ceiling retain their native dimensions and frame cadence.
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
+            int maximumOutputFps,
             std::string& error);
         void Close();
 
@@ -74,6 +76,7 @@ namespace BigScreen {
         int height_ = 0;
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
+        double outputFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
 
         std::thread worker_;
