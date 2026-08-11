@@ -27,6 +27,18 @@ namespace BigScreen {
         void CreateUi(GlobalNamespace::StandardLevelDetailView* detailView);
         void ForgetUi();
 
+        /// Reapplies the current preview preference when Beat Saber makes the
+        /// song-detail panel visible again. Playback is resumed only when the
+        /// selected map still has a prepared video and all global switches
+        /// permit it.
+        void SongSelectionShown();
+
+        /// Stops only a menu preview when the song-detail panel is hidden.
+        /// Beat Saber can retain this view instead of destroying it while it
+        /// returns home or presents another flow coordinator, so OnDestroy is
+        /// not a reliable cleanup boundary by itself.
+        void SongSelectionHidden();
+
         void LevelSelected(
             bool isCustom,
             const std::string& levelId,

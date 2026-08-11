@@ -124,11 +124,41 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
+        StandardLevelDetailView_OnEnable,
+        &GlobalNamespace::StandardLevelDetailView::OnEnable,
+        void,
+        GlobalNamespace::StandardLevelDetailView* self)
+    {
+        // Let Beat Saber restore its audio/selection subscriptions first, then
+        // resume the retained preview only if the user's global settings allow
+        // it. Initial activation is harmless because no map is prepared yet.
+        StandardLevelDetailView_OnEnable(self);
+        BigScreen::SelectionVideoToggle::Instance().SongSelectionShown();
+    }
+
+    MAKE_HOOK_MATCH(
+        StandardLevelDetailView_OnDisable,
+        &GlobalNamespace::StandardLevelDetailView::OnDisable,
+        void,
+        GlobalNamespace::StandardLevelDetailView* self)
+    {
+        // OnDisable is the reliable boundary for leaving song selection. The
+        // view is commonly kept alive while Beat Saber shows its home screen
+        // or a mod flow, so waiting for OnDestroy can leave the world-space
+        // video surface and decoder running outside the song browser.
+        BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
+        StandardLevelDetailView_OnDisable(self);
+    }
+
+    MAKE_HOOK_MATCH(
         StandardLevelDetailView_OnDestroy,
         &GlobalNamespace::StandardLevelDetailView::OnDestroy,
         void,
         GlobalNamespace::StandardLevelDetailView* self)
     {
+        // OnDisable normally runs first, but repeat the context-guarded cleanup
+        // here as a defensive fallback for scene teardown ordering changes.
+        BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
         BigScreen::SelectionVideoToggle::Instance().ForgetUi();
         StandardLevelDetailView_OnDestroy(self);
     }
@@ -338,12 +368,14 @@ MOD_EXTERN_FUNC void late_load() noexcept
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
 
-    // These four hooks form a deliberately small public-API boundary: prepare
-    // and select the environment at transition, create on song start, follow
-    // the authoritative song clock, and clean up when the level finishes.
+    // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view
+    // visibility owns menu preview lifetime, scene transition owns gameplay
+    // setup, and Beat Saber's audio clocks remain authoritative for sync.
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_Awake);
+    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
+    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

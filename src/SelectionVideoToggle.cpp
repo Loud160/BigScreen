@@ -148,6 +148,28 @@ namespace BigScreen {
         inMapUi_ = nullptr;
     }
 
+    void SelectionVideoToggle::SongSelectionShown()
+    {
+        // Stop() deliberately retains the parsed map configuration. If Beat
+        // Saber returns to the same still-selected song, this common settings
+        // path can rebuild the decoder and screen without rereading the map or
+        // waiting for SongCore to raise another selection event.
+        MenuPreviewPreferenceChanged();
+    }
+
+    void SelectionVideoToggle::SongSelectionHidden()
+    {
+        auto& playback = PlaybackSession::Instance();
+        if(!playback.IsMenuPreviewActive())
+            return;
+
+        // Restrict cleanup to the menu context. The same view can be disabled
+        // during the transition into gameplay, and a late disable callback
+        // must never tear down a gameplay or Replay-owned screen.
+        playback.Stop();
+        PaperLogger.info("Stopped video preview because song selection was hidden");
+    }
+
     void SelectionVideoToggle::LevelSelected(
         bool isCustom,
         const std::string& levelId,
