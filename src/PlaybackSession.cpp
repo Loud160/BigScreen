@@ -35,6 +35,7 @@ namespace BigScreen {
         baseConfig_.reset();
         config_.reset();
         levelDirectory_.clear();
+        menuPreviewStartSongTime_ = 0.0;
 
         // Hooks remain installed for the lifetime of the process, but the
         // master switch makes every entry point inert. Keeping this guard here
@@ -47,6 +48,9 @@ namespace BigScreen {
             return;
 
         const std::string levelId(level->levelID);
+        menuPreviewStartSongTime_ = std::max(
+            0.0,
+            static_cast<double>(level->previewStartTime));
         baseConfig_ = VideoLibrary::Instance().ResolvePlayback(level);
 
         if(baseConfig_)
@@ -125,6 +129,33 @@ namespace BigScreen {
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
         context_ = context;
+
+        // SongPreviewPlayer begins custom-song previews at BeatmapLevel's
+        // previewStartTime rather than zero. Start the decoder worker toward
+        // that exact media position immediately, before the first audio Update
+        // reaches Big Screen. This is especially important for downloaded
+        // YouTube streams whose previous H.264 keyframe may be several seconds
+        // before the requested preview point.
+        const double initialSongTime = context == PlaybackContext::MenuPreview
+            ? menuPreviewStartSongTime_
+            : 0.0;
+        const double initialMediaTime = config_->MediaTimeForSong(
+            initialSongTime,
+            decoder_.DurationSeconds());
+        const bool initialTimeIsVisible =
+            initialMediaTime >= 0.0 &&
+            (!config_->stopAtVideoSecond ||
+             initialMediaTime <= *config_->stopAtVideoSecond);
+        if(initialTimeIsVisible)
+        {
+            const int fpsLimit = std::max(
+                1,
+                Settings::Instance().PlaybackFpsLimit());
+            decoder_.Request(initialMediaTime);
+            lastPresentationSlot_ = static_cast<std::int64_t>(std::floor(
+                initialSongTime * fpsLimit + 0.000001));
+            lastTickSongTime_ = initialSongTime;
+        }
         PaperLogger.info(
             "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s)",
             decoder_.Width(),

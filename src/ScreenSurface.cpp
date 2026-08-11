@@ -75,9 +75,13 @@ namespace BigScreen {
         filter->set_sharedMesh(mesh_);
         renderer->set_material(material_);
 
-        // A screen starts hidden so a black rectangle is not shown during a
-        // negative mapper offset or while FFmpeg seeks to the opening frame.
-        SetVisible(false);
+        // A screen starts hidden so an uninitialized gray/black texture is not
+        // exposed during a negative mapper offset or while FFmpeg seeks to the
+        // opening frame. Do this directly: visible_ already starts false, so
+        // routing the initial transition through SetVisible(false) would be
+        // treated as a no-op even though a new GameObject is active by default.
+        gameObject_->SetActive(false);
+        visible_ = false;
         return true;
     }
 

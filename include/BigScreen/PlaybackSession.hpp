@@ -57,6 +57,7 @@ namespace BigScreen {
         std::optional<MapVideoConfig> config_;
         FrameDecoder decoder_;
         ScreenSurface surface_;
+        double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
         bool firstFrameUploaded_ = false;
         // The presentation limiter lives above FFmpeg so decoder timestamps
