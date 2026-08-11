@@ -195,30 +195,32 @@ namespace {
             overrideEnvironmentSettings,
             environmentsListModel);
 
-        const auto& requested = playback.RequestedEnvironment();
         if(!BigScreen::Settings::Instance().EnvironmentOverrideEnabled())
         {
-            if(requested)
-                PaperLogger.info("Map environment override suppressed by user setting");
+            if(playback.HasPreparedVideo())
+                PaperLogger.info("Big Mirror override disabled; using the map's intended environment");
             return;
         }
 
-        if(!requested || !environmentsListModel)
+        if(!playback.HasPreparedVideo() || !environmentsListModel)
             return;
 
-        // The safe lookup cannot throw for an unknown mapper-authored name. It
-        // may return a fallback, so verify the serialized name before applying
-        // it; a typo must never silently replace the player's environment.
-        auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(*requested);
-        if(environment && std::string(environment->get_serializedName()) == *requested)
+        // This preference is deliberately a force override, not permission to
+        // honor an environmentName from mapper metadata. Enabled always means
+        // Big Mirror for a playable video map; disabled leaves Beat Saber's
+        // normal map-selected environment untouched.
+        constexpr auto bigMirrorName = "BigMirrorEnvironment";
+        auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(
+            StringW(bigMirrorName));
+        if(environment && std::string(environment->get_serializedName()) == bigMirrorName)
         {
             self->set_environmentInfo(environment);
             self->set_usingOverrideEnvironment(true);
-            PaperLogger.info("Using map-requested environment '{}'", *requested);
+            PaperLogger.info("Forced Big Mirror environment for video gameplay");
         }
         else
         {
-            PaperLogger.warn("Map requested unavailable environment '{}'", *requested);
+            PaperLogger.error("Big Mirror environment is unavailable; keeping the map environment");
         }
     }
 
@@ -312,10 +314,6 @@ namespace {
             BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
         }
 
-        auto& session = BigScreen::PlaybackSession::Instance();
-        if(!session.IsMenuPreviewActive())
-            return;
-
         // SongPreviewPlayer crossfades between a small bank of AudioSources.
         // Reading its active source after the original Update gives Big Screen
         // the exact clip position heard by the user, including preview start,
@@ -330,7 +328,22 @@ namespace {
             return;
         auto audioSource = controller->__cordl_internal_get_audioSource();
         if(audioSource)
-            session.Tick(audioSource->get_time());
+        {
+            // An AudioSource can remain alive for Beat Saber's default menu
+            // track or while its controller is completely faded out. Neither
+            // represents an audible selected-song preview, so neither should
+            // restart or advance Big Screen's menu video.
+            const auto activeClip = self->get_activeAudioClip();
+            const auto defaultClip = self->__cordl_internal_get__defaultAudioClip();
+            const bool selectedSongAudioIsAudible =
+                audioSource->get_isPlaying() &&
+                controller->get_volume() > 0.001f &&
+                activeClip &&
+                activeClip != defaultClip;
+            BigScreen::SelectionVideoToggle::Instance().TickSongPreview(
+                audioSource->get_time(),
+                selectedSongAudioIsAudible);
+        }
     }
 
     MAKE_HOOK_MATCH(

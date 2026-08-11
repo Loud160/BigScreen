@@ -50,6 +50,11 @@ namespace BigScreen {
 
         void TickDownloadUi();
 
+        /// Synchronizes an active menu video to Beat Saber's audible selected-
+        /// song preview. A return from gameplay is held here until the song
+        /// clip, rather than the default menu clip, is actually playing.
+        void TickSongPreview(double songTimeSeconds, bool selectedSongAudioIsAudible);
+
         /// Mirrors a changed global state into this control and immediately
         /// applies it to the currently selected video map, if there is one.
         void ApplyGlobalVideoEnabled(bool enabled);
@@ -80,5 +85,7 @@ namespace BigScreen {
         std::string selectedLevelId_;
         bool selectedLevelHasVideo_ = false;
         bool inMapEnabled_ = true;
+        bool resumeWhenSongAudioStarts_ = false;
+        bool resumeWaitReported_ = false;
     };
 }

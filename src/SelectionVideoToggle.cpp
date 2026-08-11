@@ -27,31 +27,31 @@
 
 namespace BigScreen {
     namespace {
-        void PlaceRightSideToggle(
+        void PlaceTopBarToggle(
             BSML::ToggleSetting* setting,
             std::string_view objectName,
-            float verticalPosition)
+            float horizontalPosition)
         {
             if(!setting)
                 return;
 
             setting->get_gameObject()->set_name(objectName);
             if(auto* layout = setting->GetComponent<UnityEngine::UI::LayoutElement*>())
-                layout->set_preferredWidth(50.0f);
+                layout->set_preferredWidth(42.0f);
 
             auto rect = setting->get_transform().cast<UnityEngine::RectTransform>();
             if(rect)
             {
-                // The BSML toggle template normally stretches across the full
-                // song-detail view. Two such roots at the same position overlap
-                // and the upper one intercepts pointer events for both visible
-                // switches. Give each control its own compact right-side hit
-                // area and a separate vertical row below Solo Play instead.
+                // Put both global controls back on Beat Saber's top strip, at
+                // the same height as Solo Play and the navigation bar. Unlike
+                // the original top-row implementation, each toggle receives a
+                // separate compact root, so their invisible hit areas cannot
+                // overlap and steal clicks from one another.
                 rect->set_anchorMin({0.5f, 0.5f});
                 rect->set_anchorMax({0.5f, 0.5f});
                 rect->set_pivot({0.5f, 0.5f});
-                rect->set_anchoredPosition({20.0f, verticalPosition});
-                rect->set_sizeDelta({50.0f, 8.0f});
+                rect->set_anchoredPosition({horizontalPosition, 28.0f});
+                rect->set_sizeDelta({42.0f, 8.0f});
             }
 
             if(setting->text)
@@ -61,13 +61,13 @@ namespace BigScreen {
                     setting->text->get_transform().cast<UnityEngine::RectTransform>();
                 if(labelRect)
                 {
-                    // Each label occupies the left portion of its compact row,
-                    // with the switch immediately to its right.
+                    // Keep the label and switch together inside that compact
+                    // root. The two roots sit side by side across the top row.
                     labelRect->set_anchorMin({0.5f, 0.5f});
                     labelRect->set_anchorMax({0.5f, 0.5f});
                     labelRect->set_pivot({0.5f, 0.5f});
-                    labelRect->set_anchoredPosition({0.0f, 0.0f});
-                    labelRect->set_sizeDelta({24.0f, 8.0f});
+                    labelRect->set_anchoredPosition({-8.0f, 0.0f});
+                    labelRect->set_sizeDelta({22.0f, 8.0f});
                 }
             }
 
@@ -79,7 +79,7 @@ namespace BigScreen {
                     switchRect->set_anchorMin({0.5f, 0.5f});
                     switchRect->set_anchorMax({0.5f, 0.5f});
                     switchRect->set_pivot({0.5f, 0.5f});
-                    switchRect->set_anchoredPosition({19.0f, 0.0f});
+                    switchRect->set_anchoredPosition({11.0f, 0.0f});
                 }
             }
         }
@@ -129,14 +129,13 @@ namespace BigScreen {
         inMapEnabled_ = settings.VideoEnabled();
 
         // The controls are global preferences rather than properties of the
-        // selected song. Create both unconditionally and keep them in separate
-        // right-side rows so scrolling between any built-in or custom song
-        // never changes their visibility or makes their hit areas overlap.
+        // selected song. Create both unconditionally and place their compact
+        // roots side by side on the permanent song-selection header.
         previewUi_ = BSML::Lite::CreateToggle(
             detailView,
             "Preview Video",
             settings.MenuPreviewEnabled(),
-            UnityEngine::Vector2{20.0f, 19.0f},
+            UnityEngine::Vector2{-18.0f, 28.0f},
             [this](bool value)
             {
                 PreviewToggleChanged(value);
@@ -145,7 +144,7 @@ namespace BigScreen {
             detailView,
             "Video In Map",
             inMapEnabled_,
-            UnityEngine::Vector2{20.0f, 10.0f},
+            UnityEngine::Vector2{28.0f, 28.0f},
             [this](bool value)
             {
                 InMapToggleChanged(value);
@@ -171,8 +170,8 @@ namespace BigScreen {
             return;
         }
 
-        PlaceRightSideToggle(previewUi_, "Big Screen Preview Video Toggle", 19.0f);
-        PlaceRightSideToggle(inMapUi_, "Big Screen Video In Map Toggle", 10.0f);
+        PlaceTopBarToggle(previewUi_, "Big Screen Preview Video Toggle", -18.0f);
+        PlaceTopBarToggle(inMapUi_, "Big Screen Video In Map Toggle", 28.0f);
         BSML::Lite::AddHoverHint(
             previewUi_,
             "Plays the selected song's video on the song-selection screen.");
@@ -180,7 +179,7 @@ namespace BigScreen {
             inMapUi_,
             "Shows the selected song's video while playing the map.");
         RefreshUi();
-        PaperLogger.info("Created stacked Preview Video and Video In Map controls");
+        PaperLogger.info("Created top-row Preview Video and Video In Map controls");
     }
 
     void SelectionVideoToggle::ForgetUi()
@@ -196,15 +195,26 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionShown()
     {
-        // Stop() deliberately retains the parsed map configuration. If Beat
-        // Saber returns to the same still-selected song, this common settings
-        // path can rebuild the decoder and screen without rereading the map or
-        // waiting for SongCore to raise another selection event.
-        MenuPreviewPreferenceChanged();
+        RefreshUi();
+
+        // Returning from gameplay does not necessarily restart Beat Saber's
+        // audio preview for the still-selected song. Defer the video restart
+        // until SongPreviewPlayer confirms that the non-default song clip is
+        // actually audible; otherwise Big Screen can visibly replay a silent
+        // video while Beat Saber remains on its normal menu soundtrack.
+        auto& playback = PlaybackSession::Instance();
+        resumeWhenSongAudioStarts_ =
+            selectedLevelHasVideo_ &&
+            inMapEnabled_ &&
+            IsMenuPreviewEnabled() &&
+            playback.HasPreparedVideo();
+        resumeWaitReported_ = false;
     }
 
     void SelectionVideoToggle::SongSelectionHidden()
     {
+        resumeWhenSongAudioStarts_ = false;
+        resumeWaitReported_ = false;
         // yt-dlp retains its .part file. Returning to this song offers Resume
         // instead of wasting storage or network data.
         DownloadManager::Instance().Cancel();
@@ -234,6 +244,8 @@ namespace BigScreen {
             return;
         }
 
+        resumeWhenSongAudioStarts_ = false;
+        resumeWaitReported_ = false;
         selectedLevelId_ = levelId;
         selectedLevel_ = level;
         inMapEnabled_ = Settings::Instance().VideoEnabled();
@@ -265,6 +277,8 @@ namespace BigScreen {
         auto& playback = PlaybackSession::Instance();
         if(!enabled)
         {
+            resumeWhenSongAudioStarts_ = false;
+            resumeWaitReported_ = false;
             // Clear the selected-map identity as well as stopping playback.
             // SongCore selections are intentionally ignored while disabled,
             // so retaining this data could resurrect the wrong song if the
@@ -284,6 +298,8 @@ namespace BigScreen {
 
     void SelectionVideoToggle::MenuPreviewPreferenceChanged()
     {
+        resumeWhenSongAudioStarts_ = false;
+        resumeWaitReported_ = false;
         RefreshUi();
         auto& playback = PlaybackSession::Instance();
         if(!IsMenuPreviewEnabled())
@@ -297,6 +313,48 @@ namespace BigScreen {
 
         if(selectedLevelHasVideo_ && inMapEnabled_ && playback.HasPreparedVideo())
             playback.Start(PlaybackContext::MenuPreview);
+    }
+
+    void SelectionVideoToggle::TickSongPreview(
+        double songTimeSeconds,
+        bool selectedSongAudioIsAudible)
+    {
+        auto& playback = PlaybackSession::Instance();
+
+        if(resumeWhenSongAudioStarts_)
+        {
+            if(!selectedLevelHasVideo_ ||
+               !inMapEnabled_ ||
+               !IsMenuPreviewEnabled() ||
+               !playback.HasPreparedVideo())
+            {
+                resumeWhenSongAudioStarts_ = false;
+                resumeWaitReported_ = false;
+                return;
+            }
+
+            if(!selectedSongAudioIsAudible)
+            {
+                if(!resumeWaitReported_)
+                {
+                    PaperLogger.info(
+                        "Waiting for Beat Saber song-preview audio before resuming the menu video");
+                    resumeWaitReported_ = true;
+                }
+                return;
+            }
+
+            playback.Start(PlaybackContext::MenuPreview);
+            resumeWhenSongAudioStarts_ = false;
+            resumeWaitReported_ = false;
+            PaperLogger.info("Resumed menu video with Beat Saber's song-preview audio");
+        }
+
+        // Drive the video only while the selected song clip is genuinely
+        // playing. This prevents a muted/faded/default menu channel from
+        // advancing the video independently after a gameplay transition.
+        if(playback.IsMenuPreviewActive() && selectedSongAudioIsAudible)
+            playback.Tick(songTimeSeconds);
     }
 
     bool SelectionVideoToggle::IsEnabledForSelectedLevel() const
