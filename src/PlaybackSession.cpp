@@ -3,6 +3,7 @@
 #include <string>
 
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -43,27 +44,8 @@ namespace BigScreen {
         if(!level || !level->levelID)
             return;
 
-        // SongCore is the public owner of custom-level paths on Quest. Looking
-        // up by Beat Saber's level ID avoids guessing installation directories
-        // and works for both CustomLevels and CustomWIPLevels.
         const std::string levelId(level->levelID);
-        auto* customLevel = SongCore::API::Loading::GetLevelByLevelID(levelId);
-        if(!customLevel)
-        {
-            PaperLogger.debug("Selected level is not a SongCore custom level: {}", levelId);
-            return;
-        }
-
-        levelDirectory_ = std::filesystem::path(customLevel->get_customLevelPath());
-        std::string error;
-        baseConfig_ = MapVideoConfig::LoadFromLevel(levelDirectory_, error);
-        if(!error.empty())
-        {
-            PaperLogger.error("Big Screen metadata rejected for '{}': {}", levelDirectory_.string(), error);
-            baseConfig_.reset();
-            config_.reset();
-            return;
-        }
+        baseConfig_ = VideoLibrary::Instance().ResolvePlayback(level);
 
         if(baseConfig_)
         {
@@ -76,7 +58,7 @@ namespace BigScreen {
         }
         else
         {
-            PaperLogger.debug("No supported video metadata in '{}'", levelDirectory_.string());
+            PaperLogger.debug("No playable video for selected level '{}'", levelId);
         }
     }
 

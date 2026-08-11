@@ -4,13 +4,19 @@
   "name": "${mod_name}",
   "id": "${mod_id}",
   "author": "Loud160 (AKA Whisp)",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.37.0_9064817954",
   "description": "Quest-native synchronized video screens for Beat Saber maps.",
   "dependencies": [],
   "modFiles": ["${binary}"],
 
-  "libraryFiles": ["libswscale.so"],
+  "libraryFiles": [
+    "libswscale.so",
+    "libpython3.14.so",
+    "libssl_python.so",
+    "libcrypto_python.so",
+    "libsqlite3_python.so"
+  ],
   "fileCopies": []
 }

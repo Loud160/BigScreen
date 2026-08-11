@@ -1,18 +1,29 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 
+#include <iomanip>
+#include <sstream>
+
+#include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/VideoLibrary.hpp"
+#include "GlobalNamespace/BeatmapLevel.hpp"
+#include "GlobalNamespace/PlayerData.hpp"
+#include "GlobalNamespace/PlayerDataModel.hpp"
+#include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/Toggle.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
 #include "main.hpp"
-#include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 
 namespace BigScreen {
     namespace {
@@ -81,6 +92,25 @@ namespace BigScreen {
             if(setting->toggle)
                 setting->toggle->SetIsOnWithoutNotify(value);
         }
+
+        bool ExplicitContentAllowed()
+        {
+            auto* container = BSML::Helpers::GetDiContainer();
+            auto* model = container
+                ? container->Resolve<GlobalNamespace::PlayerDataModel*>()
+                : nullptr;
+            auto* data = model ? model->get_playerData() : nullptr;
+            return data && data->get_desiredSensitivityFlag().value__ >=
+                GlobalNamespace::PlayerSensitivityFlag::Explicit.value__;
+        }
+
+        std::string Megabytes(std::uint64_t bytes)
+        {
+            std::ostringstream text;
+            text << std::fixed << std::setprecision(1)
+                 << static_cast<double>(bytes) / (1024.0 * 1024.0) << " MB";
+            return text.str();
+        }
     }
 
     SelectionVideoToggle& SelectionVideoToggle::Instance()
@@ -120,6 +150,20 @@ namespace BigScreen {
             {
                 InMapToggleChanged(value);
             });
+        downloadButton_ = BSML::Lite::CreateUIButton(
+            detailView,
+            "Download Video",
+            UnityEngine::Vector2{20.0f, 0.5f},
+            UnityEngine::Vector2{31.0f, 7.0f},
+            [this]() { DownloadButtonPressed(); });
+        downloadStatus_ = BSML::Lite::CreateText(
+            detailView,
+            "",
+            2.5f,
+            UnityEngine::Vector2{20.0f, -5.5f},
+            UnityEngine::Vector2{42.0f, 7.0f});
+        if(downloadStatus_)
+            downloadStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         if(!previewUi_ || !inMapUi_)
         {
@@ -146,6 +190,8 @@ namespace BigScreen {
         // later menu scene can construct a fresh control safely.
         previewUi_ = nullptr;
         inMapUi_ = nullptr;
+        downloadButton_ = nullptr;
+        downloadStatus_ = nullptr;
     }
 
     void SelectionVideoToggle::SongSelectionShown()
@@ -159,6 +205,9 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionHidden()
     {
+        // yt-dlp retains its .part file. Returning to this song offers Resume
+        // instead of wasting storage or network data.
+        DownloadManager::Instance().Cancel();
         auto& playback = PlaybackSession::Instance();
         if(!playback.IsMenuPreviewActive())
             return;
@@ -171,21 +220,10 @@ namespace BigScreen {
     }
 
     void SelectionVideoToggle::LevelSelected(
-        bool isCustom,
         const std::string& levelId,
-        SongCore::SongLoader::CustomBeatmapLevel* customLevel)
+        GlobalNamespace::BeatmapLevel* level)
     {
         auto& playback = PlaybackSession::Instance();
-
-        if(!isCustom || !customLevel)
-        {
-            selectedLevelId_ = levelId;
-            selectedLevelHasVideo_ = false;
-            inMapEnabled_ = Settings::Instance().VideoEnabled();
-            playback.Prepare(nullptr);
-            RefreshUi();
-            return;
-        }
 
         // SongCore also raises its selection event when difficulty changes.
         // Preserve the prepared decoder for a difficulty-only change. The
@@ -197,8 +235,9 @@ namespace BigScreen {
         }
 
         selectedLevelId_ = levelId;
+        selectedLevel_ = level;
         inMapEnabled_ = Settings::Instance().VideoEnabled();
-        playback.Prepare(customLevel);
+        playback.Prepare(level);
         selectedLevelHasVideo_ = playback.HasPreparedVideo();
         RefreshUi();
 
@@ -231,6 +270,7 @@ namespace BigScreen {
             // so retaining this data could resurrect the wrong song if the
             // user changes selection before re-enabling Big Screen.
             selectedLevelId_.clear();
+            selectedLevel_ = nullptr;
             selectedLevelHasVideo_ = false;
             inMapEnabled_ = Settings::Instance().VideoEnabled();
             playback.Prepare(nullptr);
@@ -262,6 +302,88 @@ namespace BigScreen {
     bool SelectionVideoToggle::IsEnabledForSelectedLevel() const
     {
         return selectedLevelHasVideo_ && inMapEnabled_;
+    }
+
+    void SelectionVideoToggle::DownloadButtonPressed()
+    {
+        auto& downloader = DownloadManager::Instance();
+        const auto snapshot = downloader.Snapshot();
+        if(snapshot.Active())
+        {
+            downloader.Cancel();
+            return;
+        }
+        if(!selectedLevel_) return;
+
+        const auto descriptor = VideoLibrary::Instance().Describe(selectedLevel_);
+        if(!descriptor.downloadUrl) return;
+        DownloadRequest request;
+        request.levelId = descriptor.levelId;
+        request.songName = descriptor.songName;
+        request.songAuthor = descriptor.songAuthor;
+        request.sourceUrl = *descriptor.downloadUrl;
+        request.origin = descriptor.downloadOrigin;
+        request.explicitContentAllowed = ExplicitContentAllowed();
+        if(descriptor.mapperDefinition)
+        {
+            request.offsetSeconds = descriptor.mapperDefinition->offsetSeconds;
+            request.playbackRate = descriptor.mapperDefinition->playbackRate;
+        }
+        std::string error;
+        if(!downloader.Start(std::move(request), error) && downloadStatus_)
+            downloadStatus_->set_text(error);
+        TickDownloadUi();
+    }
+
+    void SelectionVideoToggle::TickDownloadUi()
+    {
+        if(!downloadButton_ || !downloadStatus_) return;
+        const auto snapshot = DownloadManager::Instance().Snapshot();
+        const bool forSelection = !snapshot.levelId.empty() &&
+                                  snapshot.levelId == selectedLevelId_;
+        const auto descriptor = selectedLevel_
+            ? VideoLibrary::Instance().Describe(selectedLevel_)
+            : VideoDescriptor{};
+        const bool show = Settings::Instance().ModEnabled() &&
+                          (descriptor.CanDownload() || forSelection);
+        downloadButton_->get_gameObject()->SetActive(show && !descriptor.CanPlay());
+        downloadStatus_->get_gameObject()->SetActive(show);
+        if(!show) return;
+
+        if(forSelection && snapshot.Active())
+        {
+            BSML::Lite::SetButtonText(downloadButton_, "Pause Download");
+            downloadStatus_->set_text(snapshot.totalBytes
+                ? Megabytes(snapshot.downloadedBytes) + " / " +
+                    Megabytes(snapshot.totalBytes)
+                : snapshot.message);
+        }
+        else if(forSelection && snapshot.state == DownloadState::Failed)
+        {
+            BSML::Lite::SetButtonText(downloadButton_, "Retry Download");
+            downloadStatus_->set_text(snapshot.message);
+        }
+        else if(forSelection && snapshot.state == DownloadState::Cancelled)
+        {
+            BSML::Lite::SetButtonText(downloadButton_, "Resume Download");
+            downloadStatus_->set_text(snapshot.message);
+        }
+        else if(descriptor.CanPlay())
+        {
+            downloadStatus_->set_text("Video ready");
+            if(!selectedLevelHasVideo_)
+            {
+                PlaybackSession::Instance().Prepare(selectedLevel_);
+                selectedLevelHasVideo_ = PlaybackSession::Instance().HasPreparedVideo();
+                if(selectedLevelHasVideo_ && inMapEnabled_ && IsMenuPreviewEnabled())
+                    PlaybackSession::Instance().Start(PlaybackContext::MenuPreview);
+            }
+        }
+        else
+        {
+            BSML::Lite::SetButtonText(downloadButton_, "Download Video");
+            downloadStatus_->set_text("This map has a video available");
+        }
     }
 
     void SelectionVideoToggle::PreviewToggleChanged(bool enabled)
@@ -327,5 +449,6 @@ namespace BigScreen {
             inMapUi_->get_gameObject()->SetActive(settings.ModEnabled());
         if(previewUi_)
             previewUi_->get_gameObject()->SetActive(settings.ModEnabled());
+        TickDownloadUi();
     }
 }

@@ -7,11 +7,16 @@ namespace BSML {
 }
 
 namespace GlobalNamespace {
+    class BeatmapLevel;
     class StandardLevelDetailView;
 }
 
-namespace SongCore::SongLoader {
-    class CustomBeatmapLevel;
+namespace TMPro {
+    class TextMeshProUGUI;
+}
+
+namespace UnityEngine::UI {
+    class Button;
 }
 
 namespace BigScreen {
@@ -40,9 +45,10 @@ namespace BigScreen {
         void SongSelectionHidden();
 
         void LevelSelected(
-            bool isCustom,
             const std::string& levelId,
-            SongCore::SongLoader::CustomBeatmapLevel* customLevel);
+            GlobalNamespace::BeatmapLevel* level);
+
+        void TickDownloadUi();
 
         /// Mirrors a changed global state into this control and immediately
         /// applies it to the currently selected video map, if there is one.
@@ -63,10 +69,14 @@ namespace BigScreen {
 
         void PreviewToggleChanged(bool enabled);
         void InMapToggleChanged(bool enabled);
+        void DownloadButtonPressed();
         void RefreshUi();
 
         BSML::ToggleSetting* previewUi_ = nullptr;
         BSML::ToggleSetting* inMapUi_ = nullptr;
+        UnityEngine::UI::Button* downloadButton_ = nullptr;
+        TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
+        GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
         std::string selectedLevelId_;
         bool selectedLevelHasVideo_ = false;
         bool inMapEnabled_ = true;

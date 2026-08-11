@@ -76,6 +76,16 @@ namespace BigScreen {
         const std::filesystem::path& levelDirectory,
         std::string& error)
     {
+        auto definition = LoadDefinitionFromLevel(levelDirectory, error);
+        if(!definition || !definition->HasLocalVideo())
+            return std::nullopt;
+        return definition;
+    }
+
+    std::optional<MapVideoConfig> MapVideoConfig::LoadDefinitionFromLevel(
+        const std::filesystem::path& levelDirectory,
+        std::string& error)
+    {
         error.clear();
 
         // The native name allows future maps to target Big Screen explicitly.
@@ -120,34 +130,43 @@ namespace BigScreen {
         }
 
         const auto videoFile = OptionalString(document, "videoFile");
-        if(!videoFile)
+        const auto videoId = OptionalString(document, "videoID");
+        const auto videoUrl = OptionalString(document, "videoUrl");
+        if(!videoFile && !videoId && !videoUrl)
         {
-            error = "The map video metadata does not specify videoFile";
+            error = "The map video metadata has no videoFile, videoID, or videoUrl";
             return std::nullopt;
         }
 
-        const std::filesystem::path relativeVideo(*videoFile);
-        if(relativeVideo.is_absolute())
+        std::filesystem::path resolvedVideo;
+        std::filesystem::path relativeVideo;
+        if(videoFile)
         {
-            error = "videoFile must be relative to the custom level directory";
-            return std::nullopt;
-        }
+            relativeVideo = std::filesystem::path(*videoFile);
+            if(relativeVideo.is_absolute())
+            {
+                error = "videoFile must be relative to the custom level directory";
+                return std::nullopt;
+            }
 
-        const auto resolvedVideo = (levelDirectory / relativeVideo).lexically_normal();
-        if(!IsPathInside(resolvedVideo, levelDirectory))
-        {
-            error = "videoFile resolves outside the custom level directory";
-            return std::nullopt;
-        }
-        if(!std::filesystem::is_regular_file(resolvedVideo))
-        {
-            error = "The configured MP4 does not exist: " + resolvedVideo.string();
-            return std::nullopt;
+            resolvedVideo = (levelDirectory / relativeVideo).lexically_normal();
+            if(!IsPathInside(resolvedVideo, levelDirectory))
+            {
+                error = "videoFile resolves outside the custom level directory";
+                return std::nullopt;
+            }
         }
 
         MapVideoConfig config;
         config.metadataPath = metadata;
-        config.videoPath = resolvedVideo;
+        config.declaredVideoPath = resolvedVideo;
+        if(!resolvedVideo.empty() && std::filesystem::is_regular_file(resolvedVideo))
+            config.videoPath = resolvedVideo;
+        config.videoId = videoId;
+        config.videoUrl = videoUrl;
+        config.title = OptionalString(document, "title");
+        config.author = OptionalString(document, "author");
+        config.configByMapper = BoolOr(document, "configByMapper", false);
         config.offsetSeconds = NumberOr(document, "offset", 0.0) / 1000.0;
         config.playbackRate = std::clamp(NumberOr(document, "playbackSpeed", 1.0), 0.05, 8.0);
         config.declaredDurationSeconds = std::max(0.0, NumberOr(document, "duration", 0.0));
@@ -174,6 +193,20 @@ namespace BigScreen {
             config.stopAtVideoSecond = stopAt;
 
         return config;
+    }
+
+    std::optional<std::string> MapVideoConfig::DownloadUrl() const
+    {
+        if(videoUrl)
+            return videoUrl;
+        if(videoId)
+            return "https://www.youtube.com/watch?v=" + *videoId;
+        return std::nullopt;
+    }
+
+    bool MapVideoConfig::HasLocalVideo() const
+    {
+        return !videoPath.empty() && std::filesystem::is_regular_file(videoPath);
     }
 
     double MapVideoConfig::MediaTimeForSong(double songTimeSeconds, double decodedDurationSeconds) const

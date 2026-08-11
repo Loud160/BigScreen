@@ -62,6 +62,13 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+# Stage the pinned Android CPython, yt-dlp, certificate bundle, and native
+# extension modules before CMake tries to include or link the runtime.
+& (Join-Path $PSScriptRoot "fetch-downloader-runtime.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 & $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

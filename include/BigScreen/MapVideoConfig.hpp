@@ -23,6 +23,17 @@ namespace BigScreen {
     struct MapVideoConfig {
         std::filesystem::path metadataPath;
         std::filesystem::path videoPath;
+        std::filesystem::path declaredVideoPath;
+
+        // Download identity is retained even when the mapper intentionally
+        // ships metadata without the much larger video file. Big Screen can
+        // then offer an explicit download without treating a normal Cinema
+        // map as a malformed configuration.
+        std::optional<std::string> videoId;
+        std::optional<std::string> videoUrl;
+        std::optional<std::string> title;
+        std::optional<std::string> author;
+        bool configByMapper = false;
 
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
@@ -43,6 +54,16 @@ namespace BigScreen {
         static std::optional<MapVideoConfig> LoadFromLevel(
             const std::filesystem::path& levelDirectory,
             std::string& error);
+
+        /// Parses mapper metadata even when its video has not been downloaded.
+        /// LoadFromLevel remains the playback-safe API and returns only configs
+        /// whose local media file exists.
+        static std::optional<MapVideoConfig> LoadDefinitionFromLevel(
+            const std::filesystem::path& levelDirectory,
+            std::string& error);
+
+        std::optional<std::string> DownloadUrl() const;
+        bool HasLocalVideo() const;
 
         /// Converts Beat Saber's authoritative song position to the media time
         /// the decoder should display. AudioTimeSyncController already includes

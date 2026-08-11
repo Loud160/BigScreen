@@ -1,9 +1,11 @@
 #include "main.hpp"
 
+#include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
@@ -37,9 +39,8 @@ namespace {
         if(!BigScreen::Settings::Instance().ModEnabled())
             return;
         BigScreen::SelectionVideoToggle::Instance().LevelSelected(
-            eventArgs.isCustom,
             eventArgs.levelID,
-            eventArgs.isCustom ? eventArgs.customBeatmapLevel : nullptr);
+            eventArgs.beatmapLevel);
     }
 }
 
@@ -301,6 +302,8 @@ namespace {
         if(!BigScreen::Settings::Instance().ModEnabled())
             return;
 
+        BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
+
         auto& session = BigScreen::PlaybackSession::Instance();
         if(!session.IsMenuPreviewActive())
             return;
@@ -367,6 +370,10 @@ MOD_EXTERN_FUNC void late_load() noexcept
 {
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
+    BigScreen::VideoLibrary::Instance().Initialize();
+    std::string downloaderError;
+    if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
+        PaperLogger.error("Downloader unavailable: {}", downloaderError);
 
     // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view
     // visibility owns menu preview lifetime, scene transition owns gameplay

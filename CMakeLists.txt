@@ -68,6 +68,18 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
 
+# Big Screen embeds the official CPython Android runtime for its optional
+# downloader. Link against the exact staged ABI and package the library beside
+# the mod; pure Python files are installed into Big Screen's ModData folder.
+set(BIGSCREEN_PYTHON_PREFIX
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/downloader/python-3.14.6/prefix)
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
+        ${BIGSCREEN_PYTHON_PREFIX}/include/python3.14)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+        ${BIGSCREEN_PYTHON_PREFIX}/lib/libpython3.14.so
+        -ldl
+        -lz)
+
 # FFmpeg is a dynamic runtime dependency supplied by Hollywood. These pinned
 # headers and Android libraries are downloaded by scripts/fetch-ffmpeg.ps1 so
 # Big Screen compiles against the exact ABI present on Beat Saber 1.37 Quests.

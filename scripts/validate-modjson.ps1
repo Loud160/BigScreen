@@ -14,9 +14,19 @@ if (Test-Path -Path $modTemplate) {
     }
 
     if ($update) {
-        & qpm qmod manifest
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+        $qpmCommand = Get-Command qpm -ErrorAction SilentlyContinue
+        if ($qpmCommand) {
+            & $qpmCommand.Source qmod manifest
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE
+            }
+        }
+        elseif (-not (Test-Path -Path $mod)) {
+            Write-Output "Error: qpm is required to create the initial mod.json"
+            exit 1
+        }
+        else {
+            Write-Output "qpm is not on PATH; using the existing mod.json and synchronizing package fields."
         }
     }
 }
