@@ -93,6 +93,11 @@ namespace BigScreen {
             ReadFloat(document, "screenScale", 1.0f),
             0.5f,
             2.0f);
+        curvedScreenEnabled_ = ReadBool(document, "curvedScreenEnabled", false);
+        screenCurvature_ = std::clamp(
+            ReadFloat(document, "screenCurvature", 0.35f),
+            -1.0f,
+            1.0f);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
@@ -115,6 +120,8 @@ namespace BigScreen {
         menuPreviewEnabled_ = true;
         screenDistanceOffset_ = 0.0f;
         screenScale_ = 1.0f;
+        curvedScreenEnabled_ = false;
+        screenCurvature_ = 0.35f;
         transparencyEnabled_ = false;
         mapLightShowEnabled_ = true;
         environmentOverrideEnabled_ = true;
@@ -148,6 +155,18 @@ namespace BigScreen {
     void Settings::SetScreenScale(float value)
     {
         screenScale_ = std::clamp(value, 0.5f, 2.0f);
+        Save();
+    }
+
+    void Settings::SetCurvedScreenEnabled(bool value)
+    {
+        curvedScreenEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetScreenCurvature(float value)
+    {
+        screenCurvature_ = std::clamp(value, -1.0f, 1.0f);
         Save();
     }
 
@@ -192,6 +211,8 @@ namespace BigScreen {
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
         Replace(document, "screenDistanceOffset", screenDistanceOffset_);
         Replace(document, "screenScale", screenScale_);
+        Replace(document, "curvedScreenEnabled", curvedScreenEnabled_);
+        Replace(document, "screenCurvature", screenCurvature_);
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);

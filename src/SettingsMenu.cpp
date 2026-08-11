@@ -12,6 +12,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
+#include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "main.hpp"
 
@@ -70,6 +71,7 @@ namespace BigScreen {
         if(!viewController || !firstActivation)
         {
             RefreshPreviewControl();
+            RefreshCurvatureControl();
             return;
         }
 
@@ -145,6 +147,38 @@ namespace BigScreen {
             size,
             "Multiplies the map-authored screen size. 1.0 keeps the original size.");
 
+        auto* curvedScreen = BSML::Lite::CreateToggle(
+            container,
+            "Curved Screen",
+            settings.CurvedScreenEnabled(),
+            [this](bool enabled)
+            {
+                Settings::Instance().SetCurvedScreenEnabled(enabled);
+                RefreshCurvatureControl();
+            });
+        BSML::Lite::AddHoverHint(
+            curvedScreen,
+            "Off uses a flat screen. On reveals the signed screen-curve adjustment below.");
+
+        // This control is created immediately after its parent toggle so the
+        // vertical settings layout always places it directly underneath. It is
+        // only active in curved mode, avoiding an irrelevant adjustment while
+        // the screen is explicitly flat.
+        curvatureSlider_ = BSML::Lite::CreateSliderSetting(
+            container,
+            "Screen Curve",
+            0.05f,
+            settings.ScreenCurvature(),
+            -1.0f,
+            1.0f,
+            [](float value)
+            {
+                Settings::Instance().SetScreenCurvature(value);
+            });
+        BSML::Lite::AddHoverHint(
+            curvatureSlider_,
+            "Positive values wrap the edges toward you; negative values bend them away.");
+
         auto* transparency = BSML::Lite::CreateToggle(
             container,
             "Video Transparency",
@@ -207,6 +241,7 @@ namespace BigScreen {
             "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
         RefreshPreviewControl();
+        RefreshCurvatureControl();
     }
 
     void SettingsMenu::RefreshPreviewControl()
@@ -219,5 +254,16 @@ namespace BigScreen {
         if(previewToggle_->toggle)
             previewToggle_->toggle->SetIsOnWithoutNotify(settings.MenuPreviewEnabled());
         previewToggle_->set_interactable(settings.VideoEnabledByDefault());
+    }
+
+    void SettingsMenu::RefreshCurvatureControl()
+    {
+        if(!curvatureSlider_)
+            return;
+
+        // SetActive participates in the vertical layout pass, so hiding the
+        // slider also closes its row instead of leaving an empty menu gap.
+        curvatureSlider_->get_gameObject()->SetActive(
+            Settings::Instance().CurvedScreenEnabled());
     }
 }

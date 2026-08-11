@@ -19,6 +19,8 @@ namespace BigScreen {
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
         float ScreenDistanceOffset() const { return screenDistanceOffset_; }
         float ScreenScale() const { return screenScale_; }
+        bool CurvedScreenEnabled() const { return curvedScreenEnabled_; }
+        float ScreenCurvature() const { return screenCurvature_; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
@@ -29,6 +31,8 @@ namespace BigScreen {
         void SetMenuPreviewEnabled(bool value);
         void SetScreenDistanceOffset(float value);
         void SetScreenScale(float value);
+        void SetCurvedScreenEnabled(bool value);
+        void SetScreenCurvature(float value);
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
         void SetEnvironmentOverrideEnabled(bool value);
@@ -44,6 +48,8 @@ namespace BigScreen {
         bool menuPreviewEnabled_ = true;
         float screenDistanceOffset_ = 0.0f;
         float screenScale_ = 1.0f;
+        bool curvedScreenEnabled_ = false;
+        float screenCurvature_ = 0.35f;
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool environmentOverrideEnabled_ = true;

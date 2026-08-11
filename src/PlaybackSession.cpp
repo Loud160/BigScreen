@@ -64,6 +64,9 @@ namespace BigScreen {
             const auto& settings = Settings::Instance();
             config_->screenPosition.z += settings.ScreenDistanceOffset();
             config_->screenHeight *= settings.ScreenScale();
+            config_->screenCurvature = settings.CurvedScreenEnabled()
+                ? settings.ScreenCurvature()
+                : 0.0f;
             config_->transparent = settings.TransparencyEnabled();
 
             PaperLogger.info(

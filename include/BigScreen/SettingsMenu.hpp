@@ -1,6 +1,7 @@
 #pragma once
 
 namespace BSML {
+    class SliderSetting;
     class ToggleSetting;
 }
 
@@ -25,7 +26,9 @@ namespace BigScreen {
             bool addedToHierarchy,
             bool screenSystemEnabling);
         void RefreshPreviewControl();
+        void RefreshCurvatureControl();
 
         BSML::ToggleSetting* previewToggle_ = nullptr;
+        BSML::SliderSetting* curvatureSlider_ = nullptr;
     };
 }
