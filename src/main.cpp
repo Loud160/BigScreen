@@ -1,6 +1,7 @@
 #include "main.hpp"
 
 #include "BigScreen/PlaybackSession.hpp"
+#include "BigScreen/SelectionVideoToggle.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
@@ -8,6 +9,7 @@
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
+#include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
@@ -53,20 +55,10 @@ namespace {
     void HandleLevelWasSelected(
         SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& eventArgs)
     {
-        auto& session = BigScreen::PlaybackSession::Instance();
-
-        // A built-in song, a level without video metadata, or a disabled
-        // preference must immediately remove any preview left by the previous
-        // selection. Gameplay preparation will create its own fresh session.
-        if(!showMenuPreview || !eventArgs.isCustom || !eventArgs.customBeatmapLevel)
-        {
-            session.Stop();
-            return;
-        }
-
-        session.Prepare(eventArgs.customBeatmapLevel);
-        if(session.HasPreparedVideo())
-            session.Start(BigScreen::PlaybackContext::MenuPreview);
+        BigScreen::SelectionVideoToggle::Instance().LevelSelected(
+            eventArgs.isCustom,
+            eventArgs.levelID,
+            eventArgs.isCustom ? eventArgs.customBeatmapLevel : nullptr);
     }
 }
 
@@ -76,6 +68,26 @@ bool IsMenuPreviewEnabled()
 }
 
 namespace {
+    MAKE_HOOK_MATCH(
+        StandardLevelDetailView_Awake,
+        &GlobalNamespace::StandardLevelDetailView::Awake,
+        void,
+        GlobalNamespace::StandardLevelDetailView* self)
+    {
+        StandardLevelDetailView_Awake(self);
+        BigScreen::SelectionVideoToggle::Instance().CreateUi(self);
+    }
+
+    MAKE_HOOK_MATCH(
+        StandardLevelDetailView_OnDestroy,
+        &GlobalNamespace::StandardLevelDetailView::OnDestroy,
+        void,
+        GlobalNamespace::StandardLevelDetailView* self)
+    {
+        BigScreen::SelectionVideoToggle::Instance().ForgetUi();
+        StandardLevelDetailView_OnDestroy(self);
+    }
+
     MAKE_HOOK_MATCH(
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo,
         &GlobalNamespace::StandardLevelScenesTransitionSetupDataSO::InitEnvironmentInfo,
@@ -87,13 +99,17 @@ namespace {
         // Init has already stored the chosen BeatmapLevel by the time it calls
         // this helper. Preparing here is early enough to influence environment
         // selection but late enough to avoid hooking both overloaded Init APIs.
-        BigScreen::PlaybackSession::Instance().Prepare(self->get_beatmapLevel());
+        auto& playback = BigScreen::PlaybackSession::Instance();
+        if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
+            playback.Prepare(self->get_beatmapLevel());
+        else
+            playback.Prepare(nullptr);
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
             self,
             overrideEnvironmentSettings,
             environmentsListModel);
 
-        const auto& requested = BigScreen::PlaybackSession::Instance().RequestedEnvironment();
+        const auto& requested = playback.RequestedEnvironment();
         if(!requested || !environmentsListModel)
             return;
 
@@ -202,6 +218,8 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // and select the environment at transition, create on song start, follow
     // the authoritative song clock, and clean up when the level finishes.
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
+    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_Awake);
+    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);

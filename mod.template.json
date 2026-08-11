@@ -4,7 +4,7 @@
   "name": "${mod_name}",
   "id": "${mod_id}",
   "author": "Loud160 (AKA Whisp)",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.37.0_9064817954",
   "description": "Quest-native synchronized video screens for Beat Saber maps.",
