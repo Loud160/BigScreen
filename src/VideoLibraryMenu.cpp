@@ -445,7 +445,7 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
         detailTitle_ = BSML::Lite::CreateText(
             editorRoot, "", 3.6f);
-        ConfigureLayout(detailTitle_, -1.0f, 8.5f, 1.0f);
+        ConfigureLayout(detailTitle_, -1.0f, 7.5f, 1.0f);
         detailText_ = BSML::Lite::CreateText(
             editorRoot, "", 2.35f);
         ConfigureLayout(detailText_, -1.0f, 7.0f, 1.0f);
@@ -469,35 +469,35 @@ namespace BigScreen {
             fillRect->set_sizeDelta({0.0f, -0.35f});
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
-        auto* urlRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
-        ConfigureGroup(urlRow, false);
-        urlRow->set_spacing(0.8f);
-        ConfigureLayout(urlRow, -1.0f, 15.5f, 1.0f);
-        urlThumbnail_ = BSML::Lite::CreateImage(
-            urlRow,
-            BSML::Utilities::ImageResources::GetBlankSprite());
-        ConfigureLayout(urlThumbnail_, 18.0f, 12.0f, 0.0f);
-        urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
-        urlThumbnail_->set_preserveAspect(true);
-
-        auto* urlControls = BSML::Lite::CreateVerticalLayoutGroup(urlRow);
-        ConfigureGroup(urlControls, true);
-        ConfigureLayout(urlControls, 31.0f, 15.5f, 1.0f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            urlControls, "YouTube URL", "", [this](StringW value) {
+            editorRoot, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
                 transientStatus_.clear();
                 if(!suppressUrlCallback_)
                     BeginUrlProbe();
             });
         ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
+
+        // Keep the address field at the panel's full width. Recognition art
+        // belongs in the following action row, where it cannot reduce the
+        // amount of the pasted URL that remains visible and editable.
+        auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        ConfigureGroup(urlPreviewRow, false);
+        urlPreviewRow->set_spacing(0.8f);
+        ConfigureLayout(urlPreviewRow, -1.0f, 9.5f, 1.0f);
+        urlThumbnail_ = BSML::Lite::CreateImage(
+            urlPreviewRow,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ConfigureLayout(urlThumbnail_, 15.0f, 8.4f, 0.0f);
+        urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        urlThumbnail_->set_preserveAspect(true);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
-            urlControls,
+            urlPreviewRow,
             "Paste URL from Clipboard",
             {0.0f, 0.0f},
-            {40.0f, 6.5f},
+            {34.0f, 7.5f},
             [this]() { PasteUrlFromClipboard(); });
-        ConfigureLayout(pasteUrlButton_, -1.0f, 6.5f, 1.0f);
+        ConfigureLayout(pasteUrlButton_, 34.0f, 7.5f, 1.0f);
         BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.8f);
         BSML::Lite::AddHoverHint(
             urlInput_,
@@ -542,7 +542,7 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
         detailStorage_ = BSML::Lite::CreateText(
             editorRoot, "", 2.3f);
-        ConfigureLayout(detailStorage_, -1.0f, 3.5f, 1.0f);
+        ConfigureLayout(detailStorage_, -1.0f, 3.0f, 1.0f);
 
         for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
