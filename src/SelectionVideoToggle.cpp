@@ -5,6 +5,8 @@
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/Toggle.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -50,13 +52,32 @@ namespace BigScreen {
         }
 
         ui_->get_gameObject()->set_name("Big Screen Video Toggle");
+
+        // BSML's settings toggle template is designed for a full settings
+        // page and therefore requests a 90-unit row: its label hugs the left
+        // edge while its switch hugs the right edge. On the song-detail panel
+        // that made the two halves look unrelated and pushed the switch into
+        // the lower-right statistics area. Reduce both the preferred and
+        // concrete width so "Video" and its switch read as one compact control
+        // centered directly above Beat Saber's difficulty selector.
+        constexpr float CompactToggleWidth = 32.0f;
+        if(auto* layout = ui_->GetComponent<UnityEngine::UI::LayoutElement*>())
+            layout->set_preferredWidth(CompactToggleWidth);
+        auto rect = ui_->get_transform().cast<UnityEngine::RectTransform>();
+        if(rect)
+        {
+            const auto size = rect->get_sizeDelta();
+            rect->set_sizeDelta({CompactToggleWidth, size.y});
+            rect->set_anchoredPosition({0.0f, -24.0f});
+        }
+
         if(ui_->text)
             ui_->text->set_fontSize(3.5f);
         BSML::Lite::AddHoverHint(
             ui_,
             "Show this song's map video in the menu and during play.");
         RefreshUi();
-        PaperLogger.info("Created complete song-detail Video toggle at centered anchor");
+        PaperLogger.info("Created compact song-detail Video toggle above difficulty selection");
     }
 
     void SelectionVideoToggle::ForgetUi()
