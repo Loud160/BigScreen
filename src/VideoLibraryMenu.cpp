@@ -22,14 +22,23 @@
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "HMUI/InputFieldView.hpp"
 #include "HMUI/TableView.hpp"
+#include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
+#include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/UI/GridLayoutGroup.hpp"
+#include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
+#include "UnityEngine/UI/LayoutElement.hpp"
+#include "UnityEngine/UI/VerticalLayoutGroup.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Lists.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
+#include "bsml/shared/BSML/Components/ClickableText.hpp"
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
@@ -58,6 +67,18 @@ namespace BigScreen {
             text << std::fixed << std::setprecision(1)
                  << "Videos " << used / 1073741824.0 << " GB  |  Free "
                  << free / 1073741824.0 << " GB";
+            return text.str();
+        }
+
+        std::string BrowserSummary(
+            std::size_t count,
+            std::uint64_t used,
+            std::uint64_t free)
+        {
+            std::ostringstream text;
+            text << count << " maps  |  " << std::fixed << std::setprecision(1)
+                 << used / 1073741824.0 << " GB videos  |  "
+                 << free / 1073741824.0 << " GB free";
             return text.str();
         }
 
@@ -132,9 +153,48 @@ namespace BigScreen {
             }
         }
 
-        void SetActive(UnityEngine::Component* component, bool active)
+        UnityEngine::UI::LayoutElement* EnsureLayout(UnityEngine::Component* component)
         {
-            if(component) component->get_gameObject()->SetActive(active);
+            if(!component) return nullptr;
+            auto object = component->get_gameObject();
+            auto* layout = object->GetComponent<UnityEngine::UI::LayoutElement*>();
+            return layout ? layout : object->AddComponent<UnityEngine::UI::LayoutElement*>();
+        }
+
+        void ConfigureLayout(
+            UnityEngine::Component* component,
+            float preferredWidth,
+            float preferredHeight,
+            float flexibleWidth = 0.0f,
+            float flexibleHeight = 0.0f)
+        {
+            auto* layout = EnsureLayout(component);
+            if(!layout) return;
+            if(preferredWidth >= 0.0f) layout->set_preferredWidth(preferredWidth);
+            if(preferredHeight >= 0.0f) layout->set_preferredHeight(preferredHeight);
+            layout->set_flexibleWidth(flexibleWidth);
+            layout->set_flexibleHeight(flexibleHeight);
+        }
+
+        template<class TLayout>
+        void ConfigureGroup(TLayout* group, bool vertical)
+        {
+            if(!group) return;
+            group->set_spacing(0.45f);
+            group->set_childControlWidth(true);
+            group->set_childControlHeight(true);
+            group->set_childForceExpandWidth(false);
+            group->set_childForceExpandHeight(false);
+        }
+
+        void StretchToPanel(UnityEngine::RectTransform* transform)
+        {
+            if(!transform) return;
+            transform->set_anchorMin({0.0f, 0.0f});
+            transform->set_anchorMax({1.0f, 1.0f});
+            transform->set_pivot({0.5f, 0.5f});
+            transform->set_anchoredPosition({0.0f, 0.0f});
+            transform->set_sizeDelta({-4.0f, -3.0f});
         }
     }
 
@@ -144,80 +204,164 @@ namespace BigScreen {
         return menu;
     }
 
-    void VideoLibraryMenu::CreateUi(HMUI::ViewController* controller)
+    void VideoLibraryMenu::CreateUi(
+        HMUI::ViewController* browserController,
+        HMUI::ViewController* editorController,
+        std::function<void(bool showEditor)> navigate)
     {
-        if(!controller) return;
-        controller_ = controller;
+        if(!browserController || !editorController) return;
+        browserController_ = browserController;
+        editorController_ = editorController;
+        navigate_ = std::move(navigate);
 
-        // Browser layer: the list receives almost the entire panel. Its 5.5
-        // unit rows show roughly ten tracks at once while retaining the native
-        // Beat Saber level-list appearance and scroll controls.
-        browserTitle_ = BSML::Lite::CreateText(
-            controller, "Video Library", 4.2f, {0, 37}, {55, 6});
-        browserStorage_ = BSML::Lite::CreateText(
-            controller, "", 2.4f, {0, 33}, {55, 4});
+        // Qounters-style pages use one layout-owned content tree per view
+        // controller. Keeping browser and editor controls on separate
+        // controllers removes the hidden hit targets and partial-page remnants
+        // caused by the earlier absolute-position overlay.
+        auto* browserRoot = BSML::Lite::CreateVerticalLayoutGroup(browserController);
+        ConfigureGroup(browserRoot, true);
+        browserRoot->set_childForceExpandWidth(true);
+        StretchToPanel(browserRoot->get_rectTransform());
+
+        browserTitle_ = BSML::Lite::CreateText(browserRoot, "Video Library", 4.8f);
+        ConfigureLayout(browserTitle_, -1.0f, 5.8f, 1.0f);
+        browserStorage_ = BSML::Lite::CreateText(browserRoot, "", 2.35f);
+        ConfigureLayout(browserStorage_, -1.0f, 3.8f, 1.0f);
         searchInput_ = BSML::Lite::CreateStringSetting(
-            controller, "Search Maps", "", {0, 27}, [this](StringW value) {
+            browserRoot, "Search Maps", "", [this](StringW value) {
                 search_ = std::string(value);
                 RebuildVisibleRows();
             });
+        ConfigureLayout(searchInput_, -1.0f, 8.0f, 1.0f);
+
+        auto* filterRow = BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
+        ConfigureGroup(filterRow, false);
+        ConfigureLayout(filterRow, -1.0f, 7.0f, 1.0f);
         filterPreviousButton_ = BSML::Lite::CreateUIButton(
-            controller, "<", UnityEngine::Vector2{-22, 18.5f}, UnityEngine::Vector2{9, 7}, [this]() { ChangeFilter(-1); });
+            filterRow, "<", {0.0f, 0.0f}, {8.0f, 7.0f}, [this]() { ChangeFilter(-1); });
+        ConfigureLayout(filterPreviousButton_, 8.0f, 7.0f);
+        BSML::Lite::SetButtonTextSize(filterPreviousButton_, 3.4f);
         filterText_ = BSML::Lite::CreateText(
-            controller, FilterNames[0], 3.0f, {0, 18.5f}, {36, 6});
+            filterRow, "Showing: Show All Maps", 3.0f);
+        ConfigureLayout(filterText_, 33.0f, 7.0f, 1.0f);
         filterNextButton_ = BSML::Lite::CreateUIButton(
-            controller, ">", UnityEngine::Vector2{22, 18.5f}, UnityEngine::Vector2{9, 7}, [this]() { ChangeFilter(1); });
+            filterRow, ">", {0.0f, 0.0f}, {8.0f, 7.0f}, [this]() { ChangeFilter(1); });
+        ConfigureLayout(filterNextButton_, 8.0f, 7.0f);
+        BSML::Lite::SetButtonTextSize(filterNextButton_, 3.4f);
+
+        auto* listRow = BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
+        ConfigureGroup(listRow, false);
+        listRow->set_spacing(0.8f);
+        ConfigureLayout(listRow, -1.0f, -1.0f, 1.0f, 1.0f);
         list_ = BSML::Lite::CreateScrollableList(
-            controller, {0, -11.5f}, {55, 52}, [this](int row) { SelectRow(row); });
+            listRow, {0.0f, 0.0f}, {46.0f, 50.0f}, [this](int row) { SelectRow(row); });
         if(list_)
         {
             list_->set_listStyle(BSML::CustomListTableData::ListStyle::List);
-            list_->cellSize = 5.0f;
             list_->expandCell = true;
+            ConfigureLayout(list_, 46.0f, 50.0f, 1.0f, 1.0f);
         }
 
-        // Editor layer: every child is initially hidden and cannot intercept
-        // pointer events from the search field or list underneath it.
+        // The compact two-column rail preserves a readable hit area for every
+        // letter without shrinking the native song cells. Its order is A/N,
+        // B/O, ... M/Z, followed by # for titles beginning with punctuation or
+        // numbers.
+        auto* alphabet = BSML::Lite::CreateGridLayoutGroup(listRow);
+        alphabet->set_constraint(UnityEngine::UI::GridLayoutGroup::Constraint::FixedColumnCount);
+        alphabet->set_constraintCount(2);
+        alphabet->set_cellSize({3.5f, 3.35f});
+        alphabet->set_spacing({0.15f, 0.15f});
+        ConfigureLayout(alphabet, 7.3f, 50.0f, 0.0f, 1.0f);
+        alphabetButtons_.clear();
+        for(int row = 0; row < 13; ++row)
+        {
+            for(const char letter : {static_cast<char>('A' + row), static_cast<char>('N' + row)})
+            {
+                auto* button = BSML::Lite::CreateClickableText(
+                    alphabet,
+                    std::string(1, letter),
+                    TMPro::FontStyles::Normal,
+                    2.35f,
+                    {0.0f, 0.0f},
+                    {3.5f, 3.35f},
+                    [this, letter]() { JumpToLetter(letter); });
+                button->set_alignment(TMPro::TextAlignmentOptions::Center);
+                alphabetButtons_.push_back(button);
+            }
+        }
+        auto* numericButton = BSML::Lite::CreateClickableText(
+            alphabet, "#", TMPro::FontStyles::Normal, 2.35f,
+            {0.0f, 0.0f}, {3.5f, 3.35f}, [this]() { JumpToLetter('#'); });
+        numericButton->set_alignment(TMPro::TextAlignmentOptions::Center);
+        alphabetButtons_.push_back(numericButton);
+
+        auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
+        ConfigureGroup(editorRoot, true);
+        editorRoot->set_childForceExpandWidth(true);
+        StretchToPanel(editorRoot->get_rectTransform());
+
         backToListButton_ = BSML::Lite::CreateUIButton(
-            controller, "< Back to Song List", UnityEngine::Vector2{0, 36}, UnityEngine::Vector2{45, 7}, [this]() { ShowBrowser(); });
+            editorRoot, "< Back to Song List", {0.0f, 0.0f}, {45.0f, 7.0f}, [this]() { ShowBrowser(); });
+        ConfigureLayout(backToListButton_, -1.0f, 7.0f, 1.0f);
+        BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
         detailTitle_ = BSML::Lite::CreateText(
-            controller, "", 3.8f, {0, 28}, {55, 9});
+            editorRoot, "", 3.6f);
+        ConfigureLayout(detailTitle_, -1.0f, 9.5f, 1.0f);
         detailText_ = BSML::Lite::CreateText(
-            controller, "", 2.6f, {0, 21}, {55, 6});
+            editorRoot, "", 2.6f);
+        ConfigureLayout(detailText_, -1.0f, 5.0f, 1.0f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            controller, "YouTube URL", "", {0, 13}, [this](StringW value) {
+            editorRoot, "YouTube URL", "", [this](StringW value) {
                 url_ = std::string(value);
             });
+        ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
-            controller, "Start Offset", 2, 0.25f, 0.0f,
-            -60.0f, 60.0f, {0, 4}, [this](float value) {
+            editorRoot, "Start Offset", 2, 0.25f, 0.0f,
+            -60.0f, 60.0f, {0, 0}, [this](float value) {
                 offset_ = value;
-                if(selected_) VideoLibrary::Instance().UpdateTiming(
-                    std::string(selected_->levelID), VideoOrigin::User, offset_, rate_);
+                if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
+                   VideoLibrary::Instance().UpdateTiming(
+                    std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+                    StartSelectedPreview();
             });
+        ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
-            controller, "Playback Speed", 2, 0.05f, 1.0f,
-            0.05f, 8.0f, {0, -4}, [this](float value) {
+            editorRoot, "Playback Speed", 2, 0.05f, 1.0f,
+            0.05f, 8.0f, {0, 0}, [this](float value) {
                 rate_ = value;
-                if(selected_) VideoLibrary::Instance().UpdateTiming(
-                    std::string(selected_->levelID), VideoOrigin::User, offset_, rate_);
+                if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
+                   VideoLibrary::Instance().UpdateTiming(
+                    std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+                    StartSelectedPreview();
             });
+        ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
+
+        auto* actionRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        ConfigureGroup(actionRow, false);
+        ConfigureLayout(actionRow, -1.0f, 7.5f, 1.0f);
         downloadButton_ = BSML::Lite::CreateUIButton(
-            controller, "Download Video", UnityEngine::Vector2{-14, -14}, UnityEngine::Vector2{27, 7},
+            actionRow, "Download Video", {0.0f, 0.0f}, {27.0f, 7.0f},
             [this]() { StartOrCancelDownload(); });
+        ConfigureLayout(downloadButton_, 27.0f, 7.0f, 1.0f);
+        BSML::Lite::SetButtonTextSize(downloadButton_, 2.8f);
         fitButton_ = BSML::Lite::CreateUIButton(
-            controller, "Fit to Song", UnityEngine::Vector2{14, -14}, UnityEngine::Vector2{22, 7}, [this]() { FitToSong(); });
+            actionRow, "Fit to Song", {0.0f, 0.0f}, {22.0f, 7.0f}, [this]() { FitToSong(); });
+        ConfigureLayout(fitButton_, 22.0f, 7.0f, 1.0f);
+        BSML::Lite::SetButtonTextSize(fitButton_, 2.8f);
         removeButton_ = BSML::Lite::CreateUIButton(
-            controller, "Remove User Video", UnityEngine::Vector2{0, -23}, UnityEngine::Vector2{31, 7},
+            editorRoot, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
             [this]() { RemoveOverride(); });
+        ConfigureLayout(removeButton_, -1.0f, 7.0f, 1.0f);
+        BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
         detailStorage_ = BSML::Lite::CreateText(
-            controller, "", 2.4f, {0, -34}, {55, 5});
+            editorRoot, "", 2.3f);
+        ConfigureLayout(detailStorage_, -1.0f, 4.0f, 1.0f);
 
         for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         RebuildCatalog();
-        ShowBrowser();
+        editorVisible_ = false;
         Refresh();
     }
 
@@ -297,10 +441,12 @@ namespace BigScreen {
                 name, author.empty() ? videoState : author + " | " + videoState));
         }
         if(browserTitle_)
-            browserTitle_->set_text("Video Library (" + std::to_string(visible_.size()) + ")");
+            browserTitle_->set_text("Video Library");
         if(browserStorage_)
-            browserStorage_->set_text(StorageLabel(
-                VideoLibrary::Instance().LibraryBytes(), VideoLibrary::Instance().FreeBytes()));
+            browserStorage_->set_text(BrowserSummary(
+                visible_.size(),
+                VideoLibrary::Instance().LibraryBytes(),
+                VideoLibrary::Instance().FreeBytes()));
         if(list_->tableView)
         {
             list_->tableView->ReloadData();
@@ -313,7 +459,8 @@ namespace BigScreen {
         constexpr int count = static_cast<int>(FilterNames.size());
         const int next = (static_cast<int>(filter_) + direction + count) % count;
         filter_ = static_cast<SongLibraryFilter>(next);
-        if(filterText_) filterText_->set_text(FilterNames[next]);
+        if(filterText_) filterText_->set_text(
+            "Showing: " + std::string(FilterNames[next]));
         RebuildVisibleRows();
     }
 
@@ -336,8 +483,7 @@ namespace BigScreen {
     void VideoLibraryMenu::ShowBrowser()
     {
         editorVisible_ = false;
-        SetEditorVisible(false);
-        SetBrowserVisible(true);
+        if(navigate_) navigate_(false);
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         ScreenPreview::Instance().ActivateCurrentState();
@@ -347,33 +493,41 @@ namespace BigScreen {
     void VideoLibraryMenu::ShowEditor()
     {
         editorVisible_ = true;
-        SetBrowserVisible(false);
-        SetEditorVisible(true);
+        if(navigate_) navigate_(true);
     }
 
-    void VideoLibraryMenu::SetBrowserVisible(bool visible)
+    void VideoLibraryMenu::JumpToLetter(char letter)
     {
-        SetActive(browserTitle_, visible);
-        SetActive(browserStorage_, visible);
-        SetActive(searchInput_, visible);
-        SetActive(filterPreviousButton_, visible);
-        SetActive(filterText_, visible);
-        SetActive(filterNextButton_, visible);
-        SetActive(list_, visible);
+        if(!list_ || !list_->tableView || visible_.empty()) return;
+        for(std::size_t index = 0; index < visible_.size(); ++index)
+        {
+            auto* level = visible_[index] ? visible_[index]->level : nullptr;
+            const std::string name = level && level->songName
+                ? std::string(level->songName)
+                : std::string{};
+            if(name.empty()) continue;
+            const auto first = static_cast<unsigned char>(name.front());
+            const bool alpha = std::isalpha(first) != 0;
+            const char normalized = alpha
+                ? static_cast<char>(std::toupper(first))
+                : '#';
+            if(normalized == letter)
+            {
+                list_->tableView->ScrollToCellWithIdx(
+                    static_cast<int>(index),
+                    HMUI::TableView::ScrollPositionType::Beginning,
+                    true);
+                return;
+            }
+        }
     }
 
-    void VideoLibraryMenu::SetEditorVisible(bool visible)
+    VideoOrigin VideoLibraryMenu::SelectedVideoOrigin() const
     {
-        SetActive(backToListButton_, visible);
-        SetActive(detailTitle_, visible);
-        SetActive(detailText_, visible);
-        SetActive(urlInput_, visible);
-        SetActive(offsetSetting_, visible);
-        SetActive(rateSetting_, visible);
-        SetActive(downloadButton_, visible);
-        SetActive(fitButton_, visible);
-        SetActive(removeButton_, visible);
-        SetActive(detailStorage_, visible);
+        if(!selected_) return VideoOrigin::User;
+        return VideoLibrary::Instance().Describe(selected_).hasUserOverride
+            ? VideoOrigin::User
+            : VideoOrigin::Mapper;
     }
 
     void VideoLibraryMenu::StartOrCancelDownload()
@@ -400,6 +554,17 @@ namespace BigScreen {
     {
         if(!selected_) return;
         VideoLibrary::Instance().RemoveUserOverride(std::string(selected_->levelID), true);
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        url_ = descriptor.downloadUrl.value_or("");
+        offset_ = descriptor.playableConfig
+            ? descriptor.playableConfig->offsetSeconds
+            : 0.0;
+        rate_ = descriptor.playableConfig
+            ? descriptor.playableConfig->playbackRate
+            : 1.0;
+        if(urlInput_) urlInput_->SetText(url_);
+        if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
+        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         RefreshDetails();
         StartSelectedPreview();
     }
@@ -417,9 +582,10 @@ namespace BigScreen {
             descriptor.playableConfig->declaredDurationSeconds / selected_->songDuration,
             0.05, 8.0);
         VideoLibrary::Instance().UpdateTiming(
-            std::string(selected_->levelID), VideoOrigin::User, offset_, rate_);
+            std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_);
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         RefreshDetails();
+        StartSelectedPreview();
     }
 
     void VideoLibraryMenu::RefreshDetails()
@@ -444,8 +610,12 @@ namespace BigScreen {
               descriptor.CanDownload() ? "Mapper video available to download" :
               "Paste a YouTube URL to add a video");
         if(downloadButton_) BSML::Lite::SetButtonText(
-            downloadButton_, download.Active() ? "Pause Download" :
+            downloadButton_, download.Active() ? "Cancel Download" :
             descriptor.hasUserOverride ? "Replace Video" : "Download Video");
+        if(downloadButton_)
+            downloadButton_->set_interactable(download.Active() || !url_.empty());
+        if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
+        if(rateSetting_) rateSetting_->set_interactable(descriptor.CanPlay());
         if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);
         if(fitButton_) fitButton_->set_interactable(descriptor.CanPlay());
         if(thisDownload && download.state == DownloadState::Completed &&
@@ -487,7 +657,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::Refresh()
     {
-        if(!controller_) return;
+        if(!browserController_ || !editorController_) return;
         active_ = true;
         RebuildCatalog();
         if(editorVisible_) RefreshDetails();
@@ -498,6 +668,7 @@ namespace BigScreen {
     void VideoLibraryMenu::Deactivate()
     {
         active_ = false;
+        editorVisible_ = false;
         DownloadManager::Instance().Cancel();
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();

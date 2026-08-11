@@ -65,6 +65,16 @@ namespace BigScreen {
             return video;
         }
 
+        StoredTiming ParseStoredTiming(const rapidjson::Value& value)
+        {
+            StoredTiming timing;
+            timing.offsetSeconds = std::clamp(
+                NumberOr(value, "offsetSeconds", 0.0), -60.0, 60.0);
+            timing.playbackRate = std::clamp(
+                NumberOr(value, "playbackRate", 1.0), 0.05, 8.0);
+            return timing;
+        }
+
         void WriteStoredVideo(
             rapidjson::Value& object,
             const StoredVideo& video,
@@ -195,12 +205,19 @@ namespace BigScreen {
         }
         else if(descriptor.hasMapperLocalFile)
         {
+            if(saved && saved->mapperTiming)
+            {
+                effective.offsetSeconds = saved->mapperTiming->offsetSeconds;
+                effective.playbackRate = saved->mapperTiming->playbackRate;
+            }
             descriptor.playableConfig = effective;
         }
         else if(descriptor.hasMapperDownload)
         {
             const auto& record = *saved->mapper;
             effective.videoPath = videoPath_ / record.fileName;
+            effective.offsetSeconds = record.offsetSeconds;
+            effective.playbackRate = record.playbackRate;
             effective.declaredDurationSeconds = record.durationSeconds;
             descriptor.playableConfig = effective;
         }
@@ -287,14 +304,33 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         auto found = FindRecord(records_, levelId);
         if(found == records_.end())
-            return false;
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
         auto& target = origin == VideoOrigin::User
             ? found->second.user
             : found->second.mapper;
-        if(!target)
+        const auto clampedOffset = std::clamp(offsetSeconds, -60.0, 60.0);
+        const auto clampedRate = std::clamp(playbackRate, 0.05, 8.0);
+        if(origin == VideoOrigin::Mapper)
+        {
+            found->second.mapperTiming = StoredTiming{clampedOffset, clampedRate};
+            if(target)
+            {
+                target->offsetSeconds = clampedOffset;
+                target->playbackRate = clampedRate;
+            }
+        }
+        else if(target)
+        {
+            target->offsetSeconds = clampedOffset;
+            target->playbackRate = clampedRate;
+        }
+        else
+        {
             return false;
-        target->offsetSeconds = std::clamp(offsetSeconds, -60.0, 60.0);
-        target->playbackRate = std::clamp(playbackRate, 0.05, 8.0);
+        }
         SaveLocked();
         return true;
     }
@@ -356,6 +392,9 @@ namespace BigScreen {
                 level.mapper = ParseStoredVideo(*mapper);
             if(const auto* user = Member(member->value, "user"); user && user->IsObject())
                 level.user = ParseStoredVideo(*user);
+            if(const auto* timing = Member(member->value, "mapperTiming");
+               timing && timing->IsObject())
+                level.mapperTiming = ParseStoredTiming(*timing);
             records_.emplace_back(
                 std::string(member->name.GetString(), member->name.GetStringLength()),
                 std::move(level));
@@ -390,6 +429,15 @@ namespace BigScreen {
                 rapidjson::Value user(rapidjson::kObjectType);
                 WriteStoredVideo(user, *record.user, allocator);
                 level.AddMember("user", user.Move(), allocator);
+            }
+            if(record.mapperTiming)
+            {
+                rapidjson::Value timing(rapidjson::kObjectType);
+                timing.AddMember(
+                    "offsetSeconds", record.mapperTiming->offsetSeconds, allocator);
+                timing.AddMember(
+                    "playbackRate", record.mapperTiming->playbackRate, allocator);
+                level.AddMember("mapperTiming", timing.Move(), allocator);
             }
             levels.AddMember(
                 rapidjson::Value(levelId.c_str(),

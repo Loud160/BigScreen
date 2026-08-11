@@ -32,11 +32,20 @@ namespace BigScreen {
         int height = 0;
     };
 
+    struct StoredTiming {
+        double offsetSeconds = 0.0;
+        double playbackRate = 1.0;
+    };
+
     struct LevelVideoRecords {
         std::string songName;
         std::string songAuthor;
         std::optional<StoredVideo> mapper;
         std::optional<StoredVideo> user;
+        // Mapper-local files live inside a map folder rather than the managed
+        // video library, so their user-adjusted timing needs a small separate
+        // manifest record of its own.
+        std::optional<StoredTiming> mapperTiming;
     };
 
     struct VideoDescriptor {

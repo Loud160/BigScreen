@@ -1,9 +1,11 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace BSML {
+    class ClickableText;
     class CustomListTableData;
     class IncrementSetting;
 }
@@ -13,6 +15,7 @@ namespace TMPro { class TextMeshProUGUI; }
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
+    enum class VideoOrigin;
     enum class SongLibraryGroup { Custom, Wip, Ost, Dlc };
     enum class SongLibraryFilter { All, Custom, Wip, Ost, Dlc, Video };
 
@@ -21,12 +24,17 @@ namespace BigScreen {
         SongLibraryGroup group = SongLibraryGroup::Ost;
     };
 
-    /// Presents two mutually exclusive layers in Beat Saber's right panel:
-    /// a full-height song browser and a focused editor for one selection.
+    /// Owns the contents of two independent right-panel view controllers: a
+    /// song browser and a focused editor. The parent flow coordinator swaps
+    /// controllers during navigation, so hidden controls can never overlap or
+    /// intercept input from the page currently visible to the player.
     class VideoLibraryMenu final {
     public:
         static VideoLibraryMenu& Instance();
-        void CreateUi(HMUI::ViewController* controller);
+        void CreateUi(
+            HMUI::ViewController* browserController,
+            HMUI::ViewController* editorController,
+            std::function<void(bool showEditor)> navigate);
         void Refresh();
         void Tick();
         void Deactivate();
@@ -44,10 +52,12 @@ namespace BigScreen {
         void FitToSong();
         void RefreshDetails();
         void StartSelectedPreview();
-        void SetBrowserVisible(bool visible);
-        void SetEditorVisible(bool visible);
+        void JumpToLetter(char letter);
+        VideoOrigin SelectedVideoOrigin() const;
 
-        HMUI::ViewController* controller_ = nullptr;
+        HMUI::ViewController* browserController_ = nullptr;
+        HMUI::ViewController* editorController_ = nullptr;
+        std::function<void(bool)> navigate_;
         BSML::CustomListTableData* list_ = nullptr;
         HMUI::InputFieldView* searchInput_ = nullptr;
         HMUI::InputFieldView* urlInput_ = nullptr;
@@ -65,6 +75,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::UI::Button* fitButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
+        std::vector<BSML::ClickableText*> alphabetButtons_;
         std::vector<SongLibraryItem> catalog_;
         std::vector<SongLibraryItem*> visible_;
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;

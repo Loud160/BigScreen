@@ -35,7 +35,9 @@ namespace BigScreen {
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             settingsViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
-            libraryViewController =
+            libraryBrowserViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            libraryEditorViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(
@@ -44,7 +46,17 @@ namespace BigScreen {
                 {
                     BackButtonWasPressed(centerViewController);
                 });
-            VideoLibraryMenu::Instance().CreateUi(libraryViewController);
+            VideoLibraryMenu::Instance().CreateUi(
+                libraryBrowserViewController,
+                libraryEditorViewController,
+                [this](bool showEditor)
+                {
+                    SetRightScreenViewController(
+                        showEditor
+                            ? libraryEditorViewController
+                            : libraryBrowserViewController,
+                        HMUI::ViewController::AnimationType::In);
+                });
 
             // Main, left, right, bottom, and top are supplied in that order.
             // Keeping main empty leaves the user's forward view clear while
@@ -52,7 +64,7 @@ namespace BigScreen {
             ProvideInitialViewControllers(
                 centerViewController,
                 settingsViewController,
-                libraryViewController,
+                libraryBrowserViewController,
                 nullptr,
                 nullptr);
             ScreenPreview::Instance().ActivateCurrentState();
@@ -63,6 +75,9 @@ namespace BigScreen {
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
         VideoLibraryMenu::Instance().Refresh();
+        SetRightScreenViewController(
+            libraryBrowserViewController,
+            HMUI::ViewController::AnimationType::None);
         ScreenPreview::Instance().ActivateCurrentState();
     }
 
