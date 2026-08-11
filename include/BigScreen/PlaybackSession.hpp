@@ -36,6 +36,7 @@ namespace BigScreen {
 
         bool HasPreparedVideo() const { return config_.has_value(); }
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
+        const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
         const std::optional<std::string>& RequestedEnvironment() const;
 
     private:

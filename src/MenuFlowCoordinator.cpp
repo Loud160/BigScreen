@@ -27,32 +27,28 @@ namespace BigScreen {
 
         if(firstActivation)
         {
-            settingsViewController =
+            centerViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
-            previewViewController =
+            settingsViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(settingsViewController);
-            ScreenPreview::Instance().Bind(this, previewViewController);
 
-            const auto& settings = Settings::Instance();
-            auto* initialPreview =
-                settings.ModEnabled() && settings.MenuScreenPreviewEnabled()
-                ? previewViewController
-                : nullptr;
+            // Main, left, right, bottom, and top are supplied in that order.
+            // Keeping main empty leaves the user's forward view clear while
+            // the complete settings list remains available on the left.
             ProvideInitialViewControllers(
+                centerViewController,
                 settingsViewController,
                 nullptr,
-                initialPreview,
                 nullptr,
                 nullptr);
             ScreenPreview::Instance().ActivateCurrentState();
             return;
         }
 
-        // BSML retains flow coordinators between visits. Rebind the native
-        // preview owner after a prior deactivation released its render target.
-        ScreenPreview::Instance().Bind(this, previewViewController);
+        // BSML retains flow coordinators between visits, while the world-space
+        // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
         ScreenPreview::Instance().ActivateCurrentState();
     }

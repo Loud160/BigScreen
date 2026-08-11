@@ -6,9 +6,9 @@ Big Screen provides synchronized gameplay and song-selection video playback,
 an inline per-song Video switch, and a dedicated main-menu settings page. The
 global settings control the default video state, previews, screen distance and
 size and curvature, transparency, map lighting, environment override and motion, and the
-480p/720p/1080p output tier. An optional second menu panel renders the actual
-screen mesh against an isolated Big Mirror reference stage while settings are
-adjusted. A persistent master switch disables all playback and Beat Saber
+480p/720p/1080p output tier. The settings page occupies Beat Saber's left menu
+panel, leaving the center view open for an optional full-size world screen that
+uses the selected map's placement and the same rendering path as gameplay. A persistent master switch disables all playback and Beat Saber
 effects while leaving the Big Screen menu available for configuration and
 re-enabling the mod.
 

@@ -4,12 +4,11 @@
 #include "HMUI/ViewController.hpp"
 #include "custom-types/shared/macros.hpp"
 
-/// Owns Big Screen's center settings panel and optional right-side preview
-/// panel. A dedicated flow coordinator is required because the convenient
-/// BSML callback registration only provides one center view controller.
+/// Places Big Screen's settings on Beat Saber's left panel and keeps an empty
+/// center view so the optional full-size world preview remains unobstructed.
 DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, centerViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, settingsViewController);
-    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, previewViewController);
 
     DECLARE_OVERRIDE_METHOD_MATCH(
         void,

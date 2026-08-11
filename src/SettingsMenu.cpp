@@ -148,7 +148,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             screenPreviewToggle_,
-            "Shows a live right-side preview using Big Screen's Big Mirror reference stage.");
+            "Shows a full-size screen in the menu at the selected map's real placement, or Big Screen's default placement when no video map is selected.");
 
         auto* distance = BSML::Lite::CreateIncrementSetting(
             container,
@@ -275,7 +275,6 @@ namespace BigScreen {
             [](StringW value)
             {
                 Settings::Instance().SetResolutionHeight(ResolutionValue(value));
-                ScreenPreview::Instance().Refresh();
             });
         BSML::Lite::AddHoverHint(
             resolution,
