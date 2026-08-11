@@ -7,6 +7,8 @@
 #include <unordered_set>
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/PlaybackSession.hpp"
+#include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
@@ -21,6 +23,7 @@
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/Time.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Lists.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -173,6 +176,7 @@ namespace BigScreen {
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         RefreshDetails();
+        StartSelectedPreview();
     }
 
     void VideoLibraryMenu::StartOrCancelDownload()
@@ -229,11 +233,49 @@ namespace BigScreen {
             downloadButton_, download.Active() ? "Pause Download" :
             descriptor.hasUserOverride ? "Replace Video" : "Download Video");
         if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);
+        if(thisDownload && download.state == DownloadState::Completed &&
+           !PlaybackSession::Instance().IsLibraryPreviewActive())
+            StartSelectedPreview();
+    }
+
+    void VideoLibraryMenu::StartSelectedPreview()
+    {
+        auto& playback = PlaybackSession::Instance();
+        playback.Stop();
+        if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
+        {
+            ScreenPreview::Instance().ActivateCurrentState();
+            return;
+        }
+        // Show the real assigned media on the same full-size, world-positioned
+        // surface used in gameplay. A separate clock avoids coupling library
+        // browsing to whichever Beat Saber song preview happens to be active.
+        ScreenPreview::Instance().Suspend();
+        playback.Prepare(selected_);
+        playback.Start(PlaybackContext::LibraryPreview);
+        previewStartedAt_ = UnityEngine::Time::get_realtimeSinceStartup();
+    }
+
+    void VideoLibraryMenu::Tick()
+    {
+        if(!active_) return;
+        if(++tickCounter_ >= 30)
+        {
+            tickCounter_ = 0;
+            RefreshDetails();
+        }
+        auto& playback = PlaybackSession::Instance();
+        if(selected_ && VideoLibrary::Instance().Describe(selected_).CanPlay() &&
+           !playback.IsLibraryPreviewActive())
+            StartSelectedPreview();
+        if(playback.IsLibraryPreviewActive())
+            playback.Tick(UnityEngine::Time::get_realtimeSinceStartup() - previewStartedAt_);
     }
 
     void VideoLibraryMenu::Refresh()
     {
         if(!controller_) return;
+        active_ = true;
         // Beat Saber can finish loading custom/WIP repositories after this
         // retained view was first constructed. Rebuild only when the panel is
         // activated so late-loaded songs appear without a per-frame scan.
@@ -245,6 +287,9 @@ namespace BigScreen {
 
     void VideoLibraryMenu::Deactivate()
     {
+        active_ = false;
         DownloadManager::Instance().Cancel();
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Stop();
     }
 }

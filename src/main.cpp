@@ -6,6 +6,7 @@
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
@@ -303,6 +304,7 @@ namespace {
             return;
 
         BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
+        BigScreen::VideoLibraryMenu::Instance().Tick();
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
         {

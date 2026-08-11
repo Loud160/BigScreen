@@ -125,7 +125,8 @@ namespace BigScreen {
             "Started {}x{} {} video screen (duration {:.3f}s)",
             decoder_.Width(),
             decoder_.Height(),
-            context == PlaybackContext::MenuPreview ? "menu-preview" : "gameplay",
+            context == PlaybackContext::MenuPreview ? "song-menu" :
+                context == PlaybackContext::LibraryPreview ? "library-preview" : "gameplay",
             decoder_.DurationSeconds());
     }
 

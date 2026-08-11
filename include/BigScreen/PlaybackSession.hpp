@@ -16,6 +16,7 @@ namespace BigScreen {
     enum class PlaybackContext {
         None,
         MenuPreview,
+        LibraryPreview,
         Gameplay
     };
 
@@ -39,6 +40,7 @@ namespace BigScreen {
 
         bool HasPreparedVideo() const { return config_.has_value(); }
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
+        bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
         const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
         const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;

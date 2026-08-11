@@ -21,6 +21,7 @@ namespace BigScreen {
         static VideoLibraryMenu& Instance();
         void CreateUi(HMUI::ViewController* controller);
         void Refresh();
+        void Tick();
         void Deactivate();
 
     private:
@@ -32,6 +33,7 @@ namespace BigScreen {
         void RemoveOverride();
         void FitToSong();
         void RefreshDetails();
+        void StartSelectedPreview();
 
         HMUI::ViewController* controller_ = nullptr;
         BSML::CustomListTableData* list_ = nullptr;
@@ -50,5 +52,8 @@ namespace BigScreen {
         std::string url_;
         double offset_ = 0.0;
         double rate_ = 1.0;
+        float previewStartedAt_ = 0.0f;
+        bool active_ = false;
+        int tickCounter_ = 0;
     };
 }
