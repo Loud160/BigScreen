@@ -234,6 +234,10 @@ namespace BigScreen {
     void VideoLibraryMenu::Refresh()
     {
         if(!controller_) return;
+        // Beat Saber can finish loading custom/WIP repositories after this
+        // retained view was first constructed. Rebuild only when the panel is
+        // activated so late-loaded songs appear without a per-frame scan.
+        RebuildCatalog();
         RefreshDetails();
         if(!Settings::Instance().ModEnabled())
             DownloadManager::Instance().Cancel();
