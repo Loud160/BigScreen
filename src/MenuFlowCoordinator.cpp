@@ -13,10 +13,14 @@ namespace BigScreen {
         bool addedToHierarchy,
         bool screenSystemEnabling)
     {
-        HMUI::FlowCoordinator::DidActivate(
-            firstActivation,
-            addedToHierarchy,
-            screenSystemEnabling);
+        // Do not call HMUI::FlowCoordinator::DidActivate from a custom-types
+        // override. The generated CORDL wrapper performs virtual dispatch, so
+        // calling it through the base type returns to this override and grows
+        // the native stack until Beat Saber crashes. HMUI lifecycle overrides
+        // are expected to provide their own activation work, as BSML's own
+        // flow coordinators do.
+        (void)addedToHierarchy;
+        (void)screenSystemEnabling;
 
         SetTitle("Big Screen", HMUI::ViewController::AnimationType::None);
         set_showBackButton(true);
@@ -58,9 +62,11 @@ namespace BigScreen {
         // A hidden camera would continue rendering every menu frame. Releasing
         // it here keeps the optional preview at zero GPU cost outside this page.
         ScreenPreview::Instance().Suspend();
-        HMUI::FlowCoordinator::DidDeactivate(
-            removedFromHierarchy,
-            screenSystemDisabling);
+
+        // The generated base wrapper has the same virtual-dispatch behavior as
+        // DidActivate, so this override must not call it directly either.
+        (void)removedFromHierarchy;
+        (void)screenSystemDisabling;
     }
 
     void MenuFlowCoordinator::BackButtonWasPressed(
