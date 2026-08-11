@@ -14,6 +14,8 @@
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
+#include "UnityEngine/UI/LayoutElement.hpp"
 #include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
@@ -110,21 +112,36 @@ namespace BigScreen {
         resetButton_ = nullptr;
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
-        // navigation inside this left panel. This keeps the actual placement
-        // preview completely clear in the user's forward view.
-        auto* title = BSML::Lite::CreateText(
-            viewController,
-            "Big Screen",
-            5.0f,
-            UnityEngine::Vector2{5.0f, 31.0f},
-            UnityEngine::Vector2{52.0f, 8.0f});
-        if(title)
-            title->set_alignment(TMPro::TextAlignmentOptions::Center);
+        // navigation inside this left panel. Anchor a dedicated header to the
+        // panel's top edge instead of guessing absolute coordinates: side-screen
+        // dimensions differ from the center screen, and the former coordinates
+        // placed the Back button beyond the panel's clipping rectangle.
+        auto* header = BSML::Lite::CreateHorizontalLayoutGroup(viewController);
+        if(header)
+        {
+            header->set_spacing(1.5f);
+            header->set_childControlWidth(true);
+            header->set_childControlHeight(true);
+            header->set_childForceExpandWidth(false);
+            header->set_childForceExpandHeight(false);
+
+            auto headerTransform = header->get_rectTransform();
+            headerTransform->set_anchorMin({0.0f, 1.0f});
+            headerTransform->set_anchorMax({1.0f, 1.0f});
+            headerTransform->set_pivot({0.5f, 1.0f});
+            headerTransform->set_anchoredPosition({0.0f, -1.5f});
+            headerTransform->set_sizeDelta({-4.0f, 8.0f});
+        }
+
+        const BSML::Lite::TransformWrapper headerParent =
+            header
+                ? BSML::Lite::TransformWrapper(header)
+                : BSML::Lite::TransformWrapper(viewController);
 
         auto* backButton = BSML::Lite::CreateUIButton(
-            viewController,
+            headerParent,
             "< Back",
-            UnityEngine::Vector2{-31.0f, 31.0f},
+            UnityEngine::Vector2{0.0f, 0.0f},
             UnityEngine::Vector2{18.0f, 8.0f},
             [callback = std::move(onBack)]()
             {
@@ -132,7 +149,33 @@ namespace BigScreen {
                     callback();
             });
         if(backButton)
+        {
             BSML::Lite::SetButtonTextSize(backButton, 3.2f);
+            if(auto* layout = backButton->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredWidth(18.0f);
+                layout->set_preferredHeight(8.0f);
+            }
+        }
+
+        auto* title = BSML::Lite::CreateText(
+            headerParent,
+            "Big Screen",
+            5.0f,
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{38.0f, 8.0f});
+        if(title)
+        {
+            title->set_alignment(TMPro::TextAlignmentOptions::Center);
+            if(auto* layout = title->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                // The title consumes whatever width remains after the fixed
+                // Back control, keeping both controls inside the side panel.
+                layout->set_preferredWidth(38.0f);
+                layout->set_preferredHeight(8.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
 
         auto& settings = Settings::Instance();
         auto* container = BSML::Lite::CreateScrollableSettingsContainer(viewController);
@@ -142,9 +185,8 @@ namespace BigScreen {
             return;
         }
 
-        // The stock settings container reserves only enough room for the
-        // FlowCoordinator header. Reserve a larger top margin for the custom
-        // title and Back button now living in this same left panel.
+        // Reserve the upper portion of the left panel for the anchored header,
+        // keeping the first setting from drawing underneath its controls.
         if(auto* external = container->GetComponent<BSML::ExternalComponents*>())
         {
             if(auto* scroll = external->Get<UnityEngine::RectTransform*>())
