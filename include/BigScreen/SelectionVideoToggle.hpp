@@ -15,8 +15,8 @@ namespace SongCore::SongLoader {
 }
 
 namespace BigScreen {
-    /// Owns the persistent Video switch shown at the top-right of Beat Saber's
-    /// song-selection screen.
+    /// Owns the persistent Preview Video and Video In Map switches shown at
+    /// the top-right of Beat Saber's song-selection screen.
     ///
     /// Its state is global rather than per-song: scrolling the song list never
     /// changes the switch or unexpectedly starts a sequence of new previews.
@@ -49,12 +49,14 @@ namespace BigScreen {
     private:
         SelectionVideoToggle() = default;
 
-        void ToggleChanged(bool enabled);
+        void PreviewToggleChanged(bool enabled);
+        void InMapToggleChanged(bool enabled);
         void RefreshUi();
 
-        BSML::ToggleSetting* ui_ = nullptr;
+        BSML::ToggleSetting* previewUi_ = nullptr;
+        BSML::ToggleSetting* inMapUi_ = nullptr;
         std::string selectedLevelId_;
         bool selectedLevelHasVideo_ = false;
-        bool enabled_ = true;
+        bool inMapEnabled_ = true;
     };
 }

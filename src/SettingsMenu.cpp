@@ -217,7 +217,7 @@ namespace BigScreen {
 
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             container,
-            "Song Videos Enabled",
+            "Video In Map",
             settings.VideoEnabled(),
             [this](bool enabled)
             {
@@ -231,11 +231,11 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             videoEnabledToggle_,
-            "Global video switch shared with the control at the top-right of song selection.");
+            "Shows videos during map gameplay and is shared with song selection.");
 
         previewToggle_ = BSML::Lite::CreateToggle(
             container,
-            "Song Video Previews",
+            "Preview Video",
             settings.MenuPreviewEnabled(),
             [](bool enabled)
             {
@@ -244,7 +244,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             previewToggle_,
-            "Controls song-selection playback separately from video during gameplay.");
+            "Plays videos during song selection and is shared with song selection.");
 
         distanceSetting_ = BSML::Lite::CreateIncrementSetting(
             container,
