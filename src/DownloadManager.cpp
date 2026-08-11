@@ -216,6 +216,32 @@ namespace BigScreen {
             return true;
         }
 
+        constexpr const char* CertificateBootstrapScript = R"PY(
+import os, zipfile
+
+# certifi is intentionally shipped as its signed/pinned wheel. Python can
+# import modules directly from that archive, but OpenSSL's C API requires a
+# real filesystem path for its PEM bundle. Materialize only that data file.
+with zipfile.ZipFile(BIGSCREEN_CERTIFI_WHEEL) as wheel:
+    certificate_data = wheel.read('certifi/cacert.pem')
+if not certificate_data.startswith(b'-----BEGIN CERTIFICATE-----'):
+    raise RuntimeError('The packaged certifi CA bundle is invalid.')
+temporary = BIGSCREEN_CA_PATH + '.tmp'
+with open(temporary, 'wb') as stream:
+    stream.write(certificate_data)
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, BIGSCREEN_CA_PATH)
+
+# urllib/OpenSSL honors SSL_CERT_FILE. yt-dlp intentionally calls
+# certifi.where() itself, so point both paths at the same verified PEM file.
+os.environ['SSL_CERT_FILE'] = BIGSCREEN_CA_PATH
+os.environ['REQUESTS_CA_BUNDLE'] = BIGSCREEN_CA_PATH
+os.environ['CURL_CA_BUNDLE'] = BIGSCREEN_CA_PATH
+import certifi
+certifi.where = lambda path=BIGSCREEN_CA_PATH: path
+)PY";
+
         constexpr const char* DownloaderScript = R"PY(
 import json, os, re, shutil, traceback
 
@@ -392,6 +418,8 @@ def classify(value):
         return 'This YouTube video is unavailable or has been removed.'
     if 'http error 429' in lower or 'too many requests' in lower:
         return 'YouTube is temporarily rate-limiting this headset. Try again later.'
+    if 'certificate verify failed' in lower:
+        return 'Secure connection failed because the YouTube certificate could not be verified.'
     if 'network is unreachable' in lower or 'timed out' in lower:
         return 'The Quest could not reach YouTube: ' + text
     return 'YouTube could not recognize this URL: ' + text
@@ -570,9 +598,50 @@ except BaseException as error:
             error = status.err_msg ? status.err_msg : "Python initialization failed";
             return false;
         }
+
+        // Configure certificate trust before releasing the interpreter lock
+        // or starting any downloader worker. This keeps verification enabled
+        // while avoiding Android's incomplete process-wide CA search paths.
+        const auto certificateWheel = runtime / "certifi.whl";
+        const auto certificateBundle = runtime / "cacert.pem";
+        PyObject* certificateGlobals = PyDict_New();
+        PyDict_SetItemString(
+            certificateGlobals,
+            "__builtins__",
+            PyEval_GetBuiltins());
+        auto* wheelPath = PyUnicode_FromString(certificateWheel.c_str());
+        auto* bundlePath = PyUnicode_FromString(certificateBundle.c_str());
+        PyDict_SetItemString(
+            certificateGlobals,
+            "BIGSCREEN_CERTIFI_WHEEL",
+            wheelPath);
+        PyDict_SetItemString(
+            certificateGlobals,
+            "BIGSCREEN_CA_PATH",
+            bundlePath);
+        Py_DECREF(wheelPath);
+        Py_DECREF(bundlePath);
+        auto* certificateResult = PyRun_String(
+            CertificateBootstrapScript,
+            Py_file_input,
+            certificateGlobals,
+            certificateGlobals);
+        if(!certificateResult)
+        {
+            PyErr_Print();
+            PyErr_Clear();
+            Py_DECREF(certificateGlobals);
+            error = "Could not prepare the embedded certificate authority bundle.";
+            PyEval_SaveThread();
+            return false;
+        }
+        Py_DECREF(certificateResult);
+        Py_DECREF(certificateGlobals);
         PyEval_SaveThread();
         initialized_ = true;
-        PaperLogger.info("Embedded CPython downloader initialized");
+        PaperLogger.info(
+            "Embedded CPython downloader initialized with CA bundle '{}'",
+            certificateBundle.string());
         return true;
     }
 
