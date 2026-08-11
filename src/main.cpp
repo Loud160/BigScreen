@@ -34,6 +34,8 @@ namespace {
     void HandleLevelWasSelected(
         SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& eventArgs)
     {
+        if(!BigScreen::Settings::Instance().ModEnabled())
+            return;
         BigScreen::SelectionVideoToggle::Instance().LevelSelected(
             eventArgs.isCustom,
             eventArgs.levelID,
@@ -43,7 +45,8 @@ namespace {
 
 bool IsMenuPreviewEnabled()
 {
-    return BigScreen::Settings::Instance().MenuPreviewEnabled();
+    const auto& settings = BigScreen::Settings::Instance();
+    return settings.ModEnabled() && settings.MenuPreviewEnabled();
 }
 
 namespace {
@@ -76,7 +79,8 @@ namespace {
 
     bool ShouldSuppressEnvironmentMotion()
     {
-        return BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+        return BigScreen::Settings::Instance().ModEnabled() &&
+               BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
                !BigScreen::Settings::Instance().EnvironmentMotionEnabled();
     }
 
@@ -137,6 +141,15 @@ namespace {
         GlobalNamespace::OverrideEnvironmentSettings* overrideEnvironmentSettings,
         GlobalNamespace::EnvironmentsListModel* environmentsListModel)
     {
+        if(!BigScreen::Settings::Instance().ModEnabled())
+        {
+            StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
+                self,
+                overrideEnvironmentSettings,
+                environmentsListModel);
+            return;
+        }
+
         // Init has already stored the chosen BeatmapLevel by the time it calls
         // this helper. Preparing here is early enough to influence environment
         // selection but late enough to avoid hooking both overloaded Init APIs.
@@ -186,6 +199,16 @@ namespace {
         StringW backButtonText,
         bool startPaused)
     {
+        if(!BigScreen::Settings::Instance().ModEnabled())
+        {
+            StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes(
+                self,
+                playerSpecificSettings,
+                backButtonText,
+                startPaused);
+            return;
+        }
+
         auto* effectiveSettings = playerSpecificSettings;
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
            !BigScreen::Settings::Instance().MapLightShowEnabled() &&
@@ -223,6 +246,9 @@ namespace {
     {
         AudioTimeSyncController_StartSong(self, startTimeOffset);
 
+        if(!BigScreen::Settings::Instance().ModEnabled())
+            return;
+
         // StartSong runs after the gameplay scene and environment have loaded,
         // so Unity objects created here belong to the correct scene. The screen
         // remains hidden until the worker publishes its first decoded frame.
@@ -241,6 +267,9 @@ namespace {
         GlobalNamespace::SongPreviewPlayer* self)
     {
         SongPreviewPlayer_Update(self);
+
+        if(!BigScreen::Settings::Instance().ModEnabled())
+            return;
 
         auto& session = BigScreen::PlaybackSession::Instance();
         if(!session.IsMenuPreviewActive())
@@ -271,6 +300,9 @@ namespace {
     {
         AudioTimeSyncController_Update(self);
 
+        if(!BigScreen::Settings::Instance().ModEnabled())
+            return;
+
         // Beat Saber's song time is the sole playback clock. It stops during a
         // pause, jumps on restart/scrub, incorporates practice speed, and is the
         // timeline Replay advances during playback and frame-by-frame capture.
@@ -287,7 +319,8 @@ namespace {
         // Release native decoder resources and Unity objects before the normal
         // transition tears down GameCore. This also guarantees that the next
         // selected map cannot inherit a stale frame or decoder worker.
-        BigScreen::PlaybackSession::Instance().Stop();
+        if(BigScreen::Settings::Instance().ModEnabled())
+            BigScreen::PlaybackSession::Instance().Stop();
         StandardLevelScenesTransitionSetupDataSO_Finish(self, levelCompletionResults);
     }
 }

@@ -32,6 +32,13 @@ namespace BigScreen {
         config_.reset();
         levelDirectory_.clear();
 
+        // Hooks remain installed for the lifetime of the process, but the
+        // master switch makes every entry point inert. Keeping this guard here
+        // as well as in callers prevents future code from accidentally parsing
+        // map files while Big Screen is disabled.
+        if(!Settings::Instance().ModEnabled())
+            return;
+
         if(!level || !level->levelID)
             return;
 
@@ -82,7 +89,10 @@ namespace BigScreen {
 
     void PlaybackSession::Start(PlaybackContext context)
     {
-        if(!config_ || started_ || context == PlaybackContext::None)
+        if(!Settings::Instance().ModEnabled() ||
+           !config_ ||
+           started_ ||
+           context == PlaybackContext::None)
             return;
 
         std::string error;
@@ -115,7 +125,7 @@ namespace BigScreen {
 
     void PlaybackSession::Tick(double songTimeSeconds)
     {
-        if(!started_ || !config_)
+        if(!Settings::Instance().ModEnabled() || !started_ || !config_)
             return;
 
         const double mediaTime = config_->MediaTimeForSong(

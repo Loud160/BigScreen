@@ -118,6 +118,27 @@ namespace BigScreen {
             playback.Start(PlaybackContext::MenuPreview);
     }
 
+    void SelectionVideoToggle::ModEnabledChanged(bool enabled)
+    {
+        auto& playback = PlaybackSession::Instance();
+        if(!enabled)
+        {
+            // Clear the selected-map identity as well as stopping playback.
+            // SongCore selections are intentionally ignored while disabled,
+            // so retaining this data could resurrect the wrong song if the
+            // user changes selection before re-enabling Big Screen.
+            selectedLevelId_.clear();
+            selectedLevelHasVideo_ = false;
+            enabled_ = Settings::Instance().VideoEnabledByDefault();
+            playback.Prepare(nullptr);
+        }
+        else if(selectedLevelHasVideo_ && enabled_ && IsMenuPreviewEnabled())
+        {
+            playback.Start(PlaybackContext::MenuPreview);
+        }
+        RefreshUi();
+    }
+
     void SelectionVideoToggle::MenuPreviewPreferenceChanged()
     {
         auto& playback = PlaybackSession::Instance();
@@ -173,6 +194,7 @@ namespace BigScreen {
         ui_->currentValue = enabled_;
         if(ui_->toggle)
             ui_->toggle->SetIsOnWithoutNotify(enabled_);
-        ui_->get_gameObject()->SetActive(selectedLevelHasVideo_);
+        ui_->get_gameObject()->SetActive(
+            Settings::Instance().ModEnabled() && selectedLevelHasVideo_);
     }
 }

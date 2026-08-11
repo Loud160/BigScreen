@@ -27,6 +27,7 @@ namespace BigScreen {
 
         HMUI::ViewController* settingsViewController_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
+        BSML::ToggleSetting* screenPreviewToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
     };
 }

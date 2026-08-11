@@ -21,6 +21,7 @@
 #include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/RenderTexture.hpp"
+#include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Shader.hpp"
 #include "UnityEngine/Texture2D.hpp"
 #include "UnityEngine/TextureFormat.hpp"
@@ -28,8 +29,8 @@
 #include "UnityEngine/UI/RawImage.hpp"
 #include "UnityEngine/Vector2.hpp"
 #include "UnityEngine/Vector3.hpp"
-#include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
@@ -196,9 +197,11 @@ namespace BigScreen {
 
     void ScreenPreview::ActivateCurrentState()
     {
-        if(!Settings::Instance().MenuScreenPreviewEnabled())
+        const auto& settings = Settings::Instance();
+        if(!settings.ModEnabled() || !settings.MenuScreenPreviewEnabled())
             return;
-        CreateUi();
+        if(!CreateUi())
+            return;
         if(CreateRenderer())
             Refresh();
     }
@@ -208,10 +211,19 @@ namespace BigScreen {
         if(!flowCoordinator_ || !previewViewController_)
             return;
 
+        // The master switch always wins over the saved preview preference.
+        // The preference itself is left intact so re-enabling Big Screen can
+        // restore the panel without silently changing an unrelated setting.
+        enabled = enabled && Settings::Instance().ModEnabled();
+
         if(enabled)
         {
-            CreateUi();
-            CreateRenderer();
+            // UI creation can fail if a required Beat Saber component is not
+            // available. Keep that failure contained inside this optional
+            // feature instead of allowing a settings callback exception to
+            // terminate the entire game.
+            if(!CreateUi() || !CreateRenderer())
+                return;
             Refresh();
             flowCoordinator_->SetRightScreenViewController(
                 previewViewController_,
@@ -241,10 +253,10 @@ namespace BigScreen {
         flowCoordinator_ = nullptr;
     }
 
-    void ScreenPreview::CreateUi()
+    bool ScreenPreview::CreateUi()
     {
         if(!previewViewController_ || previewImage_)
-            return;
+            return previewViewController_ && previewImage_;
 
         BSML::Lite::CreateText(
             previewViewController_,
@@ -252,17 +264,50 @@ namespace BigScreen {
             4.5f,
             {0.0f, 27.0f},
             {68.0f, 7.0f});
-        previewImage_ = BSML::Lite::CreateRawImage(
-            previewViewController_,
-            nullptr,
-            {0.0f, 1.0f},
-            {68.0f, 38.25f});
+
+        // BSML 0.4.43's CreateRawImage helper mistakenly constructs an
+        // ImageTag and then searches it for a RawImage component. The lookup
+        // returns null on Beat Saber 1.37 and its next set_texture call aborts
+        // the game. Construct the standard Unity RawImage directly, following
+        // the working RawImageTag implementation shipped by that BSML version.
+        auto* imageObject = UnityEngine::GameObject::New_ctor(
+            "Big Screen Settings Preview Image");
+        if(!imageObject)
+        {
+            PaperLogger.error("Could not create the settings-preview image object");
+            return false;
+        }
+
+        previewImage_ = imageObject->AddComponent<UnityEngine::UI::RawImage*>();
+        if(!previewImage_)
+        {
+            PaperLogger.error("Could not add RawImage to the settings preview");
+            UnityEngine::Object::Destroy(imageObject);
+            return false;
+        }
+
+        previewImage_->set_material(BSML::Helpers::GetUINoGlowMat());
+        previewImage_->set_raycastTarget(false);
+        auto imageRect = previewImage_->get_rectTransform();
+        if(!imageRect)
+        {
+            PaperLogger.error("The settings-preview RawImage has no RectTransform");
+            UnityEngine::Object::Destroy(imageObject);
+            previewImage_ = nullptr;
+            return false;
+        }
+        imageRect->SetParent(previewViewController_->get_transform(), false);
+        imageRect->set_anchoredPosition({0.0f, 1.0f});
+        imageRect->set_sizeDelta({68.0f, 38.25f});
+
         statusText_ = BSML::Lite::CreateText(
             previewViewController_,
             "",
             3.2f,
             {0.0f, -25.0f},
             {70.0f, 8.0f});
+        PaperLogger.info("Created the settings screen-preview UI");
+        return true;
     }
 
     bool ScreenPreview::CreateRenderer()
@@ -339,6 +384,7 @@ namespace BigScreen {
         backgroundObject_->get_transform()->set_localPosition({0.0f, 0.0f, 3.0f});
 
         previewImage_->set_texture(renderTexture_);
+        PaperLogger.info("Created the isolated settings screen-preview renderer");
         return true;
     }
 

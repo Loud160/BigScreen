@@ -72,6 +72,7 @@ namespace BigScreen {
         // Clear native UI references before constructing the new scene's page.
         settingsViewController_ = viewController;
         previewToggle_ = nullptr;
+        screenPreviewToggle_ = nullptr;
         curvatureSlider_ = nullptr;
 
         auto& settings = Settings::Instance();
@@ -81,6 +82,28 @@ namespace BigScreen {
             PaperLogger.error("Could not create the Big Screen settings container");
             return;
         }
+
+        auto* modEnabled = BSML::Lite::CreateToggle(
+            container,
+            "Big Screen Enabled",
+            settings.ModEnabled(),
+            [this](bool enabled)
+            {
+                auto& current = Settings::Instance();
+                current.SetModEnabled(enabled);
+
+                // The hooks remain installed so this menu can still be
+                // reached, but disabling immediately removes every Big Screen
+                // object, decoder, selection state, and optional preview.
+                SelectionVideoToggle::Instance().ModEnabledChanged(enabled);
+                ScreenPreview::Instance().SetEnabled(
+                    enabled && current.MenuScreenPreviewEnabled());
+                RefreshControls();
+                PaperLogger.info("Big Screen switched {}", enabled ? "on" : "off");
+            });
+        BSML::Lite::AddHoverHint(
+            modEnabled,
+            "Disables all Big Screen effects while keeping this settings menu available.");
 
         auto* defaultVideo = BSML::Lite::CreateToggle(
             container,
@@ -114,7 +137,7 @@ namespace BigScreen {
             previewToggle_,
             "Controls song-selection previews separately from video during gameplay.");
 
-        auto* screenPreview = BSML::Lite::CreateToggle(
+        screenPreviewToggle_ = BSML::Lite::CreateToggle(
             container,
             "Settings Screen Preview",
             settings.MenuScreenPreviewEnabled(),
@@ -124,7 +147,7 @@ namespace BigScreen {
                 ScreenPreview::Instance().SetEnabled(enabled);
             });
         BSML::Lite::AddHoverHint(
-            screenPreview,
+            screenPreviewToggle_,
             "Shows a live right-side preview using Big Screen's Big Mirror reference stage.");
 
         auto* distance = BSML::Lite::CreateIncrementSetting(
@@ -269,14 +292,17 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshPreviewControl()
     {
-        if(!previewToggle_)
-            return;
-
         const auto& settings = Settings::Instance();
-        previewToggle_->currentValue = settings.MenuPreviewEnabled();
-        if(previewToggle_->toggle)
-            previewToggle_->toggle->SetIsOnWithoutNotify(settings.MenuPreviewEnabled());
-        previewToggle_->set_interactable(settings.VideoEnabledByDefault());
+        if(previewToggle_)
+        {
+            previewToggle_->currentValue = settings.MenuPreviewEnabled();
+            if(previewToggle_->toggle)
+                previewToggle_->toggle->SetIsOnWithoutNotify(settings.MenuPreviewEnabled());
+            previewToggle_->set_interactable(
+                settings.ModEnabled() && settings.VideoEnabledByDefault());
+        }
+        if(screenPreviewToggle_)
+            screenPreviewToggle_->set_interactable(settings.ModEnabled());
     }
 
     void SettingsMenu::RefreshCurvatureControl()

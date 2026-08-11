@@ -35,7 +35,9 @@ namespace BigScreen {
             SettingsMenu::Instance().CreateUi(settingsViewController);
             ScreenPreview::Instance().Bind(this, previewViewController);
 
-            auto* initialPreview = Settings::Instance().MenuScreenPreviewEnabled()
+            const auto& settings = Settings::Instance();
+            auto* initialPreview =
+                settings.ModEnabled() && settings.MenuScreenPreviewEnabled()
                 ? previewViewController
                 : nullptr;
             ProvideInitialViewControllers(

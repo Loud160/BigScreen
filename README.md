@@ -8,7 +8,9 @@ global settings control the default video state, previews, screen distance and
 size and curvature, transparency, map lighting, environment override and motion, and the
 480p/720p/1080p output tier. An optional second menu panel renders the actual
 screen mesh against an isolated Big Mirror reference stage while settings are
-adjusted.
+adjusted. A persistent master switch disables all playback and Beat Saber
+effects while leaving the Big Screen menu available for configuration and
+re-enabling the mod.
 
 Use `qpm s build` to build
 Same goes for `qpm s copy` and `qpm s qmod`

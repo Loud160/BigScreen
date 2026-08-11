@@ -83,6 +83,7 @@ namespace BigScreen {
         if(!document.IsObject())
             document.SetObject();
 
+        modEnabled_ = ReadBool(document, "modEnabled", true);
         videoEnabledByDefault_ = ReadBool(document, "videoEnabledByDefault", true);
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
         menuScreenPreviewEnabled_ = ReadBool(document, "menuScreenPreviewEnabled", false);
@@ -117,6 +118,7 @@ namespace BigScreen {
 
     void Settings::Reset()
     {
+        modEnabled_ = true;
         videoEnabledByDefault_ = true;
         menuPreviewEnabled_ = true;
         menuScreenPreviewEnabled_ = false;
@@ -129,6 +131,12 @@ namespace BigScreen {
         environmentOverrideEnabled_ = true;
         environmentMotionEnabled_ = true;
         resolutionHeight_ = 720;
+        Save();
+    }
+
+    void Settings::SetModEnabled(bool value)
+    {
+        modEnabled_ = value;
         Save();
     }
 
@@ -215,6 +223,7 @@ namespace BigScreen {
         if(!document.IsObject())
             document.SetObject();
 
+        Replace(document, "modEnabled", modEnabled_);
         Replace(document, "videoEnabledByDefault", videoEnabledByDefault_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
         Replace(document, "menuScreenPreviewEnabled", menuScreenPreviewEnabled_);

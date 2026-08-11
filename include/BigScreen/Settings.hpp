@@ -15,6 +15,7 @@ namespace BigScreen {
         void Load();
         void Reset();
 
+        bool ModEnabled() const { return modEnabled_; }
         bool VideoEnabledByDefault() const { return videoEnabledByDefault_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
         bool MenuScreenPreviewEnabled() const { return menuScreenPreviewEnabled_; }
@@ -28,6 +29,7 @@ namespace BigScreen {
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
         int ResolutionHeight() const { return resolutionHeight_; }
 
+        void SetModEnabled(bool value);
         void SetVideoEnabledByDefault(bool value);
         void SetMenuPreviewEnabled(bool value);
         void SetMenuScreenPreviewEnabled(bool value);
@@ -46,6 +48,7 @@ namespace BigScreen {
 
         void Save();
 
+        bool modEnabled_ = true;
         bool videoEnabledByDefault_ = true;
         bool menuPreviewEnabled_ = true;
         bool menuScreenPreviewEnabled_ = false;

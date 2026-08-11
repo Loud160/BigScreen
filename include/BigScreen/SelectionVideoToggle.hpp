@@ -37,6 +37,10 @@ namespace BigScreen {
         /// Future selections read the same value directly from Settings.
         void ApplyDefaultVideoEnabled(bool enabled);
 
+        /// Tears down all selection/video state when the master mod switch is
+        /// off and restores normal selection handling when it is turned on.
+        void ModEnabledChanged(bool enabled);
+
         /// Starts or stops only menu-preview playback after its independent
         /// preference changes; gameplay playback is intentionally untouched.
         void MenuPreviewPreferenceChanged();

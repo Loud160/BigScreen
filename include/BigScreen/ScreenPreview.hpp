@@ -40,7 +40,7 @@ namespace BigScreen {
     private:
         ScreenPreview() = default;
 
-        void CreateUi();
+        bool CreateUi();
         bool CreateRenderer();
         void DestroyRenderer();
         void RebuildScreenMesh();
