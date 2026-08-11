@@ -48,6 +48,7 @@ namespace BigScreen {
         void ShowEditor();
         void ChangeFilter(int direction);
         void StartOrCancelDownload();
+        void PasteUrlFromClipboard();
         void RemoveOverride();
         void FitToSong();
         void RefreshDetails();
@@ -72,6 +73,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
+        UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::UI::Button* fitButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;

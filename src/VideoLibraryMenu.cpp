@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
@@ -26,6 +27,7 @@
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/GUIUtility.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
@@ -59,6 +61,26 @@ namespace BigScreen {
                 return static_cast<char>(std::tolower(c));
             });
             return value;
+        }
+
+        std::string Trim(std::string value)
+        {
+            const auto isWhitespace = [](unsigned char character) {
+                return std::isspace(character) != 0;
+            };
+            value.erase(
+                value.begin(),
+                std::find_if_not(value.begin(), value.end(), isWhitespace));
+            value.erase(
+                std::find_if_not(value.rbegin(), value.rend(), isWhitespace).base(),
+                value.end());
+            return value;
+        }
+
+        bool IsWebUrl(const std::string& value)
+        {
+            const auto lowered = Lower(value);
+            return lowered.starts_with("https://") || lowered.starts_with("http://");
         }
 
         std::string StorageLabel(std::uint64_t used, std::uint64_t free)
@@ -315,6 +337,14 @@ namespace BigScreen {
                 url_ = std::string(value);
             });
         ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
+        pasteUrlButton_ = BSML::Lite::CreateUIButton(
+            editorRoot,
+            "Paste URL from Clipboard",
+            {0.0f, 0.0f},
+            {40.0f, 6.5f},
+            [this]() { PasteUrlFromClipboard(); });
+        ConfigureLayout(pasteUrlButton_, -1.0f, 6.5f, 1.0f);
+        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.8f);
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorRoot, "Start Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
@@ -548,6 +578,40 @@ namespace BigScreen {
         if(!downloader.Start(std::move(request), error) && detailText_)
             detailText_->set_text(error);
         RefreshDetails();
+    }
+
+    void VideoLibraryMenu::PasteUrlFromClipboard()
+    {
+        if(!urlInput_ || !detailText_) return;
+        try
+        {
+            const auto clipboardValue = UnityEngine::GUIUtility::get_systemCopyBuffer();
+            const auto clipboard = Trim(
+                clipboardValue ? std::string(clipboardValue) : std::string{});
+            if(clipboard.empty())
+            {
+                detailText_->set_text(
+                    "The Quest clipboard is empty. Copy a video link first.");
+                return;
+            }
+            if(!IsWebUrl(clipboard))
+            {
+                detailText_->set_text(
+                    "Clipboard text is not a valid http or https URL.");
+                return;
+            }
+
+            url_ = clipboard;
+            urlInput_->SetText(url_);
+            RefreshDetails();
+            detailText_->set_text(
+                "URL pasted. Select Download Video to add it to this map.");
+        }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Could not read the Quest clipboard: {}", error.what());
+            detailText_->set_text("Could not read the Quest clipboard.");
+        }
     }
 
     void VideoLibraryMenu::RemoveOverride()
