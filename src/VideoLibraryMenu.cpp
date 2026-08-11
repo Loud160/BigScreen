@@ -49,7 +49,6 @@
 #include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
-#include "UnityEngine/UI/ContentSizeFitter.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/Image.hpp"
@@ -64,7 +63,6 @@
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/ClickableText.hpp"
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
-#include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/Helpers/delegates.hpp"
@@ -537,56 +535,12 @@ namespace BigScreen {
         ConfigureLayout(backToListButton_, -1.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
 
-        // Keep navigation fixed while the denser download and synchronization
-        // editor scrolls below it. BSML returns the content object while its
-        // ExternalComponents owns the actual viewport LayoutElement.
-        auto* editorContent = BSML::Lite::CreateScrollView(editorRoot);
-        if(editorContent)
-        {
-            auto* contentLayout =
-                editorContent->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>();
-            ConfigureGroup(contentLayout, true);
-            if(contentLayout)
-                contentLayout->set_childForceExpandWidth(true);
-
-            // ScrollViewTag normally sizes this hierarchy to the preferred
-            // width of its children. That is useful for modal text, but it
-            // causes a side-screen form to collapse around its shortest rows.
-            // Leave vertical sizing content-driven while stretching both
-            // content transforms across the complete viewport width.
-            if(auto contentRect =
-                   editorContent->get_transform().cast<UnityEngine::RectTransform>())
-            {
-                contentRect->set_anchorMin({0.0f, 1.0f});
-                contentRect->set_anchorMax({1.0f, 1.0f});
-                contentRect->set_pivot({0.5f, 1.0f});
-                contentRect->set_sizeDelta({0.0f, -1.0f});
-            }
-            if(auto scrollContent = editorContent->get_transform()->get_parent())
-            {
-                if(auto* fitter = scrollContent->get_gameObject()
-                       ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
-                    fitter->set_horizontalFit(
-                        UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
-            }
-            if(auto* external = editorContent->GetComponent<BSML::ExternalComponents*>())
-            {
-                if(auto* scrollLayout = external->Get<UnityEngine::UI::LayoutElement*>())
-                {
-                    scrollLayout->set_flexibleWidth(1.0f);
-                    scrollLayout->set_flexibleHeight(1.0f);
-                }
-                if(auto* viewport = external->Get<UnityEngine::RectTransform*>())
-                {
-                    viewport->set_anchorMin({0.0f, 0.0f});
-                    viewport->set_anchorMax({1.0f, 1.0f});
-                    viewport->set_sizeDelta({0.0f, 0.0f});
-                }
-            }
-        }
-        const BSML::Lite::TransformWrapper editorBody = editorContent
-            ? BSML::Lite::TransformWrapper(editorContent)
-            : BSML::Lite::TransformWrapper(editorRoot);
+        // Place editor rows directly on the full-panel root. The BSML
+        // ScrollView template carries its own narrow viewport geometry, which
+        // cannot inherit the complete right-side panel width reliably. The
+        // complete form fits in this controller, so an intermediate viewport
+        // only reduces usable space without providing a layout benefit.
+        const BSML::Lite::TransformWrapper editorBody(editorRoot);
 
         detailTitle_ = BSML::Lite::CreateText(
             editorBody, "", 3.6f);
