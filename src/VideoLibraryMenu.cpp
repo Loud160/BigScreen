@@ -446,6 +446,51 @@ namespace BigScreen {
         detailTitle_ = BSML::Lite::CreateText(
             editorRoot, "", 3.6f);
         ConfigureLayout(detailTitle_, -1.0f, 7.5f, 1.0f);
+        urlInput_ = BSML::Lite::CreateStringSetting(
+            editorRoot, "YouTube URL", "", [this](StringW value) {
+                url_ = Trim(std::string(value));
+                transientStatus_.clear();
+                if(!suppressUrlCallback_)
+                    BeginUrlProbe();
+            });
+        ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
+
+        // Keep the address field at the panel's full width. Recognition art
+        // belongs in the following action row, where it cannot reduce the
+        // amount of the pasted URL that remains visible and editable.
+        auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        ConfigureGroup(urlPreviewRow, false);
+        urlPreviewRow->set_spacing(0.45f);
+        ConfigureLayout(urlPreviewRow, -1.0f, 9.5f, 1.0f);
+        urlThumbnail_ = BSML::Lite::CreateImage(
+            urlPreviewRow,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ConfigureLayout(urlThumbnail_, 15.0f, 8.4f, 0.0f);
+        urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
+        urlThumbnail_->set_preserveAspect(true);
+        pasteUrlButton_ = BSML::Lite::CreateUIButton(
+            urlPreviewRow,
+            "Paste URL",
+            {0.0f, 0.0f},
+            {15.5f, 7.5f},
+            [this]() { PasteUrlFromClipboard(); });
+        ConfigureLayout(pasteUrlButton_, 15.5f, 7.5f, 1.0f);
+        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.6f);
+        downloadButton_ = BSML::Lite::CreateUIButton(
+            urlPreviewRow, "Download Video", {0.0f, 0.0f}, {18.5f, 7.5f},
+            [this]() { StartOrCancelDownload(); });
+        ConfigureLayout(downloadButton_, 18.5f, 7.5f, 1.0f);
+        BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
+        BSML::Lite::AddHoverHint(
+            urlInput_,
+            "Accepts youtube.com links and youtu.be Share links.");
+        BSML::Lite::AddHoverHint(
+            pasteUrlButton_,
+            "Pastes a youtube.com or youtu.be address from the Quest clipboard.");
+
+        // Status and progress belong directly below the controls they describe.
+        // This keeps recognition errors and active download feedback visually
+        // attached to the thumbnail/download row instead of the song heading.
         detailText_ = BSML::Lite::CreateText(
             editorRoot, "", 2.35f);
         ConfigureLayout(detailText_, -1.0f, 7.0f, 1.0f);
@@ -469,39 +514,6 @@ namespace BigScreen {
             fillRect->set_sizeDelta({0.0f, -0.35f});
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
-        urlInput_ = BSML::Lite::CreateStringSetting(
-            editorRoot, "YouTube URL", "", [this](StringW value) {
-                url_ = Trim(std::string(value));
-                transientStatus_.clear();
-                if(!suppressUrlCallback_)
-                    BeginUrlProbe();
-            });
-        ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
-
-        // Keep the address field at the panel's full width. Recognition art
-        // belongs in the following action row, where it cannot reduce the
-        // amount of the pasted URL that remains visible and editable.
-        auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
-        ConfigureGroup(urlPreviewRow, false);
-        urlPreviewRow->set_spacing(0.8f);
-        ConfigureLayout(urlPreviewRow, -1.0f, 9.5f, 1.0f);
-        urlThumbnail_ = BSML::Lite::CreateImage(
-            urlPreviewRow,
-            BSML::Utilities::ImageResources::GetBlankSprite());
-        ConfigureLayout(urlThumbnail_, 15.0f, 8.4f, 0.0f);
-        urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
-        urlThumbnail_->set_preserveAspect(true);
-        pasteUrlButton_ = BSML::Lite::CreateUIButton(
-            urlPreviewRow,
-            "Paste URL from Clipboard",
-            {0.0f, 0.0f},
-            {34.0f, 7.5f},
-            [this]() { PasteUrlFromClipboard(); });
-        ConfigureLayout(pasteUrlButton_, 34.0f, 7.5f, 1.0f);
-        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.8f);
-        BSML::Lite::AddHoverHint(
-            urlInput_,
-            "Accepts youtube.com links and youtu.be Share links.");
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorRoot, "Start Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
@@ -523,17 +535,10 @@ namespace BigScreen {
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
 
-        auto* actionRow = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
-        ConfigureGroup(actionRow, false);
-        ConfigureLayout(actionRow, -1.0f, 7.5f, 1.0f);
-        downloadButton_ = BSML::Lite::CreateUIButton(
-            actionRow, "Download Video", {0.0f, 0.0f}, {27.0f, 7.0f},
-            [this]() { StartOrCancelDownload(); });
-        ConfigureLayout(downloadButton_, 27.0f, 7.0f, 1.0f);
-        BSML::Lite::SetButtonTextSize(downloadButton_, 2.8f);
         fitButton_ = BSML::Lite::CreateUIButton(
-            actionRow, "Fit to Song", {0.0f, 0.0f}, {22.0f, 7.0f}, [this]() { FitToSong(); });
-        ConfigureLayout(fitButton_, 22.0f, 7.0f, 1.0f);
+            editorRoot, "Fit to Song", {0.0f, 0.0f}, {31.0f, 7.0f},
+            [this]() { FitToSong(); });
+        ConfigureLayout(fitButton_, -1.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(fitButton_, 2.8f);
         removeButton_ = BSML::Lite::CreateUIButton(
             editorRoot, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
@@ -911,21 +916,50 @@ namespace BigScreen {
 
     void VideoLibraryMenu::FitToSong()
     {
-        if(!selected_ || selected_->songDuration <= 0.0f) return;
+        if(!selected_)
+        {
+            transientStatus_ = "Select a song before using Fit to Song.";
+            RefreshDetails();
+            return;
+        }
+        if(selected_->songDuration <= 0.0f)
+        {
+            transientStatus_ = "Song duration is unavailable, so Fit to Song could not run.";
+            RefreshDetails();
+            return;
+        }
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         if(!descriptor.playableConfig || descriptor.playableConfig->declaredDurationSeconds <= 0.0)
         {
-            if(detailText_) detailText_->set_text("Video duration is not available yet.");
+            transientStatus_ = "Video duration is unavailable, so Fit to Song could not run.";
+            RefreshDetails();
             return;
         }
-        rate_ = std::clamp(
-            descriptor.playableConfig->declaredDurationSeconds / selected_->songDuration,
-            0.05, 8.0);
-        VideoLibrary::Instance().UpdateTiming(
-            std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_);
+
+        const auto requestedRate =
+            descriptor.playableConfig->declaredDurationSeconds / selected_->songDuration;
+        rate_ = std::clamp(requestedRate, 0.05, 8.0);
+        if(!VideoLibrary::Instance().UpdateTiming(
+            std::string(selected_->levelID), SelectedVideoOrigin(), offset_, rate_))
+        {
+            transientStatus_ = "Fit to Song could not save the new playback speed.";
+            RefreshDetails();
+            return;
+        }
         if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
-        RefreshDetails();
         StartSelectedPreview();
+
+        // Report the concrete result so the button never appears inert. Include
+        // the limit when an unusually mismatched video requires a speed outside
+        // the range supported by the playback controls.
+        std::ostringstream status;
+        status << std::fixed << std::setprecision(2)
+               << "Fit applied: playback speed set to " << rate_ << "x";
+        if(std::abs(requestedRate - rate_) > 0.0001)
+            status << " (limited from " << requestedRate << "x)";
+        status << ".";
+        transientStatus_ = status.str();
+        RefreshDetails();
     }
 
     void VideoLibraryMenu::RefreshDetails()
