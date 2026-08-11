@@ -15,27 +15,27 @@
   "workspace": {
     "scripts": {
       "build": [
-        "pwsh ./scripts/build.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1"
       ],
-      "clean": ["pwsh ./scripts/build.ps1 -clean"],
+      "clean": ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean"],
       "copy": [
-        "pwsh ./scripts/copy.ps1 $0:?"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1 $0:?"
       ],
       "logcat": [
-        "pwsh ./scripts/start-logging.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-logging.ps1"
       ],
       "qmod": [
-        "pwsh ./scripts/build.ps1",
-        "pwsh ./scripts/createqmod.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1",
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1"
       ],
       "restart": [
-        "pwsh ./scripts/restart-game.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/restart-game.ps1"
       ],
       "stack": [
-        "pwsh ./scripts/ndk-stack.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/ndk-stack.ps1"
       ],
       "tomb": [
-        "pwsh ./scripts/pull-tombstone.ps1"
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/pull-tombstone.ps1"
       ]
     },
     "qmodIncludeDirs": ["./build", "./extern/libs"],
@@ -44,19 +44,34 @@
   "dependencies": [
     {
       "id": "beatsaber-hook",
-      "versionRange": "^5.0.0",
+      "versionRange": "=5.1.9",
       "additionalData": {}
     },
     {
       "id": "scotland2",
-      "versionRange": "^0.1.4",
+      "versionRange": "=0.1.4",
       "additionalData": {
         "includeQmod": false
       }
     },
     {
       "id": "paper",
-      "versionRange": "^3.0.0",
+      "versionRange": "=3.7.0",
+      "additionalData": {}
+    },
+    {
+      "id": "bs-cordl",
+      "versionRange": "=3700.0.0",
+      "additionalData": {}
+    },
+    {
+      "id": "songcore",
+      "versionRange": "=1.1.16",
+      "additionalData": {}
+    },
+    {
+      "id": "hollywood",
+      "versionRange": "=1.0.1",
       "additionalData": {}
     }
   ]
