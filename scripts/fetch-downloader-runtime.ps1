@@ -250,18 +250,25 @@ Copy-Item `
 # omitted, while the rest of the standard library stays available for future
 # yt-dlp releases without requiring another Big Screen build.
 $dynamicStage = Join-Path $stageRoot "lib-dynload"
+if (Test-Path -LiteralPath $dynamicStage) {
+    if ((Split-Path -Parent $dynamicStage) -ne $stageRoot) {
+        throw "Refusing to replace unexpected native-extension staging path $dynamicStage"
+    }
+    Remove-Item -LiteralPath $dynamicStage -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $dynamicStage | Out-Null
 $dynamicRoot = Join-Path $stdlibRoot "lib-dynload"
-Get-ChildItem -LiteralPath $dynamicRoot -File -Filter "*.so" |
+$productionExtensions = @(Get-ChildItem -LiteralPath $dynamicRoot -File -Filter "*.so" |
     Where-Object {
         $_.Name -notlike "_test*" -and
+        $_.Name -notlike "*_test.*" -and
         $_.Name -notlike "xx*" -and
         $_.Name -ne "_xxtestfuzz.cpython-314-aarch64-linux-android.so" -and
         $_.Name -ne "_remote_debugging.cpython-314-aarch64-linux-android.so"
-    } |
-    ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $dynamicStage -Force
-    }
+    } | Sort-Object Name)
+foreach ($extension in $productionExtensions) {
+    Copy-Item -LiteralPath $extension.FullName -Destination $dynamicStage -Force
+}
 
 @{
     pythonVersion = $pythonVersion
@@ -272,6 +279,7 @@ Get-ChildItem -LiteralPath $dynamicRoot -File -Filter "*.so" |
     certifiVersion = $certifiVersion
     certifiSha256 = $certifiSha256
     quickJsVersion = "0.16.1"
+    nativeExtensions = @($productionExtensions | ForEach-Object Name)
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageRoot "runtime-manifest.json") -Encoding UTF8
 
 Write-Output "Prepared CPython $pythonVersion and yt-dlp $ytDlpVersion in $stageRoot"

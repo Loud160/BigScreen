@@ -1,7 +1,8 @@
 """Create Big Screen's zipimport yt-dlp runtime from upstream source trees.
 
-The regular Quest build uses yt-dlp's signed-release asset after checking its
-SHA-256 because that keeps normal builds fast. This helper is the reproducible
+The regular Quest build uses yt-dlp's official release asset after checking its
+SHA-256 because that keeps normal builds fast. The checksum verifies integrity;
+it is not a digital signature. This helper is the reproducible
 source path: it packages the yt-dlp Python tree plus the locally rebuilt EJS
 solver payload without relying on Make, zip, or other Unix-only utilities.
 """

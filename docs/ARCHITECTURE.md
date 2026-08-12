@@ -9,8 +9,9 @@ The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.
 Big Screen registers a built-in Python module and a preferred yt-dlp JavaScript
 challenge provider, so modern YouTube extraction can run without `execve`,
 Termux, Node, Deno, or a writable executable. Each EJS evaluation owns an
-isolated QuickJS runtime with memory and time limits. yt-dlp updates are tested
-against that provider API and engine before activation.
+isolated QuickJS runtime with memory, stack, source, output, and time limits.
+yt-dlp updates are staged transactionally and tested with both real EJS solver
+bundles, the provider API, and the engine before activation.
 
 Beat Saber's audio/song position is the only video clock. That preserves pause,
 practice speed, seeking, and Replay behavior. The decoder uses a one-frame

@@ -4,11 +4,26 @@
 #include <chrono>
 #include <cstddef>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <string_view>
 
 #include "BigScreen/QuickJsEngine.hpp"
 
 namespace {
+    /// Releases the GIL while QuickJS performs CPU work and restores it during
+    /// every normal or exceptional exit from the scope.
+    class AllowPythonThreads final {
+    public:
+        AllowPythonThreads() : state_(PyEval_SaveThread()) {}
+        ~AllowPythonThreads() { PyEval_RestoreThread(state_); }
+        AllowPythonThreads(const AllowPythonThreads&) = delete;
+        AllowPythonThreads& operator=(const AllowPythonThreads&) = delete;
+
+    private:
+        PyThreadState* state_;
+    };
+
     PyObject* Execute(
         PyObject*,
         PyObject* arguments,
@@ -54,15 +69,42 @@ namespace {
             PyErr_SetString(PyExc_OverflowError, "JavaScript source is too large");
             return nullptr;
         }
+        if(static_cast<unsigned long long>(sourceLength) >
+           BigScreen::QuickJsMaximumSourceLength)
+        {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "source exceeds Big Screen's 16 MiB JavaScript limit");
+            return nullptr;
+        }
 
         BigScreen::JavaScriptEvaluation result;
-        Py_BEGIN_ALLOW_THREADS
-        result = BigScreen::EvaluateJavaScript(
-            std::string_view{
-                source, static_cast<std::size_t>(sourceLength)},
-            std::chrono::milliseconds(timeoutMilliseconds),
-            static_cast<std::size_t>(memoryMebibytes) * 1024u * 1024u);
-        Py_END_ALLOW_THREADS
+        try
+        {
+            AllowPythonThreads allowThreads;
+            result = BigScreen::EvaluateJavaScript(
+                std::string_view{
+                    source, static_cast<std::size_t>(sourceLength)},
+                std::chrono::milliseconds(timeoutMilliseconds),
+                static_cast<std::size_t>(memoryMebibytes) * 1024u * 1024u);
+        }
+        catch(const std::bad_alloc&)
+        {
+            PyErr_NoMemory();
+            return nullptr;
+        }
+        catch(const std::exception& error)
+        {
+            PyErr_SetString(PyExc_RuntimeError, error.what());
+            return nullptr;
+        }
+        catch(...)
+        {
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                "Big Screen stopped an unexpected native JavaScript error");
+            return nullptr;
+        }
 
         if(!result)
         {

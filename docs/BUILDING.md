@@ -33,8 +33,9 @@ before changing a version or expected hash.
 `scripts/fetch-quickjs-ng.ps1` retrieves the official QuickJS-NG 0.16.1
 amalgamated source. CMake compiles it directly into `libbigscreen.so` without
 `QJS_BUILD_LIBC`; the engine therefore has no direct file, process, or network
-APIs. `QuickJsEngineTests.cpp` validates successful output, syntax errors, and
-the interrupt deadline on the host before the Quest build begins.
+APIs. `QuickJsEngineTests.cpp` validates successful output, syntax errors,
+interrupts, recursion/stack containment, and source/output ceilings in Release
+builds before the Quest build begins.
 
 ## Rebuilding the downloader from source
 
@@ -76,7 +77,10 @@ The test suite covers deterministic library keys/path rules, quality fallback, e
 
 ## QMOD contents
 
-`scripts/createqmod.ps1` regenerates `mod.json`, validates required runtime files, and packages:
+`scripts/createqmod.ps1` regenerates `mod.json`, validates required runtime
+files, creates a fresh archive without update-mode residue, verifies that its
+unique entries exactly match the manifest, and only then atomically replaces
+an older QMOD. It packages:
 
 - `libbigscreen.so` and declared native dependencies;
 - the CPython standard library and Android extension modules;
@@ -108,7 +112,13 @@ When the controller launch gate prevents unattended Beat Saber startup, compile 
 
 ## CI
 
-`core-tests.yml` runs host tests and verifies public documentation files. `build-ndk.yml` restores QPM dependencies, uses the Quest NDK build, creates a QMOD, and uploads artifacts. Third-party actions are pinned to commit SHAs. The local canary-NDK composite action fixes the release URL/version; changing it requires a clean package build.
+`core-tests.yml` runs host tests, verifies public documentation files, and uses
+pinned Node/pnpm tooling to rebuild yt-dlp plus yt-dlp-ejs from source and
+compare the full payload with the shipped release. `build-ndk.yml` restores QPM
+dependencies, uses the Quest NDK build, creates a validated QMOD, and uploads
+artifacts. Third-party actions are pinned to commit SHAs. The local canary-NDK
+composite action fixes the release URL/version; changing it requires a clean
+package build.
 
 ## Threading rules
 

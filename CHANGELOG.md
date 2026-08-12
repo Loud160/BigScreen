@@ -10,3 +10,4 @@
 - Reproducible, hash-pinned source builds for QuickJS-NG, yt-dlp, and yt-dlp-ejs, including byte-for-byte release-payload comparison.
 - Automatic library recovery, storage maintenance, performance diagnostics/reduction, error containment, host tests, and CI.
 - Release hardening adds HTTPS YouTube mapper URL restrictions, metadata/list bounds, decoder-worker exception containment, pinned CI actions, and packaged third-party notices.
+- Downloader hardening adds bounded QuickJS input/output/stack use, exception-safe Python ownership, real EJS startup validation, transactional update activation, stale native-extension pruning, fresh QMOD verification, and source-rebuild CI.

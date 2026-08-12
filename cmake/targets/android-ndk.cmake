@@ -34,12 +34,17 @@ set(ANDROID_ABI arm64-v8a)
 set(ANDROID_STL c++_static)
 set(ANDROID_USE_LEGACY_TOOLCHAIN_FILE OFF)
 
-#TODO: Fix this warning
-if(CMAKE_TOOLCHAIN_FILE MATCHES ".+")
-    message(WARNING "CMAKE_TOOLCHAIN_FILE already defined, overwriting! ${CMAKE_TOOLCHAIN_FILE}")
+set(_bigscreen_android_toolchain
+    "${CMAKE_ANDROID_NDK}/build/cmake/android.toolchain.cmake")
+if(DEFINED CMAKE_TOOLCHAIN_FILE AND
+   NOT CMAKE_TOOLCHAIN_FILE STREQUAL "" AND
+   NOT CMAKE_TOOLCHAIN_FILE STREQUAL _bigscreen_android_toolchain)
+    message(FATAL_ERROR
+        "Big Screen requires Android NDK toolchain ${_bigscreen_android_toolchain}, but CMAKE_TOOLCHAIN_FILE is ${CMAKE_TOOLCHAIN_FILE}")
 endif()
-
-set(CMAKE_TOOLCHAIN_FILE ${CMAKE_ANDROID_NDK}/build/cmake/android.toolchain.cmake)
+set(CMAKE_TOOLCHAIN_FILE "${_bigscreen_android_toolchain}" CACHE FILEPATH
+    "Android NDK toolchain used by Big Screen" FORCE)
+unset(_bigscreen_android_toolchain)
 
 # Set triplet for vcpkg
 set(VCPKG_TARGET_TRIPLET arm64-android)

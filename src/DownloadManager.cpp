@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
+#include <unordered_set>
 
 #include "main.hpp"
 #include "BigScreen/CoreLogic.hpp"
@@ -25,6 +27,262 @@ namespace BigScreen {
         constexpr std::uint64_t RequiredReserve = 512ull * 1024ull * 1024ull;
         const std::filesystem::path InternalNativeRuntime{
             "/data/user/0/com.beatgames.beatsaber/code_cache/BigScreen"};
+
+        class ScopedPythonGil final {
+        public:
+            ScopedPythonGil() : state_(PyGILState_Ensure()) {}
+            ~ScopedPythonGil() { PyGILState_Release(state_); }
+            ScopedPythonGil(const ScopedPythonGil&) = delete;
+            ScopedPythonGil& operator=(const ScopedPythonGil&) = delete;
+
+        private:
+            PyGILState_STATE state_;
+        };
+
+        struct PythonObjectDeleter {
+            void operator()(PyObject* object) const
+            {
+                Py_XDECREF(object);
+            }
+        };
+
+        using PythonObject = std::unique_ptr<PyObject, PythonObjectDeleter>;
+
+        PythonObject CreatePythonGlobals(
+            const char* json,
+            std::size_t jsonLength)
+        {
+            PythonObject globals{PyDict_New()};
+            if(!globals)
+                return {};
+            if(PyDict_SetItemString(
+                   globals.get(), "__builtins__", PyEval_GetBuiltins()) < 0)
+                return {};
+            PythonObject job{PyUnicode_FromStringAndSize(
+                json, static_cast<Py_ssize_t>(jsonLength))};
+            if(!job ||
+               PyDict_SetItemString(globals.get(), "BIGSCREEN_JOB", job.get()) < 0)
+                return {};
+            return globals;
+        }
+
+        bool FilesEqual(
+            const std::filesystem::path& left,
+            const std::filesystem::path& right)
+        {
+            std::error_code error;
+            const auto leftSize = std::filesystem::file_size(left, error);
+            if(error) return false;
+            const auto rightSize = std::filesystem::file_size(right, error);
+            if(error || leftSize != rightSize) return false;
+
+            std::ifstream leftStream(left, std::ios::binary);
+            std::ifstream rightStream(right, std::ios::binary);
+            if(!leftStream || !rightStream) return false;
+            std::array<char, 64u * 1024u> leftBuffer{};
+            std::array<char, 64u * 1024u> rightBuffer{};
+            while(leftStream && rightStream)
+            {
+                leftStream.read(leftBuffer.data(), leftBuffer.size());
+                rightStream.read(rightBuffer.data(), rightBuffer.size());
+                const auto leftCount = leftStream.gcount();
+                const auto rightCount = rightStream.gcount();
+                if(leftCount != rightCount ||
+                   !std::equal(
+                       leftBuffer.begin(),
+                       leftBuffer.begin() + leftCount,
+                       rightBuffer.begin()))
+                    return false;
+            }
+            return leftStream.eof() && rightStream.eof();
+        }
+
+        /// Owns the filesystem transaction that promotes a staged yt-dlp
+        /// package. Any return before Accept() moves the candidate back to
+        /// `next` and restores the prior active package, so an unrelated
+        /// Python/native initialization error cannot strand a bad active file.
+        class DownloaderActivation final {
+        public:
+            explicit DownloaderActivation(std::filesystem::path runtime)
+                : runtime_(std::move(runtime)),
+                  next_(runtime_ / "yt-dlp-next"),
+                  active_(runtime_ / "yt-dlp-active"),
+                  previous_(runtime_ / "yt-dlp-previous") {}
+
+            ~DownloaderActivation()
+            {
+                if(attempted_ && !accepted_)
+                    RestoreForRetry();
+            }
+
+            bool Promote(std::string& error)
+            {
+                if(!std::filesystem::is_regular_file(next_))
+                    return true;
+                attempted_ = true;
+                hadActive_ = std::filesystem::is_regular_file(active_);
+                std::ifstream version(next_.string() + ".version");
+                if(version) std::getline(version, candidateVersion_);
+
+                if(!Remove(previous_, error) ||
+                   !Remove(previous_.string() + ".version", error))
+                    return false;
+                if(hadActive_)
+                {
+                    if(!Rename(active_, previous_, error))
+                        return false;
+                    originalMoved_ = true;
+                    if(std::filesystem::is_regular_file(active_.string() + ".version") &&
+                       !Rename(
+                           active_.string() + ".version",
+                           previous_.string() + ".version",
+                           error))
+                        return false;
+                }
+                if(!Rename(next_, active_, error))
+                    return false;
+                candidateActive_ = true;
+                if(std::filesystem::is_regular_file(next_.string() + ".version") &&
+                   !Rename(
+                       next_.string() + ".version",
+                       active_.string() + ".version",
+                       error))
+                    return false;
+                return true;
+            }
+
+            bool Promoted() const { return candidateActive_; }
+            const std::string& CandidateVersion() const { return candidateVersion_; }
+
+            void Accept()
+            {
+                accepted_ = true;
+                std::error_code ignored;
+                std::filesystem::remove(
+                    runtime_ / "yt-dlp-rejected.version", ignored);
+            }
+
+            bool Reject(std::string& error)
+            {
+                if(!candidateActive_)
+                    return true;
+                if(!Remove(active_, error) ||
+                   !Remove(active_.string() + ".version", error))
+                    return false;
+                candidateActive_ = false;
+                if(originalMoved_)
+                {
+                    if(!Rename(previous_, active_, error))
+                        return false;
+                    originalMoved_ = false;
+                    if(std::filesystem::is_regular_file(previous_.string() + ".version") &&
+                       !Rename(
+                           previous_.string() + ".version",
+                           active_.string() + ".version",
+                           error))
+                        return false;
+                }
+                if(!WriteRejectedVersion(candidateVersion_, error))
+                    return false;
+                accepted_ = true;
+                return true;
+            }
+
+        private:
+            bool Remove(const std::filesystem::path& path, std::string& error)
+            {
+                std::error_code fileError;
+                std::filesystem::remove(path, fileError);
+                if(!fileError) return true;
+                error = "Could not remove " + path.filename().string() + ": " +
+                        fileError.message();
+                return false;
+            }
+
+            bool Rename(
+                const std::filesystem::path& from,
+                const std::filesystem::path& to,
+                std::string& error)
+            {
+                std::error_code fileError;
+                std::filesystem::rename(from, to, fileError);
+                if(!fileError) return true;
+                error = "Could not activate " + from.filename().string() + ": " +
+                        fileError.message();
+                return false;
+            }
+
+            bool WriteRejectedVersion(
+                const std::string& version,
+                std::string& error) const
+            {
+                std::ofstream rejected(
+                    runtime_ / "yt-dlp-rejected.version",
+                    std::ios::binary | std::ios::trunc);
+                rejected << (version.empty() ? "unknown" : version);
+                rejected.flush();
+                if(rejected) return true;
+                error = "Could not record the rejected yt-dlp version.";
+                return false;
+            }
+
+            void RestoreForRetry() noexcept
+            {
+                std::error_code ignored;
+                if(candidateActive_)
+                {
+                    std::filesystem::remove(next_, ignored);
+                    ignored.clear();
+                    std::filesystem::rename(active_, next_, ignored);
+                    ignored.clear();
+                    if(std::filesystem::is_regular_file(
+                           active_.string() + ".version", ignored))
+                    {
+                        ignored.clear();
+                        std::filesystem::remove(
+                            next_.string() + ".version", ignored);
+                        ignored.clear();
+                        std::filesystem::rename(
+                            active_.string() + ".version",
+                            next_.string() + ".version",
+                            ignored);
+                    }
+                    candidateActive_ = false;
+                }
+                if(originalMoved_)
+                {
+                    ignored.clear();
+                    std::filesystem::remove(active_, ignored);
+                    ignored.clear();
+                    std::filesystem::rename(previous_, active_, ignored);
+                    ignored.clear();
+                    if(std::filesystem::is_regular_file(
+                           previous_.string() + ".version", ignored))
+                    {
+                        ignored.clear();
+                        std::filesystem::remove(
+                            active_.string() + ".version", ignored);
+                        ignored.clear();
+                        std::filesystem::rename(
+                            previous_.string() + ".version",
+                            active_.string() + ".version",
+                            ignored);
+                    }
+                    originalMoved_ = false;
+                }
+            }
+
+            std::filesystem::path runtime_;
+            std::filesystem::path next_;
+            std::filesystem::path active_;
+            std::filesystem::path previous_;
+            std::string candidateVersion_;
+            bool attempted_ = false;
+            bool accepted_ = false;
+            bool hadActive_ = false;
+            bool originalMoved_ = false;
+            bool candidateActive_ = false;
+        };
 
         const char* StateName(DownloadState state)
         {
@@ -128,15 +386,10 @@ namespace BigScreen {
             // from /sdcard. QMOD files have to arrive through shared storage,
             // so copy native dependencies into the app's private code cache
             // before CPython or dlopen attempts to load them.
-            const auto sourceSize = std::filesystem::file_size(source, fileError);
-            if(fileError)
-            {
-                error = "Could not read " + source.filename().string() + ": " +
-                        fileError.message();
-                return false;
-            }
-            const auto destinationSize = std::filesystem::file_size(destination, fileError);
-            if(!fileError && destinationSize == sourceSize)
+            // Size-only comparisons can preserve a different same-sized .so
+            // after an update. Compare the complete files before reusing the
+            // executable private copy; this runs once during game startup.
+            if(FilesEqual(source, destination))
                 return true;
 
             fileError.clear();
@@ -199,23 +452,100 @@ namespace BigScreen {
 
             const auto sourceExtensions = externalRuntime / "lib-dynload";
             const auto privateExtensions = InternalNativeRuntime / "lib-dynload";
+            std::unordered_set<std::string> expectedExtensions;
+            std::ifstream manifestStream(
+                externalRuntime / "runtime-manifest.json", std::ios::binary);
+            const std::string manifestJson{
+                std::istreambuf_iterator<char>(manifestStream), {}};
+            rapidjson::Document manifest;
+            manifest.Parse(manifestJson.data(), manifestJson.size());
+            if(manifest.HasParseError() || !manifest.IsObject())
+            {
+                error = "The CPython runtime manifest is missing or invalid.";
+                return false;
+            }
+            const auto extensionList = manifest.FindMember("nativeExtensions");
+            if(extensionList == manifest.MemberEnd() ||
+               !extensionList->value.IsArray() ||
+               extensionList->value.Empty() ||
+               extensionList->value.Size() > 256)
+            {
+                error = "The CPython runtime manifest has an invalid native-extension list.";
+                return false;
+            }
+            for(const auto& entry : extensionList->value.GetArray())
+            {
+                if(!entry.IsString())
+                {
+                    error = "The CPython runtime manifest contains an invalid extension name.";
+                    return false;
+                }
+                const std::string name{entry.GetString(), entry.GetStringLength()};
+                const auto path = std::filesystem::path{name};
+                if(name.empty() || path.filename() != path || path.extension() != ".so" ||
+                   !expectedExtensions.emplace(name).second)
+                {
+                    error = "The CPython runtime manifest contains an unsafe or duplicate extension name.";
+                    return false;
+                }
+                if(!CopyNativeLibrary(
+                    sourceExtensions / name,
+                    privateExtensions / name,
+                    error))
+                    return false;
+            }
+
+            // Both folders are mod-owned. Keep them exact mirrors of the
+            // manifest so extensions removed by a later QMOD do not linger in
+            // shared storage or remain importable from the executable cache.
             std::error_code iteratorError;
-            std::filesystem::directory_iterator entries(sourceExtensions, iteratorError);
+            std::filesystem::directory_iterator sourceEntries(
+                sourceExtensions, iteratorError);
             if(iteratorError)
             {
-                error = "Could not read the CPython extension folder: " +
+                error = "Could not verify the staged CPython extension folder: " +
                         iteratorError.message();
                 return false;
             }
-            for(const auto& entry : entries)
+            for(const auto& entry : sourceEntries)
             {
-                if(entry.path().extension() != ".so")
-                    continue;
-                if(!CopyNativeLibrary(
-                    entry.path(),
-                    privateExtensions / entry.path().filename(),
-                    error))
-                    return false;
+                if(entry.path().extension() == ".so" &&
+                   !expectedExtensions.contains(entry.path().filename().string()))
+                {
+                    std::filesystem::remove(entry.path(), iteratorError);
+                    if(iteratorError)
+                    {
+                        error = "Could not remove obsolete staged CPython extension " +
+                                entry.path().filename().string() + ": " +
+                                iteratorError.message();
+                        return false;
+                    }
+                }
+            }
+
+            iteratorError.clear();
+            std::filesystem::directory_iterator privateEntries(
+                privateExtensions, iteratorError);
+            if(iteratorError)
+            {
+                error = "Could not verify the private CPython extension folder: " +
+                        iteratorError.message();
+                return false;
+            }
+            for(const auto& entry : privateEntries)
+            {
+                if(entry.path().extension() == ".so" &&
+                   !expectedExtensions.contains(entry.path().filename().string()))
+                {
+                    std::filesystem::remove(entry.path(), iteratorError);
+                    if(iteratorError)
+                    {
+                        error = "Could not remove stale CPython extension " +
+                                entry.path().filename().string() + ": " +
+                                iteratorError.message();
+                        return false;
+                    }
+                }
             }
             return true;
         }
@@ -539,22 +869,43 @@ try:
             raise RuntimeError('yt-dlp checksum list did not include the Android-compatible Python package.')
         temporary = job['nextPath'] + '.part'
         digest = hashlib.sha256()
+        maximum_package_bytes = 32 * 1024 * 1024
         with urllib.request.urlopen(urllib.request.Request(package_url, headers={'User-Agent':'Big-Screen-Beat-Saber'}), timeout=60) as response, open(temporary, 'wb') as output:
+            declared_size = int(response.headers.get('Content-Length') or 0)
+            if declared_size > maximum_package_bytes:
+                raise RuntimeError('The yt-dlp update is larger than Big Screen\'s 32 MB safety limit.')
+            downloaded_size = 0
             while True:
                 block = response.read(262144)
                 if not block: break
+                downloaded_size += len(block)
+                if downloaded_size > maximum_package_bytes:
+                    raise RuntimeError('The yt-dlp update exceeded Big Screen\'s 32 MB safety limit.')
                 output.write(block); digest.update(block)
         if digest.hexdigest().lower() != expected.lower():
             os.remove(temporary)
             raise RuntimeError('Downloaded yt-dlp SHA-256 did not match the official release checksum.')
         with zipfile.ZipFile(temporary) as package:
-            if package.testzip() is not None or 'yt_dlp/__init__.py' not in package.namelist():
+            required_entries = {
+                'yt_dlp/__init__.py',
+                'yt_dlp_ejs/__init__.py',
+                'yt_dlp_ejs/yt/solver/__init__.py',
+                'yt_dlp_ejs/yt/solver/core.min.js',
+                'yt_dlp_ejs/yt/solver/lib.min.js',
+            }
+            if package.testzip() is not None or not required_entries.issubset(package.namelist()):
                 raise RuntimeError('The downloaded yt-dlp package failed its compatibility self-test.')
         os.replace(temporary, job['nextPath'])
         with open(job['nextPath'] + '.version', 'w', encoding='utf-8') as version_file:
             version_file.write(version)
         publish('completed', 'yt-dlp ' + version + ' verified. Restart Beat Saber to activate it.', version=version)
 except BaseException as error:
+    temporary_path = locals().get('temporary', '')
+    if temporary_path and os.path.exists(temporary_path):
+        try:
+            os.remove(temporary_path)
+        except OSError:
+            pass
     publish('failed', 'yt-dlp update failed: ' + str(error)[-700:])
 )PY";
 
@@ -620,30 +971,7 @@ os.replace(temporary, job['destination'])
     {
         if(initialized_) return true;
         const auto runtime = VideoLibrary::Instance().RuntimePath();
-        const auto next = runtime / "yt-dlp-next";
         const auto active = runtime / "yt-dlp-active";
-        const auto previous = runtime / "yt-dlp-previous";
-        bool promotedCandidate = false;
-        std::string candidateVersion;
-        if(std::filesystem::is_regular_file(next))
-        {
-            std::ifstream version(next.string() + ".version");
-            if(version) std::getline(version, candidateVersion);
-            std::filesystem::remove(previous);
-            std::filesystem::remove(previous.string() + ".version");
-            if(std::filesystem::is_regular_file(active))
-            {
-                std::filesystem::rename(active, previous);
-                if(std::filesystem::is_regular_file(active.string() + ".version"))
-                    std::filesystem::rename(active.string() + ".version", previous.string() + ".version");
-            }
-            std::filesystem::rename(next, active);
-            if(std::filesystem::is_regular_file(next.string() + ".version"))
-                std::filesystem::rename(next.string() + ".version", active.string() + ".version");
-            promotedCandidate = true;
-        }
-        std::ifstream activeVersion(active.string() + ".version");
-        if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
         const auto modLibraries = std::filesystem::path(
             "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs");
         if(!StageNativeRuntime(runtime, modLibraries, error))
@@ -652,6 +980,40 @@ os.replace(temporary, job['destination'])
            !LoadGlobalLibrary(InternalNativeRuntime / "libssl_python.so", error) ||
            !LoadGlobalLibrary(InternalNativeRuntime / "libsqlite3_python.so", error))
             return false;
+
+        // Validate and publish the certificate path before CPython starts. If
+        // this fails, Initialize() can safely be retried because no interpreter
+        // has been created and DownloaderActivation restores any candidate.
+        const auto certificateBundle = runtime / "certifi" / "cacert.pem";
+        std::ifstream certificateStream(certificateBundle, std::ios::binary);
+        std::string certificateHeader(4096, '\0');
+        certificateStream.read(certificateHeader.data(), certificateHeader.size());
+        certificateHeader.resize(static_cast<std::size_t>(certificateStream.gcount()));
+        if(certificateHeader.find("-----BEGIN CERTIFICATE-----") == std::string::npos)
+        {
+            error = "The packaged certificate authority bundle is missing or invalid.";
+            return false;
+        }
+        const auto bundlePath = certificateBundle.string();
+        if(setenv("SSL_CERT_FILE", bundlePath.c_str(), 1) != 0 ||
+           setenv("REQUESTS_CA_BUNDLE", bundlePath.c_str(), 1) != 0 ||
+           setenv("CURL_CA_BUNDLE", bundlePath.c_str(), 1) != 0)
+        {
+            error = "Could not configure the embedded certificate authority bundle.";
+            return false;
+        }
+
+        // Promote only after every fallible native/certificate prerequisite
+        // has passed. From this point until Accept(), DownloaderActivation
+        // owns restoration if bridge registration, CPython initialization, or
+        // validation fails.
+        DownloaderActivation activation{runtime};
+        if(!activation.Promote(error))
+            return false;
+        const auto promotedCandidate = activation.Promoted();
+        const auto candidateVersion = activation.CandidateVersion();
+        std::ifstream activeVersion(active.string() + ".version");
+        if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
 
         // Register the compiled bridge before CPython starts. Keeping this as
         // a built-in module avoids Android's prohibition on executing a qjs
@@ -700,49 +1062,31 @@ os.replace(temporary, job['destination'])
             return false;
         }
 
-        // certifi is installed as a physical package so yt-dlp's unmodified
-        // certifi.where() returns this same real PEM path. The environment
-        // variables cover urllib and any future downloader networking backend
-        // without running a fallible Python bootstrap during initialization.
-        const auto certificateBundle = runtime / "certifi" / "cacert.pem";
-        std::ifstream certificateStream(certificateBundle, std::ios::binary);
-        std::string certificateHeader(4096, '\0');
-        certificateStream.read(certificateHeader.data(), certificateHeader.size());
-        certificateHeader.resize(static_cast<std::size_t>(certificateStream.gcount()));
-        if(certificateHeader.find("-----BEGIN CERTIFICATE-----") == std::string::npos)
-        {
-            error = "The packaged certificate authority bundle is missing or invalid.";
-            PyEval_SaveThread();
-            return false;
-        }
-        const auto bundlePath = certificateBundle.string();
-        if(setenv("SSL_CERT_FILE", bundlePath.c_str(), 1) != 0 ||
-           setenv("REQUESTS_CA_BUNDLE", bundlePath.c_str(), 1) != 0 ||
-           setenv("CURL_CA_BUNDLE", bundlePath.c_str(), 1) != 0)
-        {
-            error = "Could not configure the embedded certificate authority bundle.";
-            PyEval_SaveThread();
-            return false;
-        }
-
         // A checksum proves that the archive matches the official release; it
         // does not prove that this CPython build can import that release. Test
-        // the exact active module before accepting it as authoritative.
+        // the exact active module and parse both shipped EJS solver bundles
+        // before accepting it as authoritative.
         const auto smokeTest = []()
         {
             return PyRun_SimpleString(
                 "import importlib, json, sys\n"
                 "importlib.invalidate_caches()\n"
-                "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.')]\n"
+                "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.') or k == 'yt_dlp_ejs' or k.startswith('yt_dlp_ejs.')]\n"
                 "import bigscreen_quickjs\n"
-                "assert json.loads(bigscreen_quickjs.execute('console.log(JSON.stringify({value: 6 * 7}))'))['value'] == 42\n"
+                "quickjs_result = json.loads(bigscreen_quickjs.execute('console.log(JSON.stringify({value: 6 * 7}))'))\n"
+                "if quickjs_result.get('value') != 42: raise RuntimeError('The QuickJS bridge returned an invalid result')\n"
                 "import bigscreen_jsc_provider\n"
                 "import yt_dlp_ejs\n"
-                "assert isinstance(yt_dlp_ejs.version, str) and yt_dlp_ejs.version\n"
+                "if not isinstance(yt_dlp_ejs.version, str) or not yt_dlp_ejs.version: raise RuntimeError('yt-dlp-ejs has no version')\n"
+                "from yt_dlp_ejs.yt import solver as ejs_solver\n"
+                "ejs_library, ejs_core = ejs_solver.lib(), ejs_solver.core()\n"
+                "if not ejs_library or not ejs_core: raise RuntimeError('The yt-dlp-ejs solver bundles are empty')\n"
+                "ejs_result = json.loads(bigscreen_quickjs.execute(ejs_library + '\\n' + ejs_core + '\\nconsole.log(JSON.stringify({value: 6 * 7}));'))\n"
+                "if ejs_result.get('value') != 42: raise RuntimeError('The yt-dlp-ejs bundles did not execute correctly')\n"
                 "from yt_dlp.extractor.youtube.jsc._registry import _jsc_providers\n"
-                "assert 'BigScreenQuickJS' in _jsc_providers.value\n"
+                "if 'BigScreenQuickJS' not in _jsc_providers.value: raise RuntimeError('The Big Screen JavaScript provider was not registered')\n"
                 "from yt_dlp import YoutubeDL\n"
-                "assert callable(YoutubeDL)\n") == 0;
+                "if not callable(YoutubeDL): raise RuntimeError('yt-dlp did not expose YoutubeDL')\n") == 0;
         };
         if(!smokeTest())
         {
@@ -753,25 +1097,18 @@ os.replace(temporary, job['destination'])
                 // Restore the one previous working package, or fall back to
                 // the immutable shipped baseline when no previous update
                 // exists. Normal video/network failures never enter this path.
-                std::filesystem::remove(active);
-                std::filesystem::remove(active.string() + ".version");
-                if(std::filesystem::is_regular_file(previous))
+                std::string rollbackError;
+                if(!activation.Reject(rollbackError))
                 {
-                    std::filesystem::rename(previous, active);
-                    if(std::filesystem::is_regular_file(previous.string() + ".version"))
-                        std::filesystem::rename(
-                            previous.string() + ".version",
-                            active.string() + ".version");
+                    error = "The new yt-dlp package failed its startup test, and Big Screen could not restore the previous package: " +
+                            rollbackError;
+                    PyEval_SaveThread();
+                    return false;
                 }
                 currentUpdateVersion_ = "2026.07.04";
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
                     std::getline(restoredVersion, currentUpdateVersion_);
-                std::ofstream rejected(
-                    runtime / "yt-dlp-rejected.version",
-                    std::ios::binary | std::ios::trunc);
-                rejected << (candidateVersion.empty() ? "unknown" : candidateVersion);
-                rejected.close();
                 if(!smokeTest())
                 {
                     PyErr_Print();
@@ -789,9 +1126,49 @@ os.replace(temporary, job['destination'])
             }
             else
             {
-                error = "The shipped yt-dlp package could not be imported.";
-                PyEval_SaveThread();
-                return false;
+                // A package activated by an older Big Screen build can still
+                // be present without a pending `next` transaction. Reject that
+                // stranded update once and retry the immutable shipped copy.
+                if(std::filesystem::is_regular_file(active))
+                {
+                    auto rejectedVersion = currentUpdateVersion_;
+                    std::error_code fileError;
+                    std::filesystem::remove(active, fileError);
+                    if(!fileError)
+                        std::filesystem::remove(active.string() + ".version", fileError);
+                    if(fileError)
+                    {
+                        error = "The active yt-dlp update failed its startup test and could not be removed: " +
+                                fileError.message();
+                        PyEval_SaveThread();
+                        return false;
+                    }
+                    std::ofstream rejected(
+                        runtime / "yt-dlp-rejected.version",
+                        std::ios::binary | std::ios::trunc);
+                    rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
+                    currentUpdateVersion_ = "2026.07.04";
+                    if(smokeTest())
+                    {
+                        std::scoped_lock lock(mutex_);
+                        updateNotice_ =
+                            "The installed yt-dlp update could not load on this Quest. Big Screen removed it and restored the built-in downloader.";
+                    }
+                    else
+                    {
+                        PyErr_Print();
+                        PyErr_Clear();
+                        error = "Neither the installed nor shipped yt-dlp package could be imported.";
+                        PyEval_SaveThread();
+                        return false;
+                    }
+                }
+                else
+                {
+                    error = "The shipped yt-dlp package could not be imported.";
+                    PyEval_SaveThread();
+                    return false;
+                }
             }
         }
         else if(promotedCandidate)
@@ -799,7 +1176,7 @@ os.replace(temporary, job['destination'])
             // A candidate is not trusted merely because it downloaded and
             // matched its checksum. Clear the rejection marker only after the
             // newly activated package imports successfully on this headset.
-            std::filesystem::remove(runtime / "yt-dlp-rejected.version");
+            activation.Accept();
         }
         PyEval_SaveThread();
         initialized_ = true;
@@ -1025,52 +1402,91 @@ os.replace(temporary, job['destination'])
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
 
-            const auto gil = PyGILState_Ensure();
-            PyObject* globals = PyDict_New();
-            PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-            auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
-            PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
-            Py_DECREF(job);
-            auto* result = PyRun_String(DownloaderScript, Py_file_input, globals, globals);
             bool runtimeRolledBack = false;
-            if(!result)
+            bool runtimeFailed = false;
             {
-                PyErr_Print();
-                PyErr_Clear();
-                // A Python execution/import failure is an internal downloader
-                // failure, unlike a private video or network error (those are
-                // caught and written to the normal status JSON by the script).
-                // Restore the one retained package and retry this job once.
-                const auto runtime = VideoLibrary::Instance().RuntimePath();
-                const auto active = runtime / "yt-dlp-active";
-                const auto previous = runtime / "yt-dlp-previous";
-                if(std::filesystem::is_regular_file(previous))
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals(
+                    buffer.GetString(), buffer.GetSize());
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        DownloaderScript,
+                        Py_file_input,
+                        globals.get(),
+                        globals.get()));
+                if(!globals || !result)
                 {
-                    std::filesystem::remove(active);
-                    std::filesystem::remove(active.string() + ".version");
-                    std::filesystem::rename(previous, active);
-                    if(std::filesystem::is_regular_file(previous.string() + ".version"))
-                        std::filesystem::rename(
-                            previous.string() + ".version",
-                            active.string() + ".version");
-                    PyRun_SimpleString(
-                        "import importlib, sys\n"
-                        "importlib.invalidate_caches()\n"
-                        "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.')]\n");
-                    result = PyRun_String(
-                        DownloaderScript, Py_file_input, globals, globals);
-                    runtimeRolledBack = result != nullptr;
-                    if(!result)
+                    PyErr_Print();
+                    PyErr_Clear();
+                    // A Python execution/import failure is an internal
+                    // downloader failure, unlike a private-video or network
+                    // error (the script publishes those normally). Restore the
+                    // one retained package and retry this job exactly once.
+                    const auto runtime = VideoLibrary::Instance().RuntimePath();
+                    const auto active = runtime / "yt-dlp-active";
+                    const auto previous = runtime / "yt-dlp-previous";
+                    std::error_code fileError;
+                    if(globals && std::filesystem::is_regular_file(previous, fileError))
                     {
-                        PyErr_Print();
-                        PyErr_Clear();
+                        std::string rejectedVersion;
+                        std::ifstream version(
+                            active.string() + ".version", std::ios::binary);
+                        if(version) std::getline(version, rejectedVersion);
+                        std::filesystem::remove(active, fileError);
+                        if(!fileError)
+                            std::filesystem::remove(
+                                active.string() + ".version", fileError);
+                        if(!fileError)
+                            std::filesystem::rename(previous, active, fileError);
+                        if(!fileError && std::filesystem::is_regular_file(
+                               previous.string() + ".version", fileError))
+                            std::filesystem::rename(
+                                previous.string() + ".version",
+                                active.string() + ".version",
+                                fileError);
+                        if(!fileError)
+                        {
+                            std::ofstream rejected(
+                                runtime / "yt-dlp-rejected.version",
+                                std::ios::binary | std::ios::trunc);
+                            rejected << (rejectedVersion.empty()
+                                ? "unknown"
+                                : rejectedVersion);
+                            currentUpdateVersion_ = "2026.07.04";
+                            std::ifstream restoredVersion(
+                                active.string() + ".version", std::ios::binary);
+                            if(restoredVersion)
+                                std::getline(
+                                    restoredVersion, currentUpdateVersion_);
+                            if(PyRun_SimpleString(
+                                   "import importlib, sys\n"
+                                   "importlib.invalidate_caches()\n"
+                                   "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.') or k == 'yt_dlp_ejs' or k.startswith('yt_dlp_ejs.')]\n") == 0)
+                            {
+                                result.reset(PyRun_String(
+                                    DownloaderScript,
+                                    Py_file_input,
+                                    globals.get(),
+                                    globals.get()));
+                                runtimeRolledBack = result != nullptr;
+                            }
+                            if(!result)
+                            {
+                                PyErr_Print();
+                                PyErr_Clear();
+                            }
+                        }
+                        else
+                        {
+                            PaperLogger.error(
+                                "Could not restore the previous yt-dlp package: {}",
+                                fileError.message());
+                        }
                     }
                 }
+                runtimeFailed = !result;
             }
-            const bool runtimeFailed = result == nullptr;
-            if(result) Py_DECREF(result);
-            Py_DECREF(globals);
-            PyGILState_Release(gil);
 
             if(runtimeRolledBack)
             {
@@ -1144,21 +1560,28 @@ os.replace(temporary, job['destination'])
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
 
-            const auto gil = PyGILState_Ensure();
-            PyObject* globals = PyDict_New();
-            PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-            auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
-            PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
-            Py_DECREF(job);
-            auto* result = PyRun_String(ProbeScript, Py_file_input, globals, globals);
-            if(!result)
+            bool runtimeFailed = false;
             {
-                PyErr_Print();
-                PyErr_Clear();
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals(
+                    buffer.GetString(), buffer.GetSize());
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        ProbeScript, Py_file_input, globals.get(), globals.get()));
+                if(!globals || !result)
+                {
+                    PyErr_Print();
+                    PyErr_Clear();
+                    runtimeFailed = true;
+                }
             }
-            else Py_DECREF(result);
-            Py_DECREF(globals);
-            PyGILState_Release(gil);
+            if(runtimeFailed)
+            {
+                SetFailure(
+                    "The embedded downloader could not check this YouTube URL. Big Screen recorded the internal error; try again after restarting Beat Saber.");
+                return;
+            }
 
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
@@ -1198,16 +1621,31 @@ os.replace(temporary, job['destination'])
             rapidjson::StringBuffer buffer;
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
-            const auto gil = PyGILState_Ensure();
-            PyObject* globals = PyDict_New();
-            PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-            auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
-            PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
-            Py_DECREF(job);
-            auto* result = PyRun_String(UpdaterScript, Py_file_input, globals, globals);
-            if(!result) { PyErr_Print(); PyErr_Clear(); } else Py_DECREF(result);
-            Py_DECREF(globals);
-            PyGILState_Release(gil);
+            bool runtimeFailed = false;
+            {
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals(
+                    buffer.GetString(), buffer.GetSize());
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        UpdaterScript,
+                        Py_file_input,
+                        globals.get(),
+                        globals.get()));
+                if(!globals || !result)
+                {
+                    PyErr_Print();
+                    PyErr_Clear();
+                    runtimeFailed = true;
+                }
+            }
+            if(runtimeFailed)
+            {
+                SetFailure(
+                    "The embedded downloader could not run the yt-dlp update check. Big Screen recorded the internal error; try again after restarting Beat Saber.");
+                return;
+            }
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
         }
@@ -1247,31 +1685,31 @@ os.replace(temporary, job['destination'])
                 rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
                 document.Accept(writer);
 
-                const auto gil = PyGILState_Ensure();
-                PyObject* globals = PyDict_New();
-                PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-                auto* job = PyUnicode_FromStringAndSize(
-                    buffer.GetString(), buffer.GetSize());
-                PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
-                Py_DECREF(job);
-                auto* result = PyRun_String(
-                    ThumbnailScript, Py_file_input, globals, globals);
-                if(!result)
                 {
-                    PyErr_Clear();
-                    PaperLogger.warn(
-                        "Could not fetch video thumbnail for {}",
-                        request.levelId);
+                    ScopedPythonGil gil;
+                    auto globals = CreatePythonGlobals(
+                        buffer.GetString(), buffer.GetSize());
+                    PythonObject result;
+                    if(globals)
+                        result.reset(PyRun_String(
+                            ThumbnailScript,
+                            Py_file_input,
+                            globals.get(),
+                            globals.get()));
+                    if(!globals || !result)
+                    {
+                        PyErr_Clear();
+                        PaperLogger.warn(
+                            "Could not fetch video thumbnail for {}",
+                            request.levelId);
+                    }
+                    else
+                    {
+                        PaperLogger.debug(
+                            "Cached video thumbnail for {}",
+                            request.levelId);
+                    }
                 }
-                else
-                {
-                    Py_DECREF(result);
-                    PaperLogger.debug(
-                        "Cached video thumbnail for {}",
-                        request.levelId);
-                }
-                Py_DECREF(globals);
-                PyGILState_Release(gil);
             }
             catch(const std::exception& error)
             {

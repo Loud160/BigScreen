@@ -1,4 +1,17 @@
-adb shell am force-stop com.beatgames.beatsaber
+$ErrorActionPreference = "Stop"
+
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+    $sideQuestAdb = "$env:ProgramFiles\SideQuest\resources\app.asar.unpacked\build\platform-tools\adb.exe"
+    if (Test-Path -LiteralPath $sideQuestAdb) {
+        $env:PATH = (Split-Path -Parent $sideQuestAdb) +
+            [IO.Path]::PathSeparator + $env:PATH
+    }
+}
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+    throw "ADB was not found. Install Android platform-tools or SideQuest before restarting Beat Saber."
+}
+
+& adb shell am force-stop com.beatgames.beatsaber
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-adb shell am start com.beatgames.beatsaber/com.unity3d.player.UnityPlayerActivity
+& adb shell am start com.beatgames.beatsaber/com.unity3d.player.UnityPlayerActivity
 exit $LASTEXITCODE

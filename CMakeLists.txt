@@ -39,9 +39,9 @@ endif()
 # Post build
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/strip.cmake)
 
-# stop symbols leaking
-# TODO: Fix
-# add_link_options(-Wl, --exclude-libs, ALL)
+# Hidden visibility above keeps private implementation symbols out of the mod's
+# public ELF surface. Required mod-loader entry points carry explicit export
+# attributes, so a broad linker exclude rule is both unnecessary and unsafe.
 project( bigscreen
         VERSION ${PACKAGE_VERSION})
 

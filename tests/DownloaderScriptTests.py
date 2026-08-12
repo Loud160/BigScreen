@@ -44,6 +44,20 @@ updater_script = extract(source, "UpdaterScript")
 assert "rejected = job.get('rejectedVersion', '')" in updater_script
 assert "version == rejected" in updater_script
 assert "will wait for a newer release" in updater_script
+assert "maximum_package_bytes = 32 * 1024 * 1024" in updater_script
+for required_entry in (
+    "yt_dlp_ejs/__init__.py",
+    "yt_dlp_ejs/yt/solver/__init__.py",
+    "yt_dlp_ejs/yt/solver/core.min.js",
+    "yt_dlp_ejs/yt/solver/lib.min.js",
+):
+    assert required_entry in updater_script
+
+# Rollback must evict both separately named packages. Otherwise Python can
+# retain solver code from a rejected update while loading yt-dlp from the
+# restored package, creating a mixed runtime that was never validated.
+assert "k == 'yt_dlp_ejs' or k.startswith('yt_dlp_ejs.')" in source
+assert "ejs_solver.lib(), ejs_solver.core()" in source
 
 # Compile every complete raw string so a typo cannot ship as a runtime-only
 # failure on the headset.

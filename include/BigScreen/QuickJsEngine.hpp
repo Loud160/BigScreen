@@ -10,6 +10,12 @@ namespace BigScreen {
     inline constexpr std::chrono::milliseconds QuickJsDefaultTimeout{30000};
     inline constexpr std::size_t QuickJsDefaultMemoryLimit =
         128u * 1024u * 1024u;
+    inline constexpr std::size_t QuickJsMaximumSourceLength =
+        16u * 1024u * 1024u;
+    inline constexpr std::size_t QuickJsMaximumCapturedOutput =
+        8u * 1024u * 1024u;
+    inline constexpr std::size_t QuickJsMaximumStackSize =
+        512u * 1024u;
 
     /// Result returned by the isolated JavaScript engine. Each evaluation owns
     /// a new runtime, so a failed YouTube challenge cannot poison a later job.

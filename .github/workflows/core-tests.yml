@@ -20,3 +20,19 @@ jobs:
         run: ctest --test-dir build-host-tests -C Release --output-on-failure
       - name: Validate public files
         run: test -f LICENSE && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md && test -f scripts/build-downloader-from-source.ps1 && test -f scripts/build_downloader_runtime.py
+
+  downloader-source-reproducibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Node.js used by the pinned yt-dlp-ejs build
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Install the pinned pnpm toolchain
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.16.0
+      - name: Rebuild yt-dlp and yt-dlp-ejs from verified source
+        shell: pwsh
+        run: ./scripts/build-downloader-from-source.ps1

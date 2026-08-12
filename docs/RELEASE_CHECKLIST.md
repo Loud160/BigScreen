@@ -11,11 +11,11 @@
 ## Automated validation
 
 - [ ] Host tests pass from a clean test build directory.
-- [ ] QuickJS output, exception, and timeout tests pass; the pinned source hash was reviewed.
+- [ ] QuickJS output, exception, timeout, recursion, source-limit, and output-limit tests pass in a Release build; the pinned source hash was reviewed.
 - [ ] `build-downloader-from-source.ps1` rebuilds yt-dlp/yt-dlp-ejs and its full payload matches the pinned official release.
 - [ ] Clean ARM64 Quest build passes with no unresolved symbols.
-- [ ] QMOD creation passes from clean staged dependencies.
-- [ ] QMOD archive contains native libraries, full downloader runtime, manifest, and license/notices.
+- [ ] QMOD creation passes from clean staged dependencies and replaces no prior artifact until fresh-archive validation succeeds.
+- [ ] QMOD archive exactly contains the unique manifest inputs: native libraries, full downloader runtime, manifest, and license/notices.
 - [ ] CI passes on the release commit/tag.
 
 ## Headset regression
