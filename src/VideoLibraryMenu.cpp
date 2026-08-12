@@ -49,6 +49,7 @@
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ColorBlock.hpp"
+#include "UnityEngine/UI/ContentSizeFitter.hpp"
 #include "UnityEngine/UI/Graphic.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
@@ -584,11 +585,15 @@ namespace BigScreen {
         auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
         ConfigureGroup(editorRoot, true);
         editorRoot->set_childForceExpandWidth(true);
-        // Keep the editor's preferred width stable even when every video-only
-        // row is hidden. Without a persistent width constraint, Unity sizes
-        // the page from the compact Paste URL button and collapses the URL
-        // field until a downloaded video's wider controls become active.
-        ConfigureLayout(editorRoot, 50.0f, -1.0f, 1.0f, 1.0f);
+        // CreateVerticalLayoutGroup installs a ContentSizeFitter that normally
+        // derives the container width from whichever children are currently
+        // active. Video-only rows therefore made the editor wider when shown
+        // and narrower when hidden. Disable horizontal fitting and let the
+        // stretched RectTransform inherit the real side-panel width instead.
+        if(auto* fitter = editorRoot->get_gameObject()
+               ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
+            fitter->set_horizontalFit(
+                UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
         StretchToPanel(editorRoot->get_rectTransform());
 
         backToListButton_ = BSML::Lite::CreateUIButton(
@@ -609,9 +614,7 @@ namespace BigScreen {
         auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlEntryRow, false);
         urlEntryRow->set_spacing(0.6f);
-        // This row remains active for maps without videos, so it also anchors
-        // the content tree to the same width used by the complete editor.
-        ConfigureLayout(urlEntryRow, 50.0f, 8.0f, 1.0f);
+        ConfigureLayout(urlEntryRow, -1.0f, 8.0f, 1.0f);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
             urlEntryRow,
             "Paste URL",
