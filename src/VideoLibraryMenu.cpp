@@ -44,6 +44,7 @@
 #include "UnityEngine/GUIUtility.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/Object.hpp"
+#include "UnityEngine/RectOffset.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/Time.hpp"
@@ -877,6 +878,7 @@ namespace BigScreen {
         // bar. Because the scrubber is the flexible child, it gives up only
         // the small amount of width needed for this additional padding.
         playbackRow->set_spacing(1.25f);
+        playbackRow->set_padding(UnityEngine::RectOffset::New_ctor(1, 1, 0, 0));
         ConfigureLayout(playbackRow, -1.0f, 7.8f, 1.0f);
         playPauseButton_ = BSML::Lite::CreateUIButton(
             playbackRow,
@@ -2055,13 +2057,25 @@ namespace BigScreen {
 
         if(previewPlaying_)
         {
-            if(songPreviewPlayer_ && previewAudioClip_ &&
+            const bool channelIsStillPlaying = previewAudioSource_ &&
+                previewAudioClip_ &&
+                previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+                previewAudioSource_->get_isPlaying();
+            if(channelIsStillPlaying && songPreviewPlayer_ &&
                songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+            {
                 songPreviewPlayer_->PauseCurrentChannel();
+                previewPlaying_ = false;
+                previewPaused_ = true;
+                playWhenAudioReady_ = false;
+                RefreshPlaybackControls();
+                return;
+            }
+
+            // The clip can finish between UI ticks. Normalize that stale
+            // "playing" flag here and continue into the normal start path.
             previewPlaying_ = false;
-            playWhenAudioReady_ = false;
-            RefreshPlaybackControls();
-            return;
+            previewPaused_ = false;
         }
 
         const double duration = std::max(0.0f, selected_->songDuration);
@@ -2080,13 +2094,14 @@ namespace BigScreen {
         // Resume the paused Beat Saber channel when it is still ours. If the
         // menu music or another preview reclaimed the channel, rebuild the
         // crossfade at the requested scrub position instead.
-        if(previewAudioSource_ &&
+        if(previewPaused_ && previewAudioSource_ &&
            previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
            songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
         {
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
             songPreviewPlayer_->UnPauseCurrentChannel();
             previewPlaying_ = true;
+            previewPaused_ = false;
             playWhenAudioReady_ = false;
             StartSelectedPreview();
             RefreshPlaybackControls();
@@ -2145,6 +2160,7 @@ namespace BigScreen {
         if(previewAudioSource_)
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
         previewPlaying_ = true;
+        previewPaused_ = false;
         playWhenAudioReady_ = false;
         transientStatus_.clear();
         StartSelectedPreview();
@@ -2155,6 +2171,7 @@ namespace BigScreen {
     {
         playWhenAudioReady_ = false;
         previewPlaying_ = false;
+        previewPaused_ = false;
         if(returnToMenuMusic && songPreviewPlayer_ && previewAudioClip_ &&
            songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
             songPreviewPlayer_->CrossfadeToDefault();
@@ -2179,11 +2196,20 @@ namespace BigScreen {
         if(previewAudioSource_ && previewAudioClip_ &&
            previewAudioSource_->get_clip().ptr() == previewAudioClip_)
         {
+            const bool sourceWasPlaying = previewAudioSource_->get_isPlaying();
             const double clipEnd = std::max(
                 0.0f,
                 previewAudioClip_->get_length() - 0.01f);
             previewAudioSource_->set_time(static_cast<float>(
                 std::min(previewSongTime_, clipEnd)));
+            if(previewPlaying_ && !sourceWasPlaying)
+            {
+                // Seeking a naturally completed AudioSource changes its time
+                // but does not restart it. Mark the transport ready so the
+                // next Play action uses StartPreviewAudio rather than Pause.
+                previewPlaying_ = false;
+                previewPaused_ = false;
+            }
         }
         else if(previewPlaying_)
         {
@@ -2285,7 +2311,13 @@ namespace BigScreen {
             }
             else
             {
+                // AudioSource reports false both for a user-paused channel and
+                // for one that naturally exhausted its clip. Explicit pauses
+                // are tracked separately; reaching the end must clear that
+                // state so Play creates a fresh crossfade after scrubbing back
+                // instead of trying to unpause an already-stopped source.
                 previewPlaying_ = false;
+                previewPaused_ = false;
                 playWhenAudioReady_ = false;
             }
             RefreshPlaybackControls();

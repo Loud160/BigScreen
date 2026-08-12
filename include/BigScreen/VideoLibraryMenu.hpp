@@ -140,6 +140,7 @@ namespace BigScreen {
         bool active_ = false;
         bool editorVisible_ = false;
         bool previewPlaying_ = false;
+        bool previewPaused_ = false;
         bool playWhenAudioReady_ = false;
         bool suppressScrubberCallback_ = false;
         float scrubberFollowResumeTime_ = 0.0f;
