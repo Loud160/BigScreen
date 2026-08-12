@@ -54,7 +54,7 @@ namespace BigScreen {
     private:
         VideoLibraryMenu() = default;
         void RebuildCatalog();
-        void RebuildVisibleRows();
+        void RebuildVisibleRows(bool preserveScrollPosition = false);
         void SelectRow(int row);
         void ShowBrowser();
         void ShowEditor();
@@ -79,6 +79,7 @@ namespace BigScreen {
         void SeekPreview(float songTimeSeconds);
         void StartPreviewAudio();
         void StopPreviewAudio(bool returnToMenuMusic);
+        void EnforcePausedPreviewAudio();
         void RefreshPlaybackControls();
         void JumpToLetter(char letter);
         VideoOrigin SelectedVideoOrigin() const;

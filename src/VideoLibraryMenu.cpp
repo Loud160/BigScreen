@@ -32,6 +32,7 @@
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "HMUI/InputFieldView.hpp"
 #include "HMUI/ImageView.hpp"
+#include "HMUI/ScrollView.hpp"
 #include "HMUI/TableCell.hpp"
 #include "HMUI/TableView.hpp"
 #include "System/Threading/CancellationToken.hpp"
@@ -604,6 +605,17 @@ namespace BigScreen {
             // filter control above. The list's own right edge still contains
             // Beat Saber's native scrollbar and page arrows.
             ConfigureLayout(list_, 42.0f, 50.0f, 0.0f, 1.0f);
+            if(list_->tableView)
+            {
+                // The browser controller is disabled while its child editor
+                // occupies the right panel. TableView normally scrolls to row
+                // zero when it is enabled again, which conflicts with the
+                // position retained by an animated A-Z jump and can make a
+                // recycled cell display a different row from its click index.
+                // Search and filter changes already reset the list explicitly,
+                // so controller activation should preserve the current row.
+                list_->tableView->__cordl_internal_set__scrollToTopOnEnable(false);
+            }
             if(listObject)
             {
                 list_->tableView->add_didSelectCellWithIdxEvent(
@@ -1350,8 +1362,26 @@ namespace BigScreen {
             add(custom, IsWip(custom) ? SongLibraryGroup::Wip : SongLibraryGroup::Custom);
 
         std::sort(catalog_.begin(), catalog_.end(), [](const auto& left, const auto& right) {
-            return Lower(std::string(left.level->songName)) <
-                   Lower(std::string(right.level->songName));
+            // Resolve every tie so rebuilding the catalog cannot reshuffle
+            // songs that share a title. Table cells and the backing model both
+            // use this index, so their order must be completely deterministic.
+            const auto leftName = Lower(left.level && left.level->songName
+                ? std::string(left.level->songName) : std::string{});
+            const auto rightName = Lower(right.level && right.level->songName
+                ? std::string(right.level->songName) : std::string{});
+            if(leftName != rightName) return leftName < rightName;
+
+            const auto leftArtist = Lower(left.level && left.level->songAuthorName
+                ? std::string(left.level->songAuthorName) : std::string{});
+            const auto rightArtist = Lower(right.level && right.level->songAuthorName
+                ? std::string(right.level->songAuthorName) : std::string{});
+            if(leftArtist != rightArtist) return leftArtist < rightArtist;
+
+            const auto leftId = left.level && left.level->levelID
+                ? std::string(left.level->levelID) : std::string{};
+            const auto rightId = right.level && right.level->levelID
+                ? std::string(right.level->levelID) : std::string{};
+            return leftId < rightId;
         });
         std::array<int, 4> groupCounts{};
         for(const auto& item : catalog_)
@@ -1362,8 +1392,19 @@ namespace BigScreen {
         RebuildVisibleRows();
     }
 
-    void VideoLibraryMenu::RebuildVisibleRows()
+    void VideoLibraryMenu::RebuildVisibleRows(bool preserveScrollPosition)
     {
+        auto* tableView = list_ ? list_->tableView : nullptr;
+        auto* scrollView = tableView ? tableView->get_scrollView().ptr() : nullptr;
+        if(preserveScrollPosition && scrollView)
+        {
+            // Selecting a song can hide the browser before an animated letter
+            // jump reaches its destination. Freeze it at the displayed position
+            // before replacing data so it cannot keep moving recycled cells
+            // after the browser controller becomes visible again.
+            scrollView->ScrollTo(scrollView->get_position(), false);
+        }
+
         visible_.clear();
         if(!list_) return;
         list_->data->Clear();
@@ -1412,15 +1453,31 @@ namespace BigScreen {
                 DistinctSongCount(visible_),
                 VideoLibrary::Instance().LibraryBytes(),
                 VideoLibrary::Instance().FreeBytes()));
-        if(list_->tableView)
+        if(tableView)
         {
             // A TableView retains its selected index even when its data is
             // rebuilt. Clear it before reloading so returning from the child
             // editor leaves every row clickable, including the song the user
             // just edited.
-            list_->tableView->ClearSelection();
-            list_->tableView->ReloadData();
-            list_->tableView->ScrollToCellWithIdx(0, HMUI::TableView::ScrollPositionType::Beginning, false);
+            tableView->ClearSelection();
+            if(preserveScrollPosition)
+            {
+                // Returning from the editor does not intentionally change the
+                // sort. Reload the metadata and the visible cells as one native
+                // operation while retaining the current letter/scroll position.
+                tableView->ReloadDataKeepingPosition();
+            }
+            else
+            {
+                // A new search, filter, or catalog intentionally begins at row
+                // zero and also cancels any previous animated scroll.
+                tableView->ReloadData();
+                if(!visible_.empty())
+                    tableView->ScrollToCellWithIdx(
+                        0,
+                        HMUI::TableView::ScrollPositionType::Beginning,
+                        false);
+            }
             RefreshVisibleVideoThumbnails();
         }
     }
@@ -1438,10 +1495,25 @@ namespace BigScreen {
     void VideoLibraryMenu::SelectRow(int row)
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
+        if(list_ && list_->tableView)
+        {
+            // Freeze a possibly animated A-Z jump before hiding the browser.
+            // The exact displayed position can then be restored safely when
+            // the user returns from the child editor.
+            if(auto* scrollView = list_->tableView->get_scrollView().ptr())
+                scrollView->ScrollTo(scrollView->get_position(), false);
+        }
         StopPreviewAudio(true);
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         selected_ = visible_[row]->level;
+        PaperLogger.debug(
+            "Opening video editor row {} for '{}' ({})",
+            row,
+            selected_ && selected_->songName
+                ? std::string(selected_->songName) : std::string("Unknown Song"),
+            selected_ && selected_->levelID
+                ? std::string(selected_->levelID) : std::string("no level id"));
         previewSongTime_ = 0.0;
         transientStatus_.clear();
         ClearThumbnail();
@@ -1490,7 +1562,7 @@ namespace BigScreen {
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         ScreenPreview::Instance().ActivateCurrentState();
-        RebuildVisibleRows();
+        RebuildVisibleRows(true);
     }
 
     void VideoLibraryMenu::ShowEditor()
@@ -2683,6 +2755,48 @@ namespace BigScreen {
         RefreshPlaybackControls();
     }
 
+    void VideoLibraryMenu::EnforcePausedPreviewAudio()
+    {
+        // Android suspends Beat Saber when the Meta system menu opens. On some
+        // Quest firmware, Unity resumes an AudioSource as the activity regains
+        // focus even when SongPreviewPlayer had explicitly paused that source.
+        // Big Screen's transport state remains paused, so without this guard
+        // the song can become audible while the video correctly stays frozen.
+        if(!editorVisible_ || !previewPaused_ || !previewAudioClip_ ||
+           !songPreviewPlayer_)
+            return;
+
+        // SongPreviewPlayer rotates through multiple sources while crossfading.
+        // Resolve its current source again after an activity resume instead of
+        // assuming the pointer captured before opening the Meta menu is still
+        // the channel that Beat Saber considers active.
+        if(!previewAudioSource_ ||
+           previewAudioSource_->get_clip().ptr() != previewAudioClip_)
+            previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
+
+        const bool bigScreenStillOwnsChannel =
+            previewAudioSource_ &&
+            previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+            songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_;
+        if(!bigScreenStillOwnsChannel || !previewAudioSource_->get_isPlaying())
+            return;
+
+        // Restore the exact scrubber position retained when the user pressed
+        // Pause, then pause the channel before this frame returns to Unity.
+        // This avoids accumulating a small audio-only jump each time the Quest
+        // system shell is opened and keeps video/audio aligned on the next Play.
+        const float clipEnd = std::max(
+            0.0f,
+            previewAudioClip_->get_length() - 0.01f);
+        previewAudioSource_->set_time(static_cast<float>(std::clamp(
+            previewSongTime_,
+            0.0,
+            static_cast<double>(clipEnd))));
+        songPreviewPlayer_->PauseCurrentChannel();
+        PaperLogger.info(
+            "Restored Big Screen's paused audio-preview state after the audio channel resumed");
+    }
+
     void VideoLibraryMenu::SeekPreview(float songTimeSeconds)
     {
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
@@ -2794,6 +2908,12 @@ namespace BigScreen {
             }
             RefreshDetails();
         }
+
+        // SongPreviewPlayer::Update runs immediately before this Tick. That is
+        // the point where Unity can revive a source after returning from the
+        // Meta shell, so enforce Big Screen's paused transport after Beat Saber
+        // has applied its own per-frame audio state.
+        EnforcePausedPreviewAudio();
 
         if(editorVisible_ && previewPlaying_ && previewAudioClip_)
         {
