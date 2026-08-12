@@ -266,8 +266,13 @@ namespace BigScreen {
             {
                 if(auto* scroll = external->Get<UnityEngine::RectTransform*>())
                 {
-                    scroll->set_anchoredPosition({2.0f, -6.0f});
-                    scroll->set_sizeDelta({0.0f, -44.0f});
+                    // With full-height anchors, these values produce a
+                    // 19-unit top inset and a 3-unit bottom inset. The tab bar
+                    // ends about 17 units below the panel top, leaving only a
+                    // narrow visual gap while giving every page essentially
+                    // the complete remaining vertical workspace.
+                    scroll->set_anchoredPosition({2.0f, -8.0f});
+                    scroll->set_sizeDelta({0.0f, -22.0f});
                     tabViewRoots_[index] = scroll->get_gameObject();
                 }
             }
