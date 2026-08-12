@@ -735,9 +735,47 @@ namespace BigScreen {
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
 
+        // Visually separate audition controls from settings that permanently
+        // alter video synchronization. The title, scrubber, transport button,
+        // and clock all belong to this single bordered playback group.
+        auto* playbackPanelObject = ConstructLayout(
+            "<vertical tags='big-screen-playback-panel' bg='round-rect-panel' "
+            "pad-left='0.8' pad-right='0.8' pad-top='0.5' pad-bottom='0.5' "
+            "spacing='0.3'/>",
+            editorRoot->get_transform(),
+            "big-screen-playback-panel");
+        auto* playbackPanel = playbackPanelObject
+            ? playbackPanelObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
+            : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(playbackPanel, true);
+        playbackPanel->set_spacing(0.3f);
+        playbackPanel->set_childForceExpandWidth(true);
+        ConfigureLayout(playbackPanel, 49.0f, 12.5f, 0.0f);
+        const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
+
+        auto* playbackGroupTitle = BSML::Lite::CreateText(
+            playbackBody,
+            "Playback Position",
+            3.0f);
+        ConfigureLayout(playbackGroupTitle, 47.0f, 3.8f, 0.0f);
+        playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
+
+        auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
+        ConfigureGroup(playbackRow, false);
+        playbackRow->set_spacing(0.6f);
+        ConfigureLayout(playbackRow, 47.0f, 6.5f, 0.0f);
+        playPauseButton_ = BSML::Lite::CreateUIButton(
+            playbackRow,
+            "Play",
+            {0.0f, 0.0f},
+            {12.0f, 6.5f},
+            [this]() { TogglePreviewPlayback(); });
+        ConfigureLayout(playPauseButton_, 12.0f, 6.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(playPauseButton_, 2.5f);
+
         playbackScrubber_ = BSML::Lite::CreateSliderSetting(
-            editorBody,
-            "Preview Position",
+            playbackRow,
+            "",
             PreviewScrubIncrement,
             0.0f,
             0.0f,
@@ -760,29 +798,25 @@ namespace BigScreen {
                     SeekPreview(static_cast<float>(value * duration));
                 }
             });
-        // Explicitly cap this settings prefab to the usable right-panel width.
-        // Its internal TextSlider must not report a preferred width that can
-        // expand the entire editor controller.
-        ConfigureLayout(playbackScrubber_, 49.0f, 8.0f, 0.0f);
+        playbackScrubber_->formatter = [this](float normalized) -> StringW
+        {
+            const double duration = selected_
+                ? std::max(0.0f, selected_->songDuration)
+                : 0.0;
+            return PlaybackTime(normalized * duration) + " / " +
+                PlaybackTime(duration);
+        };
+        playbackTimeText_ = playbackScrubber_->text;
+        if(playbackTimeText_)
+        {
+            playbackTimeText_->set_fontSize(2.4f);
+            playbackTimeText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        }
 
-        auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
-        ConfigureGroup(playbackRow, false);
-        playbackRow->set_spacing(0.6f);
-        ConfigureLayout(playbackRow, -1.0f, 7.0f, 1.0f);
-        playPauseButton_ = BSML::Lite::CreateUIButton(
-            playbackRow,
-            "Play",
-            {0.0f, 0.0f},
-            {17.0f, 6.5f},
-            [this]() { TogglePreviewPlayback(); });
-        ConfigureLayout(playPauseButton_, 17.0f, 6.5f, 0.0f);
-        BSML::Lite::SetButtonTextSize(playPauseButton_, 2.8f);
-        playbackTimeText_ = BSML::Lite::CreateText(
-            playbackRow,
-            "0:00 / 0:00",
-            2.8f);
-        ConfigureLayout(playbackTimeText_, 29.0f, 6.5f, 1.0f);
-        playbackTimeText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        // Play/Pause reserves the left edge; the scrubber consumes every
+        // remaining unit of row width. Its native centered value text now
+        // serves as the current/total playback clock directly on the bar.
+        ConfigureLayout(playbackScrubber_, 0.0f, 6.0f, 1.0f);
 
         removeButton_ = BSML::Lite::CreateUIButton(
             editorBody, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
