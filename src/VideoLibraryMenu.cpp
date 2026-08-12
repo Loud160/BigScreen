@@ -680,9 +680,9 @@ namespace BigScreen {
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
 
-        // ToggleSetting is a full-width settings-row prefab. Stack these two
-        // persistent policies instead of squeezing them side by side, which
-        // clipped both the labels and switches on the live side panel.
+        // ToggleSetting is a full-width settings-row prefab. Keep Fit to Song
+        // on its own row, followed by the two numeric timing controls. The
+        // lead-in appearance belongs directly beneath the offset it describes.
         auto* timingToggleObject = ConstructLayout(
             "<vertical tags='big-screen-timing-toggles' spacing='0.2' "
             "horizontal-fit='Unconstrained'/>",
@@ -694,7 +694,7 @@ namespace BigScreen {
         ConfigureGroup(timingToggleColumn, true);
         timingToggleColumn->set_spacing(0.2f);
         timingToggleColumn->set_childForceExpandWidth(true);
-        ConfigureLayout(timingToggleColumn, -1.0f, 15.8f, 1.0f);
+        ConfigureLayout(timingToggleColumn, -1.0f, 7.8f, 1.0f);
         fitToggle_ = BSML::Lite::CreateToggle(
             timingToggleColumn,
             "Fit to Song",
@@ -724,33 +724,29 @@ namespace BigScreen {
         StyleToggleRow(fitToggle_);
         BSML::Lite::AddHoverHint(
             fitToggle_,
-            "Continuously adjusts playback speed so the video ends with the song after applying Start Offset.");
-        blackLeadInToggle_ = BSML::Lite::CreateToggle(
-            timingToggleColumn,
-            "Black Lead-In",
-            false,
-            [this](bool enabled)
-            {
+            "Continuously adjusts playback speed so the video ends with the song after applying Video Playback Offset.");
+        videoOnlyRows_.push_back(timingToggleColumn->get_gameObject());
+
+        rateSetting_ = BSML::Lite::CreateIncrementSetting(
+            editorBody, "Playback Speed", 2, 0.05f, 1.0f,
+            0.05f, 8.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
-                blackDuringLeadIn_ = enabled;
+                rate_ = value;
                 if(SaveTiming())
                 {
-                    transientStatus_ = enabled
-                        ? "Negative offset lead-in will use a solid black screen."
-                        : "Negative offset lead-in will remain transparent.";
+                    std::ostringstream status;
+                    status << std::fixed << std::setprecision(2)
+                           << "Manual playback speed saved at " << rate_ << "x.";
+                    transientStatus_ = status.str();
                     StartSelectedPreview();
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
-        StyleToggleRow(blackLeadInToggle_);
-        BSML::Lite::AddHoverHint(
-            blackLeadInToggle_,
-            "Off keeps the screen fully transparent until video time reaches zero. On shows solid black during that delay.");
-        videoOnlyRows_.push_back(timingToggleColumn->get_gameObject());
+        ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
+        videoOnlyRows_.push_back(rateSetting_->get_gameObject());
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorBody, "Start Offset", 2, 0.25f, 0.0f,
+            editorBody, "Video Playback Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 offset_ = value;
@@ -777,23 +773,30 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             offsetSetting_,
             "Negative values delay video frame zero; positive values skip forward into the video.");
-        rateSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorBody, "Playback Speed", 2, 0.05f, 1.0f,
-            0.05f, 8.0f, {0, 0}, [this](float value) {
+
+        blackLeadInToggle_ = BSML::Lite::CreateToggle(
+            editorBody,
+            "Lead-In Background",
+            false,
+            [this](bool enabled)
+            {
                 if(suppressTimingCallbacks_) return;
-                rate_ = value;
+                blackDuringLeadIn_ = enabled;
                 if(SaveTiming())
                 {
-                    std::ostringstream status;
-                    status << std::fixed << std::setprecision(2)
-                           << "Manual playback speed saved at " << rate_ << "x.";
-                    transientStatus_ = status.str();
+                    transientStatus_ = enabled
+                        ? "Video lead-in will use a solid black background."
+                        : "Video lead-in will remain transparent.";
                     StartSelectedPreview();
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
-        videoOnlyRows_.push_back(rateSetting_->get_gameObject());
+        ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
+        StyleToggleRow(blackLeadInToggle_);
+        BSML::Lite::AddHoverHint(
+            blackLeadInToggle_,
+            "When enabled, a delayed video lead-in appears on a solid black background. When disabled, the screen stays transparent until the video begins.");
+        videoOnlyRows_.push_back(blackLeadInToggle_->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
         // alter video synchronization. The title, scrubber, transport button,
