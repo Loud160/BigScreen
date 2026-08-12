@@ -11,8 +11,11 @@ custom, and WIP songs and does not require a PC after the QMOD is installed.
   folder.
 - Synchronized previews in song selection and full playback during gameplay,
   Replay playback, and Replay recording.
-- Three saved screen layouts with flat/curved display, size up to 2.5x,
+- Three saved screen layouts with flat display size up to 4.0x or curved size
+  up to 2.5x,
   distance, X/Y position, tilt, curvature, and optional curve aspect retention.
+- Change the active screen layout or hide the video screen for the current map
+  directly from Beat Saber's pause menu.
 - 480p/720p/1080p output and 15/30/60 FPS presentation limits. Source files are
   retained at their downloaded/native resolution and downscaled while playing.
 - Timing offset, playback speed, fit-to-song, black/transparent lead-in, menu

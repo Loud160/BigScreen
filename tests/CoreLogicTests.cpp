@@ -37,12 +37,26 @@ int main()
     auto [changedMin, tierMin] = NextPerformanceTier(15, 480);
     Expect(!changedMin && tierMin.second == 480, "minimum tier is stable");
 
-    Expect(IsRepeatedWithin("same", "same", std::chrono::seconds(179)),
-           "same error inside three minutes trips");
-    Expect(!IsRepeatedWithin("same", "same", std::chrono::seconds(181)),
-           "same error outside three minutes does not trip");
-    Expect(!IsRepeatedWithin("one", "two", std::chrono::seconds(1)),
-           "different errors do not trip");
+    Expect(IsSecondFailureWithin(std::chrono::seconds(179)),
+           "a second internal failure inside three minutes trips");
+    Expect(!IsSecondFailureWithin(std::chrono::seconds(181)),
+           "a later internal failure starts a new three-minute window");
+
+    Expect(DownloadProgressFraction(25, 100) == 0.25f,
+           "download progress reports the transferred byte fraction");
+    Expect(DownloadProgressFraction(25, 0) == 0.0f,
+           "unknown download totals do not divide by zero");
+    Expect(DownloadProgressFraction(125, 100) == 1.0f,
+           "download progress is clamped when an estimate changes");
+
+    Expect(ScreenScaleMaximum(false) == 4.0f,
+           "flat screens allow the expanded 4x size");
+    Expect(ScreenScaleMaximum(true) == 2.5f,
+           "curved screens retain the safe 2.5x size cap");
+    Expect(NormalizeScreenScale(4.0f, true) == 2.5f,
+           "enabling curvature clamps an oversized flat screen");
+    Expect(NormalizeScreenScale(2.5f, false) == 2.5f,
+           "returning to flat mode preserves the current size");
 
     if(failures == 0)
         std::cout << "All Big Screen core tests passed.\n";

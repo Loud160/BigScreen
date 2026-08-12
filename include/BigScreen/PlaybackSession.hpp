@@ -48,13 +48,28 @@ namespace BigScreen {
         /// Rebuilds the selected map's effective display configuration from
         /// mapper-authored metadata and the latest global settings.
         void RefreshDisplaySettings();
+        /// Applies the currently selected user layout to a running gameplay
+        /// surface without reopening FFmpeg or changing the playback clock.
+        bool ApplyActiveScreenLayoutLive();
+        /// Shows or hides only the current gameplay screen. This session-local
+        /// override deliberately leaves the user's global Video In Map setting
+        /// unchanged, so the next map still follows the saved preference.
+        void SetGameplayScreenEnabled(bool enabled);
+        bool GameplayScreenEnabled() const { return gameplayScreenEnabled_; }
         void Start(PlaybackContext context);
         void Tick(double songTimeSeconds);
         void Stop();
 
         bool HasPreparedVideo() const { return config_.has_value(); }
+        /// True only when both the global opt-in and actual mapper-authored
+        /// presentation data are present. Environment hooks use the same
+        /// predicate as screen rendering so the two halves cannot disagree.
+        bool MapperPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
+        bool IsGameplayActive() const {
+            return started_ && context_ == PlaybackContext::Gameplay;
+        }
         const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
         const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;
@@ -68,10 +83,16 @@ namespace BigScreen {
 
     private:
         PlaybackSession() = default;
+        void RebuildEffectiveConfig();
         bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
         void CaptureDiagnosticsSummary();
 
         std::filesystem::path levelDirectory_;
+        // This flag is independent of cinema-video.json. A user-assigned video
+        // can make any Chroma map a Big Screen map, and Chroma still needs
+        // ownership of that map's environment even when Cinema metadata is
+        // absent.
+        bool chromaMapDetected_ = false;
         // Keep the mapper-authored configuration immutable. Reapplying global
         // offsets to an already-adjusted config would accumulate scale and
         // placement changes, especially after Reset to Defaults.
@@ -82,6 +103,7 @@ namespace BigScreen {
         double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
         bool firstFrameUploaded_ = false;
+        bool gameplayScreenEnabled_ = true;
         // The presentation limiter lives above FFmpeg so decoder timestamps
         // remain untouched. Native-rate gating still occurs inside FrameDecoder.
         std::optional<std::int64_t> lastPresentationSlot_;
@@ -95,6 +117,10 @@ namespace BigScreen {
         double performanceWindowStartSongTime_ = 0.0;
         int automaticReductions_ = 0;
         int diagnosticsFrameCounter_ = 0;
+        // Quest Chroma applies difficulty environment data from an end-of-frame
+        // coroutine. Delay Cinema's separate environment array a few gameplay
+        // updates so it remains the final mapper-authored scene pass.
+        int mapperEnvironmentApplyCountdown_ = 0;
         std::string lastDiagnosticsSummary_;
         PlaybackContext context_ = PlaybackContext::None;
     };

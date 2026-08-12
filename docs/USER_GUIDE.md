@@ -8,6 +8,18 @@ Big Screen validates the URL, shows its video thumbnail, and enables Download
 Video only when the video is available. Private, login-required, unavailable,
 and parental-control-restricted videos report their actual reason.
 
+If a mapper listed a downloadable video but did not include the MP4, the normal
+song-detail screen shows Video available and Download Video. The same row shows
+preparation and byte/percentage progress, allows cancellation/resume, and saves
+the completed mapper video into Big Screen's durable library. A failed download
+shows the specific reason and directs the player to the Video Library, where a
+different YouTube result or compatible local H.264 MP4 can be assigned.
+Common web failures are translated into plain language. For example, HTTP 403
+is identified as YouTube refusing access to the requested stream, while 404,
+429, authentication errors, and temporary YouTube server errors explain what
+the response means and whether retrying, updating yt-dlp, or changing videos is
+the appropriate next step.
+
 After downloading or assigning a local/imported MP4, use the playback preview
 to adjust Video Playback Offset and Playback Speed. Fit to Song keeps the
 playable video range aligned with the map length, including any lead-in created
@@ -18,6 +30,27 @@ by the offset. The lead-in can be transparent or solid black.
 The Screen tab stores three independent layouts. Select the layout being edited,
 then adjust placement, size, tilt, and curve. The Screen Layout control on the
 song-selection header switches the active layout without opening the mod menu.
+While a playable assigned video is active, the pause menu provides a Video
+Screen toggle that hides or restores the screen for the current play without
+changing the global Video In Map preference. Big Screen-controlled maps also
+show a Screen Layout selector. Switching layouts updates the live geometry
+without reopening the decoder, restarting the video, or changing its song-time
+synchronization. Mapper/Chroma-controlled screens keep their authored layout
+and therefore do not show the layout selector.
+Flat layouts can scale the screen from 0.5x through 4.0x. Curved layouts are
+limited to 2.5x; enabling curvature on a larger flat layout immediately resizes
+it to 2.5x, while returning to flat mode restores the 4.0x adjustment range.
+
+Allow Chroma Override is enabled by default. When a map includes mapper-authored
+Cinema or Chroma presentation data, the mapper's screen position, rotation,
+size, curvature, transparency, requested environment, and environment-object
+changes take precedence. Quest Chroma continues to process the difficulty's
+Chroma environment data. Turn the option off to ignore that presentation and
+use the selected Big Screen layout and environment controls instead. Detection
+is map-wide and independent of how the video was assigned: Chroma requirements,
+suggestions, or environment data are honored for mapper, downloaded, imported,
+and map-folder videos. Non-Chroma maps that contain only video URL/timing data
+are unaffected by this option.
 
 ## Performance
 

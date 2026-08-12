@@ -11,11 +11,11 @@
 #include <iterator>
 #include <stdexcept>
 
+#include "main.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
-#include "main.hpp"
 
 namespace BigScreen {
     namespace {
@@ -287,8 +287,20 @@ def classify(value):
         return 'failed', 'This video has no H.264 MP4 stream at 1080p or lower.'
     if 'no space left' in lower:
         return 'failed', 'The Quest ran out of free storage while downloading.'
+    if 'http error 400' in lower or ('400' in lower and 'bad request' in lower):
+        return 'failed', 'YouTube returned HTTP 400 (Bad Request). It rejected the video request, usually because the link is malformed or the downloader needs an update.'
+    if 'http error 401' in lower or ('401' in lower and 'unauthorized' in lower):
+        return 'failed', 'YouTube returned HTTP 401 (Unauthorized). This video requires account authentication, which Big Screen does not use or store.'
+    if 'http error 403' in lower or ('403' in lower and 'forbidden' in lower):
+        return 'failed', 'YouTube returned HTTP 403 (Forbidden). YouTube understood the request but refused access to this video stream. The video may be restricted, or yt-dlp may need an update.'
+    if 'http error 404' in lower or ('404' in lower and 'not found' in lower):
+        return 'failed', 'YouTube returned HTTP 404 (Not Found). The video address no longer points to an available video.'
+    if 'http error 410' in lower or ('410' in lower and 'gone' in lower):
+        return 'failed', 'YouTube returned HTTP 410 (Gone). The video was removed and is no longer available from this address.'
     if 'http error 429' in lower or 'too many requests' in lower:
-        return 'failed', 'YouTube is temporarily rate-limiting this headset. Try again later.'
+        return 'failed', 'YouTube returned HTTP 429 (Too Many Requests). It is temporarily rate-limiting this headset; wait and try again later.'
+    if re.search(r'http error 5\d\d', lower):
+        return 'failed', 'YouTube returned a 5xx server error. YouTube could not complete the request; this is normally temporary, so try again later.'
     if 'certificate verify failed' in lower:
         return 'failed', 'Secure connection failed because the certificate could not be verified.'
     if 'unable to download' in lower or 'network is unreachable' in lower or 'timed out' in lower:
@@ -422,8 +434,20 @@ def classify(value):
     if ('removed by the uploader' in lower or 'video has been removed' in lower or
             'video unavailable' in lower):
         return 'This YouTube video is unavailable or has been removed.'
+    if 'http error 400' in lower or ('400' in lower and 'bad request' in lower):
+        return 'YouTube returned HTTP 400 (Bad Request). It rejected the video request, usually because the link is malformed or the downloader needs an update.'
+    if 'http error 401' in lower or ('401' in lower and 'unauthorized' in lower):
+        return 'YouTube returned HTTP 401 (Unauthorized). This video requires account authentication, which Big Screen does not use or store.'
+    if 'http error 403' in lower or ('403' in lower and 'forbidden' in lower):
+        return 'YouTube returned HTTP 403 (Forbidden). YouTube understood the request but refused access to this video stream. The video may be restricted, or yt-dlp may need an update.'
+    if 'http error 404' in lower or ('404' in lower and 'not found' in lower):
+        return 'YouTube returned HTTP 404 (Not Found). The video address no longer points to an available video.'
+    if 'http error 410' in lower or ('410' in lower and 'gone' in lower):
+        return 'YouTube returned HTTP 410 (Gone). The video was removed and is no longer available from this address.'
     if 'http error 429' in lower or 'too many requests' in lower:
-        return 'YouTube is temporarily rate-limiting this headset. Try again later.'
+        return 'YouTube returned HTTP 429 (Too Many Requests). It is temporarily rate-limiting this headset; wait and try again later.'
+    if re.search(r'http error 5\d\d', lower):
+        return 'YouTube returned a 5xx server error. YouTube could not complete the request; this is normally temporary, so try again later.'
     if 'certificate verify failed' in lower:
         return 'Secure connection failed because the YouTube certificate could not be verified.'
     if 'network is unreachable' in lower or 'timed out' in lower:
@@ -497,7 +521,7 @@ try:
         package_url = assets.get('yt-dlp')
         sums_url = assets.get('SHA2-256SUMS')
         if not package_url or not sums_url:
-            raise RuntimeError('The selected release does not contain signed release checksum files.')
+            raise RuntimeError('The selected release does not contain an official SHA-256 checksum list.')
         with urllib.request.urlopen(urllib.request.Request(sums_url, headers={'User-Agent':'Big-Screen-Beat-Saber'}), timeout=30) as response:
             sums = response.read().decode('utf-8')
         expected = next((line.split()[0] for line in sums.splitlines() if line.rstrip().endswith('yt-dlp')), '')
@@ -791,7 +815,10 @@ os.replace(temporary, job['destination'])
         cancelPath_ = library.RuntimePath() / "download.cancel";
         std::filesystem::remove(cancelPath_);
         std::filesystem::remove(statusPath_);
-        snapshot_ = {DownloadState::Preparing, request.levelId, "Checking video information"};
+        snapshot_ = {};
+        snapshot_.state = DownloadState::Preparing;
+        snapshot_.levelId = request.levelId;
+        snapshot_.message = "Checking video information";
         PaperLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
@@ -833,7 +860,10 @@ os.replace(temporary, job['destination'])
         cancelPath_ = runtime / "url-probe.cancel";
         std::filesystem::remove(statusPath_);
         std::filesystem::remove(cancelPath_);
-        snapshot_ = {DownloadState::Probing, levelId, "Checking YouTube URL"};
+        snapshot_ = {};
+        snapshot_.state = DownloadState::Probing;
+        snapshot_.levelId = levelId;
+        snapshot_.message = "Checking YouTube URL";
         snapshot_.metadataOnly = true;
         PaperLogger.info("Checking a YouTube URL for {}", levelId);
         worker_ = std::thread([
@@ -859,7 +889,10 @@ os.replace(temporary, job['destination'])
         statusPath_ = VideoLibrary::Instance().RuntimePath() / "update-status.json";
         cancelPath_ = VideoLibrary::Instance().RuntimePath() / "update.cancel";
         std::filesystem::remove(statusPath_);
-        snapshot_ = {DownloadState::Preparing, "__updater__", "Checking yt-dlp releases"};
+        snapshot_ = {};
+        snapshot_.state = DownloadState::Preparing;
+        snapshot_.levelId = "__updater__";
+        snapshot_.message = "Checking yt-dlp releases";
         worker_ = std::thread([this, nightly, install]() { RunUpdater(nightly, install); });
         return true;
     }
@@ -1045,6 +1078,10 @@ os.replace(temporary, job['destination'])
         {
             SetFailure(std::string("Downloader stopped: ") + exception.what());
         }
+        catch(...)
+        {
+            SetFailure("Downloader stopped because of an unexpected internal error.");
+        }
     }
 
     void DownloadManager::RunProbe(std::string levelId, std::string sourceUrl)
@@ -1090,37 +1127,53 @@ os.replace(temporary, job['destination'])
         {
             SetFailure(std::string("URL check stopped: ") + exception.what());
         }
+        catch(...)
+        {
+            SetFailure("URL check stopped because of an unexpected internal error.");
+        }
     }
 
     void DownloadManager::RunUpdater(bool nightly, bool install)
     {
-        const auto runtime = VideoLibrary::Instance().RuntimePath();
-        rapidjson::Document document(rapidjson::kObjectType);
-        auto& allocator = document.GetAllocator();
-        AddString(document, "statusPath", statusPath_.string(), allocator);
-        AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
-        AddString(document, "currentVersion", currentUpdateVersion_, allocator);
-        document.AddMember("nightly", nightly, allocator);
-        document.AddMember("install", install, allocator);
-        rapidjson::StringBuffer buffer;
-        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-        document.Accept(writer);
-        const auto gil = PyGILState_Ensure();
-        PyObject* globals = PyDict_New();
-        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-        auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
-        PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
-        Py_DECREF(job);
-        auto* result = PyRun_String(UpdaterScript, Py_file_input, globals, globals);
-        if(!result) { PyErr_Print(); PyErr_Clear(); } else Py_DECREF(result);
-        Py_DECREF(globals);
-        PyGILState_Release(gil);
-        std::scoped_lock lock(mutex_);
-        RefreshSnapshotFromDiskLocked();
-        std::ifstream stream(statusPath_, std::ios::binary);
-        const std::string json{std::istreambuf_iterator<char>(stream), {}};
-        rapidjson::Document status; status.Parse(json.data(), json.size());
-        availableUpdateVersion_ = ReadString(status, "version");
+        try
+        {
+            const auto runtime = VideoLibrary::Instance().RuntimePath();
+            rapidjson::Document document(rapidjson::kObjectType);
+            auto& allocator = document.GetAllocator();
+            AddString(document, "statusPath", statusPath_.string(), allocator);
+            AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
+            AddString(document, "currentVersion", currentUpdateVersion_, allocator);
+            document.AddMember("nightly", nightly, allocator);
+            document.AddMember("install", install, allocator);
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            document.Accept(writer);
+            const auto gil = PyGILState_Ensure();
+            PyObject* globals = PyDict_New();
+            PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+            auto* job = PyUnicode_FromStringAndSize(buffer.GetString(), buffer.GetSize());
+            PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
+            Py_DECREF(job);
+            auto* result = PyRun_String(UpdaterScript, Py_file_input, globals, globals);
+            if(!result) { PyErr_Print(); PyErr_Clear(); } else Py_DECREF(result);
+            Py_DECREF(globals);
+            PyGILState_Release(gil);
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            std::ifstream stream(statusPath_, std::ios::binary);
+            const std::string json{std::istreambuf_iterator<char>(stream), {}};
+            rapidjson::Document status;
+            status.Parse(json.data(), json.size());
+            availableUpdateVersion_ = ReadString(status, "version");
+        }
+        catch(const std::exception& exception)
+        {
+            SetFailure(std::string("yt-dlp update stopped: ") + exception.what());
+        }
+        catch(...)
+        {
+            SetFailure("yt-dlp update stopped because of an unexpected internal error.");
+        }
     }
 
     void DownloadManager::RunThumbnailQueue()
@@ -1181,6 +1234,12 @@ os.replace(temporary, job['destination'])
                     "Video thumbnail worker failed for {}: {}",
                     request.levelId,
                     error.what());
+            }
+            catch(...)
+            {
+                PaperLogger.warn(
+                    "Video thumbnail worker failed for {} because of an unexpected internal error",
+                    request.levelId);
             }
         }
     }

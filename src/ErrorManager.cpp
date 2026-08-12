@@ -50,22 +50,19 @@ namespace BigScreen {
         PaperLogger.error("Internal failure in {}: {}", context, detail);
         const auto now = std::chrono::steady_clock::now();
         const auto signature = context + ": " + detail;
-        bool disable = false;
         {
             std::scoped_lock lock(mutex_);
-            const bool repeated =
+            const bool secondFailure =
                 lastInternalError_ != std::chrono::steady_clock::time_point{} &&
-                CoreLogic::IsRepeatedWithin(
-                    lastSignature_, signature, now - lastInternalError_);
-            lastSignature_ = signature;
+                CoreLogic::IsSecondFailureWithin(now - lastInternalError_);
             lastInternalError_ = now;
-            if(repeated && !disabledByCircuitBreaker_)
+            if(secondFailure && !disabledByCircuitBreaker_)
             {
                 disabledByCircuitBreaker_ = true;
-                disable = true;
+                disableRequested_ = true;
                 pendingDialog_ = std::make_pair(
                     "Big Screen disabled itself",
-                    "Big Screen encountered the same internal error twice within three minutes, so it turned itself off to protect Beat Saber.\n\nLast error: " +
+                    "Big Screen encountered two internal errors within three minutes, so it turned itself off to protect Beat Saber.\n\nLast error: " +
                     signature + "\n\nLogs: " + LogFolder +
                     "\n\nYou can turn the mod back on from its General tab after reviewing the log.");
             }
@@ -76,11 +73,13 @@ namespace BigScreen {
                     "Big Screen could not complete an internal operation.\n\n" +
                     signature + "\n\nThe error was recorded in " + LogFolder + ".");
             }
-            // During gameplay the first failure remains log-only. If it later
-            // repeats, the one circuit-breaker dialog waits until gameplay ends.
+            // During gameplay the first failure remains log-only. If a second
+            // failure follows soon after, one circuit-breaker dialog waits
+            // until gameplay ends.
         }
-        if(disable)
-            Settings::Instance().SetModEnabled(false);
+        // Settings and its JSON document belong to the Unity thread. Worker
+        // failures request the state change here; TickMainThread applies it
+        // after gameplay rather than writing config from a background thread.
     }
 
     std::optional<std::pair<std::string, std::string>>
@@ -96,6 +95,18 @@ namespace BigScreen {
 
     void ErrorManager::TickMainThread()
     {
+        bool disable = false;
+        {
+            std::scoped_lock lock(mutex_);
+            if(!gameplayActive_ && disableRequested_)
+            {
+                disableRequested_ = false;
+                disable = true;
+            }
+        }
+        if(disable)
+            Settings::Instance().SetModEnabled(false);
+
         std::pair<std::string, std::string> message;
         {
             std::scoped_lock lock(mutex_);
@@ -154,5 +165,13 @@ namespace BigScreen {
             // next main-flow frame instead of silently losing it.
             pendingDialog_ = std::move(message);
         }
+    }
+
+    void ErrorManager::ResetCircuitBreaker()
+    {
+        std::scoped_lock lock(mutex_);
+        disabledByCircuitBreaker_ = false;
+        disableRequested_ = false;
+        lastInternalError_ = {};
     }
 }

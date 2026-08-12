@@ -57,6 +57,7 @@ namespace BigScreen {
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
         BSML::DropdownListSetting* screenLayoutDropdown_ = nullptr;
+        BSML::ToggleSetting* allowChromaOverrideToggle_ = nullptr;
         BSML::IncrementSetting* distanceSetting_ = nullptr;
         BSML::IncrementSetting* horizontalSetting_ = nullptr;
         BSML::IncrementSetting* verticalSetting_ = nullptr;
@@ -78,6 +79,7 @@ namespace BigScreen {
         BSML::ToggleSetting* hideTrackRingsToggle_ = nullptr;
         BSML::ToggleSetting* hideSideBarsToggle_ = nullptr;
         BSML::ToggleSetting* hideSpectrogramBarsToggle_ = nullptr;
+        HMUI::HoverHint* hideSpectrogramBarsHint_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;

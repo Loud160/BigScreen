@@ -161,6 +161,7 @@ namespace BigScreen {
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
         screenLayoutDropdown_ = nullptr;
+        allowChromaOverrideToggle_ = nullptr;
         distanceSetting_ = nullptr;
         horizontalSetting_ = nullptr;
         verticalSetting_ = nullptr;
@@ -182,6 +183,7 @@ namespace BigScreen {
         hideTrackRingsToggle_ = nullptr;
         hideSideBarsToggle_ = nullptr;
         hideSpectrogramBarsToggle_ = nullptr;
+        hideSpectrogramBarsHint_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
@@ -349,7 +351,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             playbackFpsDropdown_,
-            "Maximum displayed video frame rate. Lower values reduce software conversion and texture-upload load; videos below the limit retain their native frame rate.");
+            "Limits how many video frames Big Screen displays each second. Lower limits can improve performance. Videos already below the limit keep their original frame rate.");
 
         resolutionDropdown_ = BSML::Lite::CreateDropdown(
             generalContainer,
@@ -368,7 +370,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             resolutionDropdown_,
-            "Maximum playback resolution. Sources below the selected tier are not upscaled. 720p is recommended; 1080p may reduce performance and battery life.");
+            "Sets the highest resolution used during playback. It does not download another copy or change the saved MP4. Lower-resolution videos are not enlarged. 720p is recommended; 1080p may reduce performance and battery life.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -381,7 +383,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceToggle_,
-            "Lets Big Screen lower its frame-rate limit and then output resolution if decoding repeatedly falls behind. Your saved quality settings are not changed.");
+            "Temporarily lowers video frame rate and then resolution when playback cannot keep up. Your saved quality choices are restored for the next map.");
         automaticPerformanceThresholdDropdown_ = BSML::Lite::CreateDropdown(
             generalContainer,
             "Automatic Performance Trigger",
@@ -395,7 +397,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceThresholdDropdown_,
-            "Percentage of missed video presentation frames in a five-second window that triggers the next performance reduction.");
+            "Chooses how many video frames may be missed during five seconds before Automatic Performance lowers quality. A lower percentage reacts sooner.");
         performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
             "Show Performance Information",
@@ -406,7 +408,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             performanceDiagnosticsToggle_,
-            "Shows source and output resolution, frame rate, missed frames, and decoder delay during video maps and on the results screen.");
+            "Shows video resolution, frame rate, missed frames, and decode time while playing. A summary remains visible on the failure or results screen.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -430,7 +432,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             modEnabledToggle_,
-            "Disables all Big Screen effects while keeping this settings menu available.");
+            "Turns Big Screen playback, previews, downloads, and environment changes on or off. This menu remains available so the mod can be turned back on.");
 
         distractionFreeMenuToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -445,7 +447,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             distractionFreeMenuToggle_,
-            "Hides the neon Beat Saber sign and any detected clock/battery display while this menu is open. Everything is restored when you leave.");
+            "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
 
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -463,7 +465,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             videoEnabledToggle_,
-            "Shows videos during map gameplay and is shared with song selection.");
+            "Master switch for song videos. Turning it off disables both in-map playback and song-selection previews. This setting is also available on the song-selection screen.");
 
         previewToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -476,7 +478,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             previewToggle_,
-            "Plays videos during song selection and is shared with song selection.");
+            "Plays assigned videos while browsing songs. This requires Video In Map to be enabled and is also available on the song-selection screen.");
 
         screenLayoutDropdown_ = BSML::Lite::CreateDropdown(
             screenContainer,
@@ -494,7 +496,23 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
-            "Chooses which of the three saved screen placements the controls below edit and gameplay uses.");
+            "Chooses which of your three saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
+
+        allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
+            screenContainer,
+            "Allow Chroma Override",
+            settings.AllowChromaOverride(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetAllowChromaOverride(enabled);
+                // A selected map may already be previewing. Rebuild from its
+                // immutable mapper configuration so the change is visible
+                // immediately without accumulating either layout's offsets.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            allowChromaOverrideToggle_,
+            "Lets a map's Cinema or Chroma data control screen placement and the environment. While active for a map, your Big Screen layout and environment overrides are not applied. Turn it off to use your own settings.");
 
         distanceSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -511,7 +529,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             distanceSetting_,
-            "Adds meters to the map position. Negative is closer; positive is farther away.");
+            "Moves the screen closer with negative values and farther away with positive values.");
 
         horizontalSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -562,7 +580,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             tiltSetting_,
-            "Adds degrees to the map's vertical tilt. Positive values lift the screen face upward.");
+            "Adjusts the screen's vertical viewing angle in degrees.");
 
         sizeSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -571,15 +589,18 @@ namespace BigScreen {
             0.1f,
             settings.ScreenScale(),
             0.5f,
-            2.5f,
-            [](float value)
+            settings.MaximumScreenScale(),
+            [this](float value)
             {
                 Settings::Instance().SetScreenScale(value);
+                // Reevaluate the maximum arrow after every step. Reaching the
+                // cap hides it; one decrement makes it available again.
+                RefreshCurvatureControl();
                 ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             sizeSetting_,
-            "Multiplies the map-authored screen size. 1.0 keeps the original size.");
+            "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5.");
 
         curvedScreenToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -588,12 +609,16 @@ namespace BigScreen {
             [this](bool enabled)
             {
                 Settings::Instance().SetCurvedScreenEnabled(enabled);
+                // Enabling curvature can clamp scale from 4.0 to 2.5. Refresh
+                // the value/range before rebuilding the preview so the text,
+                // arrow state, saved setting, and visible surface change as
+                // one user action.
                 RefreshCurvatureControl();
                 ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             curvedScreenToggle_,
-            "Off uses a flat screen. On reveals the signed screen-curve adjustment below.");
+            "Switches between a flat screen and a curved screen. Turning this on reveals the curve controls below and limits screen size to 2.5.");
 
         maintainCurveAspectToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -642,7 +667,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             transparencyToggle_,
-            "Lets environment lights and objects remain partially visible through the video.");
+            "Makes the video partly transparent so lights and scenery behind it can remain visible. Turn this off for an opaque screen that blocks objects behind it.");
 
         lightShowToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -655,7 +680,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             lightShowToggle_,
-            "Keeps the selected map's lighting events active while its video plays.");
+            "Allows the map's light show during video maps. Turning this off disables all map lighting and temporarily locks the individual lighting controls below.");
 
         hideBackWallLightsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -703,7 +728,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             environmentOverrideToggle_,
-            "When disabled, the map's intended background is used and may partially block the video.");
+            "Uses Big Mirror as the background for video maps. Turn this off to keep each map's intended environment, which may contain objects that block part of the screen. Takes effect when the next map starts.");
 
         // The experimental Glass Desert override is intentionally absent from
         // the public menu. Its persisted setting and gameplay implementation
@@ -754,7 +779,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetHideSpectrogramBars(enabled);
             });
-        BSML::Lite::AddHoverHint(
+        hideSpectrogramBarsHint_ = BSML::Lite::AddHoverHint(
             hideSpectrogramBarsToggle_,
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
 
@@ -825,7 +850,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             nightlyUpdatesToggle_,
-            "Warning: nightly builds may contain new bugs. Stable releases are recommended unless video downloads have stopped working.");
+            "Uses yt-dlp's frequently updated nightly channel. Nightly versions may contain new bugs; use this only when YouTube downloads fail with the stable version.");
         updaterButton_ = BSML::Lite::CreateUIButton(
             updateContainer,
             "Check yt-dlp Update",
@@ -924,7 +949,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             resetButton_,
-            "Restores every Big Screen option, including placement, to its original value.");
+            "Restores every Big Screen setting and all three screen layouts to their original values. Downloaded videos and timing assignments are not removed.");
 
         resetConfirmationModal_ = BSML::Lite::CreateModal(
             viewController,
@@ -1011,6 +1036,8 @@ namespace BigScreen {
             settings.DistractionFreeMenu());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+        SetToggleWithoutNotification(
+            allowChromaOverrideToggle_, settings.AllowChromaOverride());
         SetToggleWithoutNotification(
             automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
         SetToggleWithoutNotification(
@@ -1133,6 +1160,8 @@ namespace BigScreen {
             curvedScreenToggle_->set_interactable(enabled);
         if(screenLayoutDropdown_)
             screenLayoutDropdown_->set_interactable(enabled);
+        if(allowChromaOverrideToggle_)
+            allowChromaOverrideToggle_->set_interactable(enabled);
         if(maintainCurveAspectToggle_)
             maintainCurveAspectToggle_->set_interactable(enabled);
         if(curvatureSlider_)
@@ -1163,6 +1192,8 @@ namespace BigScreen {
             hideRingLightsHint_->set_enabled(lightingChildrenEnabled);
         if(hideSideLaserLightsHint_)
             hideSideLaserLightsHint_->set_enabled(lightingChildrenEnabled);
+        if(hideSpectrogramBarsHint_)
+            hideSpectrogramBarsHint_->set_enabled(lightingChildrenEnabled);
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);
         if(disableEnvironmentMotionToggle_)
@@ -1192,7 +1223,25 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshCurvatureControl()
     {
-        const bool curved = Settings::Instance().CurvedScreenEnabled();
+        const auto& settings = Settings::Instance();
+        const bool curved = settings.CurvedScreenEnabled();
+
+        if(sizeSetting_)
+        {
+            sizeSetting_->maxValue = settings.MaximumScreenScale();
+            sizeSetting_->set_Value(settings.ScreenScale());
+
+            // BSML normally leaves an unusable maximum arrow visible but
+            // disabled. Hide that arrow at the active mode's cap, then restore
+            // it as soon as flat mode raises the cap from 2.5x to 4.0x.
+            if(sizeSetting_->incButton)
+            {
+                const bool canIncrease =
+                    settings.ScreenScale() + 0.0001f <
+                    settings.MaximumScreenScale();
+                sizeSetting_->incButton->get_gameObject()->SetActive(canIncrease);
+            }
+        }
 
         // SetActive participates in the vertical layout pass, so hiding both
         // curve-only rows also closes their space instead of leaving gaps.
@@ -1216,9 +1265,11 @@ namespace BigScreen {
         if(!updaterHoverHint_)
             return;
         updaterHoverHint_->set_text(
-            Settings::Instance().NightlyDownloaderUpdates()
-                ? "Checks the yt-dlp nightly update channel. Nightly builds may contain bugs; use this channel only when stable downloads are failing."
-                : "Checks for updates from the current stable yt-dlp release channel. Stable releases are recommended for normal use.");
+            DownloadManager::Instance().Snapshot().state == DownloadState::UpdateAvailable
+                ? "Downloads the available yt-dlp update, verifies it against the official SHA-256 checksum, and activates it after Beat Saber restarts."
+                : Settings::Instance().NightlyDownloaderUpdates()
+                    ? "Checks yt-dlp's nightly update channel. Nightly versions may contain bugs; use this only when stable downloads are failing."
+                    : "Checks the official stable yt-dlp release channel. Stable releases are recommended for normal use.");
     }
 
     void SettingsMenu::ResetToDefaults()

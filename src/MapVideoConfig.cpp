@@ -47,6 +47,29 @@ namespace BigScreen {
             };
         }
 
+        std::optional<Float3> OptionalVector(
+            const JsonValue& object,
+            std::string_view name)
+        {
+            const JsonValue* value = Member(object, name);
+            if(!value || !value->IsObject())
+                return std::nullopt;
+            return Float3{
+                static_cast<float>(NumberOr(*value, "x", 0.0)),
+                static_cast<float>(NumberOr(*value, "y", 0.0)),
+                static_cast<float>(NumberOr(*value, "z", 0.0))};
+        }
+
+        std::optional<bool> OptionalBool(
+            const JsonValue& object,
+            std::string_view name)
+        {
+            const JsonValue* value = Member(object, name);
+            return value && value->IsBool()
+                ? std::optional<bool>{value->GetBool()}
+                : std::nullopt;
+        }
+
         std::optional<std::string> OptionalString(const JsonValue& object, std::string_view name)
         {
             const JsonValue* value = Member(object, name);
@@ -167,6 +190,10 @@ namespace BigScreen {
         config.title = OptionalString(document, "title");
         config.author = OptionalString(document, "author");
         config.configByMapper = BoolOr(document, "configByMapper", false);
+        config.disableDefaultModifications = BoolOr(
+            document, "disableDefaultModifications", false);
+        config.forceEnvironmentModifications = BoolOr(
+            document, "forceEnvironmentModifications", false);
         config.offsetSeconds = NumberOr(document, "offset", 0.0) / 1000.0;
         config.playbackRate = std::clamp(NumberOr(document, "playbackSpeed", 1.0), 0.05, 8.0);
         config.declaredDurationSeconds = std::max(0.0, NumberOr(document, "duration", 0.0));
@@ -177,16 +204,60 @@ namespace BigScreen {
             static_cast<float>(NumberOr(document, "screenHeight", config.screenHeight)),
             0.5f,
             200.0f);
-        config.screenCurvature = std::clamp(
-            static_cast<float>(NumberOr(document, "screenCurvature", 0.0)),
-            -1.0f,
-            1.0f);
+        if(const auto* curvature = Member(document, "screenCurvature");
+           curvature && curvature->IsNumber())
+        {
+            config.cinemaCurvatureDegrees = std::clamp(
+                curvature->GetFloat(), 0.0f, 360.0f);
+        }
+        config.cinemaCurveYAxis = BoolOr(document, "curveYAxis", false);
         config.screenSegments = std::clamp(
             static_cast<int>(NumberOr(document, "screenSubsurfaces", 32.0)),
             1,
-            128);
-        config.transparent = BoolOr(document, "transparency", false);
+            512);
+        config.mapperTransparency = OptionalBool(document, "transparency");
+        config.transparent = config.mapperTransparency.value_or(false);
         config.requestedEnvironment = OptionalString(document, "environmentName");
+
+        if(const auto* environment = Member(document, "environment");
+           environment && environment->IsArray())
+        {
+            config.environmentModifications.reserve(environment->Size());
+            for(const auto& item : environment->GetArray())
+            {
+                if(!item.IsObject())
+                    continue;
+                auto name = OptionalString(item, "name");
+                if(!name)
+                    continue;
+                EnvironmentModification modification;
+                modification.name = std::move(*name);
+                modification.parentName = OptionalString(item, "parentName");
+                modification.cloneFrom = OptionalString(item, "cloneFrom");
+                modification.active = OptionalBool(item, "active");
+                modification.position = OptionalVector(item, "position");
+                modification.rotation = OptionalVector(item, "rotation");
+                modification.scale = OptionalVector(item, "scale");
+                config.environmentModifications.push_back(std::move(modification));
+            }
+        }
+
+        // Do not treat configByMapper by itself as permission to ignore the
+        // user's layout: most Cinema configs use it only to protect timing.
+        // Presentation ownership begins only when a mapper supplied an actual
+        // screen/environment field that PC Cinema would honor.
+        config.hasMapperPresentation =
+            Member(document, "screenPosition") ||
+            Member(document, "screenRotation") ||
+            Member(document, "screenHeight") ||
+            Member(document, "screenCurvature") ||
+            Member(document, "screenSubsurfaces") ||
+            Member(document, "curveYAxis") ||
+            Member(document, "transparency") ||
+            Member(document, "environmentName") ||
+            Member(document, "disableDefaultModifications") ||
+            Member(document, "forceEnvironmentModifications") ||
+            !config.environmentModifications.empty();
 
         const double stopAt = NumberOr(document, "endVideoAt", 0.0);
         if(stopAt > 0.0)

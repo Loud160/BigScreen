@@ -2,6 +2,7 @@
 
 #include <sstream>
 
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/StorageManager.hpp"
 #include "HMUI/ViewController.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
@@ -58,12 +59,22 @@ namespace BigScreen {
         fileList_->set_alignment(TMPro::TextAlignmentOptions::TopLeft);
         scanButton_ = BSML::Lite::CreateUIButton(
             controller, "Scan Storage", {21.0f, -38.0f}, {26.0f, 8.0f}, []() {
-                std::string error;
-                StorageManager::Instance().StartScan(error);
+                ErrorManager::Instance().Guard("starting a storage scan", []() {
+                    std::string error;
+                    if(!StorageManager::Instance().StartScan(error) && !error.empty())
+                        ErrorManager::Instance().ReportUserVisible(
+                            "Storage scan could not start", error);
+                });
             });
+        BSML::Lite::AddHoverHint(
+            scanButton_,
+            "Checks Big Screen's own folders for incomplete downloads, unused thumbnails, and downloaded videos that are no longer assigned. Nothing is removed during a scan.");
         cleanButton_ = BSML::Lite::CreateUIButton(
             controller, "Clean Selected Files", {51.0f, -38.0f}, {30.0f, 8.0f},
             [this]() { if(confirmationModal_) confirmationModal_->Show(); });
+        BSML::Lite::AddHoverHint(
+            cleanButton_,
+            "Shows a confirmation before removing only the files listed above. Assigned videos, map-folder videos, imported videos, and required downloader files are protected.");
 
         confirmationModal_ = BSML::Lite::CreateModal(
             controller, {68.0f, 34.0f}, nullptr, true);
@@ -81,16 +92,24 @@ namespace BigScreen {
             confirmationModal_->get_transform(), "Remove", {48.0f, -27.0f}, {20.0f, 7.0f},
             [this]() {
                 if(confirmationModal_) confirmationModal_->Hide();
-                std::string error;
-                StorageManager::Instance().StartCleanup(error);
+                ErrorManager::Instance().Guard("starting storage cleanup", []() {
+                    std::string error;
+                    if(!StorageManager::Instance().StartCleanup(error) && !error.empty())
+                        ErrorManager::Instance().ReportUserVisible(
+                            "Storage cleanup could not start", error);
+                });
             });
         Refresh();
     }
 
     void StorageMaintenanceMenu::Show()
     {
-        std::string error;
-        StorageManager::Instance().StartScan(error);
+        ErrorManager::Instance().Guard("opening storage maintenance", []() {
+            std::string error;
+            if(!StorageManager::Instance().StartScan(error) && !error.empty())
+                ErrorManager::Instance().ReportUserVisible(
+                    "Storage scan could not start", error);
+        });
         Refresh();
     }
 

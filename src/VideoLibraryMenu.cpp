@@ -158,7 +158,8 @@ namespace BigScreen {
             if(!player) return nullptr;
             const int channel = player->__cordl_internal_get__activeChannel();
             auto controllers = player->__cordl_internal_get__audioSourceControllers();
-            if(!controllers || channel < 0 || channel >= controllers.size())
+            if(!controllers || channel < 0 ||
+               channel >= static_cast<int>(controllers.size()))
                 return nullptr;
             auto* controller = controllers[channel];
             return controller
@@ -449,7 +450,7 @@ namespace BigScreen {
         }
 
         template<class TLayout>
-        void ConfigureGroup(TLayout* group, bool vertical)
+        void ConfigureGroup(TLayout* group)
         {
             if(!group) return;
             group->set_spacing(0.45f);
@@ -503,7 +504,7 @@ namespace BigScreen {
         // controllers removes the hidden hit targets and partial-page remnants
         // caused by the earlier absolute-position overlay.
         auto* browserRoot = BSML::Lite::CreateVerticalLayoutGroup(browserController);
-        ConfigureGroup(browserRoot, true);
+        ConfigureGroup(browserRoot);
         browserRoot->set_childForceExpandWidth(true);
         StretchToPanel(browserRoot->get_rectTransform());
 
@@ -529,7 +530,7 @@ namespace BigScreen {
         auto* filterRow = filterPanel
             ? filterPanel->GetComponent<UnityEngine::UI::HorizontalLayoutGroup*>()
             : BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
-        ConfigureGroup(filterRow, false);
+        ConfigureGroup(filterRow);
         ConfigureLayout(filterRow, -1.0f, 7.0f, 1.0f);
         filterPreviousButton_ = BSML::Lite::CreateUIButton(
             filterRow, "<", {0.0f, 0.0f}, {8.0f, 7.0f}, [this]() { ChangeFilter(-1); });
@@ -544,7 +545,7 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(filterNextButton_, 3.4f);
 
         auto* listRow = BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
-        ConfigureGroup(listRow, false);
+        ConfigureGroup(listRow);
         listRow->set_spacing(0.8f);
         ConfigureLayout(listRow, -1.0f, -1.0f, 1.0f, 1.0f);
         // The compact two-column rail is deliberately the first child in this
@@ -629,7 +630,7 @@ namespace BigScreen {
         }
 
         auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
-        ConfigureGroup(editorRoot, true);
+        ConfigureGroup(editorRoot);
         editorRoot->set_childForceExpandWidth(true);
         // CreateVerticalLayoutGroup installs a ContentSizeFitter that normally
         // derives the container width from whichever children are currently
@@ -662,7 +663,7 @@ namespace BigScreen {
         auto* titleTopSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
         ConfigureLayout(titleTopSpacer, -1.0f, 0.5f, 1.0f);
         auto* titleActionRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
-        ConfigureGroup(titleActionRow, false);
+        ConfigureGroup(titleActionRow);
         titleActionRow->set_spacing(0.7f);
         ConfigureLayout(titleActionRow, 54.0f, 7.5f, 1.0f);
         if(auto* rowLayout = EnsureLayout(titleActionRow))
@@ -718,7 +719,7 @@ namespace BigScreen {
         // filename/action rows directly in the editor, and this complete
         // layout node is removed when the selected map has no MP4 files.
         auto* localRows = BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(localRows, true);
+        ConfigureGroup(localRows);
         localRows->set_childForceExpandWidth(true);
         localRows->set_spacing(0.45f);
         ConfigureLayout(localRows, 54.0f, 0.0f, 1.0f);
@@ -750,7 +751,7 @@ namespace BigScreen {
         ConfigureLayout(closeLocalHelp, 22.0f, 7.0f, 0.0f);
 
         auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
-        ConfigureGroup(urlEntryRow, false);
+        ConfigureGroup(urlEntryRow);
         urlEntryRow->set_spacing(0.6f);
         ConfigureLayout(urlEntryRow, -1.0f, 8.0f, 1.0f);
         if(auto* urlEntryLayout = EnsureLayout(urlEntryRow))
@@ -804,7 +805,7 @@ namespace BigScreen {
         if(auto* spacerLayout = EnsureLayout(urlRowSpacer))
             spacerLayout->set_minHeight(0.7f);
         auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
-        ConfigureGroup(urlPreviewRow, false);
+        ConfigureGroup(urlPreviewRow);
         urlPreviewRow->set_spacing(0.45f);
         ConfigureLayout(urlPreviewRow, -1.0f, 9.0f, 1.0f);
         if(auto* previewRowLayout = EnsureLayout(urlPreviewRow))
@@ -822,6 +823,9 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
         downloadButtonText_ = downloadButton_->get_gameObject()
             ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
+        BSML::Lite::AddHoverHint(
+            downloadButton_,
+            "Downloads the checked YouTube video as an H.264 MP4 and assigns it to this song. While active, the same button can pause the download.");
         downloadButton_->get_gameObject()->SetActive(false);
         // Preserve the thumbnail/action row geometry while the real button is
         // hidden. Swapping this transparent slot out when validation succeeds
@@ -841,10 +845,10 @@ namespace BigScreen {
         ConfigureLayout(thumbnailBalance, 15.0f, 8.4f, 0.0f);
         BSML::Lite::AddHoverHint(
             urlInput_,
-            "Accepts youtube.com links and youtu.be Share links.");
+            "Enter a normal youtube.com video address or a youtu.be Share link. Big Screen checks the link before the Download Video button appears.");
         BSML::Lite::AddHoverHint(
             pasteUrlButton_,
-            "Pastes a youtube.com or youtu.be address from the Quest clipboard.");
+            "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
 
         // Status and progress belong directly below the controls they describe.
         // This keeps recognition errors and active download feedback visually
@@ -884,7 +888,7 @@ namespace BigScreen {
         auto* timingToggleColumn = timingToggleObject
             ? timingToggleObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
             : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(timingToggleColumn, true);
+        ConfigureGroup(timingToggleColumn);
         timingToggleColumn->set_spacing(0.2f);
         timingToggleColumn->set_childForceExpandWidth(true);
         ConfigureLayout(timingToggleColumn, -1.0f, 7.8f, 1.0f);
@@ -917,7 +921,7 @@ namespace BigScreen {
         StyleToggleRow(fitToggle_);
         BSML::Lite::AddHoverHint(
             fitToggle_,
-            "Continuously adjusts playback speed so the video ends with the song after applying Video Playback Offset.");
+            "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed.");
         videoOnlyRows_.push_back(timingToggleColumn->get_gameObject());
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
@@ -937,6 +941,9 @@ namespace BigScreen {
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
         videoOnlyRows_.push_back(rateSetting_->get_gameObject());
+        BSML::Lite::AddHoverHint(
+            rateSetting_,
+            "Controls how quickly the video advances. 1.00 is normal speed; lower values slow it down and higher values speed it up. Fit to Song manages this value automatically when enabled.");
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Video Playback Offset", 2, 0.25f, 0.0f,
@@ -965,7 +972,7 @@ namespace BigScreen {
         videoOnlyRows_.push_back(offsetSetting_->get_gameObject());
         BSML::Lite::AddHoverHint(
             offsetSetting_,
-            "Negative values delay video frame zero; positive values skip forward into the video.");
+            "Aligns the video with the song. Negative values wait before showing video frame zero; positive values begin farther into the video.");
 
         blackLeadInToggle_ = BSML::Lite::CreateToggle(
             editorBody,
@@ -988,7 +995,7 @@ namespace BigScreen {
         StyleToggleRow(blackLeadInToggle_);
         BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
-            "When enabled, a delayed video lead-in appears on a solid black background. When disabled, the screen stays transparent until the video begins.");
+            "Controls the waiting time created by a negative Video Playback Offset. On shows a solid black screen; off keeps the screen hidden until the video begins.");
         videoOnlyRows_.push_back(blackLeadInToggle_->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
@@ -1003,7 +1010,7 @@ namespace BigScreen {
         auto* playbackPanel = playbackPanelObject
             ? playbackPanelObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
             : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(playbackPanel, true);
+        ConfigureGroup(playbackPanel);
         playbackPanel->set_spacing(0.3f);
         playbackPanel->set_childForceExpandWidth(true);
         ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);
@@ -1026,7 +1033,7 @@ namespace BigScreen {
         playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
-        ConfigureGroup(playbackRow, false);
+        ConfigureGroup(playbackRow);
         // A deliberate gap separates the transport button from the draggable
         // bar. Because the scrubber is the flexible child, it gives up only
         // the small amount of width needed for this additional padding.
@@ -1052,6 +1059,9 @@ namespace BigScreen {
         playPauseButton_->set_colors(transportColors);
         if(auto target = playPauseButton_->get_targetGraphic())
             target->set_color(UnityEngine::Color::get_white());
+        BSML::Lite::AddHoverHint(
+            playPauseButton_,
+            "Plays or pauses this song and video together so you can check synchronization before entering the map.");
 
         playbackScrubber_ = BSML::Lite::CreateSliderSetting(
             playbackRow,
@@ -1176,6 +1186,9 @@ namespace BigScreen {
         // remaining unit of row width. Its native centered value text now
         // serves as the current/total playback clock directly on the bar.
         ConfigureLayout(playbackScrubber_, 0.0f, 6.7f, 1.0f);
+        BSML::Lite::AddHoverHint(
+            playbackScrubber_,
+            "Drag to another point in the song and video preview. The time shown on the bar is the current song position and total song length.");
 
         // Deleting an override also deletes its downloaded media, thumbnail,
         // and saved timing. Require an explicit second action so an imprecise
@@ -1241,7 +1254,7 @@ namespace BigScreen {
         auto* storagePanel = storagePanelObject
             ? storagePanelObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
             : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(storagePanel, true);
+        ConfigureGroup(storagePanel);
         storagePanel->set_spacing(0.3f);
         storagePanel->set_childForceExpandWidth(true);
         ConfigureLayout(storagePanel, -1.0f, 12.5f, 1.0f);
@@ -1267,7 +1280,7 @@ namespace BigScreen {
         // this layout only when one or more MP4 files physically exist in the
         // selected map folder, so ordinary maps do not gain an empty column.
         auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(storageBody);
-        ConfigureGroup(storageRow, false);
+        ConfigureGroup(storageRow);
         storageRow->set_spacing(0.6f);
         ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
         detailMapStorage_ = BSML::Lite::CreateText(
@@ -1310,6 +1323,9 @@ namespace BigScreen {
         removeButton_->set_colors(removeColors);
         if(auto target = removeButton_->get_targetGraphic())
             target->set_color(UnityEngine::Color::get_white());
+        BSML::Lite::AddHoverHint(
+            removeButton_,
+            "Removes the current user video assignment after confirmation. Downloaded Big Screen videos are deleted; map-folder and Video Import files are only unassigned and remain on the Quest.");
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
@@ -1931,7 +1947,7 @@ namespace BigScreen {
                     : descriptor.userOverrideIsMapLocal);
 
             auto* row = BSML::Lite::CreateHorizontalLayoutGroup(rows);
-            ConfigureGroup(row, false);
+            ConfigureGroup(row);
             row->set_spacing(0.6f);
             ConfigureLayout(row, 54.0f, 8.0f, 1.0f);
             localVideoRowObjects_.push_back(row->get_gameObject());
@@ -1958,6 +1974,15 @@ namespace BigScreen {
                 action,
                 std::min(localFileFontSize, 3.6f));
             action->set_interactable(!active);
+            BSML::Lite::AddHoverHint(
+                action,
+                !file.compatible
+                    ? "Explains why this MP4 cannot be used and which video format Big Screen requires."
+                    : active
+                        ? "This is the video currently assigned to the selected song."
+                        : imported
+                            ? "Assigns this Video Import MP4 to the selected song without moving or deleting the file."
+                            : "Assigns this map-folder MP4 to the selected song without moving or deleting the file.");
 
             auto* name = BSML::Lite::CreateText(
                 row,
@@ -2500,6 +2525,9 @@ namespace BigScreen {
                 ? DownloadStatus(download)
             : descriptor.userOverrideIsMapLocal
                 ? "Local map video active: " +
+                    descriptor.activeMapFileName.value_or("selected MP4")
+            : descriptor.userOverrideIsImported
+                ? "Imported video active: " +
                     descriptor.activeMapFileName.value_or("selected MP4")
             : descriptor.hasUserOverride ? "Downloaded user video active" :
               descriptor.CanPlay() ? "Mapper video ready" :

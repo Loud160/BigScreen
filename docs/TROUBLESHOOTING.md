@@ -5,7 +5,7 @@ Big Screen logs to Beat Saber's standard mod log folder:
 `/sdcard/ModData/com.beatgames.beatsaber/logs`
 
 Expected video/content errors are shown in the menu and do not count against the
-mod's safety circuit. If the same internal Big Screen error occurs twice within
+mod's safety circuit. If two internal Big Screen errors occur within
 three minutes, the mod turns its own Enabled switch off, queues one explanatory
 dialog, and leaves Beat Saber/map playback running. Re-enable it from General
 after reviewing the log.

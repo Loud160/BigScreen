@@ -43,9 +43,11 @@ namespace BigScreen {
         float ScreenVerticalOffset() const { return ActiveLayout().verticalOffset; }
         float ScreenTiltOffset() const { return ActiveLayout().tiltOffset; }
         float ScreenScale() const { return ActiveLayout().scale; }
+        float MaximumScreenScale() const;
         bool CurvedScreenEnabled() const { return ActiveLayout().curved; }
         float ScreenCurvature() const { return ActiveLayout().curvature; }
         bool MaintainCurveAspectRatio() const { return ActiveLayout().maintainAspectRatio; }
+        bool AllowChromaOverride() const { return allowChromaOverride_; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
@@ -77,6 +79,7 @@ namespace BigScreen {
         void SetCurvedScreenEnabled(bool value);
         void SetScreenCurvature(float value);
         void SetMaintainCurveAspectRatio(bool value);
+        void SetAllowChromaOverride(bool value);
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
         void SetHideBackWallLights(bool value);
@@ -109,6 +112,10 @@ namespace BigScreen {
         bool menuPreviewEnabled_ = true;
         std::array<ScreenLayoutProfile, 3> screenLayouts_{};
         int activeScreenLayout_ = 0;
+        // Only maps that actually contain mapper-authored Cinema presentation
+        // fields can take ownership; ordinary video maps remain on the selected
+        // Big Screen layout even though compatibility defaults to enabled.
+        bool allowChromaOverride_ = true;
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool hideBackWallLights_ = true;

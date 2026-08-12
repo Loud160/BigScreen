@@ -28,6 +28,11 @@ namespace BigScreen {
         ScreenSurface& operator=(const ScreenSurface&) = delete;
 
         bool Create(const MapVideoConfig& config, int videoWidth, int videoHeight);
+        /// Rebuilds only geometry and placement while preserving the decoder's
+        /// current texture, material, visibility, and most recently presented
+        /// frame. This is used by the pause-menu layout selector so changing a
+        /// layout cannot restart or desynchronize video playback.
+        bool UpdateGeometry(const MapVideoConfig& config);
         void Destroy();
         void SetVisible(bool visible);
         /// Shows an opaque black surface during negative video time, or hides

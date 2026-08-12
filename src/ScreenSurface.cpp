@@ -8,9 +8,9 @@
 #include "TMPro/TextMeshPro.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/SceneManagement/SceneManager.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/GameObject.hpp"
-#include "UnityEngine/Color.hpp"
 #include "UnityEngine/LayerMask.hpp"
 #include "UnityEngine/Material.hpp"
 #include "UnityEngine/Mesh.hpp"
@@ -69,9 +69,24 @@ namespace BigScreen {
         if(videoWidth <= 0 || videoHeight <= 0)
             return false;
 
-        gameObject_ = UnityEngine::GameObject::New_ctor("Big Screen Video Surface");
+        // PC Cinema and Chroma maps conventionally target this exact root name
+        // (often with the regex CinemaScreen$). Keeping the compatible name is
+        // harmless for ordinary maps and lets later scene integrations find
+        // Big Screen's surface without a Quest-specific map variant.
+        gameObject_ = UnityEngine::GameObject::New_ctor("CinemaScreen");
         if(!gameObject_)
             return false;
+
+        // Quest Chroma intentionally indexes only objects belonging to an
+        // environment scene. A newly constructed object otherwise lands in
+        // GameCore and is invisible to Chroma's CinemaScreen$ lookup. Move the
+        // root into the loaded environment scene before Chroma's delayed scan;
+        // no parenting is needed, so the mapper's world coordinates stay exact.
+        if(auto environmentRoot = UnityEngine::GameObject::Find("/Environment"))
+        {
+            UnityEngine::SceneManagement::SceneManager::MoveGameObjectToScene(
+                gameObject_, environmentRoot->get_scene());
+        }
 
         // Match Beat Saber's environment geometry so the normal VR cameras see
         // the screen. NameToLayer avoids assuming Unity's numeric layer layout.
@@ -146,27 +161,64 @@ namespace BigScreen {
         const float halfWidth = width * 0.5f;
         const float halfHeight = config.screenHeight * 0.5f;
 
+        const bool cinemaCurve = config.cinemaCurvatureDegrees.has_value();
+        const float cinemaArcRadians = cinemaCurve
+            ? *config.cinemaCurvatureDegrees * Pi / 180.0f : 0.0f;
+        const bool cinemaCurveIsFlat =
+            !cinemaCurve || std::abs(cinemaArcRadians) < 0.000001f;
+        const float cinemaCurveLength = config.cinemaCurveYAxis
+            ? config.screenHeight : width;
+        const float cinemaRadius = cinemaCurveIsFlat
+            ? 0.0f : cinemaCurveLength / cinemaArcRadians;
+
         for(int column = 0; column < columns; ++column)
         {
             const float u = static_cast<float>(column) / config.screenSegments;
-            const float x = (u - 0.5f) * width;
-
-            // Curvature is deliberately expressed as a normalized bow amount:
-            // zero is a plane and +/-1 moves the outer edges by 12% of width.
-            // The center remains at the configured map position, making flat
-            // and curved screens share predictable placement controls.
-            const float edgeShape = CurveEdgeShape(u);
-            const float z = -config.screenCurvature * width * 0.12f * edgeShape;
-
             const int bottom = column * 2;
             const int top = bottom + 1;
-            vertices[bottom] = {x, -halfHeight, z};
-            vertices[top] = {x, halfHeight, z};
 
-            // swscale writes rows from the top of the decoded image while
-            // Unity's texture UV origin is at the bottom, so V is inverted.
-            uvs[bottom] = {u, 1.0f};
-            uvs[top] = {u, 0.0f};
+            if(cinemaCurve && !cinemaCurveIsFlat)
+            {
+                // Cinema defines curvature as an arc angle, not a bow-depth
+                // multiplier. Reproduce its circular surface mathematically so
+                // mapper values have the same physical size on PC and Quest.
+                const float theta = (u - 0.5f) * cinemaArcRadians;
+                const float curvedAxis = std::sin(theta) * cinemaRadius;
+                const float z = std::cos(theta) * cinemaRadius - cinemaRadius;
+                if(config.cinemaCurveYAxis)
+                {
+                    // Reverse left/right storage to retain the same clockwise
+                    // front-face winding used by the horizontal mesh.
+                    vertices[bottom] = {halfWidth, curvedAxis, z};
+                    vertices[top] = {-halfWidth, curvedAxis, z};
+                    uvs[bottom] = {1.0f, 1.0f - u};
+                    uvs[top] = {0.0f, 1.0f - u};
+                }
+                else
+                {
+                    vertices[bottom] = {curvedAxis, -halfHeight, z};
+                    vertices[top] = {curvedAxis, halfHeight, z};
+                    uvs[bottom] = {u, 1.0f};
+                    uvs[top] = {u, 0.0f};
+                }
+            }
+            else
+            {
+                const float x = (u - 0.5f) * width;
+                // Big Screen layouts retain their signed bow model. An
+                // explicit Cinema curvature of zero reaches this path with a
+                // flat surface and is never replaced by the user's curve.
+                const float edgeShape = CurveEdgeShape(u);
+                const float z = cinemaCurve
+                    ? 0.0f
+                    : -config.screenCurvature * width * 0.12f * edgeShape;
+                vertices[bottom] = {x, -halfHeight, z};
+                vertices[top] = {x, halfHeight, z};
+                // swscale writes rows from the top of the decoded image while
+                // Unity's texture UV origin is at the bottom, so V is inverted.
+                uvs[bottom] = {u, 1.0f};
+                uvs[top] = {u, 0.0f};
+            }
         }
 
         for(int segment = 0; segment < config.screenSegments; ++segment)
@@ -195,6 +247,67 @@ namespace BigScreen {
         mesh_->set_triangles(triangles);
         mesh_->RecalculateNormals();
         mesh_->RecalculateBounds();
+        return true;
+    }
+
+    bool ScreenSurface::UpdateGeometry(const MapVideoConfig& config)
+    {
+        if(!gameObject_ || textureWidth_ <= 0 || textureHeight_ <= 0)
+            return false;
+
+        auto* filter = gameObject_->GetComponent<UnityEngine::MeshFilter*>();
+        if(!filter)
+            return false;
+
+        const float aspectRatio =
+            static_cast<float>(textureWidth_) / textureHeight_;
+        auto* previousMesh = mesh_;
+        mesh_ = nullptr;
+        if(!CreateMesh(config, aspectRatio) || !mesh_)
+        {
+            mesh_ = previousMesh;
+            return false;
+        }
+
+        // Publish the complete replacement only after mesh creation succeeds.
+        // The previous surface and decoded frame remain visible throughout the
+        // operation, preventing the gray flash caused by recreating a screen.
+        filter->set_sharedMesh(mesh_);
+        if(previousMesh)
+            UnityEngine::Object::Destroy(previousMesh);
+
+        auto transform = gameObject_->get_transform();
+        transform->set_position({
+            config.screenPosition.x,
+            config.screenPosition.y,
+            config.screenPosition.z});
+        transform->set_eulerAngles({
+            config.screenRotation.x,
+            config.screenRotation.y,
+            config.screenRotation.z});
+
+        const float flatWidth = config.screenHeight * aspectRatio;
+        screenWidth_ = config.maintainAspectRatioWhenCurved &&
+                       std::abs(config.screenCurvature) > 0.0001f
+            ? flatWidth * CurvedWidthScale(
+                config.screenCurvature,
+                config.screenSegments)
+            : flatWidth;
+        screenHeight_ = config.screenHeight;
+
+        // Diagnostics is parented to the screen. Reposition its lower-left
+        // anchor after a live size change without changing the text itself.
+        if(diagnosticsObject_)
+        {
+            diagnosticsObject_->get_transform()->set_localPosition({
+                -screenWidth_ * 0.48f,
+                -screenHeight_ * 0.62f,
+                -0.05f});
+            if(diagnosticsText_)
+                diagnosticsText_->get_rectTransform()->set_sizeDelta({
+                    screenWidth_ * 11.5f,
+                    screenHeight_ * 3.0f});
+        }
         return true;
     }
 

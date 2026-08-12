@@ -3,6 +3,7 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
+#include "BigScreen/PauseMenuLayoutSelector.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
@@ -29,6 +30,7 @@
 #include "GlobalNamespace/LightsAnimator.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
+#include "GlobalNamespace/PauseMenuManager.hpp"
 #include "GlobalNamespace/PointLight.hpp"
 #include "GlobalNamespace/Rotate.hpp"
 #include "GlobalNamespace/ResultsViewController.hpp"
@@ -390,6 +392,7 @@ namespace {
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+               !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
                BigScreen::Settings::Instance().DisableEnvironmentMotion();
     }
 
@@ -397,6 +400,7 @@ namespace {
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+               !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
                !BigScreen::Settings::Instance().MapLightShowEnabled();
     }
 
@@ -468,6 +472,44 @@ namespace {
         if(ShouldSuppressEnvironmentMotion())
             return;
         TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent(self, eventData);
+    }
+
+    MAKE_HOOK_MATCH(
+        PauseMenuManager_Start,
+        &GlobalNamespace::PauseMenuManager::Start,
+        void,
+        GlobalNamespace::PauseMenuManager* self)
+    {
+        PauseMenuManager_Start(self);
+        BigScreen::ErrorManager::Instance().Guard(
+            "creating the pause-menu screen layout selector",
+            [&]() {
+                BigScreen::PauseMenuLayoutSelector::Instance().CreateUi(self);
+            });
+    }
+
+    MAKE_HOOK_MATCH(
+        PauseMenuManager_ShowMenu,
+        &GlobalNamespace::PauseMenuManager::ShowMenu,
+        void,
+        GlobalNamespace::PauseMenuManager* self)
+    {
+        PauseMenuManager_ShowMenu(self);
+        BigScreen::ErrorManager::Instance().Guard(
+            "showing the pause-menu screen layout selector",
+            []() {
+                BigScreen::PauseMenuLayoutSelector::Instance().MenuShown();
+            });
+    }
+
+    MAKE_HOOK_MATCH(
+        PauseMenuManager_OnDestroy,
+        &GlobalNamespace::PauseMenuManager::OnDestroy,
+        void,
+        GlobalNamespace::PauseMenuManager* self)
+    {
+        BigScreen::PauseMenuLayoutSelector::Instance().ForgetUi();
+        PauseMenuManager_OnDestroy(self);
     }
 
     MAKE_HOOK_MATCH(
@@ -559,6 +601,38 @@ namespace {
             environmentsListModel);
 
         const auto& settings = BigScreen::Settings::Instance();
+        if(playback.MapperPresentationActive())
+        {
+            // A mapper-requested environment is part of the Cinema scene
+            // contract. If none is supplied, retain the map's normal Chroma-
+            // aware environment instead of forcing Big Mirror.
+            const auto& mapperEnvironment = playback.RequestedEnvironment();
+            if(!mapperEnvironment || !environmentsListModel)
+            {
+                PaperLogger.info(
+                    "Allow Chroma Override retained the map's intended environment");
+                return;
+            }
+            auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(
+                StringW(*mapperEnvironment));
+            if(environment &&
+               std::string(environment->get_serializedName()) == *mapperEnvironment)
+            {
+                self->set_environmentInfo(environment);
+                self->set_usingOverrideEnvironment(true);
+                PaperLogger.info(
+                    "Allow Chroma Override loaded mapper environment '{}'",
+                    *mapperEnvironment);
+            }
+            else
+            {
+                PaperLogger.warn(
+                    "Mapper environment '{}' is unavailable; keeping the map environment",
+                    *mapperEnvironment);
+            }
+            return;
+        }
+
         if(!settings.GlassDesertOverrideEnabled() &&
            !settings.EnvironmentOverrideEnabled())
         {
@@ -617,6 +691,7 @@ namespace {
 
         auto* effectiveSettings = playerSpecificSettings;
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
            !BigScreen::Settings::Instance().MapLightShowEnabled() &&
            playerSpecificSettings)
         {
@@ -663,19 +738,27 @@ namespace {
         BigScreen::ErrorManager::Instance().Guard("starting gameplay video", [&]() {
             const auto& settings = BigScreen::Settings::Instance();
             auto& playback = BigScreen::PlaybackSession::Instance();
-            if(playback.HasPreparedVideo() && settings.DisableEnvironmentMotion())
+            const bool mapperControlsPresentation =
+                playback.MapperPresentationActive();
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               settings.DisableEnvironmentMotion())
                 DisableEnvironmentMotion();
-            if(playback.HasPreparedVideo() && !settings.MapLightShowEnabled())
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               !settings.MapLightShowEnabled())
                 DisableEnvironmentLighting();
-            else if(playback.HasPreparedVideo())
+            else if(playback.HasPreparedVideo() && !mapperControlsPresentation)
                 DisableSelectedLightingChannels();
-            if(playback.HasPreparedVideo() && settings.HideTrackRings())
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               settings.HideTrackRings())
                 HideTrackLaneRings();
-            if(playback.HasPreparedVideo() && settings.HideSideBars())
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               settings.HideSideBars())
                 HideSideBars();
-            if(playback.HasPreparedVideo() && settings.HideSpectrogramBars())
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               settings.HideSpectrogramBars())
                 HideSpectrogramBars();
-            if(playback.HasPreparedVideo() && settings.HideSideLaserLights())
+            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+               settings.HideSideLaserLights())
                 HideSideLaserGeometry();
             BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
         });
@@ -825,8 +908,10 @@ namespace {
 MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
-    BigScreen::Settings::Instance().Load();
     Paper::Logger::RegisterFileContextId(PaperLogger.tag);
+    BigScreen::ErrorManager::Instance().Guard("loading settings", []() {
+        BigScreen::Settings::Instance().Load();
+    });
     PaperLogger.info("Big Screen {} initialized", VERSION);
 }
 
@@ -837,12 +922,14 @@ MOD_EXTERN_FUNC void late_load() noexcept
     BigScreen::ErrorManager::Instance().Guard("initializing video library", []() {
         BigScreen::VideoLibrary::Instance().Initialize();
     });
-    std::string downloaderError;
-    if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
-        PaperLogger.error("Downloader unavailable: {}", downloaderError);
-    else
-        BigScreen::DownloadManager::Instance().StartScheduledUpdaterCheck(
-            BigScreen::Settings::Instance().NightlyDownloaderUpdates());
+    BigScreen::ErrorManager::Instance().Guard("initializing downloader", []() {
+        std::string downloaderError;
+        if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
+            PaperLogger.error("Downloader unavailable: {}", downloaderError);
+        else
+            BigScreen::DownloadManager::Instance().StartScheduledUpdaterCheck(
+                BigScreen::Settings::Instance().NightlyDownloaderUpdates());
+    });
 
     // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view
     // visibility owns menu preview lifetime, scene transition owns gameplay
@@ -853,6 +940,9 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
+    INSTALL_HOOK(PaperLogger, PauseMenuManager_Start);
+    INSTALL_HOOK(PaperLogger, PauseMenuManager_ShowMenu);
+    INSTALL_HOOK(PaperLogger, PauseMenuManager_OnDestroy);
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

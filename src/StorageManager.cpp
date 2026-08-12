@@ -199,6 +199,14 @@ namespace BigScreen {
             snapshot_.state = StorageState::Failed;
             snapshot_.message = "Storage scan failed. See the Big Screen log for details.";
         }
+        catch(...)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "scanning storage", "Unknown native exception");
+            std::scoped_lock lock(mutex_);
+            snapshot_.state = StorageState::Failed;
+            snapshot_.message = "Storage scan failed. See the Big Screen log for details.";
+        }
     }
 
     void StorageManager::CleanupWorker(std::vector<StorageCleanupItem> approved)
@@ -229,6 +237,14 @@ namespace BigScreen {
         catch(const std::exception& exception)
         {
             ErrorManager::Instance().ReportInternal("cleaning storage", exception.what());
+            std::scoped_lock lock(mutex_);
+            snapshot_.state = StorageState::Failed;
+            snapshot_.message = "Storage cleanup failed. See the Big Screen log for details.";
+        }
+        catch(...)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "cleaning storage", "Unknown native exception");
             std::scoped_lock lock(mutex_);
             snapshot_.state = StorageState::Failed;
             snapshot_.message = "Storage cleanup failed. See the Big Screen log for details.";

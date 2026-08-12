@@ -23,6 +23,9 @@ namespace BigScreen {
         /// dialog. Must be called from a Unity main-thread Update hook.
         void TickMainThread();
         bool GameplayActive() const;
+        /// Starts a fresh error window when the player deliberately turns Big
+        /// Screen back on after the circuit breaker disabled it.
+        void ResetCircuitBreaker();
 
         template<typename Function>
         bool Guard(const char* context, Function&& function) noexcept
@@ -52,7 +55,7 @@ namespace BigScreen {
         mutable std::mutex mutex_;
         bool gameplayActive_ = false;
         bool disabledByCircuitBreaker_ = false;
-        std::string lastSignature_;
+        bool disableRequested_ = false;
         std::chrono::steady_clock::time_point lastInternalError_{};
         std::optional<std::pair<std::string, std::string>> pendingDialog_;
         bool dialogVisible_ = false;

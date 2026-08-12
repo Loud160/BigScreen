@@ -1,10 +1,13 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
+#include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/VideoLibrary.hpp"
@@ -13,18 +16,23 @@
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
+#include "HMUI/ImageView.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
+#include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/Toggle.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
+#include "bsml/shared/Helpers/utilities.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
@@ -193,7 +201,46 @@ namespace BigScreen {
             UnityEngine::Vector2{20.0f, -5.5f},
             UnityEngine::Vector2{42.0f, 7.0f});
         if(downloadStatus_)
+        {
             downloadStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+            downloadStatus_->set_enableWordWrapping(false);
+            downloadStatus_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        }
+
+        // Cinema exposes transfer state directly on the selected song. Use a
+        // real fill bar in addition to text so progress remains legible at a
+        // glance inside the headset. Unknown-length preparation uses a moving
+        // pulse; once yt-dlp supplies byte totals this becomes exact progress.
+        downloadProgressTrack_ = BSML::Lite::CreateImage(
+            detailView,
+            BSML::Utilities::ImageResources::GetBlankSprite(),
+            UnityEngine::Vector2{20.0f, -9.8f},
+            UnityEngine::Vector2{42.0f, 1.25f});
+        if(downloadProgressTrack_)
+        {
+            downloadProgressTrack_->set_color({0.08f, 0.10f, 0.13f, 0.90f});
+            downloadProgressTrack_->set_preserveAspect(false);
+            downloadProgressTrack_->set_raycastTarget(false);
+            downloadProgressFill_ = BSML::Lite::CreateImage(
+                downloadProgressTrack_->get_transform(),
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            if(downloadProgressFill_)
+            {
+                downloadProgressFill_->set_color({0.10f, 0.75f, 1.0f, 1.0f});
+                downloadProgressFill_->set_preserveAspect(false);
+                downloadProgressFill_->set_raycastTarget(false);
+                if(auto fillRect = downloadProgressFill_->get_transform()
+                       .cast<UnityEngine::RectTransform>())
+                {
+                    fillRect->set_anchorMin({0.0f, 0.0f});
+                    fillRect->set_anchorMax({0.0f, 1.0f});
+                    fillRect->set_pivot({0.0f, 0.5f});
+                    fillRect->set_anchoredPosition({0.0f, 0.0f});
+                    fillRect->set_sizeDelta({0.0f, -0.20f});
+                }
+            }
+            downloadProgressTrack_->get_gameObject()->SetActive(false);
+        }
 
         if(!previewUi_ || !inMapUi_)
         {
@@ -205,13 +252,13 @@ namespace BigScreen {
         PlaceTopBarToggle(inMapUi_, "Big Screen Video In Map Toggle", 28.0f);
         BSML::Lite::AddHoverHint(
             previewUi_,
-            "Plays the selected song's video on the song-selection screen.");
+            "Turns video previews on or off while browsing songs. This is a global setting and requires Video In Map to be enabled.");
         BSML::Lite::AddHoverHint(
             inMapUi_,
-            "Shows the selected song's video while playing the map.");
+            "Master switch for all song videos. Turning it off disables both in-map playback and song-selection previews.");
         BSML::Lite::AddHoverHint(
             layoutUi_,
-            "Selects one of your three saved screen layouts for previews and gameplay.");
+            "Selects Layout 1, 2, or 3 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
         RefreshUi();
         PaperLogger.info("Created top-row Preview Video and Video In Map controls");
     }
@@ -226,6 +273,8 @@ namespace BigScreen {
         layoutUi_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
+        downloadProgressTrack_ = nullptr;
+        downloadProgressFill_ = nullptr;
     }
 
     void SelectionVideoToggle::SongSelectionShown()
@@ -425,9 +474,35 @@ namespace BigScreen {
             request.blackDuringLeadIn = descriptor.mapperDefinition->blackDuringLeadIn;
         }
         std::string error;
-        if(!downloader.Start(std::move(request), error) && downloadStatus_)
-            downloadStatus_->set_text(error);
+        if(!downloader.Start(std::move(request), error))
+        {
+            if(downloadStatus_)
+            {
+                downloadStatus_->set_text("Download unavailable");
+                downloadStatus_->set_color({1.0f, 0.28f, 0.25f, 1.0f});
+            }
+            ReportDownloadFailure(error);
+        }
+        else
+        {
+            // A retry deserves a fresh result dialog even if YouTube returns
+            // the same reason as the previous attempt.
+            reportedDownloadFailure_.clear();
+        }
         TickDownloadUi();
+    }
+
+    void SelectionVideoToggle::ReportDownloadFailure(const std::string& detail)
+    {
+        const std::string reason = detail.empty()
+            ? "YouTube did not provide a usable H.264 video."
+            : detail;
+        ErrorManager::Instance().ReportUserVisible(
+            "Video download failed",
+            reason +
+            "\n\nOpen Big Screen from the Mods menu and select this song. "
+            "You can search YouTube for another video, paste a different link, "
+            "or assign a compatible local H.264 MP4 file.");
     }
 
     void SelectionVideoToggle::TickDownloadUi()
@@ -443,29 +518,86 @@ namespace BigScreen {
                           (descriptor.CanDownload() || forSelection);
         downloadButton_->get_gameObject()->SetActive(show && !descriptor.CanPlay());
         downloadStatus_->get_gameObject()->SetActive(show);
+        const bool showProgress = show && forSelection &&
+            !snapshot.metadataOnly && snapshot.state != DownloadState::Idle;
+        if(downloadProgressTrack_)
+            downloadProgressTrack_->get_gameObject()->SetActive(showProgress);
         if(!show) return;
+
+        float progress = 0.0f;
+        if(showProgress)
+        {
+            if(snapshot.state == DownloadState::Completed)
+                progress = 1.0f;
+            else if(snapshot.state == DownloadState::Failed ||
+                    snapshot.state == DownloadState::Cancelled)
+                progress = 0.04f;
+            else if(snapshot.totalBytes)
+                progress = CoreLogic::DownloadProgressFraction(
+                    snapshot.downloadedBytes,
+                    snapshot.totalBytes);
+            else if(snapshot.Active())
+                progress = 0.12f + 0.68f * std::abs(std::sin(
+                    UnityEngine::Time::get_realtimeSinceStartup() * 1.8f));
+
+            if(downloadProgressFill_)
+            {
+                downloadProgressFill_->set_color(
+                    snapshot.state == DownloadState::Completed
+                        ? UnityEngine::Color{0.20f, 0.90f, 0.42f, 1.0f}
+                        : snapshot.state == DownloadState::Failed
+                            ? UnityEngine::Color{0.95f, 0.22f, 0.20f, 1.0f}
+                            : snapshot.state == DownloadState::Cancelled
+                                ? UnityEngine::Color{0.95f, 0.65f, 0.12f, 1.0f}
+                                : UnityEngine::Color{0.10f, 0.75f, 1.0f, 1.0f});
+                if(auto fillRect = downloadProgressFill_->get_transform()
+                       .cast<UnityEngine::RectTransform>())
+                    fillRect->set_anchorMax({progress, 1.0f});
+            }
+        }
 
         if(forSelection && snapshot.Active())
         {
-            BSML::Lite::SetButtonText(downloadButton_, "Pause Download");
-            downloadStatus_->set_text(snapshot.totalBytes
-                ? Megabytes(snapshot.downloadedBytes) + " / " +
-                    Megabytes(snapshot.totalBytes)
-                : snapshot.message);
+            BSML::Lite::SetButtonText(downloadButton_, "Cancel Download");
+            downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
+            if(snapshot.totalBytes)
+            {
+                std::ostringstream status;
+                status << "Downloading "
+                       << static_cast<int>(std::round(progress * 100.0f))
+                       << "%  |  " << Megabytes(snapshot.downloadedBytes)
+                       << " / " << Megabytes(snapshot.totalBytes);
+                downloadStatus_->set_text(status.str());
+            }
+            else
+            {
+                downloadStatus_->set_text(snapshot.message.empty()
+                    ? "Preparing download..."
+                    : snapshot.message);
+            }
         }
         else if(forSelection && snapshot.state == DownloadState::Failed)
         {
             BSML::Lite::SetButtonText(downloadButton_, "Retry Download");
-            downloadStatus_->set_text(snapshot.message);
+            downloadStatus_->set_text("Download failed — select Retry");
+            downloadStatus_->set_color({1.0f, 0.28f, 0.25f, 1.0f});
+            const auto failureKey = snapshot.levelId + "\n" + snapshot.message;
+            if(reportedDownloadFailure_ != failureKey)
+            {
+                reportedDownloadFailure_ = failureKey;
+                ReportDownloadFailure(snapshot.message);
+            }
         }
         else if(forSelection && snapshot.state == DownloadState::Cancelled)
         {
             BSML::Lite::SetButtonText(downloadButton_, "Resume Download");
-            downloadStatus_->set_text(snapshot.message);
+            downloadStatus_->set_text("Download paused");
+            downloadStatus_->set_color({1.0f, 0.68f, 0.20f, 1.0f});
         }
         else if(descriptor.CanPlay())
         {
-            downloadStatus_->set_text("Video ready");
+            downloadStatus_->set_text("Video ready!");
+            downloadStatus_->set_color({0.20f, 0.90f, 0.42f, 1.0f});
             if(!selectedLevelHasVideo_)
             {
                 PlaybackSession::Instance().Prepare(selectedLevel_);
@@ -477,7 +609,8 @@ namespace BigScreen {
         else
         {
             BSML::Lite::SetButtonText(downloadButton_, "Download Video");
-            downloadStatus_->set_text("This map has a video available");
+            downloadStatus_->set_text("Video available");
+            downloadStatus_->set_color(UnityEngine::Color::get_white());
         }
     }
 

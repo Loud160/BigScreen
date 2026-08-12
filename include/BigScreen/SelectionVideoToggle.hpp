@@ -16,6 +16,10 @@ namespace TMPro {
     class TextMeshProUGUI;
 }
 
+namespace HMUI {
+    class ImageView;
+}
+
 namespace UnityEngine::UI {
     class Button;
 }
@@ -76,6 +80,7 @@ namespace BigScreen {
         void PreviewToggleChanged(bool enabled);
         void InMapToggleChanged(bool enabled);
         void DownloadButtonPressed();
+        void ReportDownloadFailure(const std::string& detail);
         void RefreshUi();
 
         BSML::ToggleSetting* previewUi_ = nullptr;
@@ -83,8 +88,14 @@ namespace BigScreen {
         BSML::IncrementSetting* layoutUi_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
+        HMUI::ImageView* downloadProgressTrack_ = nullptr;
+        HMUI::ImageView* downloadProgressFill_ = nullptr;
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
         std::string selectedLevelId_;
+        // A failed worker remains in a terminal state until another task is
+        // started. Remember the exact failure already presented so the
+        // per-frame song-menu refresh cannot spam identical dialogs.
+        std::string reportedDownloadFailure_;
         bool selectedLevelHasVideo_ = false;
         bool inMapEnabled_ = true;
         bool resumeWhenSongAudioStarts_ = false;

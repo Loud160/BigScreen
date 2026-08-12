@@ -1,7 +1,10 @@
 #include "BigScreen/Settings.hpp"
 
 #include <algorithm>
+#include <exception>
 
+#include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "beatsaber-hook/shared/config/config-utils.hpp"
 #include "main.hpp"
 
@@ -124,12 +127,18 @@ namespace BigScreen {
             layout.tiltOffset = std::clamp(ReadFloat(
                 document, (prefix + "Tilt").c_str(),
                 legacy ? ReadFloat(document, "screenTiltOffset", 0.0f) : 0.0f), -30.0f, 30.0f);
-            layout.scale = std::clamp(ReadFloat(
+            const float configuredScale = ReadFloat(
                 document, (prefix + "Scale").c_str(),
-                legacy ? ReadFloat(document, "screenScale", 1.0f) : 1.0f), 0.5f, 2.5f);
+                legacy ? ReadFloat(document, "screenScale", 1.0f) : 1.0f);
             layout.curved = ReadBool(
                 document, (prefix + "Curved").c_str(),
                 legacy ? ReadBool(document, "curvedScreenEnabled", false) : false);
+            // Read the geometry mode before normalizing scale. Flat profiles
+            // may persist up to 4x, while a hand-edited or older curved
+            // profile must be reduced to the tested 2.5x ceiling at startup.
+            layout.scale = CoreLogic::NormalizeScreenScale(
+                configuredScale,
+                layout.curved);
             layout.curvature = std::clamp(ReadFloat(
                 document, (prefix + "Curvature").c_str(),
                 legacy ? ReadFloat(document, "screenCurvature", 0.35f) : 0.35f),
@@ -140,6 +149,7 @@ namespace BigScreen {
         }
         activeScreenLayout_ = std::clamp(
             ReadInt(document, "activeScreenLayout", 0), 0, 2);
+        allowChromaOverride_ = ReadBool(document, "allowChromaOverride", true);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
@@ -190,12 +200,15 @@ namespace BigScreen {
         // makes a newly added setting participate automatically as long as it
         // declares its intended default beside the member itself.
         *this = Settings{};
+        ErrorManager::Instance().ResetCircuitBreaker();
         Save();
     }
 
     void Settings::SetModEnabled(bool value)
     {
         modEnabled_ = value;
+        if(value)
+            ErrorManager::Instance().ResetCircuitBreaker();
         Save();
     }
 
@@ -253,14 +266,26 @@ namespace BigScreen {
 
     void Settings::SetScreenScale(float value)
     {
-        screenLayouts_[activeScreenLayout_].scale = std::clamp(value, 0.5f, 2.5f);
+        auto& layout = screenLayouts_[activeScreenLayout_];
+        layout.scale = CoreLogic::NormalizeScreenScale(value, layout.curved);
         Save();
     }
 
     void Settings::SetCurvedScreenEnabled(bool value)
     {
-        screenLayouts_[activeScreenLayout_].curved = value;
+        auto& layout = screenLayouts_[activeScreenLayout_];
+        layout.curved = value;
+        // Switching a 2.6x-4.0x flat layout to curved mode immediately makes
+        // the persisted value, menu preview, and next gameplay surface agree.
+        // Switching back to flat does not inflate the screen; it only restores
+        // permission for the player to increase it toward 4x.
+        layout.scale = CoreLogic::NormalizeScreenScale(layout.scale, value);
         Save();
+    }
+
+    float Settings::MaximumScreenScale() const
+    {
+        return CoreLogic::ScreenScaleMaximum(CurvedScreenEnabled());
     }
 
     void Settings::SetScreenCurvature(float value)
@@ -278,6 +303,12 @@ namespace BigScreen {
     void Settings::SetMaintainCurveAspectRatio(bool value)
     {
         screenLayouts_[activeScreenLayout_].maintainAspectRatio = value;
+        Save();
+    }
+
+    void Settings::SetAllowChromaOverride(bool value)
+    {
+        allowChromaOverride_ = value;
         Save();
     }
 
@@ -418,6 +449,7 @@ namespace BigScreen {
             Replace(document, (prefix + "Curvature").c_str(), layout.curvature);
             Replace(document, (prefix + "MaintainAspect").c_str(), layout.maintainAspectRatio);
         }
+        Replace(document, "allowChromaOverride", allowChromaOverride_);
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);
@@ -437,6 +469,23 @@ namespace BigScreen {
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
         Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
-        configuration.Write();
+        try
+        {
+            configuration.Write();
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error("Could not save Big Screen settings: {}", exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Settings were not saved",
+                "Big Screen could not write its settings file. Your changes will remain active until Beat Saber closes. Check the Big Screen log for details.");
+        }
+        catch(...)
+        {
+            PaperLogger.error("Could not save Big Screen settings: unknown write error");
+            ErrorManager::Instance().ReportUserVisible(
+                "Settings were not saved",
+                "Big Screen could not write its settings file. Your changes will remain active until Beat Saber closes. Check the Big Screen log for details.");
+        }
     }
 }

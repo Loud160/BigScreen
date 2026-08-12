@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace BigScreen {
 
@@ -13,6 +14,18 @@ namespace BigScreen {
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
+    };
+
+    /// One Cinema-compatible scene-object change. Optional members preserve
+    /// the distinction between "not supplied" and an explicit zero/false.
+    struct EnvironmentModification {
+        std::string name;
+        std::optional<std::string> parentName;
+        std::optional<std::string> cloneFrom;
+        std::optional<bool> active;
+        std::optional<Float3> position;
+        std::optional<Float3> rotation;
+        std::optional<Float3> scale;
     };
 
     /// The subset of map video metadata Big Screen currently needs.
@@ -34,6 +47,12 @@ namespace BigScreen {
         std::optional<std::string> title;
         std::optional<std::string> author;
         bool configByMapper = false;
+        // True only when the metadata contains presentation fields rather than
+        // merely a video URL and timing. Allow Chroma Override uses this guard
+        // so ordinary videos continue using the player's selected layout.
+        bool hasMapperPresentation = false;
+        bool disableDefaultModifications = false;
+        bool forceEnvironmentModifications = false;
 
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
@@ -47,10 +66,17 @@ namespace BigScreen {
         Float3 screenRotation{-8.0f, 0.0f, 0.0f};
         float screenHeight = 25.0f;
         float screenCurvature = 0.0f;
+        // Cinema expresses mapper curvature as arc degrees. Big Screen's own
+        // layout slider uses a signed bow amount, so the two representations
+        // stay separate instead of applying a lossy guessed conversion.
+        std::optional<float> cinemaCurvatureDegrees;
+        bool cinemaCurveYAxis = false;
         bool maintainAspectRatioWhenCurved = false;
         int screenSegments = 32;
         bool transparent = false;
+        std::optional<bool> mapperTransparency;
         std::optional<std::string> requestedEnvironment;
+        std::vector<EnvironmentModification> environmentModifications;
 
         /// Looks for Big Screen's native file first, followed by compatible map
         /// metadata names already present in existing custom levels.

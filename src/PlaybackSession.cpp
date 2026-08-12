@@ -9,6 +9,8 @@
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/CinemaEnvironment.hpp"
+#include "BigScreen/ChromaMapDetector.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "songcore/shared/SongCore.hpp"
@@ -33,6 +35,13 @@ namespace BigScreen {
         return config_ ? config_->requestedEnvironment : noEnvironment;
     }
 
+    bool PlaybackSession::MapperPresentationActive() const
+    {
+        return Settings::Instance().AllowChromaOverride() &&
+               baseConfig_ &&
+               (baseConfig_->hasMapperPresentation || chromaMapDetected_);
+    }
+
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
     {
         return {
@@ -49,6 +58,7 @@ namespace BigScreen {
         baseConfig_.reset();
         config_.reset();
         levelDirectory_.clear();
+        chromaMapDetected_ = false;
         menuPreviewStartSongTime_ = 0.0;
 
         // Hooks remain installed for the lifetime of the process, but the
@@ -69,6 +79,23 @@ namespace BigScreen {
 
         if(baseConfig_)
         {
+            // Resolve the real map folder only after confirming this level has
+            // a playable video. Maps without videos must remain completely
+            // unaffected by every Big Screen environment decision.
+            if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(levelId))
+            {
+                levelDirectory_ = std::filesystem::path(
+                    custom->get_customLevelPath());
+                std::string chromaReason;
+                chromaMapDetected_ = ChromaMapDetector::UsesChroma(
+                    levelDirectory_, chromaReason);
+                if(chromaMapDetected_)
+                {
+                    PaperLogger.info(
+                        "Allow Chroma Override detected map-wide Chroma use: {}",
+                        chromaReason);
+                }
+            }
             RefreshDisplaySettings();
 
             PaperLogger.info(
@@ -90,6 +117,12 @@ namespace BigScreen {
         if(started_)
             Stop();
 
+        RebuildEffectiveConfig();
+    }
+
+    void PlaybackSession::RebuildEffectiveConfig()
+    {
+
         if(!baseConfig_)
         {
             config_.reset();
@@ -102,6 +135,28 @@ namespace BigScreen {
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
         // scale adjustments from accumulating on the selected song.
         const auto& settings = Settings::Instance();
+        if(MapperPresentationActive())
+        {
+            // Cinema/Chroma compatibility is deliberately all-or-nothing for
+            // geometry. Mixing a mapper's close, angled screen with a user's
+            // back-wall offsets is the exact failure this opt-in prevents.
+            // Transparency remains a user preference only when the mapper did
+            // not explicitly choose it, matching PC Cinema's nullable field.
+            config_->transparent = config_->mapperTransparency.value_or(
+                settings.TransparencyEnabled());
+            if(!config_->cinemaCurvatureDegrees)
+            {
+                config_->screenCurvature = settings.CurvedScreenEnabled()
+                    ? settings.ScreenCurvature() : 0.0f;
+                config_->maintainAspectRatioWhenCurved =
+                    settings.CurvedScreenEnabled() &&
+                    settings.MaintainCurveAspectRatio();
+            }
+            PaperLogger.info(
+                "Allow Chroma Override is yielding screen and environment presentation to the mapper/Chroma");
+            return;
+        }
+
         config_->screenPosition.x += settings.ScreenHorizontalOffset();
         config_->screenPosition.y += settings.ScreenVerticalOffset();
         config_->screenPosition.z += settings.ScreenDistanceOffset();
@@ -114,6 +169,55 @@ namespace BigScreen {
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
         config_->transparent = settings.TransparencyEnabled();
+    }
+
+    bool PlaybackSession::ApplyActiveScreenLayoutLive()
+    {
+        // Mapper/Chroma presentation intentionally ignores user layouts. The
+        // pause control is hidden for that case, but keep this guard here so a
+        // stale callback can never override the mapper's live screen.
+        if(!IsGameplayActive() || !baseConfig_ || MapperPresentationActive())
+            return false;
+
+        const auto previousConfig = config_;
+        RebuildEffectiveConfig();
+        if(!config_ || !surface_.UpdateGeometry(*config_))
+        {
+            config_ = previousConfig;
+            ErrorManager::Instance().ReportInternal(
+                "switching the paused screen layout",
+                "Unity could not rebuild the video screen geometry");
+            return false;
+        }
+
+        PaperLogger.info(
+            "Applied Screen Layout {} to the paused gameplay video without restarting playback",
+            Settings::Instance().ActiveScreenLayout() + 1);
+        return true;
+    }
+
+    void PlaybackSession::SetGameplayScreenEnabled(bool enabled)
+    {
+        if(!IsGameplayActive())
+            return;
+
+        gameplayScreenEnabled_ = enabled;
+        if(enabled)
+        {
+            // Do not briefly reveal the last frame from before the screen was
+            // hidden. Keep the surface invisible until the decoder supplies a
+            // frame for Beat Saber's current song time.
+            firstFrameUploaded_ = false;
+            surface_.SetVisible(false);
+            lastPresentationSlot_.reset();
+        }
+        else
+        {
+            surface_.SetVisible(false);
+        }
+        PaperLogger.info(
+            "Paused gameplay Video Screen changed to {} for the current map",
+            enabled ? "On" : "Off");
     }
 
     void PlaybackSession::Start(PlaybackContext context)
@@ -149,6 +253,7 @@ namespace BigScreen {
         }
 
         started_ = true;
+        gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
@@ -160,6 +265,9 @@ namespace BigScreen {
         performanceWindowStartSongTime_ = 0.0;
         automaticReductions_ = 0;
         diagnosticsFrameCounter_ = 0;
+        mapperEnvironmentApplyCountdown_ =
+            context == PlaybackContext::Gameplay && MapperPresentationActive()
+                ? 3 : 0;
 
         // SongPreviewPlayer begins custom-song previews at BeatmapLevel's
         // previewStartTime rather than zero. Start the decoder worker toward
@@ -203,6 +311,25 @@ namespace BigScreen {
     {
         if(!Settings::Instance().ModEnabled() || !started_ || !config_)
             return;
+
+        if(mapperEnvironmentApplyCountdown_ > 0 &&
+           --mapperEnvironmentApplyCountdown_ == 0)
+        {
+            // The surface already exists under the CinemaScreen-compatible
+            // name, so Quest Chroma can include it in its delayed difficulty
+            // pass. Apply Cinema's independent environment array afterward.
+            CinemaEnvironment::Apply(*config_);
+        }
+
+        // The pause-menu switch is intentionally session-local. Keep the
+        // decoder open for a fast restart, but stop issuing frame requests and
+        // uploading textures while the player has hidden this map's screen.
+        if(context_ == PlaybackContext::Gameplay && !gameplayScreenEnabled_)
+        {
+            surface_.SetVisible(false);
+            lastTickSongTime_ = songTimeSeconds;
+            return;
+        }
 
         const double mediaTime = config_->MediaTimeForSong(
             songTimeSeconds,
@@ -317,10 +444,12 @@ namespace BigScreen {
         surface_.Destroy();
         decoder_.Close();
         started_ = false;
+        gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
         context_ = PlaybackContext::None;
+        mapperEnvironmentApplyCountdown_ = 0;
     }
 
     bool PlaybackSession::ApplyAutomaticPerformanceReduction(double mediaTimeSeconds)

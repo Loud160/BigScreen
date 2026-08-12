@@ -11,13 +11,13 @@
 #include <stdexcept>
 #include <chrono>
 
+#include "main.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
-#include "main.hpp"
 
 extern "C" {
 #include "libavcodec/avcodec.h"
