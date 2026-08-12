@@ -1,5 +1,6 @@
 #include "BigScreen/SettingsMenu.hpp"
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <string_view>
@@ -11,7 +12,11 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/VideoLibraryMenu.hpp"
+#include "HMUI/HoverHint.hpp"
+#include "HMUI/TextSegmentedControl.hpp"
 #include "HMUI/ViewController.hpp"
+#include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
@@ -25,6 +30,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/ExternalComponents.hpp"
+#include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/BSML/Components/Settings/DropdownListSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
@@ -43,6 +49,10 @@ namespace BigScreen {
             "15 FPS",
             "30 FPS",
             "60 FPS"
+        };
+
+        std::array<std::string_view, 4> SettingsTabNames{
+            "General", "Screen", "Playback", "Update"
         };
 
         std::string ResolutionLabel(int height)
@@ -89,6 +99,11 @@ namespace BigScreen {
             // The playback session keeps an effective configuration for the
             // selected song. Rebuild it as well as the visible settings screen
             // so leaving this menu cannot resurrect stale size or placement.
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            {
+                VideoLibraryMenu::Instance().RefreshDisplaySettings();
+                return;
+            }
             PlaybackSession::Instance().RefreshDisplaySettings();
             ScreenPreview::Instance().Refresh();
         }
@@ -126,6 +141,9 @@ namespace BigScreen {
         // MenuCore restarts replace the controller and all of its children.
         // Clear every cached component before constructing the new scene's UI.
         settingsViewController_ = viewController;
+        settingsTabs_ = nullptr;
+        tabViewRoots_.fill(nullptr);
+        selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
@@ -143,7 +161,9 @@ namespace BigScreen {
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
+        nightlyWarningModal_ = nullptr;
         updaterButton_ = nullptr;
+        updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
         resetButton_ = nullptr;
 
@@ -214,26 +234,61 @@ namespace BigScreen {
         }
 
         auto& settings = Settings::Instance();
-        auto* container = BSML::Lite::CreateScrollableSettingsContainer(viewController);
-        if(!container)
+
+        // A native segmented control keeps the four categories visible while
+        // their independent scroll views occupy the same content region.
+        // Every page is scrollable from the start so future settings can be
+        // added without another structural menu migration.
+        settingsTabs_ = BSML::Lite::CreateTextSegmentedControl(
+            viewController,
+            {0.0f, 0.0f},
+            {54.0f, 7.0f},
+            SettingsTabNames,
+            [this](int index) { ShowSettingsTab(index); });
+        if(settingsTabs_)
         {
-            PaperLogger.error("Could not create the Big Screen settings container");
+            auto tabsRect = settingsTabs_->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            tabsRect->set_anchorMin({0.0f, 1.0f});
+            tabsRect->set_anchorMax({1.0f, 1.0f});
+            tabsRect->set_pivot({0.5f, 1.0f});
+            tabsRect->set_anchoredPosition({0.0f, -10.0f});
+            tabsRect->set_sizeDelta({-4.0f, 7.0f});
+        }
+
+        const auto createTabPage = [&](int index) -> UnityEngine::GameObject*
+        {
+            auto* content = BSML::Lite::CreateScrollableSettingsContainer(
+                viewController);
+            if(!content)
+                return nullptr;
+            if(auto* external = content->GetComponent<BSML::ExternalComponents*>())
+            {
+                if(auto* scroll = external->Get<UnityEngine::RectTransform*>())
+                {
+                    scroll->set_anchoredPosition({2.0f, -6.0f});
+                    scroll->set_sizeDelta({0.0f, -44.0f});
+                    tabViewRoots_[index] = scroll->get_gameObject();
+                }
+            }
+            if(!tabViewRoots_[index])
+                tabViewRoots_[index] = content;
+            return content;
+        };
+
+        auto* generalContainer = createTabPage(0);
+        auto* screenContainer = createTabPage(1);
+        auto* playbackContainer = createTabPage(2);
+        auto* updateContainer = createTabPage(3);
+        if(!generalContainer || !screenContainer ||
+           !playbackContainer || !updateContainer)
+        {
+            PaperLogger.error("Could not create all Big Screen settings tabs");
             return;
         }
 
-        // Reserve the upper portion of the left panel for the anchored header,
-        // keeping the first setting from drawing underneath its controls.
-        if(auto* external = container->GetComponent<BSML::ExternalComponents*>())
-        {
-            if(auto* scroll = external->Get<UnityEngine::RectTransform*>())
-            {
-                scroll->set_anchoredPosition({2.0f, -2.0f});
-                scroll->set_sizeDelta({0.0f, -32.0f});
-            }
-        }
-
         modEnabledToggle_ = BSML::Lite::CreateToggle(
-            container,
+            generalContainer,
             "Big Screen Enabled",
             settings.ModEnabled(),
             [this](bool enabled)
@@ -252,7 +307,7 @@ namespace BigScreen {
             "Disables all Big Screen effects while keeping this settings menu available.");
 
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
-            container,
+            generalContainer,
             "Video In Map",
             settings.VideoEnabled(),
             [this](bool enabled)
@@ -270,7 +325,7 @@ namespace BigScreen {
             "Shows videos during map gameplay and is shared with song selection.");
 
         previewToggle_ = BSML::Lite::CreateToggle(
-            container,
+            generalContainer,
             "Preview Video",
             settings.MenuPreviewEnabled(),
             [](bool enabled)
@@ -283,7 +338,7 @@ namespace BigScreen {
             "Plays videos during song selection and is shared with song selection.");
 
         distanceSetting_ = BSML::Lite::CreateIncrementSetting(
-            container,
+            screenContainer,
             "Screen Distance Offset",
             0,
             2.0f,
@@ -300,7 +355,7 @@ namespace BigScreen {
             "Adds meters to the map position. Negative is closer; positive is farther away.");
 
         horizontalSetting_ = BSML::Lite::CreateIncrementSetting(
-            container,
+            screenContainer,
             "Screen X Offset",
             0,
             1.0f,
@@ -317,7 +372,7 @@ namespace BigScreen {
             "Moves the screen left with negative values and right with positive values.");
 
         verticalSetting_ = BSML::Lite::CreateIncrementSetting(
-            container,
+            screenContainer,
             "Screen Y Offset",
             0,
             1.0f,
@@ -334,7 +389,7 @@ namespace BigScreen {
             "Moves the screen down with negative values and up with positive values.");
 
         tiltSetting_ = BSML::Lite::CreateIncrementSetting(
-            container,
+            screenContainer,
             "Screen Tilt Offset",
             0,
             1.0f,
@@ -351,7 +406,7 @@ namespace BigScreen {
             "Adds degrees to the map's vertical tilt. Positive values lift the screen face upward.");
 
         sizeSetting_ = BSML::Lite::CreateIncrementSetting(
-            container,
+            screenContainer,
             "Screen Size Multiplier",
             1,
             0.1f,
@@ -368,7 +423,7 @@ namespace BigScreen {
             "Multiplies the map-authored screen size. 1.0 keeps the original size.");
 
         curvedScreenToggle_ = BSML::Lite::CreateToggle(
-            container,
+            screenContainer,
             "Curved Screen",
             settings.CurvedScreenEnabled(),
             [this](bool enabled)
@@ -384,7 +439,7 @@ namespace BigScreen {
         // Keeping this directly after Curved Screen makes the vertical layout
         // collapse cleanly when the signed curve control is irrelevant.
         curvatureSlider_ = BSML::Lite::CreateSliderSetting(
-            container,
+            screenContainer,
             "Screen Curve",
             0.05f,
             settings.ScreenCurvature(),
@@ -400,7 +455,7 @@ namespace BigScreen {
             "Positive values wrap the edges toward you; negative values bend them away.");
 
         transparencyToggle_ = BSML::Lite::CreateToggle(
-            container,
+            screenContainer,
             "Video Transparency",
             settings.TransparencyEnabled(),
             [](bool enabled)
@@ -413,7 +468,7 @@ namespace BigScreen {
             "Lets environment lights and objects remain partially visible through the video.");
 
         lightShowToggle_ = BSML::Lite::CreateToggle(
-            container,
+            playbackContainer,
             "Map Light Show",
             settings.MapLightShowEnabled(),
             [](bool enabled)
@@ -425,7 +480,7 @@ namespace BigScreen {
             "Keeps the selected map's lighting events active while its video plays.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
-            container,
+            playbackContainer,
             "Use Big Mirror Override",
             settings.EnvironmentOverrideEnabled(),
             [](bool enabled)
@@ -437,7 +492,7 @@ namespace BigScreen {
             "When disabled, the map's intended background is used and may partially block the video.");
 
         environmentMotionToggle_ = BSML::Lite::CreateToggle(
-            container,
+            playbackContainer,
             "Environment Rotation and Motion",
             settings.EnvironmentMotionEnabled(),
             [](bool enabled)
@@ -449,7 +504,7 @@ namespace BigScreen {
             "Turns rotating and moving background scenery on or off for video maps.");
 
         playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
-            container,
+            playbackContainer,
             "Video Frame Rate Limit",
             PlaybackFpsLabel(settings.PlaybackFpsLimit()),
             PlaybackFpsChoices,
@@ -462,7 +517,7 @@ namespace BigScreen {
             "Maximum displayed video frame rate. Lower values reduce software conversion and texture-upload load; videos below the limit retain their native frame rate.");
 
         resolutionDropdown_ = BSML::Lite::CreateDropdown(
-            container,
+            playbackContainer,
             "Video Resolution",
             ResolutionLabel(settings.ResolutionHeight()),
             ResolutionChoices,
@@ -474,16 +529,76 @@ namespace BigScreen {
             resolutionDropdown_,
             "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
+        nightlyWarningModal_ = BSML::Lite::CreateModal(
+            viewController,
+            {64.0f, 31.0f},
+            nullptr,
+            false);
+        auto* nightlyWarningText = BSML::Lite::CreateText(
+            nightlyWarningModal_,
+            "Use nightly yt-dlp builds?\n\nNightly builds contain the newest changes, but they are more likely to include bugs than stable releases.",
+            TMPro::FontStyles::Normal,
+            {0.0f, 6.0f});
+        nightlyWarningText->set_fontSize(2.9f);
+        nightlyWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            nightlyWarningModal_->get_transform(),
+            "Stay on Stable",
+            {16.0f, -22.5f},
+            {24.0f, 8.0f},
+            [this]()
+            {
+                if(nightlyWarningModal_)
+                    nightlyWarningModal_->Hide();
+                suppressNightlyCallback_ = true;
+                SetToggleWithoutNotification(nightlyUpdatesToggle_, false);
+                suppressNightlyCallback_ = false;
+            });
+        BSML::Lite::CreateUIButton(
+            nightlyWarningModal_->get_transform(),
+            "Use Nightly",
+            {43.0f, -22.5f},
+            {24.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().SetNightlyDownloaderUpdates(true);
+                suppressNightlyCallback_ = true;
+                SetToggleWithoutNotification(nightlyUpdatesToggle_, true);
+                suppressNightlyCallback_ = false;
+                if(nightlyWarningModal_)
+                    nightlyWarningModal_->Hide();
+                RefreshUpdaterHint();
+            });
+
         nightlyUpdatesToggle_ = BSML::Lite::CreateToggle(
-            container,
+            updateContainer,
             "Use Nightly yt-dlp Updates",
             settings.NightlyDownloaderUpdates(),
-            [](bool enabled) { Settings::Instance().SetNightlyDownloaderUpdates(enabled); });
+            [this](bool enabled)
+            {
+                if(suppressNightlyCallback_)
+                    return;
+                if(!enabled)
+                {
+                    Settings::Instance().SetNightlyDownloaderUpdates(false);
+                    RefreshUpdaterHint();
+                    return;
+                }
+
+                // Do not persist the riskier channel until the player accepts
+                // the modal warning. Revert the visual switch while the
+                // decision is pending so Cancel has no hidden state change.
+                suppressNightlyCallback_ = true;
+                SetToggleWithoutNotification(nightlyUpdatesToggle_, false);
+                suppressNightlyCallback_ = false;
+                if(nightlyWarningModal_)
+                    nightlyWarningModal_->Show();
+            });
         BSML::Lite::AddHoverHint(
             nightlyUpdatesToggle_,
             "Warning: nightly builds may contain new bugs. Stable releases are recommended unless video downloads have stopped working.");
         updaterButton_ = BSML::Lite::CreateUIButton(
-            container,
+            updateContainer,
             "Check yt-dlp Update",
             UnityEngine::Vector2{0, 0},
             UnityEngine::Vector2{42, 8},
@@ -496,11 +611,12 @@ namespace BigScreen {
                     updaterStatus_->set_text(error);
                 RefreshDownloaderStatus();
             });
-        updaterStatus_ = BSML::Lite::CreateText(container, "Stable updates only", 2.5f);
+        updaterHoverHint_ = BSML::Lite::AddHoverHint(updaterButton_, "");
+        updaterStatus_ = BSML::Lite::CreateText(updateContainer, "", 2.5f);
         if(updaterStatus_) updaterStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         resetButton_ = BSML::Lite::CreateUIButton(
-            container,
+            generalContainer,
             "Reset to Defaults",
             UnityEngine::Vector2{0.0f, 0.0f},
             UnityEngine::Vector2{42.0f, 8.0f},
@@ -512,6 +628,9 @@ namespace BigScreen {
             resetButton_,
             "Restores every Big Screen option, including placement, to its original value.");
 
+        ShowSettingsTab(0);
+        if(settingsTabs_)
+            settingsTabs_->SelectCellWithNumber(0);
         RefreshControls();
     }
 
@@ -523,6 +642,7 @@ namespace BigScreen {
         RefreshValues();
         RefreshEnabledState();
         RefreshCurvatureControl();
+        RefreshUpdaterHint();
     }
 
     void SettingsMenu::RefreshValues()
@@ -633,6 +753,25 @@ namespace BigScreen {
         // slider also closes its row instead of leaving an empty menu gap.
         curvatureSlider_->get_gameObject()->SetActive(
             Settings::Instance().CurvedScreenEnabled());
+    }
+
+    void SettingsMenu::ShowSettingsTab(int index)
+    {
+        index = std::clamp(index, 0, 3);
+        selectedTab_ = index;
+        for(int page = 0; page < static_cast<int>(tabViewRoots_.size()); ++page)
+            if(tabViewRoots_[page])
+                tabViewRoots_[page]->SetActive(page == selectedTab_);
+    }
+
+    void SettingsMenu::RefreshUpdaterHint()
+    {
+        if(!updaterHoverHint_)
+            return;
+        updaterHoverHint_->set_text(
+            Settings::Instance().NightlyDownloaderUpdates()
+                ? "Checks the yt-dlp nightly update channel. Nightly builds may contain bugs; use this channel only when stable downloads are failing."
+                : "Checks for updates from the current stable yt-dlp release channel. Stable releases are recommended for normal use.");
     }
 
     void SettingsMenu::ResetToDefaults()

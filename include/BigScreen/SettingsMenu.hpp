@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <functional>
 
 namespace BSML {
@@ -7,11 +8,16 @@ namespace BSML {
     class IncrementSetting;
     class SliderSetting;
     class ToggleSetting;
+    class ModalView;
 }
 
 namespace HMUI {
+    class HoverHint;
+    class TextSegmentedControl;
     class ViewController;
 }
+
+namespace UnityEngine { class GameObject; }
 
 namespace UnityEngine::UI {
     class Button;
@@ -37,9 +43,14 @@ namespace BigScreen {
         void RefreshValues();
         void RefreshEnabledState();
         void RefreshCurvatureControl();
+        void RefreshUpdaterHint();
+        void ShowSettingsTab(int index);
         void ResetToDefaults();
 
         HMUI::ViewController* settingsViewController_ = nullptr;
+        HMUI::TextSegmentedControl* settingsTabs_ = nullptr;
+        std::array<UnityEngine::GameObject*, 4> tabViewRoots_{};
+        int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
@@ -57,8 +68,11 @@ namespace BigScreen {
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
+        BSML::ModalView* nightlyWarningModal_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
+        HMUI::HoverHint* updaterHoverHint_ = nullptr;
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;
         UnityEngine::UI::Button* resetButton_ = nullptr;
+        bool suppressNightlyCallback_ = false;
     };
 }

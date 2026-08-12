@@ -865,6 +865,12 @@ namespace BigScreen {
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         auto* playbackPanelBackground = playbackPanel->get_gameObject()
             ->GetComponent<HMUI::ImageView*>();
+        if(playbackPanelBackground)
+        {
+            playbackPanelBackground->set_gradient(false);
+            playbackPanelBackground->set_color(
+                {0.22f, 0.25f, 0.30f, 0.90f});
+        }
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
         auto* playbackGroupTitle = BSML::Lite::CreateText(
@@ -990,10 +996,12 @@ namespace BigScreen {
                 playbackScrubber_->slider->set_targetGraphic(sliderHandle);
             }
             auto sliderColors = playbackScrubber_->slider->get_colors();
-            sliderColors.set_normalColor(UnityEngine::Color::get_white());
+            const UnityEngine::Color restingHandle{
+                0.05f, 0.62f, 0.95f, 1.0f};
+            sliderColors.set_normalColor(restingHandle);
             sliderColors.set_highlightedColor(UnityEngine::Color::get_black());
             sliderColors.set_pressedColor(UnityEngine::Color::get_black());
-            sliderColors.set_selectedColor(UnityEngine::Color::get_black());
+            sliderColors.set_selectedColor(restingHandle);
             playbackScrubber_->slider->set_colors(sliderColors);
 
             playbackScrubberFill_ = BSML::Lite::CreateImage(
@@ -1087,8 +1095,11 @@ namespace BigScreen {
         if(playbackPanelBackground)
             if(auto* storagePanelBackground = storagePanel->get_gameObject()
                    ->GetComponent<HMUI::ImageView*>())
+            {
+                storagePanelBackground->set_gradient(false);
                 storagePanelBackground->set_color(
                     playbackPanelBackground->get_color());
+            }
         const BSML::Lite::TransformWrapper storageBody(storagePanel);
 
         auto* storageGroupTitle = BSML::Lite::CreateText(
@@ -2360,6 +2371,21 @@ namespace BigScreen {
             if(PlaybackSession::Instance().IsLibraryPreviewActive())
                 PlaybackSession::Instance().Stop();
         }
+    }
+
+    void VideoLibraryMenu::RefreshDisplaySettings()
+    {
+        if(!editorVisible_ || !selected_ ||
+           !VideoLibrary::Instance().Describe(selected_).CanPlay())
+            return;
+
+        // Curvature changes the screen mesh, so the active surface must be
+        // recreated. Reopen the library preview at its retained song time;
+        // sending the change through ScreenPreview would replace the playing
+        // frame with that settings preview's checkerboard pattern.
+        StartSelectedPreview();
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Tick(previewSongTime_);
     }
 
     void VideoLibraryMenu::Deactivate()
