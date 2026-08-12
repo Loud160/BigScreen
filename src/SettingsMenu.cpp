@@ -820,6 +820,8 @@ namespace BigScreen {
     {
         const auto& settings = Settings::Instance();
         const bool enabled = settings.ModEnabled();
+        const bool lightingChildrenEnabled =
+            enabled && settings.MapLightShowEnabled();
 
         // The master switch and Reset remain usable. Every setting capable of
         // affecting Beat Saber is explicitly locked while the mod is off.
@@ -848,15 +850,17 @@ namespace BigScreen {
             transparencyToggle_->set_interactable(enabled);
         if(lightShowToggle_)
             lightShowToggle_->set_interactable(enabled);
+
+        // The master switch changes only whether these controls can be edited;
+        // it deliberately does not rewrite their persisted toggle values. When
+        // the light show is re-enabled, RefreshValues restores every user's
+        // previous combination before making the controls interactive again.
         if(hideBackWallLightsToggle_)
-            hideBackWallLightsToggle_->set_interactable(
-                enabled && settings.MapLightShowEnabled());
+            hideBackWallLightsToggle_->set_interactable(lightingChildrenEnabled);
         if(hideRingLightsToggle_)
-            hideRingLightsToggle_->set_interactable(
-                enabled && settings.MapLightShowEnabled());
+            hideRingLightsToggle_->set_interactable(lightingChildrenEnabled);
         if(hideSideLaserLightsToggle_)
-            hideSideLaserLightsToggle_->set_interactable(
-                enabled && settings.MapLightShowEnabled());
+            hideSideLaserLightsToggle_->set_interactable(lightingChildrenEnabled);
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);
         if(glassDesertOverrideToggle_)
@@ -868,7 +872,7 @@ namespace BigScreen {
         if(hideSideBarsToggle_)
             hideSideBarsToggle_->set_interactable(enabled);
         if(hideSpectrogramBarsToggle_)
-            hideSpectrogramBarsToggle_->set_interactable(enabled);
+            hideSpectrogramBarsToggle_->set_interactable(lightingChildrenEnabled);
         if(playbackFpsDropdown_)
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)
