@@ -623,6 +623,10 @@ namespace BigScreen {
             [this]() { PasteUrlFromClipboard(); });
         ConfigureLayout(pasteUrlButton_, 13.0f, 7.5f, 0.0f);
         BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.45f);
+        pasteUrlButtonText_ = pasteUrlButton_->get_gameObject()
+            ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
+        if(pasteUrlButtonText_)
+            pasteUrlButtonText_->set_color(UnityEngine::Color::get_white());
         urlInput_ = BSML::Lite::CreateStringSetting(
             urlEntryRow, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
@@ -650,6 +654,8 @@ namespace BigScreen {
             [this]() { StartOrCancelDownload(); });
         ConfigureLayout(downloadButton_, 18.5f, 7.5f, 0.0f);
         BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
+        downloadButtonText_ = downloadButton_->get_gameObject()
+            ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
         auto* thumbnailBalance = BSML::Lite::CreateImage(
             urlPreviewRow,
             BSML::Utilities::ImageResources::GetBlankSprite());
@@ -1868,10 +1874,22 @@ namespace BigScreen {
                 ? "Resume Download" :
             descriptor.hasUserOverride ? "Replace Video" : "Download Video");
         if(downloadButton_)
-            downloadButton_->set_interactable(
+        {
+            const bool downloadInteractable =
                 (thisDownload && download.Active() &&
                     download.state != DownloadState::Probing) ||
-                (!download.Active() && !url_.empty()));
+                (!download.Active() && !url_.empty());
+            downloadButton_->set_interactable(downloadInteractable);
+
+            // The native button prefab uses a slightly muted label even when
+            // enabled. Make an actionable download unambiguously bright while
+            // retaining a subdued label when there is no valid URL to use.
+            if(downloadButtonText_)
+                downloadButtonText_->set_color(
+                    downloadInteractable
+                        ? UnityEngine::Color::get_white()
+                        : UnityEngine::Color{0.62f, 0.62f, 0.62f, 1.0f});
+        }
         for(auto* row : videoOnlyRows_)
             if(row) row->SetActive(descriptor.CanPlay());
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
