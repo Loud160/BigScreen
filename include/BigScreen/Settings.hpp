@@ -28,6 +28,7 @@ namespace BigScreen {
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
+        bool GlassDesertOverrideEnabled() const { return glassDesertOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
         bool HideTrackRings() const { return hideTrackRings_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
@@ -47,6 +48,7 @@ namespace BigScreen {
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
         void SetEnvironmentOverrideEnabled(bool value);
+        void SetGlassDesertOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
         void SetHideTrackRings(bool value);
         void SetPlaybackFpsLimit(int value);
@@ -71,6 +73,7 @@ namespace BigScreen {
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool environmentOverrideEnabled_ = true;
+        bool glassDesertOverrideEnabled_ = false;
         bool environmentMotionEnabled_ = true;
         bool hideTrackRings_ = true;
         int playbackFpsLimit_ = 30;

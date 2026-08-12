@@ -157,6 +157,7 @@ namespace BigScreen {
         transparencyToggle_ = nullptr;
         lightShowToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
+        glassDesertOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
         hideTrackRingsToggle_ = nullptr;
         playbackFpsDropdown_ = nullptr;
@@ -497,6 +498,18 @@ namespace BigScreen {
             environmentOverrideToggle_,
             "When disabled, the map's intended background is used and may partially block the video.");
 
+        glassDesertOverrideToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Force Glass Desert",
+            settings.GlassDesertOverrideEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetGlassDesertOverrideEnabled(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            glassDesertOverrideToggle_,
+            "Loads Glass Desert for video gameplay so its open 360-style layout can be tested. This takes priority over the Big Mirror override and applies when the next map starts.");
+
         environmentMotionToggle_ = BSML::Lite::CreateToggle(
             playbackContainer,
             "Environment Rotation and Motion",
@@ -676,6 +689,9 @@ namespace BigScreen {
             environmentOverrideToggle_,
             settings.EnvironmentOverrideEnabled());
         SetToggleWithoutNotification(
+            glassDesertOverrideToggle_,
+            settings.GlassDesertOverrideEnabled());
+        SetToggleWithoutNotification(
             environmentMotionToggle_,
             settings.EnvironmentMotionEnabled());
         SetToggleWithoutNotification(
@@ -753,6 +769,8 @@ namespace BigScreen {
             lightShowToggle_->set_interactable(enabled);
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);
+        if(glassDesertOverrideToggle_)
+            glassDesertOverrideToggle_->set_interactable(enabled);
         if(environmentMotionToggle_)
             environmentMotionToggle_->set_interactable(enabled);
         if(hideTrackRingsToggle_)

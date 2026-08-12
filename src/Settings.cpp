@@ -129,6 +129,7 @@ namespace BigScreen {
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
+        glassDesertOverrideEnabled_ = ReadBool(document, "glassDesertOverrideEnabled", false);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
         hideTrackRings_ = ReadBool(document, "hideTrackRings", true);
         playbackFpsLimit_ = NormalizePlaybackFps(
@@ -161,6 +162,7 @@ namespace BigScreen {
         transparencyEnabled_ = false;
         mapLightShowEnabled_ = true;
         environmentOverrideEnabled_ = true;
+        glassDesertOverrideEnabled_ = false;
         environmentMotionEnabled_ = true;
         hideTrackRings_ = true;
         playbackFpsLimit_ = 30;
@@ -257,6 +259,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetGlassDesertOverrideEnabled(bool value)
+    {
+        glassDesertOverrideEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetEnvironmentMotionEnabled(bool value)
     {
         environmentMotionEnabled_ = value;
@@ -311,6 +319,7 @@ namespace BigScreen {
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
+        Replace(document, "glassDesertOverrideEnabled", glassDesertOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
         Replace(document, "hideTrackRings", hideTrackRings_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);

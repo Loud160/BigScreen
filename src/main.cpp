@@ -334,32 +334,41 @@ namespace {
             overrideEnvironmentSettings,
             environmentsListModel);
 
-        if(!BigScreen::Settings::Instance().EnvironmentOverrideEnabled())
+        const auto& settings = BigScreen::Settings::Instance();
+        if(!settings.GlassDesertOverrideEnabled() &&
+           !settings.EnvironmentOverrideEnabled())
         {
             if(playback.HasPreparedVideo())
-                PaperLogger.info("Big Mirror override disabled; using the map's intended environment");
+                PaperLogger.info("Environment overrides disabled; using the map's intended environment");
             return;
         }
 
         if(!playback.HasPreparedVideo() || !environmentsListModel)
             return;
 
-        // This preference is deliberately a force override, not permission to
-        // honor an environmentName from mapper metadata. Enabled always means
-        // Big Mirror for a playable video map; disabled leaves Beat Saber's
-        // normal map-selected environment untouched.
+        // Glass Desert is an explicit experiment and takes precedence while
+        // enabled. Turning it back off restores the independent Big Mirror
+        // preference without losing that user's normal override choice.
         constexpr auto bigMirrorName = "BigMirrorEnvironment";
+        constexpr auto glassDesertName = "GlassDesertEnvironment";
+        const auto* requestedName = settings.GlassDesertOverrideEnabled()
+            ? glassDesertName
+            : bigMirrorName;
         auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(
-            StringW(bigMirrorName));
-        if(environment && std::string(environment->get_serializedName()) == bigMirrorName)
+            StringW(requestedName));
+        if(environment && std::string(environment->get_serializedName()) == requestedName)
         {
             self->set_environmentInfo(environment);
             self->set_usingOverrideEnvironment(true);
-            PaperLogger.info("Forced Big Mirror environment for video gameplay");
+            PaperLogger.info(
+                "Forced {} environment for video gameplay",
+                settings.GlassDesertOverrideEnabled() ? "Glass Desert" : "Big Mirror");
         }
         else
         {
-            PaperLogger.error("Big Mirror environment is unavailable; keeping the map environment");
+            PaperLogger.error(
+                "Requested {} environment is unavailable; keeping the map environment",
+                requestedName);
         }
     }
 
