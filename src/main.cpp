@@ -20,7 +20,6 @@
 #include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
 #include "GlobalNamespace/LightColorBeatmapEventData.hpp"
-#include "GlobalNamespace/LightPairRotationEventEffect.hpp"
 #include "GlobalNamespace/LightWithIdMonoBehaviour.hpp"
 #include "GlobalNamespace/LightRotationBeatmapEventData.hpp"
 #include "GlobalNamespace/LightTranslationBeatmapEventData.hpp"
@@ -43,6 +42,7 @@
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Object.hpp"
+#include "UnityEngine/Transform.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
 #include "custom-types/shared/register.hpp"
@@ -119,30 +119,54 @@ namespace {
         PaperLogger.info("Hidden {} track-lane ring objects for video gameplay", hidden);
     }
 
-    void HideRotatingLaserRigs()
+    void HideSideBars()
     {
         int hidden = 0;
-        for(auto* effect : UnityEngine::Object::FindObjectsOfType<
-                GlobalNamespace::LightPairRotationEventEffect*>(false))
+        for(auto* transform : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Transform*>(false))
         {
-            if(!effect)
+            if(!transform)
                 continue;
-            auto gameObject = effect->get_gameObject();
-            if(!gameObject ||
-               std::string(gameObject->get_name()) != "RotatingLasersPair" ||
-               !gameObject->get_activeSelf())
+            auto gameObject = transform->get_gameObject();
+            if(!gameObject || !gameObject->get_activeSelf())
             {
                 continue;
             }
 
-            // Glass Desert groups the visible BaseL/BaseR towers, their fan of
-            // emitters, and the laser effects under this exact root. Removing
-            // the root avoids broad renderer filtering and leaves unrelated
-            // environment geometry and gameplay objects untouched.
+            // The visible rigid bars in Big Mirror belong to the two near-
+            // building roots. They are not the RotatingLasersPair effects the
+            // first implementation targeted; live logging proved those effects
+            // were deactivated while the bars remained visible. Match only the
+            // two exact scene roots so map lighting and unrelated scenery stay.
+            const std::string name(gameObject->get_name());
+            if(name != "NearBuildingLeft" && name != "NearBuildingRight")
+                continue;
+
             gameObject->SetActive(false);
             ++hidden;
         }
-        PaperLogger.info("Hidden {} rotating laser-rig pairs for video gameplay", hidden);
+        PaperLogger.info("Hidden {} Big Mirror side-bar structures for video gameplay", hidden);
+    }
+
+    void HideSpectrogramBars()
+    {
+        int hidden = 0;
+        for(auto* spectrogram : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::Spectrogram*>(false))
+        {
+            if(!spectrogram)
+                continue;
+            auto gameObject = spectrogram->get_gameObject();
+            if(!gameObject || !gameObject->get_activeSelf())
+                continue;
+
+            // A Spectrogram component drives the complete audio-reactive bar
+            // object. Deactivating its GameObject hides both the bar geometry
+            // and its animation, instead of merely freezing a visible frame.
+            gameObject->SetActive(false);
+            ++hidden;
+        }
+        PaperLogger.info("Hidden {} spectrogram-bar objects for video gameplay", hidden);
     }
 
     void DisableEnvironmentLighting()
@@ -211,6 +235,33 @@ namespace {
                !BigScreen::Settings::Instance().MapLightShowEnabled();
     }
 
+    bool ShouldSuppressBackWallLighting()
+    {
+        const auto& settings = BigScreen::Settings::Instance();
+        return settings.ModEnabled() &&
+               BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+               settings.MapLightShowEnabled() &&
+               settings.HideBackWallLights();
+    }
+
+    bool IsBackWallLightingEvent(GlobalNamespace::BeatmapEventData* eventData)
+    {
+        if(!eventData)
+            return false;
+
+        const auto basic =
+            il2cpp_utils::try_cast<GlobalNamespace::BasicBeatmapEventData>(eventData);
+        if(!basic)
+            return false;
+
+        // Big Mirror and Glass Desert both map legacy channels 0 and 4 to
+        // light IDs 1 and 5. Their track definition identifies these as the
+        // above-track and lane/under-track groups directly behind the screen.
+        // Preserve every other event so ring and side lighting still plays.
+        const int eventType = (*basic)->basicBeatmapEventType.value__;
+        return eventType == 0 || eventType == 4;
+    }
+
     bool IsLightingEvent(GlobalNamespace::BeatmapEventData* eventData)
     {
         if(!eventData)
@@ -248,6 +299,8 @@ namespace {
         // runs per map event, not per rendered frame, and disabling the effects
         // therefore reduces rather than increases the level's rendering work.
         if(ShouldSuppressMapLighting() && IsLightingEvent(eventData))
+            return;
+        if(ShouldSuppressBackWallLighting() && IsBackWallLightingEvent(eventData))
             return;
         BeatmapCallbacksController_TriggerBeatmapEvent(self, eventData);
     }
@@ -479,7 +532,12 @@ namespace {
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
            BigScreen::Settings::Instance().HideSideBars())
         {
-            HideRotatingLaserRigs();
+            HideSideBars();
+        }
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           BigScreen::Settings::Instance().HideSpectrogramBars())
+        {
+            HideSpectrogramBars();
         }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }

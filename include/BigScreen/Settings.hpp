@@ -27,11 +27,13 @@ namespace BigScreen {
         float ScreenCurvature() const { return screenCurvature_; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
+        bool HideBackWallLights() const { return hideBackWallLights_; }
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
         bool GlassDesertOverrideEnabled() const { return glassDesertOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
         bool HideTrackRings() const { return hideTrackRings_; }
         bool HideSideBars() const { return hideSideBars_; }
+        bool HideSpectrogramBars() const { return hideSpectrogramBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
@@ -48,11 +50,13 @@ namespace BigScreen {
         void SetScreenCurvature(float value);
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
+        void SetHideBackWallLights(bool value);
         void SetEnvironmentOverrideEnabled(bool value);
         void SetGlassDesertOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
         void SetHideTrackRings(bool value);
         void SetHideSideBars(bool value);
+        void SetHideSpectrogramBars(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
         void SetNightlyDownloaderUpdates(bool value);
@@ -74,11 +78,13 @@ namespace BigScreen {
         float screenCurvature_ = 0.35f;
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
+        bool hideBackWallLights_ = true;
         bool environmentOverrideEnabled_ = true;
         bool glassDesertOverrideEnabled_ = false;
         bool environmentMotionEnabled_ = true;
         bool hideTrackRings_ = true;
         bool hideSideBars_ = true;
+        bool hideSpectrogramBars_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
         bool nightlyDownloaderUpdates_ = false;

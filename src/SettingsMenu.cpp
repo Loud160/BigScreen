@@ -156,11 +156,13 @@ namespace BigScreen {
         curvatureSlider_ = nullptr;
         transparencyToggle_ = nullptr;
         lightShowToggle_ = nullptr;
+        hideBackWallLightsToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
         glassDesertOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
         hideTrackRingsToggle_ = nullptr;
         hideSideBarsToggle_ = nullptr;
+        hideSpectrogramBarsToggle_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
@@ -482,10 +484,23 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetMapLightShowEnabled(enabled);
+                SettingsMenu::Instance().RefreshControls();
             });
         BSML::Lite::AddHoverHint(
             lightShowToggle_,
             "Keeps the selected map's lighting events active while its video plays.");
+
+        hideBackWallLightsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Back Wall Lights",
+            settings.HideBackWallLights(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideBackWallLights(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideBackWallLightsToggle_,
+            "Blocks legacy lighting channels 0 and 4, which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
             playbackContainer,
@@ -545,7 +560,19 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             hideSideBarsToggle_,
-            "Hides the paired side structures and their attached effects when they would obstruct video gameplay. Takes effect when the next map starts.");
+            "Hides Big Mirror's paired near-building structures when they obstruct the sides of the video. Takes effect when the next map starts.");
+
+        hideSpectrogramBarsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Spectrogram Bars",
+            settings.HideSpectrogramBars(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideSpectrogramBars(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideSpectrogramBarsToggle_,
+            "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
 
         playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
             playbackContainer,
@@ -699,6 +726,9 @@ namespace BigScreen {
         SetToggleWithoutNotification(transparencyToggle_, settings.TransparencyEnabled());
         SetToggleWithoutNotification(lightShowToggle_, settings.MapLightShowEnabled());
         SetToggleWithoutNotification(
+            hideBackWallLightsToggle_,
+            settings.HideBackWallLights());
+        SetToggleWithoutNotification(
             environmentOverrideToggle_,
             settings.EnvironmentOverrideEnabled());
         SetToggleWithoutNotification(
@@ -713,6 +743,9 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             hideSideBarsToggle_,
             settings.HideSideBars());
+        SetToggleWithoutNotification(
+            hideSpectrogramBarsToggle_,
+            settings.HideSpectrogramBars());
         SetToggleWithoutNotification(
             nightlyUpdatesToggle_,
             settings.NightlyDownloaderUpdates());
@@ -783,6 +816,9 @@ namespace BigScreen {
             transparencyToggle_->set_interactable(enabled);
         if(lightShowToggle_)
             lightShowToggle_->set_interactable(enabled);
+        if(hideBackWallLightsToggle_)
+            hideBackWallLightsToggle_->set_interactable(
+                enabled && settings.MapLightShowEnabled());
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);
         if(glassDesertOverrideToggle_)
@@ -793,6 +829,8 @@ namespace BigScreen {
             hideTrackRingsToggle_->set_interactable(enabled);
         if(hideSideBarsToggle_)
             hideSideBarsToggle_->set_interactable(enabled);
+        if(hideSpectrogramBarsToggle_)
+            hideSpectrogramBarsToggle_->set_interactable(enabled);
         if(playbackFpsDropdown_)
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)

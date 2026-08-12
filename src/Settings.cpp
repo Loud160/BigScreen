@@ -128,6 +128,7 @@ namespace BigScreen {
             MaximumScreenCurvature);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
+        hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
         glassDesertOverrideEnabled_ = ReadBool(document, "glassDesertOverrideEnabled", false);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
@@ -136,6 +137,7 @@ namespace BigScreen {
             document,
             "hideSideBars",
             ReadBool(document, "hideLaserRigs", true));
+        hideSpectrogramBars_ = ReadBool(document, "hideSpectrogramBars", true);
         playbackFpsLimit_ = NormalizePlaybackFps(
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
@@ -165,11 +167,13 @@ namespace BigScreen {
         screenCurvature_ = 0.35f;
         transparencyEnabled_ = false;
         mapLightShowEnabled_ = true;
+        hideBackWallLights_ = true;
         environmentOverrideEnabled_ = true;
         glassDesertOverrideEnabled_ = false;
         environmentMotionEnabled_ = true;
         hideTrackRings_ = true;
         hideSideBars_ = true;
+        hideSpectrogramBars_ = true;
         playbackFpsLimit_ = 30;
         resolutionHeight_ = 720;
         nightlyDownloaderUpdates_ = false;
@@ -258,6 +262,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetHideBackWallLights(bool value)
+    {
+        hideBackWallLights_ = value;
+        Save();
+    }
+
     void Settings::SetEnvironmentOverrideEnabled(bool value)
     {
         environmentOverrideEnabled_ = value;
@@ -285,6 +295,12 @@ namespace BigScreen {
     void Settings::SetHideSideBars(bool value)
     {
         hideSideBars_ = value;
+        Save();
+    }
+
+    void Settings::SetHideSpectrogramBars(bool value)
+    {
+        hideSpectrogramBars_ = value;
         Save();
     }
 
@@ -329,12 +345,14 @@ namespace BigScreen {
         Replace(document, "screenCurvature", screenCurvature_);
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
+        Replace(document, "hideBackWallLights", hideBackWallLights_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "glassDesertOverrideEnabled", glassDesertOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
         Replace(document, "hideTrackRings", hideTrackRings_);
         document.RemoveMember("hideLaserRigs");
         Replace(document, "hideSideBars", hideSideBars_);
+        Replace(document, "hideSpectrogramBars", hideSpectrogramBars_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
