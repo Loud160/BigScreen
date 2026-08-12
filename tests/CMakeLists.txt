@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(BigScreenCoreTests LANGUAGES CXX)
+enable_testing()
+add_executable(bigscreen-core-tests CoreLogicTests.cpp)
+target_compile_features(bigscreen-core-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)

@@ -105,35 +105,41 @@ namespace BigScreen {
             "videoEnabled",
             ReadBool(document, "videoEnabledByDefault", true));
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
-        screenDistanceOffset_ = std::clamp(
-            ReadFloat(document, "screenDistanceOffset", 0.0f),
-            -40.0f,
-            40.0f);
-        screenHorizontalOffset_ = std::clamp(
-            ReadFloat(document, "screenHorizontalOffset", 0.0f),
-            -40.0f,
-            40.0f);
-        screenVerticalOffset_ = std::clamp(
-            ReadFloat(document, "screenVerticalOffset", 0.0f),
-            -40.0f,
-            40.0f);
-        screenTiltOffset_ = std::clamp(
-            ReadFloat(document, "screenTiltOffset", 0.0f),
-            -30.0f,
-            30.0f);
-        screenScale_ = std::clamp(
-            ReadFloat(document, "screenScale", 1.0f),
-            0.5f,
-            2.5f);
-        curvedScreenEnabled_ = ReadBool(document, "curvedScreenEnabled", false);
-        screenCurvature_ = std::clamp(
-            ReadFloat(document, "screenCurvature", 0.35f),
-            -MaximumScreenCurvature,
-            MaximumScreenCurvature);
-        maintainCurveAspectRatio_ = ReadBool(
-            document,
-            "maintainCurveAspectRatio",
-            false);
+        // Profile 1 migrates the original single-layout keys. Profiles 2 and
+        // 3 begin at documented defaults until the user changes them.
+        for(int index = 0; index < static_cast<int>(screenLayouts_.size()); ++index)
+        {
+            const auto prefix = "screenLayout" + std::to_string(index + 1);
+            auto& layout = screenLayouts_[index];
+            const bool legacy = index == 0;
+            layout.distanceOffset = std::clamp(ReadFloat(
+                document, (prefix + "Distance").c_str(),
+                legacy ? ReadFloat(document, "screenDistanceOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+            layout.horizontalOffset = std::clamp(ReadFloat(
+                document, (prefix + "Horizontal").c_str(),
+                legacy ? ReadFloat(document, "screenHorizontalOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+            layout.verticalOffset = std::clamp(ReadFloat(
+                document, (prefix + "Vertical").c_str(),
+                legacy ? ReadFloat(document, "screenVerticalOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+            layout.tiltOffset = std::clamp(ReadFloat(
+                document, (prefix + "Tilt").c_str(),
+                legacy ? ReadFloat(document, "screenTiltOffset", 0.0f) : 0.0f), -30.0f, 30.0f);
+            layout.scale = std::clamp(ReadFloat(
+                document, (prefix + "Scale").c_str(),
+                legacy ? ReadFloat(document, "screenScale", 1.0f) : 1.0f), 0.5f, 2.5f);
+            layout.curved = ReadBool(
+                document, (prefix + "Curved").c_str(),
+                legacy ? ReadBool(document, "curvedScreenEnabled", false) : false);
+            layout.curvature = std::clamp(ReadFloat(
+                document, (prefix + "Curvature").c_str(),
+                legacy ? ReadFloat(document, "screenCurvature", 0.35f) : 0.35f),
+                -MaximumScreenCurvature, MaximumScreenCurvature);
+            layout.maintainAspectRatio = ReadBool(
+                document, (prefix + "MaintainAspect").c_str(),
+                legacy ? ReadBool(document, "maintainCurveAspectRatio", false) : false);
+        }
+        activeScreenLayout_ = std::clamp(
+            ReadInt(document, "activeScreenLayout", 0), 0, 2);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
@@ -158,6 +164,13 @@ namespace BigScreen {
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
+        automaticPerformanceEnabled_ = ReadBool(
+            document, "automaticPerformanceEnabled", false);
+        const auto threshold = ReadInt(document, "automaticPerformanceThreshold", 10);
+        automaticPerformanceThreshold_ =
+            threshold == 5 || threshold == 10 || threshold == 20 ? threshold : 10;
+        performanceDiagnosticsEnabled_ = ReadBool(
+            document, "performanceDiagnosticsEnabled", false);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
 
         // Preview decoding is an avoidable performance cost when videos are
@@ -208,39 +221,45 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetActiveScreenLayout(int value)
+    {
+        activeScreenLayout_ = std::clamp(value, 0, 2);
+        Save();
+    }
+
     void Settings::SetScreenDistanceOffset(float value)
     {
-        screenDistanceOffset_ = std::clamp(value, -40.0f, 40.0f);
+        screenLayouts_[activeScreenLayout_].distanceOffset = std::clamp(value, -40.0f, 40.0f);
         Save();
     }
 
     void Settings::SetScreenHorizontalOffset(float value)
     {
-        screenHorizontalOffset_ = std::clamp(value, -40.0f, 40.0f);
+        screenLayouts_[activeScreenLayout_].horizontalOffset = std::clamp(value, -40.0f, 40.0f);
         Save();
     }
 
     void Settings::SetScreenVerticalOffset(float value)
     {
-        screenVerticalOffset_ = std::clamp(value, -40.0f, 40.0f);
+        screenLayouts_[activeScreenLayout_].verticalOffset = std::clamp(value, -40.0f, 40.0f);
         Save();
     }
 
     void Settings::SetScreenTiltOffset(float value)
     {
-        screenTiltOffset_ = std::clamp(value, -30.0f, 30.0f);
+        screenLayouts_[activeScreenLayout_].tiltOffset = std::clamp(value, -30.0f, 30.0f);
         Save();
     }
 
     void Settings::SetScreenScale(float value)
     {
-        screenScale_ = std::clamp(value, 0.5f, 2.5f);
+        screenLayouts_[activeScreenLayout_].scale = std::clamp(value, 0.5f, 2.5f);
         Save();
     }
 
     void Settings::SetCurvedScreenEnabled(bool value)
     {
-        curvedScreenEnabled_ = value;
+        screenLayouts_[activeScreenLayout_].curved = value;
         Save();
     }
 
@@ -249,7 +268,7 @@ namespace BigScreen {
         // Preserve the original response through +/-1 while permitting a
         // strong wrap without the impractical geometry produced by the old
         // experimental +/-25 limit.
-        screenCurvature_ = std::clamp(
+        screenLayouts_[activeScreenLayout_].curvature = std::clamp(
             value,
             -MaximumScreenCurvature,
             MaximumScreenCurvature);
@@ -258,7 +277,7 @@ namespace BigScreen {
 
     void Settings::SetMaintainCurveAspectRatio(bool value)
     {
-        maintainCurveAspectRatio_ = value;
+        screenLayouts_[activeScreenLayout_].maintainAspectRatio = value;
         Save();
     }
 
@@ -340,6 +359,25 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetAutomaticPerformanceEnabled(bool value)
+    {
+        automaticPerformanceEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceThreshold(int value)
+    {
+        automaticPerformanceThreshold_ =
+            value == 5 || value == 10 || value == 20 ? value : 10;
+        Save();
+    }
+
+    void Settings::SetPerformanceDiagnosticsEnabled(bool value)
+    {
+        performanceDiagnosticsEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetNightlyDownloaderUpdates(bool value)
     {
         nightlyDownloaderUpdates_ = value;
@@ -361,14 +399,25 @@ namespace BigScreen {
         document.RemoveMember("menuScreenPreviewEnabled");
         Replace(document, "videoEnabled", videoEnabled_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
-        Replace(document, "screenDistanceOffset", screenDistanceOffset_);
-        Replace(document, "screenHorizontalOffset", screenHorizontalOffset_);
-        Replace(document, "screenVerticalOffset", screenVerticalOffset_);
-        Replace(document, "screenTiltOffset", screenTiltOffset_);
-        Replace(document, "screenScale", screenScale_);
-        Replace(document, "curvedScreenEnabled", curvedScreenEnabled_);
-        Replace(document, "screenCurvature", screenCurvature_);
-        Replace(document, "maintainCurveAspectRatio", maintainCurveAspectRatio_);
+        for(const auto* oldKey : {
+            "screenDistanceOffset", "screenHorizontalOffset", "screenVerticalOffset",
+            "screenTiltOffset", "screenScale", "curvedScreenEnabled",
+            "screenCurvature", "maintainCurveAspectRatio"})
+            document.RemoveMember(oldKey);
+        Replace(document, "activeScreenLayout", activeScreenLayout_);
+        for(int index = 0; index < static_cast<int>(screenLayouts_.size()); ++index)
+        {
+            const auto prefix = "screenLayout" + std::to_string(index + 1);
+            const auto& layout = screenLayouts_[index];
+            Replace(document, (prefix + "Distance").c_str(), layout.distanceOffset);
+            Replace(document, (prefix + "Horizontal").c_str(), layout.horizontalOffset);
+            Replace(document, (prefix + "Vertical").c_str(), layout.verticalOffset);
+            Replace(document, (prefix + "Tilt").c_str(), layout.tiltOffset);
+            Replace(document, (prefix + "Scale").c_str(), layout.scale);
+            Replace(document, (prefix + "Curved").c_str(), layout.curved);
+            Replace(document, (prefix + "Curvature").c_str(), layout.curvature);
+            Replace(document, (prefix + "MaintainAspect").c_str(), layout.maintainAspectRatio);
+        }
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);
@@ -384,6 +433,9 @@ namespace BigScreen {
         Replace(document, "hideSpectrogramBars", hideSpectrogramBars_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
+        Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
+        Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
+        Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         configuration.Write();
     }

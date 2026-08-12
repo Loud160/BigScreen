@@ -1,12 +1,15 @@
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
 #include <sstream>
 #include <stdexcept>
+#include <chrono>
 
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "rapidjson/document.h"
@@ -62,7 +65,9 @@ namespace BigScreen {
             video.fileName = StringOr(value, "fileName");
             video.title = StringOr(value, "title");
             video.codec = StringOr(value, "codec");
-            video.mapLocal = StringOr(value, "sourceType") == "mapFile";
+            const auto sourceType = StringOr(value, "sourceType");
+            video.mapLocal = sourceType == "mapFile";
+            video.importFile = sourceType == "importFile";
             video.offsetSeconds = NumberOr(value, "offsetSeconds", 0.0);
             video.playbackRate = std::clamp(
                 NumberOr(value, "playbackRate", 1.0),
@@ -111,7 +116,9 @@ namespace BigScreen {
             addString("fileName", video.fileName);
             addString("title", video.title);
             addString("codec", video.codec);
-            addString("sourceType", video.mapLocal ? "mapFile" : "managedFile");
+            addString("sourceType", video.mapLocal
+                ? "mapFile"
+                : (video.importFile ? "importFile" : "managedFile"));
             object.AddMember("offsetSeconds", video.offsetSeconds, allocator);
             object.AddMember("playbackRate", video.playbackRate, allocator);
             object.AddMember("fitToSong", video.fitToSong, allocator);
@@ -160,6 +167,7 @@ namespace BigScreen {
 
         std::optional<std::filesystem::path> ResolveStoredFile(
             const std::filesystem::path& videoDirectory,
+            const std::filesystem::path& importDirectory,
             const std::filesystem::path& levelDirectory,
             const std::optional<StoredVideo>& video)
         {
@@ -170,7 +178,9 @@ namespace BigScreen {
             if(relative.is_absolute() || relative.filename() != relative)
                 return std::nullopt;
 
-            const auto parent = video->mapLocal ? levelDirectory : videoDirectory;
+            const auto parent = video->mapLocal
+                ? levelDirectory
+                : (video->importFile ? importDirectory : videoDirectory);
             if(parent.empty())
                 return std::nullopt;
             const auto resolved = (parent / relative).lexically_normal();
@@ -284,6 +294,39 @@ namespace BigScreen {
             closeFormat();
             return result;
         }
+
+        /// Enumerates MP4 candidates without hiding invalid files. Showing a
+        /// red HELP row is more useful than silently ignoring a mistyped or
+        /// unsupported file that the user deliberately copied to the headset.
+        std::vector<LocalVideoFile> DiscoverVideosInDirectory(
+            const std::filesystem::path& directory)
+        {
+            std::vector<LocalVideoFile> files;
+            std::error_code iteratorError;
+            for(std::filesystem::directory_iterator iterator(directory, iteratorError), end;
+                !iteratorError && iterator != end; iterator.increment(iteratorError))
+            {
+                std::error_code typeError;
+                if(!iterator->is_regular_file(typeError) || typeError)
+                    continue;
+                auto extension = iterator->path().extension().string();
+                std::transform(extension.begin(), extension.end(), extension.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                if(extension == ".mp4")
+                    files.push_back(ProbeLocalVideo(iterator->path()));
+            }
+            std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
+            {
+                std::string leftName = left.fileName;
+                std::string rightName = right.fileName;
+                std::transform(leftName.begin(), leftName.end(), leftName.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                std::transform(rightName.begin(), rightName.end(), rightName.begin(),
+                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                return leftName < rightName;
+            });
+            return files;
+        }
     }
 
     VideoLibrary& VideoLibrary::Instance()
@@ -299,10 +342,12 @@ namespace BigScreen {
         videoPath_ = rootPath_ / "Videos";
         thumbnailPath_ = rootPath_ / "Thumbnails";
         runtimePath_ = rootPath_ / "Runtime";
+        importPath_ = rootPath_ / "Video Import";
         manifestPath_ = rootPath_ / "library.json";
         std::filesystem::create_directories(videoPath_);
         std::filesystem::create_directories(thumbnailPath_);
         std::filesystem::create_directories(runtimePath_);
+        std::filesystem::create_directories(importPath_);
         LoadLocked();
         PaperLogger.info(
             "Video library ready at '{}' with {} saved level entries",
@@ -345,15 +390,17 @@ namespace BigScreen {
         const auto found = FindRecord(records_, descriptor.levelId);
         const LevelVideoRecords* saved = found == records_.end() ? nullptr : &found->second;
         const auto userPath = saved
-            ? ResolveStoredFile(videoPath_, levelDirectory, saved->user)
+            ? ResolveStoredFile(videoPath_, importPath_, levelDirectory, saved->user)
             : std::nullopt;
         const auto mapperPath = saved
-            ? ResolveStoredFile(videoPath_, levelDirectory, saved->mapper)
+            ? ResolveStoredFile(videoPath_, importPath_, levelDirectory, saved->mapper)
             : std::nullopt;
         descriptor.hasUserOverride = userPath.has_value();
         descriptor.hasMapperDownload = mapperPath.has_value();
         descriptor.userOverrideIsMapLocal =
             descriptor.hasUserOverride && saved->user->mapLocal;
+        descriptor.userOverrideIsImported =
+            descriptor.hasUserOverride && saved->user->importFile;
 
         MapVideoConfig effective = descriptor.mapperDefinition.value_or(MapVideoConfig{});
         if(descriptor.hasUserOverride)
@@ -373,7 +420,7 @@ namespace BigScreen {
             else
                 descriptor.downloadUrl = record.sourceUrl;
             descriptor.downloadOrigin = VideoOrigin::User;
-            if(record.mapLocal)
+            if(record.mapLocal || record.importFile)
                 descriptor.activeMapFileName = record.fileName;
             else
                 descriptor.thumbnailPath = AllocateThumbnailPath(
@@ -471,7 +518,8 @@ namespace BigScreen {
         const auto previous = target;
         target = std::move(video);
         SaveLocked();
-        if(previous && !previous->mapLocal && previous->fileName != target->fileName)
+        if(previous && !previous->mapLocal && !previous->importFile &&
+           previous->fileName != target->fileName)
             std::filesystem::remove(videoPath_ / previous->fileName);
     }
 
@@ -486,31 +534,18 @@ namespace BigScreen {
         if(!custom)
             return files;
 
-        const std::filesystem::path directory(custom->get_customLevelPath());
-        std::error_code iteratorError;
-        for(std::filesystem::directory_iterator iterator(directory, iteratorError), end;
-            !iteratorError && iterator != end; iterator.increment(iteratorError))
+        return DiscoverVideosInDirectory(
+            std::filesystem::path(custom->get_customLevelPath()));
+    }
+
+    std::vector<LocalVideoFile> VideoLibrary::DiscoverImportedVideos() const
+    {
+        std::filesystem::path directory;
         {
-            std::error_code typeError;
-            if(!iterator->is_regular_file(typeError) || typeError)
-                continue;
-            auto extension = iterator->path().extension().string();
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-            if(extension == ".mp4")
-                files.push_back(ProbeLocalVideo(iterator->path()));
+            std::scoped_lock lock(mutex_);
+            directory = importPath_;
         }
-        std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
-        {
-            std::string leftName = left.fileName;
-            std::string rightName = right.fileName;
-            std::transform(leftName.begin(), leftName.end(), leftName.begin(),
-                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-            std::transform(rightName.begin(), rightName.end(), rightName.begin(),
-                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-            return leftName < rightName;
-        });
-        return files;
+        return DiscoverVideosInDirectory(directory);
     }
 
     bool VideoLibrary::SetLocalVideoOverride(
@@ -586,7 +621,7 @@ namespace BigScreen {
         // A map-local file is never owned or deleted by Big Screen. A managed
         // YouTube override being explicitly replaced is removed to avoid an
         // inaccessible orphan consuming the headset's storage.
-        if(previous && !previous->mapLocal)
+        if(previous && !previous->mapLocal && !previous->importFile)
             std::filesystem::remove(videoPath_ / previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -597,13 +632,89 @@ namespace BigScreen {
         return true;
     }
 
+    bool VideoLibrary::SetImportedVideoOverride(
+        GlobalNamespace::BeatmapLevel* level,
+        const std::string& fileName,
+        std::string& error)
+    {
+        error.clear();
+        if(!level || !level->levelID)
+        {
+            error = "Select a song before assigning a video from the import folder.";
+            return false;
+        }
+
+        const std::filesystem::path relative(fileName);
+        if(relative.empty() || relative.is_absolute() || relative.filename() != relative)
+        {
+            error = "The imported video filename is invalid.";
+            return false;
+        }
+        std::filesystem::path directory;
+        {
+            std::scoped_lock lock(mutex_);
+            directory = importPath_;
+        }
+        const auto path = (directory / relative).lexically_normal();
+        if(!IsPathInside(path, directory) || !std::filesystem::is_regular_file(path))
+        {
+            error = "The selected MP4 is no longer in Big Screen's Video Import folder.";
+            return false;
+        }
+
+        const auto probe = ProbeLocalVideo(path);
+        if(!probe.compatible)
+        {
+            error = probe.problem.empty()
+                ? "This imported MP4 is not compatible with Big Screen."
+                : probe.problem;
+            return false;
+        }
+
+        const std::string levelId(level->levelID);
+        StoredVideo video;
+        video.fileName = probe.fileName;
+        video.title = probe.fileName;
+        video.codec = probe.codec;
+        video.importFile = true;
+        video.durationSeconds = probe.durationSeconds;
+        video.bytes = probe.bytes;
+        video.width = probe.width;
+        video.height = probe.height;
+
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
+        found->second.songName = level->songName
+            ? std::string(level->songName) : "Unknown Song";
+        found->second.songAuthor = level->songAuthorName
+            ? std::string(level->songAuthorName) : std::string{};
+        const auto previous = found->second.user;
+        found->second.user = std::move(video);
+        SaveLocked();
+
+        // Import files remain user-owned. Only a replaced Big Screen download
+        // is deleted; another import or map-folder file is merely unregistered.
+        if(previous && !previous->mapLocal && !previous->importFile)
+            std::filesystem::remove(videoPath_ / previous->fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
+        PaperLogger.info("Assigned imported video '{}' to '{}'", probe.fileName, levelId);
+        return true;
+    }
+
     bool VideoLibrary::RemoveUserOverride(const std::string& levelId, bool deleteFile)
     {
         std::scoped_lock lock(mutex_);
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.user)
             return false;
-        if(deleteFile && !found->second.user->mapLocal)
+        if(deleteFile && !found->second.user->mapLocal &&
+           !found->second.user->importFile)
             std::filesystem::remove(videoPath_ / found->second.user->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -702,7 +813,7 @@ namespace BigScreen {
         std::string countedFile;
         const auto addManagedFile = [&](const std::optional<StoredVideo>& video)
         {
-            if(!video || video->mapLocal || video->fileName.empty() ||
+            if(!video || video->mapLocal || video->importFile || video->fileName.empty() ||
                video->fileName == countedFile)
                 return;
             const auto path = videoPath_ / video->fileName;
@@ -741,12 +852,14 @@ namespace BigScreen {
         return error ? 0 : info.available;
     }
 
-    void VideoLibrary::LoadLocked()
+    bool VideoLibrary::TryLoadManifestLocked(
+        const std::filesystem::path& path,
+        std::vector<std::pair<std::string, LevelVideoRecords>>& output) const
     {
-        records_.clear();
-        std::ifstream stream(manifestPath_, std::ios::binary);
+        output.clear();
+        std::ifstream stream(path, std::ios::binary);
         if(!stream)
-            return;
+            return false;
         const std::string json{
             std::istreambuf_iterator<char>(stream),
             std::istreambuf_iterator<char>()};
@@ -754,10 +867,7 @@ namespace BigScreen {
         document.Parse(json.data(), json.size());
         const auto* levels = Member(document, "levels");
         if(document.HasParseError() || !levels || !levels->IsObject())
-        {
-            PaperLogger.error("Ignoring invalid video library manifest '{}'", manifestPath_.string());
-            return;
-        }
+            return false;
 
         for(auto member = levels->MemberBegin(); member != levels->MemberEnd(); ++member)
         {
@@ -773,10 +883,68 @@ namespace BigScreen {
             if(const auto* timing = Member(member->value, "mapperTiming");
                timing && timing->IsObject())
                 level.mapperTiming = ParseStoredTiming(*timing);
-            records_.emplace_back(
+            output.emplace_back(
                 std::string(member->name.GetString(), member->name.GetStringLength()),
                 std::move(level));
         }
+        return true;
+    }
+
+    void VideoLibrary::LoadLocked()
+    {
+        records_.clear();
+        recoveryScanNeeded_ = false;
+        if(!std::filesystem::exists(manifestPath_))
+            return;
+
+        if(TryLoadManifestLocked(manifestPath_, records_))
+            return;
+
+        // Preserve the corrupt bytes for troubleshooting before attempting a
+        // backup. A timestamped quarantine is never used as an automatic
+        // source, so repeated starts cannot cycle damaged data back into use.
+        const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto quarantine = manifestPath_.string() +
+            ".corrupt-" + std::to_string(stamp);
+        std::error_code error;
+        std::filesystem::rename(manifestPath_, quarantine, error);
+        if(error)
+            PaperLogger.error("Could not quarantine invalid library manifest: {}", error.message());
+
+        const std::array backups{
+            std::filesystem::path(manifestPath_.string() + ".backup1"),
+            std::filesystem::path(manifestPath_.string() + ".backup2")};
+        for(std::size_t index = 0; index < backups.size(); ++index)
+        {
+            std::vector<std::pair<std::string, LevelVideoRecords>> restored;
+            if(!TryLoadManifestLocked(backups[index], restored))
+                continue;
+            records_ = std::move(restored);
+            const auto temporary = manifestPath_.string() + ".restore.tmp";
+            error.clear();
+            std::filesystem::copy_file(
+                backups[index], temporary,
+                std::filesystem::copy_options::overwrite_existing, error);
+            if(!error)
+            {
+                std::filesystem::remove(manifestPath_, error);
+                error.clear();
+                std::filesystem::rename(temporary, manifestPath_, error);
+            }
+            recoveryNotice_ =
+                "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved.";
+            PaperLogger.warn("Recovered video library from backup {}", index + 1);
+            return;
+        }
+
+        // SongCore may not have finished loading when the mod initializes.
+        // Defer filename-to-level reconstruction until the library catalog has
+        // real BeatmapLevel objects and stable IDs available.
+        recoveryScanNeeded_ = true;
+        recoveryNotice_ =
+            "Big Screen could not read the video library or either backup. It will rebuild every recoverable downloaded-video assignment after the song library finishes loading.";
+        PaperLogger.error("Video library and both known-good backups are invalid");
     }
 
     void VideoLibrary::SaveLocked() const
@@ -833,6 +1001,14 @@ namespace BigScreen {
         rapidjson::StringBuffer buffer;
         rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
         document.Accept(writer);
+        // Validate the complete serialized document before it can replace any
+        // known-good file. This catches programming errors as well as partial
+        // in-memory serialization failures.
+        rapidjson::Document validation;
+        validation.Parse(buffer.GetString(), buffer.GetSize());
+        if(validation.HasParseError())
+            throw std::runtime_error("Generated video library JSON was invalid");
+
         const auto temporary = manifestPath_.string() + ".tmp";
         {
             std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
@@ -841,21 +1017,93 @@ namespace BigScreen {
             if(!stream)
                 throw std::runtime_error("Could not write video library manifest");
         }
-        std::filesystem::rename(temporary, manifestPath_);
+        const auto backup1 = std::filesystem::path(manifestPath_.string() + ".backup1");
+        const auto backup2 = std::filesystem::path(manifestPath_.string() + ".backup2");
+        std::error_code error;
+        std::vector<std::pair<std::string, LevelVideoRecords>> knownGood;
+        if(TryLoadManifestLocked(backup1, knownGood))
+            std::filesystem::copy_file(
+                backup1, backup2,
+                std::filesystem::copy_options::overwrite_existing, error);
+        error.clear();
+        if(TryLoadManifestLocked(manifestPath_, knownGood))
+            std::filesystem::copy_file(
+                manifestPath_, backup1,
+                std::filesystem::copy_options::overwrite_existing, error);
+
+        // Android/libc rename does not consistently replace an existing file,
+        // so remove only the exact manifest path after the fully flushed temp
+        // and backups exist. A crash at this boundary still leaves two copies.
+        error.clear();
+        std::filesystem::remove(manifestPath_, error);
+        error.clear();
+        std::filesystem::rename(temporary, manifestPath_, error);
+        if(error)
+            throw std::runtime_error(
+                "Could not replace video library manifest: " + error.message());
+    }
+
+    std::optional<std::string> VideoLibrary::TakeRecoveryNotice()
+    {
+        std::scoped_lock lock(mutex_);
+        auto notice = recoveryNotice_;
+        recoveryNotice_.reset();
+        return notice;
+    }
+
+    void VideoLibrary::RecoverManagedFiles(
+        const std::vector<GlobalNamespace::BeatmapLevel*>& installedLevels)
+    {
+        std::scoped_lock lock(mutex_);
+        if(!recoveryScanNeeded_)
+            return;
+
+        std::size_t recovered = 0;
+        for(auto* level : installedLevels)
+        {
+            if(!level || !level->levelID)
+                continue;
+            const std::string levelId(level->levelID);
+            LevelVideoRecords record;
+            record.songName = level->songName ? std::string(level->songName) : "Unknown Song";
+            record.songAuthor = level->songAuthorName
+                ? std::string(level->songAuthorName) : std::string{};
+            const auto key = StableKey(levelId);
+            const auto recoverOne = [&](const char* suffix) -> std::optional<StoredVideo>
+            {
+                const auto path = videoPath_ / (key + suffix);
+                if(!std::filesystem::is_regular_file(path))
+                    return std::nullopt;
+                const auto probe = ProbeLocalVideo(path);
+                if(!probe.compatible)
+                    return std::nullopt;
+                StoredVideo video;
+                video.fileName = probe.fileName;
+                video.title = probe.fileName;
+                video.codec = probe.codec;
+                video.durationSeconds = probe.durationSeconds;
+                video.bytes = probe.bytes;
+                video.width = probe.width;
+                video.height = probe.height;
+                return video;
+            };
+            record.user = recoverOne("-user.mp4");
+            record.mapper = recoverOne("-mapper.mp4");
+            if(!record.user && !record.mapper)
+                continue;
+            records_.emplace_back(levelId, std::move(record));
+            ++recovered;
+        }
+        recoveryScanNeeded_ = false;
+        SaveLocked();
+        recoveryNotice_ = "Big Screen rebuilt " + std::to_string(recovered) +
+            " downloaded-video assignment" + (recovered == 1 ? "." : "s.") +
+            " Timing was reset to safe defaults because the damaged manifest could not be read.";
+        PaperLogger.warn("Rebuilt {} video library entries from managed files", recovered);
     }
 
     std::string VideoLibrary::StableKey(const std::string& levelId)
     {
-        // FNV-1a is used only to form a short filesystem-safe key; the complete
-        // level ID remains in the manifest and is the authority for lookup.
-        std::uint64_t hash = 14695981039346656037ull;
-        for(const unsigned char value : levelId)
-        {
-            hash ^= value;
-            hash *= 1099511628211ull;
-        }
-        std::ostringstream text;
-        text << std::hex << std::setw(16) << std::setfill('0') << hash;
-        return text.str();
+        return CoreLogic::StableVideoKey(levelId);
     }
 }

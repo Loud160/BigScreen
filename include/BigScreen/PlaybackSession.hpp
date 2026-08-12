@@ -14,6 +14,19 @@ namespace GlobalNamespace {
 }
 
 namespace BigScreen {
+    struct PlaybackDiagnostics {
+        int sourceWidth = 0;
+        int sourceHeight = 0;
+        int outputWidth = 0;
+        int outputHeight = 0;
+        double sourceFps = 0.0;
+        int outputFpsLimit = 0;
+        std::uint64_t requestedFrames = 0;
+        std::uint64_t presentedFrames = 0;
+        double averageDecodeMilliseconds = 0.0;
+        int automaticReductions = 0;
+    };
+
     enum class PlaybackContext {
         None,
         MenuPreview,
@@ -45,9 +58,18 @@ namespace BigScreen {
         const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
         const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;
+        PlaybackDiagnostics Diagnostics() const;
+        /// Freezes the current statistics and keeps them visible beside the
+        /// video during Beat Saber's failed-level overlay.
+        void FinalizeDiagnosticsDisplay();
+        const std::string& LastDiagnosticsSummary() const {
+            return lastDiagnosticsSummary_;
+        }
 
     private:
         PlaybackSession() = default;
+        bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
+        void CaptureDiagnosticsSummary();
 
         std::filesystem::path levelDirectory_;
         // Keep the mapper-authored configuration immutable. Reapplying global
@@ -64,6 +86,16 @@ namespace BigScreen {
         // remain untouched. Native-rate gating still occurs inside FrameDecoder.
         std::optional<std::int64_t> lastPresentationSlot_;
         double lastTickSongTime_ = 0.0;
+        int effectiveFpsLimit_ = 30;
+        int effectiveResolutionHeight_ = 720;
+        std::uint64_t requestedFrames_ = 0;
+        std::uint64_t presentedFrames_ = 0;
+        std::uint64_t windowRequestedFrames_ = 0;
+        std::uint64_t windowPresentedFrames_ = 0;
+        double performanceWindowStartSongTime_ = 0.0;
+        int automaticReductions_ = 0;
+        int diagnosticsFrameCounter_ = 0;
+        std::string lastDiagnosticsSummary_;
         PlaybackContext context_ = PlaybackContext::None;
     };
 }

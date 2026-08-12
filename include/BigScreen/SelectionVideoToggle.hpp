@@ -3,6 +3,7 @@
 #include <string>
 
 namespace BSML {
+    class IncrementSetting;
     class ToggleSetting;
 }
 
@@ -79,6 +80,7 @@ namespace BigScreen {
 
         BSML::ToggleSetting* previewUi_ = nullptr;
         BSML::ToggleSetting* inMapUi_ = nullptr;
+        BSML::IncrementSetting* layoutUi_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;

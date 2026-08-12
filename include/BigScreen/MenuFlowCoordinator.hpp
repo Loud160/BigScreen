@@ -19,6 +19,7 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, settingsViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryEditorViewController);
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, storageViewController);
 
     DECLARE_OVERRIDE_METHOD_MATCH(
         void,

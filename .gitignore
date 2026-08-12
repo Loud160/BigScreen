@@ -62,6 +62,7 @@ qpm_defines.cmake
 
 # CMake stuff
 [Bb]uild/
+build-host-tests/
 cmake-build-*/
 extern.cmake
 

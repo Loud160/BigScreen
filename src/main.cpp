@@ -1,10 +1,12 @@
 #include "main.hpp"
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
@@ -29,10 +31,12 @@
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
 #include "GlobalNamespace/PointLight.hpp"
 #include "GlobalNamespace/Rotate.hpp"
+#include "GlobalNamespace/ResultsViewController.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "GlobalNamespace/Spectrogram.hpp"
 #include "GlobalNamespace/SpectrogramRow.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
+#include "GlobalNamespace/StandardLevelFailedController.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
 #include "GlobalNamespace/TrackLaneRing.hpp"
@@ -45,7 +49,9 @@
 #include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Transform.hpp"
+#include "TMPro/TextAlignmentOptions.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
 #include "custom-types/shared/register.hpp"
 #include "songcore/shared/SongCore.hpp"
@@ -59,9 +65,11 @@ namespace {
     {
         if(!BigScreen::Settings::Instance().ModEnabled())
             return;
-        BigScreen::SelectionVideoToggle::Instance().LevelSelected(
-            eventArgs.levelID,
-            eventArgs.beatmapLevel);
+        BigScreen::ErrorManager::Instance().Guard("handling song selection", [&]() {
+            BigScreen::SelectionVideoToggle::Instance().LevelSelected(
+                eventArgs.levelID,
+                eventArgs.beatmapLevel);
+        });
     }
 }
 
@@ -469,7 +477,9 @@ namespace {
         GlobalNamespace::StandardLevelDetailView* self)
     {
         StandardLevelDetailView_Awake(self);
-        BigScreen::SelectionVideoToggle::Instance().CreateUi(self);
+        BigScreen::ErrorManager::Instance().Guard("creating song-screen controls", [&]() {
+            BigScreen::SelectionVideoToggle::Instance().CreateUi(self);
+        });
     }
 
     MAKE_HOOK_MATCH(
@@ -482,7 +492,9 @@ namespace {
         // resume the retained preview only if the user's global settings allow
         // it. Initial activation is harmless because no map is prepared yet.
         StandardLevelDetailView_OnEnable(self);
-        BigScreen::SelectionVideoToggle::Instance().SongSelectionShown();
+        BigScreen::ErrorManager::Instance().Guard("showing song-screen video controls", [&]() {
+            BigScreen::SelectionVideoToggle::Instance().SongSelectionShown();
+        });
     }
 
     MAKE_HOOK_MATCH(
@@ -495,7 +507,9 @@ namespace {
         // view is commonly kept alive while Beat Saber shows its home screen
         // or a mod flow, so waiting for OnDestroy can leave the world-space
         // video surface and decoder running outside the song browser.
-        BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
+        BigScreen::ErrorManager::Instance().Guard("hiding song-screen video controls", []() {
+            BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
+        });
         StandardLevelDetailView_OnDisable(self);
     }
 
@@ -507,8 +521,10 @@ namespace {
     {
         // OnDisable normally runs first, but repeat the context-guarded cleanup
         // here as a defensive fallback for scene teardown ordering changes.
-        BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
-        BigScreen::SelectionVideoToggle::Instance().ForgetUi();
+        BigScreen::ErrorManager::Instance().Guard("destroying song-screen video controls", []() {
+            BigScreen::SelectionVideoToggle::Instance().SongSelectionHidden();
+            BigScreen::SelectionVideoToggle::Instance().ForgetUi();
+        });
         StandardLevelDetailView_OnDestroy(self);
     }
 
@@ -639,46 +655,30 @@ namespace {
         if(!BigScreen::Settings::Instance().ModEnabled())
             return;
 
-        // StartSong runs after the gameplay scene and environment have loaded,
-        // so Unity objects created here belong to the correct scene. The screen
-        // remains hidden until the worker publishes its first decoded frame.
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           BigScreen::Settings::Instance().DisableEnvironmentMotion())
-        {
-            DisableEnvironmentMotion();
-        }
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           !BigScreen::Settings::Instance().MapLightShowEnabled())
-        {
-            DisableEnvironmentLighting();
-        }
-        else if(BigScreen::PlaybackSession::Instance().HasPreparedVideo())
-        {
-            // Environments create some beams already lit. Black out and
-            // unregister only the selected groups before gameplay begins.
-            DisableSelectedLightingChannels();
-        }
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           BigScreen::Settings::Instance().HideTrackRings())
-        {
-            HideTrackLaneRings();
-        }
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           BigScreen::Settings::Instance().HideSideBars())
-        {
-            HideSideBars();
-        }
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           BigScreen::Settings::Instance().HideSpectrogramBars())
-        {
-            HideSpectrogramBars();
-        }
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           BigScreen::Settings::Instance().HideSideLaserLights())
-        {
-            HideSideLaserGeometry();
-        }
-        BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
+        BigScreen::ErrorManager::Instance().SetGameplayActive(true);
+        // StartSong runs after the gameplay scene and environment have loaded.
+        // Treat environment cleanup and screen creation as one protected mod
+        // operation: any failure is logged/queued, never allowed to interrupt
+        // Beat Saber's already-started song.
+        BigScreen::ErrorManager::Instance().Guard("starting gameplay video", [&]() {
+            const auto& settings = BigScreen::Settings::Instance();
+            auto& playback = BigScreen::PlaybackSession::Instance();
+            if(playback.HasPreparedVideo() && settings.DisableEnvironmentMotion())
+                DisableEnvironmentMotion();
+            if(playback.HasPreparedVideo() && !settings.MapLightShowEnabled())
+                DisableEnvironmentLighting();
+            else if(playback.HasPreparedVideo())
+                DisableSelectedLightingChannels();
+            if(playback.HasPreparedVideo() && settings.HideTrackRings())
+                HideTrackLaneRings();
+            if(playback.HasPreparedVideo() && settings.HideSideBars())
+                HideSideBars();
+            if(playback.HasPreparedVideo() && settings.HideSpectrogramBars())
+                HideSpectrogramBars();
+            if(playback.HasPreparedVideo() && settings.HideSideLaserLights())
+                HideSideLaserGeometry();
+            BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
+        });
     }
 
     MAKE_HOOK_MATCH(
@@ -689,16 +689,24 @@ namespace {
     {
         SongPreviewPlayer_Update(self);
 
+        // Error dialogs remain available after the circuit breaker disables
+        // the mod; all other Big Screen menu work stays behind the master flag.
+        BigScreen::ErrorManager::Instance().TickMainThread();
         if(!BigScreen::Settings::Instance().ModEnabled())
             return;
 
-        BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
-        BigScreen::VideoLibraryMenu::Instance().Tick(self);
+        BigScreen::ErrorManager::Instance().Guard("updating menu video UI", [&]() {
+            BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
+            BigScreen::VideoLibraryMenu::Instance().Tick(self);
+            BigScreen::StorageMaintenanceMenu::Instance().Tick();
+        });
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
         {
             downloaderUiFrame = 0;
-            BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
+            BigScreen::ErrorManager::Instance().Guard("refreshing downloader status", []() {
+                BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
+            });
         }
 
         // SongPreviewPlayer crossfades between a small bank of AudioSources.
@@ -727,9 +735,11 @@ namespace {
                 controller->get_volume() > 0.001f &&
                 activeClip &&
                 activeClip != defaultClip;
-            BigScreen::SelectionVideoToggle::Instance().TickSongPreview(
-                audioSource->get_time(),
-                selectedSongAudioIsAudible);
+            BigScreen::ErrorManager::Instance().Guard("synchronizing song-menu preview", [&]() {
+                BigScreen::SelectionVideoToggle::Instance().TickSongPreview(
+                    audioSource->get_time(),
+                    selectedSongAudioIsAudible);
+            });
         }
     }
 
@@ -747,7 +757,9 @@ namespace {
         // Beat Saber's song time is the sole playback clock. It stops during a
         // pause, jumps on restart/scrub, incorporates practice speed, and is the
         // timeline Replay advances during playback and frame-by-frame capture.
-        BigScreen::PlaybackSession::Instance().Tick(self->get_songTime());
+        BigScreen::ErrorManager::Instance().Guard("updating gameplay video", [&]() {
+            BigScreen::PlaybackSession::Instance().Tick(self->get_songTime());
+        });
     }
 
     MAKE_HOOK_MATCH(
@@ -760,9 +772,53 @@ namespace {
         // Release native decoder resources and Unity objects before the normal
         // transition tears down GameCore. This also guarantees that the next
         // selected map cannot inherit a stale frame or decoder worker.
-        if(BigScreen::Settings::Instance().ModEnabled())
+        // Stop unconditionally because the circuit breaker may have changed
+        // ModEnabled during the song while a screen/decoder still exists.
+        BigScreen::ErrorManager::Instance().Guard("stopping gameplay video", [&]() {
             BigScreen::PlaybackSession::Instance().Stop();
+        });
+        BigScreen::ErrorManager::Instance().SetGameplayActive(false);
         StandardLevelScenesTransitionSetupDataSO_Finish(self, levelCompletionResults);
+    }
+
+    MAKE_HOOK_MATCH(
+        ResultsViewController_DidActivate,
+        &GlobalNamespace::ResultsViewController::DidActivate,
+        void,
+        GlobalNamespace::ResultsViewController* self,
+        bool firstActivation,
+        bool addedToHierarchy,
+        bool screenSystemEnabling)
+    {
+        ResultsViewController_DidActivate(
+            self, firstActivation, addedToHierarchy, screenSystemEnabling);
+        if(!firstActivation ||
+           !BigScreen::Settings::Instance().PerformanceDiagnosticsEnabled())
+            return;
+        const auto& summary =
+            BigScreen::PlaybackSession::Instance().LastDiagnosticsSummary();
+        if(summary.empty())
+            return;
+        auto* text = BSML::Lite::CreateText(
+            self,
+            "<b>Big Screen Performance</b>\n" + summary,
+            2.7f,
+            UnityEngine::Vector2{0.0f, -36.0f},
+            UnityEngine::Vector2{92.0f, 12.0f});
+        if(text)
+            text->set_alignment(TMPro::TextAlignmentOptions::Center);
+    }
+
+    MAKE_HOOK_MATCH(
+        StandardLevelFailedController_HandleLevelFailed,
+        &GlobalNamespace::StandardLevelFailedController::HandleLevelFailed,
+        void,
+        GlobalNamespace::StandardLevelFailedController* self)
+    {
+        StandardLevelFailedController_HandleLevelFailed(self);
+        BigScreen::ErrorManager::Instance().Guard("showing failed-map performance information", []() {
+            BigScreen::PlaybackSession::Instance().FinalizeDiagnosticsDisplay();
+        });
     }
 }
 
@@ -778,7 +834,9 @@ MOD_EXTERN_FUNC void late_load() noexcept
 {
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
-    BigScreen::VideoLibrary::Instance().Initialize();
+    BigScreen::ErrorManager::Instance().Guard("initializing video library", []() {
+        BigScreen::VideoLibrary::Instance().Initialize();
+    });
     std::string downloaderError;
     if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
         PaperLogger.error("Downloader unavailable: {}", downloaderError);
@@ -802,6 +860,8 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
+    INSTALL_HOOK(PaperLogger, ResultsViewController_DidActivate);
+    INSTALL_HOOK(PaperLogger, StandardLevelFailedController_HandleLevelFailed);
 
     // SongCore publishes selections after its custom-level details are ready,
     // including WIP songs. A plain native callback keeps this path independent

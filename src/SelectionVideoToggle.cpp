@@ -1,5 +1,6 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
@@ -22,6 +23,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
+#include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "main.hpp"
 
@@ -122,7 +124,7 @@ namespace BigScreen {
     void SelectionVideoToggle::CreateUi(
         GlobalNamespace::StandardLevelDetailView* detailView)
     {
-        if(!detailView || previewUi_ || inMapUi_)
+        if(!detailView || previewUi_ || inMapUi_ || layoutUi_)
             return;
 
         const auto& settings = Settings::Instance();
@@ -149,6 +151,35 @@ namespace BigScreen {
             {
                 InMapToggleChanged(value);
             });
+        layoutUi_ = BSML::Lite::CreateIncrementSetting(
+            detailView,
+            "Screen Layout",
+            0,
+            1.0f,
+            static_cast<float>(settings.ActiveScreenLayout() + 1),
+            1.0f,
+            3.0f,
+            UnityEngine::Vector2{-57.0f, 28.0f},
+            [](float value)
+            {
+                auto& settings = Settings::Instance();
+                settings.SetActiveScreenLayout(
+                    std::clamp(static_cast<int>(value) - 1, 0, 2));
+                auto& playback = PlaybackSession::Instance();
+                const bool restartPreview = playback.IsMenuPreviewActive();
+                playback.RefreshDisplaySettings();
+                if(restartPreview)
+                    playback.Start(PlaybackContext::MenuPreview);
+            });
+        if(layoutUi_)
+        {
+            auto rect = layoutUi_->get_transform().cast<UnityEngine::RectTransform>();
+            rect->set_anchorMin({0.5f, 0.5f});
+            rect->set_anchorMax({0.5f, 0.5f});
+            rect->set_pivot({0.5f, 0.5f});
+            rect->set_anchoredPosition({-57.0f, 28.0f});
+            rect->set_sizeDelta({34.0f, 8.0f});
+        }
         downloadButton_ = BSML::Lite::CreateUIButton(
             detailView,
             "Download Video",
@@ -178,6 +209,9 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             inMapUi_,
             "Shows the selected song's video while playing the map.");
+        BSML::Lite::AddHoverHint(
+            layoutUi_,
+            "Selects one of your three saved screen layouts for previews and gameplay.");
         RefreshUi();
         PaperLogger.info("Created top-row Preview Video and Video In Map controls");
     }
@@ -189,6 +223,7 @@ namespace BigScreen {
         // later menu scene can construct a fresh control safely.
         previewUi_ = nullptr;
         inMapUi_ = nullptr;
+        layoutUi_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
     }
@@ -489,7 +524,7 @@ namespace BigScreen {
 
     void SelectionVideoToggle::RefreshUi()
     {
-        if(!previewUi_ && !inMapUi_)
+        if(!previewUi_ && !inMapUi_ && !layoutUi_)
             return;
 
         const auto& settings = Settings::Instance();
@@ -501,6 +536,12 @@ namespace BigScreen {
         SetToggleWithoutNotification(previewUi_, settings.MenuPreviewEnabled());
         if(previewUi_)
             previewUi_->set_interactable(inMapEnabled_);
+        if(layoutUi_)
+        {
+            layoutUi_->set_Value(
+                static_cast<float>(settings.ActiveScreenLayout() + 1));
+            layoutUi_->set_interactable(settings.ModEnabled());
+        }
 
         // Visibility deliberately does not inspect selectedLevelHasVideo_: both
         // switches control all songs the user subsequently browses. Only the
@@ -509,6 +550,8 @@ namespace BigScreen {
             inMapUi_->get_gameObject()->SetActive(settings.ModEnabled());
         if(previewUi_)
             previewUi_->get_gameObject()->SetActive(settings.ModEnabled());
+        if(layoutUi_)
+            layoutUi_->get_gameObject()->SetActive(settings.ModEnabled());
         TickDownloadUi();
     }
 }

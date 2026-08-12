@@ -28,6 +28,9 @@ namespace BigScreen {
         // files are user-owned assets referenced by a relative filename and
         // must never be deleted when their assignment is removed.
         bool mapLocal = false;
+        // Import-folder files are also user-owned, but unlike map-local files
+        // they can be assigned to OST, DLC, custom, or WIP maps.
+        bool importFile = false;
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
         bool fitToSong = false;
@@ -74,6 +77,7 @@ namespace BigScreen {
         bool hasMapperDownload = false;
         bool hasUserOverride = false;
         bool userOverrideIsMapLocal = false;
+        bool userOverrideIsImported = false;
         std::optional<std::string> activeMapFileName;
 
         bool CanDownload() const { return downloadUrl.has_value(); }
@@ -124,7 +128,12 @@ namespace BigScreen {
             StoredVideo video);
         std::vector<LocalVideoFile> DiscoverLocalVideos(
             GlobalNamespace::BeatmapLevel* level) const;
+        std::vector<LocalVideoFile> DiscoverImportedVideos() const;
         bool SetLocalVideoOverride(
+            GlobalNamespace::BeatmapLevel* level,
+            const std::string& fileName,
+            std::string& error);
+        bool SetImportedVideoOverride(
             GlobalNamespace::BeatmapLevel* level,
             const std::string& fileName,
             std::string& error);
@@ -145,16 +154,27 @@ namespace BigScreen {
         std::uint64_t ManagedBytesForLevel(const std::string& levelId) const;
         std::uint64_t LibraryBytes() const;
         std::uint64_t FreeBytes() const;
+        /// Returns and clears a one-time startup recovery message for the UI.
+        std::optional<std::string> TakeRecoveryNotice();
+        /// Rebuilds manifest entries for managed MP4s after all backups failed.
+        /// Level metadata is supplied only after SongCore has completed loading.
+        void RecoverManagedFiles(
+            const std::vector<GlobalNamespace::BeatmapLevel*>& installedLevels);
 
         const std::filesystem::path& RootPath() const { return rootPath_; }
         const std::filesystem::path& VideoPath() const { return videoPath_; }
         const std::filesystem::path& RuntimePath() const { return runtimePath_; }
+        const std::filesystem::path& ImportPath() const { return importPath_; }
+        const std::filesystem::path& ThumbnailPath() const { return thumbnailPath_; }
 
     private:
         VideoLibrary() = default;
 
         void LoadLocked();
         void SaveLocked() const;
+        bool TryLoadManifestLocked(
+            const std::filesystem::path& path,
+            std::vector<std::pair<std::string, LevelVideoRecords>>& output) const;
         static std::string StableKey(const std::string& levelId);
 
         mutable std::mutex mutex_;
@@ -162,7 +182,10 @@ namespace BigScreen {
         std::filesystem::path videoPath_;
         std::filesystem::path thumbnailPath_;
         std::filesystem::path runtimePath_;
+        std::filesystem::path importPath_;
         std::filesystem::path manifestPath_;
         std::vector<std::pair<std::string, LevelVideoRecords>> records_;
+        bool recoveryScanNeeded_ = false;
+        std::optional<std::string> recoveryNotice_;
     };
 }

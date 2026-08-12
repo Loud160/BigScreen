@@ -8,10 +8,12 @@
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "HMUI/HoverHint.hpp"
 #include "HMUI/TextSegmentedControl.hpp"
@@ -52,8 +54,16 @@ namespace BigScreen {
             "60 FPS"
         };
 
-        std::array<std::string_view, 4> SettingsTabNames{
-            "General", "Screen", "Environment", "Update"
+        std::array<std::string_view, 3> ScreenLayoutChoices{
+            "Layout 1", "Layout 2", "Layout 3"
+        };
+
+        std::array<std::string_view, 3> PerformanceThresholdChoices{
+            "5% missed frames", "10% missed frames", "20% missed frames"
+        };
+
+        std::array<std::string_view, 5> SettingsTabNames{
+            "General", "Screen", "Environment", "Update", "Storage"
         };
 
         std::string ResolutionLabel(int height)
@@ -129,7 +139,8 @@ namespace BigScreen {
 
     void SettingsMenu::CreateUi(
         HMUI::ViewController* viewController,
-        std::function<void()> onBack)
+        std::function<void()> onBack,
+        std::function<void()> onManageStorage)
     {
         if(!viewController)
             return;
@@ -149,6 +160,7 @@ namespace BigScreen {
         distractionFreeMenuToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
+        screenLayoutDropdown_ = nullptr;
         distanceSetting_ = nullptr;
         horizontalSetting_ = nullptr;
         verticalSetting_ = nullptr;
@@ -172,6 +184,9 @@ namespace BigScreen {
         hideSpectrogramBarsToggle_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
+        automaticPerformanceToggle_ = nullptr;
+        automaticPerformanceThresholdDropdown_ = nullptr;
+        performanceDiagnosticsToggle_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         nightlyWarningModal_ = nullptr;
         localVideoInstructionsModal_ = nullptr;
@@ -299,12 +314,26 @@ namespace BigScreen {
         auto* screenContainer = createTabPage(1);
         auto* environmentContainer = createTabPage(2);
         auto* updateContainer = createTabPage(3);
+        auto* storageContainer = createTabPage(4);
         if(!generalContainer || !screenContainer ||
-           !environmentContainer || !updateContainer)
+           !environmentContainer || !updateContainer || !storageContainer)
         {
             PaperLogger.error("Could not create all Big Screen settings tabs");
             return;
         }
+
+        auto* storageExplanation = BSML::Lite::CreateText(
+            storageContainer,
+            "Storage Maintenance scans for unassigned Big Screen downloads, unused thumbnails, and abandoned temporary files. You will see the exact list and total size before anything is removed. Map-folder videos and files in Video Import are never deleted.",
+            3.0f);
+        storageExplanation->set_enableWordWrapping(true);
+        storageExplanation->set_alignment(TMPro::TextAlignmentOptions::Center);
+        auto* manageStorageButton = BSML::Lite::CreateUIButton(
+            storageContainer, "Manage Storage", {0.0f, 0.0f}, {38.0f, 8.0f},
+            [callback = std::move(onManageStorage)]() { if(callback) callback(); });
+        BSML::Lite::AddHoverHint(
+            manageStorageButton,
+            "Opens a review page that scans for safe-to-remove Big Screen files. Nothing is deleted without confirmation.");
 
         // Performance limits are global playback preferences rather than
         // environment behavior. Create them first so they remain at the top of
@@ -340,6 +369,44 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             resolutionDropdown_,
             "Maximum playback resolution. Sources below the selected tier are not upscaled. 720p is recommended; 1080p may reduce performance and battery life.");
+
+        automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Automatic Performance",
+            settings.AutomaticPerformanceEnabled(),
+            [this](bool enabled)
+            {
+                Settings::Instance().SetAutomaticPerformanceEnabled(enabled);
+                RefreshEnabledState();
+            });
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceToggle_,
+            "Lets Big Screen lower its frame-rate limit and then output resolution if decoding repeatedly falls behind. Your saved quality settings are not changed.");
+        automaticPerformanceThresholdDropdown_ = BSML::Lite::CreateDropdown(
+            generalContainer,
+            "Automatic Performance Trigger",
+            std::to_string(settings.AutomaticPerformanceThreshold()) + "% missed frames",
+            PerformanceThresholdChoices,
+            [](StringW value)
+            {
+                const std::string text(value);
+                Settings::Instance().SetAutomaticPerformanceThreshold(
+                    text.starts_with("5%") ? 5 : text.starts_with("20%") ? 20 : 10);
+            });
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceThresholdDropdown_,
+            "Percentage of missed video presentation frames in a five-second window that triggers the next performance reduction.");
+        performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Show Performance Information",
+            settings.PerformanceDiagnosticsEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetPerformanceDiagnosticsEnabled(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            performanceDiagnosticsToggle_,
+            "Shows source and output resolution, frame rate, missed frames, and decoder delay during video maps and on the results screen.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -410,6 +477,24 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             previewToggle_,
             "Plays videos during song selection and is shared with song selection.");
+
+        screenLayoutDropdown_ = BSML::Lite::CreateDropdown(
+            screenContainer,
+            "Editing Screen Layout",
+            "Layout " + std::to_string(settings.ActiveScreenLayout() + 1),
+            ScreenLayoutChoices,
+            [this](StringW value)
+            {
+                const std::string label(value);
+                const int index = !label.empty() && label.back() >= '1' && label.back() <= '3'
+                    ? label.back() - '1' : 0;
+                Settings::Instance().SetActiveScreenLayout(index);
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
+        BSML::Lite::AddHoverHint(
+            screenLayoutDropdown_,
+            "Chooses which of the three saved screen placements the controls below edit and gameplay uses.");
 
         distanceSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -582,7 +667,7 @@ namespace BigScreen {
             });
         hideBackWallLightsHint_ = BSML::Lite::AddHoverHint(
             hideBackWallLightsToggle_,
-            "Turns off legacy lighting groups 0 and 4 (light IDs 1 and 5), which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
+            "Hides the back-wall and center-lane light groups that most often shine across the video. Other map lighting remains active. Takes effect when the next map starts.");
 
         hideRingLightsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -594,7 +679,7 @@ namespace BigScreen {
             });
         hideRingLightsHint_ = BSML::Lite::AddHoverHint(
             hideRingLightsToggle_,
-            "Turns off legacy lighting group 1 (light ID 2), which supplies the ring lights. Takes effect when the next map starts.");
+            "Hides the map's ring-light group while leaving the remaining light show active. Takes effect when the next map starts.");
 
         hideSideLaserLightsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -606,7 +691,7 @@ namespace BigScreen {
             });
         hideSideLaserLightsHint_ = BSML::Lite::AddHoverHint(
             hideSideLaserLightsToggle_,
-            "Turns off the legacy left/right laser groups 2 and 3 (light IDs 3 and 4). Use this when their beams cross the video. Takes effect when the next map starts.");
+            "Hides the left and right laser-light groups when their beams cross the video. Takes effect when the next map starts.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -767,10 +852,10 @@ namespace BigScreen {
         auto* localVideoInstructions = BSML::Lite::CreateText(
             localVideoInstructionsModal_,
             "<size=3.8><b>Add Your Own Video</b></size>\n\n"
-            "1. Copy an H.264/AVC MP4 (up to 1080p) into a custom or WIP map folder.\n\n"
-            "2. Select that map in Video Library.\n\n"
-            "3. Press SET next to the file, then adjust its timing if needed.\n\n"
-            "Big Screen never moves or deletes map-folder videos. Remove Video only unregisters them. This feature is not available for OST or DLC songs.",
+            "For a custom or WIP map, copy an H.264/AVC MP4 (up to 1080p) into that map's folder.\n\n"
+            "For any song—including OST and DLC—copy the MP4 into:\n"
+            "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import\n\n"
+            "Open Video Library, choose the song, and press SET beside the file. You can then adjust timing normally. Big Screen only registers these user-owned files; Remove Video never deletes them.",
             TMPro::FontStyles::Normal,
             3.1f,
             {0.0f, 3.0f},
@@ -825,7 +910,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             addLocalVideoButton,
-            "Explains how to assign an H.264 MP4 stored inside a custom or WIP map folder.");
+            "Explains how to assign an H.264 MP4 from a map folder or Big Screen's Video Import folder.");
 
         resetButton_ = BSML::Lite::CreateUIButton(
             generalActions,
@@ -882,6 +967,24 @@ namespace BigScreen {
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             confirmResetText->set_color({1.0f, 0.35f, 0.35f, 1.0f});
 
+        // One shared error surface prevents repeated failures from building a
+        // stack of modal views. ErrorManager keeps only the newest pending
+        // message and never permits this UI to appear over active gameplay.
+        errorModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 42.0f}, nullptr, true);
+        errorModalText_ = BSML::Lite::CreateText(
+            errorModal_, "", TMPro::FontStyles::Normal, 3.0f,
+            {0.0f, 3.0f}, {66.0f, 30.0f});
+        errorModalText_->set_enableWordWrapping(true);
+        errorModalText_->set_enableAutoSizing(true);
+        errorModalText_->set_fontSizeMin(2.2f);
+        errorModalText_->set_fontSizeMax(3.0f);
+        errorModalText_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        errorModalText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            errorModal_->get_transform(), "OK", {36.0f, -35.0f}, {20.0f, 7.0f},
+            [this]() { if(errorModal_) errorModal_->Hide(); });
+
         ShowSettingsTab(0);
         if(settingsTabs_)
             settingsTabs_->SelectCellWithNumber(0);
@@ -908,6 +1011,10 @@ namespace BigScreen {
             settings.DistractionFreeMenu());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
+        SetToggleWithoutNotification(
+            automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
+        SetToggleWithoutNotification(
+            performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(curvedScreenToggle_, settings.CurvedScreenEnabled());
         SetToggleWithoutNotification(
             maintainCurveAspectToggle_,
@@ -942,6 +1049,15 @@ namespace BigScreen {
             nightlyUpdatesToggle_,
             settings.NightlyDownloaderUpdates());
 
+        if(screenLayoutDropdown_)
+        {
+            const int index = settings.ActiveScreenLayout();
+            screenLayoutDropdown_->index = index;
+            if(screenLayoutDropdown_->dropdown)
+                screenLayoutDropdown_->dropdown->SelectCellWithIdx(index);
+            screenLayoutDropdown_->UpdateState();
+        }
+
         if(distanceSetting_)
             distanceSetting_->set_Value(settings.ScreenDistanceOffset());
         if(horizontalSetting_)
@@ -973,6 +1089,15 @@ namespace BigScreen {
             if(resolutionDropdown_->dropdown)
                 resolutionDropdown_->dropdown->SelectCellWithIdx(index);
             resolutionDropdown_->UpdateState();
+        }
+        if(automaticPerformanceThresholdDropdown_)
+        {
+            const int index = settings.AutomaticPerformanceThreshold() == 5
+                ? 0 : settings.AutomaticPerformanceThreshold() == 20 ? 2 : 1;
+            automaticPerformanceThresholdDropdown_->index = index;
+            if(automaticPerformanceThresholdDropdown_->dropdown)
+                automaticPerformanceThresholdDropdown_->dropdown->SelectCellWithIdx(index);
+            automaticPerformanceThresholdDropdown_->UpdateState();
         }
     }
 
@@ -1006,6 +1131,8 @@ namespace BigScreen {
             sizeSetting_->set_interactable(enabled);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
+        if(screenLayoutDropdown_)
+            screenLayoutDropdown_->set_interactable(enabled);
         if(maintainCurveAspectToggle_)
             maintainCurveAspectToggle_->set_interactable(enabled);
         if(curvatureSlider_)
@@ -1050,6 +1177,13 @@ namespace BigScreen {
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)
             resolutionDropdown_->set_interactable(enabled);
+        if(automaticPerformanceToggle_)
+            automaticPerformanceToggle_->set_interactable(enabled);
+        if(automaticPerformanceThresholdDropdown_)
+            automaticPerformanceThresholdDropdown_->set_interactable(
+                enabled && settings.AutomaticPerformanceEnabled());
+        if(performanceDiagnosticsToggle_)
+            performanceDiagnosticsToggle_->set_interactable(enabled);
         if(nightlyUpdatesToggle_)
             nightlyUpdatesToggle_->set_interactable(enabled);
         if(updaterButton_)
@@ -1070,7 +1204,7 @@ namespace BigScreen {
 
     void SettingsMenu::ShowSettingsTab(int index)
     {
-        index = std::clamp(index, 0, 3);
+        index = std::clamp(index, 0, 4);
         selectedTab_ = index;
         for(int page = 0; page < static_cast<int>(tabViewRoots_.size()); ++page)
             if(tabViewRoots_[page])
@@ -1147,6 +1281,18 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshDownloaderStatus()
     {
+        if(auto recovery = VideoLibrary::Instance().TakeRecoveryNotice())
+            ErrorManager::Instance().ReportUserVisible("Video library recovered", *recovery);
+        if(auto update = DownloadManager::Instance().TakeUpdateNotice())
+            ErrorManager::Instance().ReportUserVisible("Downloader rollback", *update);
+        if(auto message = ErrorManager::Instance().TakePendingDialog();
+           message && errorModal_ && errorModalText_)
+        {
+            errorModalText_->set_text(
+                "<b>" + message->first + "</b>\n\n" + message->second);
+            errorModal_->Show();
+            RefreshControls();
+        }
         if(!updaterButton_ || !updaterStatus_) return;
         const auto snapshot = DownloadManager::Instance().Snapshot();
         if(snapshot.levelId != "__updater__") return;

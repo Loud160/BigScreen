@@ -3,6 +3,7 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/OVRManager.hpp"
 #include "UnityEngine/GameObject.hpp"
@@ -216,12 +217,21 @@ namespace BigScreen {
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             libraryEditorViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            storageViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(
                 settingsViewController,
                 [this]()
                 {
                     BackButtonWasPressed(centerViewController);
+                },
+                [this]()
+                {
+                    StorageMaintenanceMenu::Instance().Show();
+                    SetRightScreenViewController(
+                        storageViewController,
+                        HMUI::ViewController::AnimationType::In);
                 });
             VideoLibraryMenu::Instance().CreateUi(
                 libraryBrowserViewController,
@@ -233,6 +243,14 @@ namespace BigScreen {
                             ? libraryEditorViewController
                             : libraryBrowserViewController,
                         HMUI::ViewController::AnimationType::In);
+                });
+            StorageMaintenanceMenu::Instance().CreateUi(
+                storageViewController,
+                [this]()
+                {
+                    SetRightScreenViewController(
+                        libraryBrowserViewController,
+                        HMUI::ViewController::AnimationType::Out);
                 });
 
             // Main, left, right, bottom, and top are supplied in that order.

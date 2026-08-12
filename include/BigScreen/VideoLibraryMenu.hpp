@@ -121,6 +121,9 @@ namespace BigScreen {
         std::vector<UnityEngine::GameObject*> videoOnlyRows_;
         std::vector<UnityEngine::GameObject*> localVideoRowObjects_;
         std::vector<LocalVideoFile> localVideoFiles_;
+        // Parallel source flags let one uniform filename/action list show both
+        // map-folder and global Video Import files without a modal picker.
+        std::vector<bool> localVideoImported_;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;

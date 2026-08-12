@@ -1,6 +1,21 @@
 #pragma once
 
+#include <array>
+
 namespace BigScreen {
+    /// One complete screen geometry preset. Keeping geometry together prevents
+    /// a profile switch from briefly mixing values from two layouts.
+    struct ScreenLayoutProfile {
+        float distanceOffset = 0.0f;
+        float horizontalOffset = 0.0f;
+        float verticalOffset = 0.0f;
+        float tiltOffset = 0.0f;
+        float scale = 1.0f;
+        bool curved = false;
+        float curvature = 0.35f;
+        bool maintainAspectRatio = false;
+    };
+
     /// Persistent, user-facing behavior shared by the main-menu page, map
     /// selection, decoding, and gameplay hooks.
     ///
@@ -19,14 +34,18 @@ namespace BigScreen {
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
-        float ScreenDistanceOffset() const { return screenDistanceOffset_; }
-        float ScreenHorizontalOffset() const { return screenHorizontalOffset_; }
-        float ScreenVerticalOffset() const { return screenVerticalOffset_; }
-        float ScreenTiltOffset() const { return screenTiltOffset_; }
-        float ScreenScale() const { return screenScale_; }
-        bool CurvedScreenEnabled() const { return curvedScreenEnabled_; }
-        float ScreenCurvature() const { return screenCurvature_; }
-        bool MaintainCurveAspectRatio() const { return maintainCurveAspectRatio_; }
+        int ActiveScreenLayout() const { return activeScreenLayout_; }
+        const ScreenLayoutProfile& ActiveLayout() const {
+            return screenLayouts_[activeScreenLayout_];
+        }
+        float ScreenDistanceOffset() const { return ActiveLayout().distanceOffset; }
+        float ScreenHorizontalOffset() const { return ActiveLayout().horizontalOffset; }
+        float ScreenVerticalOffset() const { return ActiveLayout().verticalOffset; }
+        float ScreenTiltOffset() const { return ActiveLayout().tiltOffset; }
+        float ScreenScale() const { return ActiveLayout().scale; }
+        bool CurvedScreenEnabled() const { return ActiveLayout().curved; }
+        float ScreenCurvature() const { return ActiveLayout().curvature; }
+        bool MaintainCurveAspectRatio() const { return ActiveLayout().maintainAspectRatio; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
@@ -40,12 +59,16 @@ namespace BigScreen {
         bool HideSpectrogramBars() const { return hideSpectrogramBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
+        bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
+        int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
+        bool PerformanceDiagnosticsEnabled() const { return performanceDiagnosticsEnabled_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
         void SetModEnabled(bool value);
         void SetDistractionFreeMenu(bool value);
         void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
+        void SetActiveScreenLayout(int value);
         void SetScreenDistanceOffset(float value);
         void SetScreenHorizontalOffset(float value);
         void SetScreenVerticalOffset(float value);
@@ -67,6 +90,9 @@ namespace BigScreen {
         void SetHideSpectrogramBars(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
+        void SetAutomaticPerformanceEnabled(bool value);
+        void SetAutomaticPerformanceThreshold(int value);
+        void SetPerformanceDiagnosticsEnabled(bool value);
         void SetNightlyDownloaderUpdates(bool value);
 
     private:
@@ -81,14 +107,8 @@ namespace BigScreen {
         bool distractionFreeMenu_ = true;
         bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
-        float screenDistanceOffset_ = 0.0f;
-        float screenHorizontalOffset_ = 0.0f;
-        float screenVerticalOffset_ = 0.0f;
-        float screenTiltOffset_ = 0.0f;
-        float screenScale_ = 1.0f;
-        bool curvedScreenEnabled_ = false;
-        float screenCurvature_ = 0.35f;
-        bool maintainCurveAspectRatio_ = false;
+        std::array<ScreenLayoutProfile, 3> screenLayouts_{};
+        int activeScreenLayout_ = 0;
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool hideBackWallLights_ = true;
@@ -102,6 +122,9 @@ namespace BigScreen {
         bool hideSpectrogramBars_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
+        bool automaticPerformanceEnabled_ = false;
+        int automaticPerformanceThreshold_ = 10;
+        bool performanceDiagnosticsEnabled_ = false;
         bool nightlyDownloaderUpdates_ = false;
     };
 }

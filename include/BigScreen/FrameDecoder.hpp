@@ -53,6 +53,12 @@ namespace BigScreen {
         bool IsOpen() const { return open_.load(); }
         int Width() const { return width_; }
         int Height() const { return height_; }
+        int SourceWidth() const { return sourceWidth_; }
+        int SourceHeight() const { return sourceHeight_; }
+        double SourceFramesPerSecond() const {
+            return nominalFrameSeconds_ > 0.0 ? 1.0 / nominalFrameSeconds_ : 0.0;
+        }
+        double AverageDecodeMilliseconds() const { return averageDecodeMilliseconds_.load(); }
         double DurationSeconds() const { return durationSeconds_; }
 
     private:
@@ -72,6 +78,8 @@ namespace BigScreen {
         int videoStream_ = -1;
         int width_ = 0;
         int height_ = 0;
+        int sourceWidth_ = 0;
+        int sourceHeight_ = 0;
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
@@ -79,6 +87,7 @@ namespace BigScreen {
         std::thread worker_;
         std::atomic<bool> open_{false};
         std::atomic<bool> stopWorker_{false};
+        std::atomic<double> averageDecodeMilliseconds_{0.0};
 
         std::mutex requestMutex_;
         std::condition_variable requestChanged_;

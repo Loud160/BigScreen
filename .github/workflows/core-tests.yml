@@ -1,0 +1,19 @@
+name: Core tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests -B build-host-tests
+      - name: Build
+        run: cmake --build build-host-tests --config Release
+      - name: Test
+        run: ctest --test-dir build-host-tests -C Release --output-on-failure
+      - name: Validate public files
+        run: test -f LICENSE && test -f THIRD_PARTY_NOTICES.md && test -f docs/USER_GUIDE.md

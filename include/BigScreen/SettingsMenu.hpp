@@ -33,7 +33,8 @@ namespace BigScreen {
         void Register();
         void CreateUi(
             HMUI::ViewController* viewController,
-            std::function<void()> onBack);
+            std::function<void()> onBack,
+            std::function<void()> onManageStorage);
         void RefreshControls();
         void RefreshDownloaderStatus();
 
@@ -49,12 +50,13 @@ namespace BigScreen {
 
         HMUI::ViewController* settingsViewController_ = nullptr;
         HMUI::TextSegmentedControl* settingsTabs_ = nullptr;
-        std::array<UnityEngine::GameObject*, 4> tabViewRoots_{};
+        std::array<UnityEngine::GameObject*, 5> tabViewRoots_{};
         int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* distractionFreeMenuToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
+        BSML::DropdownListSetting* screenLayoutDropdown_ = nullptr;
         BSML::IncrementSetting* distanceSetting_ = nullptr;
         BSML::IncrementSetting* horizontalSetting_ = nullptr;
         BSML::IncrementSetting* verticalSetting_ = nullptr;
@@ -78,10 +80,15 @@ namespace BigScreen {
         BSML::ToggleSetting* hideSpectrogramBarsToggle_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
+        BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
+        BSML::DropdownListSetting* automaticPerformanceThresholdDropdown_ = nullptr;
+        BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
         BSML::ModalView* nightlyWarningModal_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
+        BSML::ModalView* errorModal_ = nullptr;
+        TMPro::TextMeshProUGUI* errorModalText_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
         HMUI::HoverHint* updaterHoverHint_ = nullptr;
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;

@@ -1361,6 +1361,14 @@ namespace BigScreen {
         for(auto* custom : SongCore::API::Loading::GetAllLevels())
             add(custom, IsWip(custom) ? SongLibraryGroup::Wip : SongLibraryGroup::Custom);
 
+        // Startup recovery waits for this complete catalog because level IDs
+        // are the only safe way to reconnect deterministic managed filenames.
+        std::vector<GlobalNamespace::BeatmapLevel*> installedLevels;
+        installedLevels.reserve(catalog_.size());
+        for(const auto& item : catalog_)
+            installedLevels.push_back(item.level);
+        VideoLibrary::Instance().RecoverManagedFiles(installedLevels);
+
         std::sort(catalog_.begin(), catalog_.end(), [](const auto& left, const auto& right) {
             // Resolve every tie so rebuilding the catalog cannot reshuffle
             // songs that share a title. Table cells and the backing model both
@@ -1857,6 +1865,16 @@ namespace BigScreen {
         localVideoFiles_ = selected_
             ? VideoLibrary::Instance().DiscoverLocalVideos(selected_)
             : std::vector<LocalVideoFile>{};
+        localVideoImported_.assign(localVideoFiles_.size(), false);
+        if(selected_)
+        {
+            auto imports = VideoLibrary::Instance().DiscoverImportedVideos();
+            for(auto& file : imports)
+            {
+                localVideoFiles_.push_back(std::move(file));
+                localVideoImported_.push_back(true);
+            }
+        }
         RebuildLocalVideoRows();
     }
 
@@ -1903,9 +1921,14 @@ namespace BigScreen {
         for(std::size_t index = 0; index < localVideoFiles_.size(); ++index)
         {
             const auto& file = localVideoFiles_[index];
+            const bool imported = index < localVideoImported_.size() &&
+                localVideoImported_[index];
             const bool active = file.compatible &&
                 descriptor.activeMapFileName &&
-                *descriptor.activeMapFileName == file.fileName;
+                *descriptor.activeMapFileName == file.fileName &&
+                (imported
+                    ? descriptor.userOverrideIsImported
+                    : descriptor.userOverrideIsMapLocal);
 
             auto* row = BSML::Lite::CreateHorizontalLayoutGroup(rows);
             ConfigureGroup(row, false);
@@ -1938,7 +1961,7 @@ namespace BigScreen {
 
             auto* name = BSML::Lite::CreateText(
                 row,
-                file.fileName,
+                imported ? "Video Import: " + file.fileName : file.fileName,
                 localFileFontSize);
             name->set_richText(false);
             name->set_enableWordWrapping(false);
@@ -1960,6 +1983,8 @@ namespace BigScreen {
         if(!selected_ || index >= localVideoFiles_.size())
             return;
         const auto& file = localVideoFiles_[index];
+        const bool imported = index < localVideoImported_.size() &&
+            localVideoImported_[index];
         if(!file.compatible)
         {
             ShowLocalVideoHelp(index);
@@ -1975,8 +2000,12 @@ namespace BigScreen {
             playback.Stop();
 
         std::string error;
-        if(!VideoLibrary::Instance().SetLocalVideoOverride(
-               selected_, file.fileName, error))
+        const bool assigned = imported
+            ? VideoLibrary::Instance().SetImportedVideoOverride(
+                selected_, file.fileName, error)
+            : VideoLibrary::Instance().SetLocalVideoOverride(
+                selected_, file.fileName, error);
+        if(!assigned)
         {
             transientStatus_ = error.empty()
                 ? "The local video could not be assigned."
@@ -2012,7 +2041,9 @@ namespace BigScreen {
             suppressUrlCallback_ = false;
         }
         ClearThumbnail();
-        transientStatus_ = "Local video assigned: " + file.fileName;
+        transientStatus_ = imported
+            ? "Imported video assigned: " + file.fileName
+            : "Local video assigned: " + file.fileName;
         previewSongTime_ = 0.0;
         playWhenAudioReady_ = true;
         RefreshLocalVideoFiles();
@@ -2030,7 +2061,8 @@ namespace BigScreen {
             return;
         const auto& file = localVideoFiles_[index];
         localVideoHelpText_->set_text(
-            file.fileName + "\n\n" +
+            ((index < localVideoImported_.size() && localVideoImported_[index])
+                ? "Video Import: " : "") + file.fileName + "\n\n" +
             (file.problem.empty()
                 ? "This MP4 is not compatible with Big Screen. Use H.264/AVC video at 1080p or lower inside a valid MP4 container."
                 : file.problem));
@@ -2044,6 +2076,8 @@ namespace BigScreen {
         const auto removedDescriptor = VideoLibrary::Instance().Describe(selected_);
         const bool removingLocalMapFile =
             removedDescriptor.userOverrideIsMapLocal;
+        const bool removingImportedFile =
+            removedDescriptor.userOverrideIsImported;
 
         // Stop both clocks before changing the active assignment. Managed
         // downloads may be deleted after their decoder closes; map-folder MP4s
@@ -2076,7 +2110,7 @@ namespace BigScreen {
         // file also prevents the periodic refresh from recreating the sprite
         // from a stale completed-probe snapshot.
         const auto download = DownloadManager::Instance().Snapshot();
-        if(!removingLocalMapFile &&
+        if(!removingLocalMapFile && !removingImportedFile &&
            download.levelId == std::string(selected_->levelID) &&
            !download.thumbnailPath.empty())
         {
@@ -2093,7 +2127,9 @@ namespace BigScreen {
         ClearThumbnail();
         transientStatus_ = removingLocalMapFile
             ? "Local video assignment removed. The MP4 remains in the map folder."
-            : "Downloaded user video removed.";
+            : removingImportedFile
+                ? "Imported video assignment removed. The MP4 remains in Video Import."
+                : "Downloaded user video removed.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig
@@ -2359,9 +2395,12 @@ namespace BigScreen {
                 std::string(selected_->levelID))
             : 0;
         std::uint64_t localVideoBytes = 0;
-        for(const auto& localVideo : localVideoFiles_)
-            localVideoBytes += localVideo.bytes;
-        const bool hasLocalVideos = !localVideoFiles_.empty();
+        for(std::size_t index = 0; index < localVideoFiles_.size(); ++index)
+            if(index >= localVideoImported_.size() || !localVideoImported_[index])
+                localVideoBytes += localVideoFiles_[index].bytes;
+        const bool hasLocalVideos = std::find(
+            localVideoImported_.begin(), localVideoImported_.end(), false) !=
+            localVideoImported_.end();
         const bool showStorage = descriptor.CanPlay() ||
             downloadedVideoBytes > 0 || hasLocalVideos;
         if(detailMapStorage_)
@@ -2389,6 +2428,8 @@ namespace BigScreen {
             removeConfirmationText_->set_text(
                 descriptor.userOverrideIsMapLocal
                     ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the map folder."
+                    : descriptor.userOverrideIsImported
+                        ? "Unassign this imported video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the Video Import folder."
                     : "Remove this downloaded video?\n\nThe downloaded MP4 and its timing settings will be deleted from Big Screen storage.");
         }
         const auto download = DownloadManager::Instance().Snapshot();

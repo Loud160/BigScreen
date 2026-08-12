@@ -589,8 +589,12 @@ os.replace(temporary, job['destination'])
         const auto next = runtime / "yt-dlp-next";
         const auto active = runtime / "yt-dlp-active";
         const auto previous = runtime / "yt-dlp-previous";
+        bool promotedCandidate = false;
+        std::string candidateVersion;
         if(std::filesystem::is_regular_file(next))
         {
+            std::ifstream version(next.string() + ".version");
+            if(version) std::getline(version, candidateVersion);
             std::filesystem::remove(previous);
             std::filesystem::remove(previous.string() + ".version");
             if(std::filesystem::is_regular_file(active))
@@ -602,6 +606,7 @@ os.replace(temporary, job['destination'])
             std::filesystem::rename(next, active);
             if(std::filesystem::is_regular_file(next.string() + ".version"))
                 std::filesystem::rename(next.string() + ".version", active.string() + ".version");
+            promotedCandidate = true;
         }
         std::ifstream activeVersion(active.string() + ".version");
         if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
@@ -675,12 +680,83 @@ os.replace(temporary, job['destination'])
             PyEval_SaveThread();
             return false;
         }
+
+        // A checksum proves that the archive matches the official release; it
+        // does not prove that this CPython build can import that release. Test
+        // the exact active module before accepting it as authoritative.
+        const auto smokeTest = []()
+        {
+            return PyRun_SimpleString(
+                "import importlib, sys\n"
+                "importlib.invalidate_caches()\n"
+                "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'yt_dlp' or k.startswith('yt_dlp.')]\n"
+                "from yt_dlp import YoutubeDL\n"
+                "assert callable(YoutubeDL)\n") == 0;
+        };
+        if(!smokeTest())
+        {
+            PyErr_Print();
+            PyErr_Clear();
+            if(promotedCandidate)
+            {
+                // Restore the one previous working package, or fall back to
+                // the immutable shipped baseline when no previous update
+                // exists. Normal video/network failures never enter this path.
+                std::filesystem::remove(active);
+                std::filesystem::remove(active.string() + ".version");
+                if(std::filesystem::is_regular_file(previous))
+                {
+                    std::filesystem::rename(previous, active);
+                    if(std::filesystem::is_regular_file(previous.string() + ".version"))
+                        std::filesystem::rename(
+                            previous.string() + ".version",
+                            active.string() + ".version");
+                }
+                currentUpdateVersion_ = "2026.07.04";
+                std::ifstream restoredVersion(active.string() + ".version");
+                if(restoredVersion)
+                    std::getline(restoredVersion, currentUpdateVersion_);
+                std::ofstream rejected(
+                    runtime / "yt-dlp-rejected.version",
+                    std::ios::binary | std::ios::trunc);
+                rejected << (candidateVersion.empty() ? "unknown" : candidateVersion);
+                rejected.close();
+                if(!smokeTest())
+                {
+                    PyErr_Print();
+                    PyErr_Clear();
+                    error = "Neither the previous nor shipped yt-dlp package could be imported.";
+                    PyEval_SaveThread();
+                    return false;
+                }
+                std::scoped_lock lock(mutex_);
+                updateNotice_ =
+                    "The new yt-dlp package could not load on this Quest. Big Screen automatically restored the previous working downloader and marked the update as rejected.";
+                PaperLogger.warn(
+                    "Rejected yt-dlp candidate '{}' and restored the previous package",
+                    candidateVersion);
+            }
+            else
+            {
+                error = "The shipped yt-dlp package could not be imported.";
+                PyEval_SaveThread();
+                return false;
+            }
+        }
         PyEval_SaveThread();
         initialized_ = true;
         PaperLogger.info(
             "Embedded CPython downloader initialized with CA bundle '{}'",
             certificateBundle.string());
         return true;
+    }
+
+    std::optional<std::string> DownloadManager::TakeUpdateNotice()
+    {
+        std::scoped_lock lock(mutex_);
+        auto result = updateNotice_;
+        updateNotice_.reset();
+        return result;
     }
 
     bool DownloadManager::Start(DownloadRequest request, std::string& error)
@@ -878,14 +954,58 @@ os.replace(temporary, job['destination'])
             PyDict_SetItemString(globals, "BIGSCREEN_JOB", job);
             Py_DECREF(job);
             auto* result = PyRun_String(DownloaderScript, Py_file_input, globals, globals);
+            bool runtimeRolledBack = false;
             if(!result)
             {
                 PyErr_Print();
                 PyErr_Clear();
+                // A Python execution/import failure is an internal downloader
+                // failure, unlike a private video or network error (those are
+                // caught and written to the normal status JSON by the script).
+                // Restore the one retained package and retry this job once.
+                const auto runtime = VideoLibrary::Instance().RuntimePath();
+                const auto active = runtime / "yt-dlp-active";
+                const auto previous = runtime / "yt-dlp-previous";
+                if(std::filesystem::is_regular_file(previous))
+                {
+                    std::filesystem::remove(active);
+                    std::filesystem::remove(active.string() + ".version");
+                    std::filesystem::rename(previous, active);
+                    if(std::filesystem::is_regular_file(previous.string() + ".version"))
+                        std::filesystem::rename(
+                            previous.string() + ".version",
+                            active.string() + ".version");
+                    PyRun_SimpleString(
+                        "import importlib, sys\n"
+                        "importlib.invalidate_caches()\n"
+                        "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'yt_dlp' or k.startswith('yt_dlp.')]\n");
+                    result = PyRun_String(
+                        DownloaderScript, Py_file_input, globals, globals);
+                    runtimeRolledBack = result != nullptr;
+                    if(!result)
+                    {
+                        PyErr_Print();
+                        PyErr_Clear();
+                    }
+                }
             }
-            else Py_DECREF(result);
+            const bool runtimeFailed = result == nullptr;
+            if(result) Py_DECREF(result);
             Py_DECREF(globals);
             PyGILState_Release(gil);
+
+            if(runtimeRolledBack)
+            {
+                std::scoped_lock noticeLock(mutex_);
+                updateNotice_ =
+                    "yt-dlp encountered an internal runtime error while starting a download. Big Screen restored the previous working downloader and retried the download once.";
+            }
+            if(runtimeFailed)
+            {
+                SetFailure(
+                    "The embedded downloader could not start. Big Screen recorded the internal error; the map and game can continue normally.");
+                return;
+            }
 
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();

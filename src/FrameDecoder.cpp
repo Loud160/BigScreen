@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -114,6 +115,8 @@ namespace BigScreen {
         }
 
         const int sourceHeight = codec_->height;
+        sourceWidth_ = codec_->width;
+        sourceHeight_ = codec_->height;
         height_ = maximumOutputHeight > 0
             ? std::min(sourceHeight, maximumOutputHeight)
             : sourceHeight;
@@ -160,9 +163,12 @@ namespace BigScreen {
         videoStream_ = -1;
         width_ = 0;
         height_ = 0;
+        sourceWidth_ = 0;
+        sourceHeight_ = 0;
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
+        averageDecodeMilliseconds_ = 0.0;
 
         {
             std::scoped_lock requestLock(requestMutex_);
@@ -250,6 +256,7 @@ namespace BigScreen {
 
             while(!stopWorker_)
             {
+                const auto decodeStarted = std::chrono::steady_clock::now();
                 if(!ReadDecodedFrame())
                 {
                     handledVersion = targetVersion;
@@ -262,7 +269,14 @@ namespace BigScreen {
 
                 VideoFrame output;
                 if(ConvertCurrentFrame(output))
+                {
+                    const auto elapsed = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - decodeStarted).count();
+                    const auto previous = averageDecodeMilliseconds_.load();
+                    averageDecodeMilliseconds_ = previous <= 0.0
+                        ? elapsed : previous * 0.9 + elapsed * 0.1;
                     Publish(std::move(output));
+                }
                 handledVersion = targetVersion;
                 break;
             }

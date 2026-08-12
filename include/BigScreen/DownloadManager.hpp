@@ -5,6 +5,7 @@
 #include <deque>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -80,6 +81,7 @@ namespace BigScreen {
         DownloadSnapshot Snapshot();
         bool IsReady() const { return initialized_; }
         const std::string& AvailableUpdateVersion() const { return availableUpdateVersion_; }
+        std::optional<std::string> TakeUpdateNotice();
 
     private:
         DownloadManager() = default;
@@ -115,5 +117,6 @@ namespace BigScreen {
         std::atomic<bool> initialized_{false};
         std::string availableUpdateVersion_;
         std::string currentUpdateVersion_ = "2026.07.04";
+        std::optional<std::string> updateNotice_;
     };
 }

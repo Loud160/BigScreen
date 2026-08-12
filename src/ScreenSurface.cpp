@@ -4,6 +4,11 @@
 #include <cstdint>
 
 #include "BigScreen/FrameDecoder.hpp"
+#include "TMPro/TextAlignmentOptions.hpp"
+#include "TMPro/TextMeshPro.hpp"
+#include "UnityEngine/Color.hpp"
+#include "UnityEngine/RectTransform.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/LayerMask.hpp"
@@ -87,6 +92,12 @@ namespace BigScreen {
         });
 
         const float aspectRatio = static_cast<float>(videoWidth) / videoHeight;
+        const float flatWidth = config.screenHeight * aspectRatio;
+        screenWidth_ = config.maintainAspectRatioWhenCurved &&
+                       std::abs(config.screenCurvature) > 0.0001f
+            ? flatWidth * CurvedWidthScale(config.screenCurvature, config.screenSegments)
+            : flatWidth;
+        screenHeight_ = config.screenHeight;
         if(!CreateMesh(config, aspectRatio) ||
            !CreateMaterialAndTexture(videoWidth, videoHeight, config.transparent))
         {
@@ -304,6 +315,10 @@ namespace BigScreen {
 
     void ScreenSurface::Destroy()
     {
+        if(diagnosticsObject_)
+            UnityEngine::Object::Destroy(diagnosticsObject_);
+        diagnosticsObject_ = nullptr;
+        diagnosticsText_ = nullptr;
         // Destroying the GameObject also destroys its MeshFilter and Renderer.
         // Mesh, material, and texture were created as standalone Unity objects,
         // so they are released explicitly when gameplay ends or a level changes.
@@ -322,7 +337,52 @@ namespace BigScreen {
         texture_ = nullptr;
         textureWidth_ = 0;
         textureHeight_ = 0;
+        screenWidth_ = 0.0f;
+        screenHeight_ = 0.0f;
         transparent_ = false;
         visible_ = false;
+    }
+
+    void ScreenSurface::SetDiagnosticsText(const std::string& text)
+    {
+        if(text.empty())
+        {
+            if(diagnosticsObject_)
+                UnityEngine::Object::Destroy(diagnosticsObject_);
+            diagnosticsObject_ = nullptr;
+            diagnosticsText_ = nullptr;
+            return;
+        }
+        if(!gameObject_)
+            return;
+        if(!diagnosticsObject_)
+        {
+            diagnosticsObject_ = UnityEngine::GameObject::New_ctor(
+                "Big Screen Performance Information");
+            diagnosticsObject_->set_layer(gameObject_->get_layer());
+            auto transform = diagnosticsObject_->get_transform();
+            transform->SetParent(gameObject_->get_transform(), false);
+            transform->set_localPosition({
+                -screenWidth_ * 0.48f,
+                -screenHeight_ * 0.62f,
+                -0.05f});
+            transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
+            transform->set_localScale({0.08f, 0.08f, 0.08f});
+            diagnosticsText_ = diagnosticsObject_->AddComponent<TMPro::TextMeshPro*>();
+            if(!diagnosticsText_)
+            {
+                UnityEngine::Object::Destroy(diagnosticsObject_);
+                diagnosticsObject_ = nullptr;
+                return;
+            }
+            diagnosticsText_->set_font(BSML::Helpers::GetMainTextFont());
+            diagnosticsText_->set_fontSize(4.0f);
+            diagnosticsText_->set_alignment(TMPro::TextAlignmentOptions::BottomLeft);
+            diagnosticsText_->set_color(UnityEngine::Color::get_white());
+            diagnosticsText_->get_rectTransform()->set_sizeDelta({
+                screenWidth_ * 11.5f,
+                screenHeight_ * 3.0f});
+        }
+        diagnosticsText_->set_text(text);
     }
 }
