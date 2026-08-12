@@ -132,6 +132,7 @@ namespace BigScreen {
         bool previewPlaying_ = false;
         bool playWhenAudioReady_ = false;
         bool suppressScrubberCallback_ = false;
+        float scrubberFollowResumeTime_ = 0.0f;
         bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;

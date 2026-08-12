@@ -79,6 +79,8 @@ namespace BigScreen {
             "Show All Maps", "Custom Maps", "WIP Maps",
             "OST Maps", "DLC Maps", "Maps With Video"
         };
+        constexpr float PreviewScrubIncrement = 0.1f;
+        constexpr float PreviewScrubFollowDelay = 0.25f;
 
         // These sprites are created only from the configured video's cached
         // YouTube thumbnail. Beat Saber's song/album cover is deliberately not
@@ -129,11 +131,15 @@ namespace BigScreen {
 
         std::string PlaybackTime(double seconds)
         {
-            const auto wholeSeconds = static_cast<int>(std::max(0.0, seconds));
+            const auto safeSeconds = std::max(0.0, seconds);
+            const auto wholeSeconds = static_cast<int>(safeSeconds);
             const int minutes = wholeSeconds / 60;
             const int remainder = wholeSeconds % 60;
+            const int tenths = static_cast<int>(std::floor(
+                (safeSeconds - wholeSeconds) * 10.0 + 0.0001));
             std::ostringstream text;
-            text << minutes << ':' << std::setw(2) << std::setfill('0') << remainder;
+            text << minutes << ':' << std::setw(2) << std::setfill('0') << remainder
+                 << '.' << tenths;
             return text.str();
         }
 
@@ -730,7 +736,7 @@ namespace BigScreen {
         playbackScrubber_ = BSML::Lite::CreateSliderSetting(
             editorBody,
             "Preview Position",
-            0.1f,
+            PreviewScrubIncrement,
             0.0f,
             0.0f,
             1.0f,
@@ -739,7 +745,15 @@ namespace BigScreen {
             {0.0f, 0.0f},
             [this](float value) {
                 if(!suppressScrubberCallback_)
+                {
+                    // SongPreviewPlayer updates every frame. Give the player's
+                    // laser drag ownership of the handle briefly so that clock
+                    // following cannot pull it away between pointer updates.
+                    scrubberFollowResumeTime_ =
+                        UnityEngine::Time::get_realtimeSinceStartup() +
+                        PreviewScrubFollowDelay;
                     SeekPreview(value);
+                }
             });
         ConfigureLayout(playbackScrubber_, -1.0f, 8.0f, 1.0f);
 
@@ -1785,9 +1799,31 @@ namespace BigScreen {
             if(auto* slider = playbackScrubber_->get_gameObject()
                     ->GetComponentInChildren<HMUI::RangeValuesTextSlider*>())
             {
-                slider->set_maxValue(static_cast<float>(std::max(0.1, duration)));
+                const float maximum = static_cast<float>(std::max(0.1, duration));
+                const int steps = std::max(
+                    2,
+                    static_cast<int>(std::ceil(
+                        maximum / PreviewScrubIncrement)) + 1);
+
+                // BSML calculates its step count only once during creation.
+                // This slider starts with a temporary 0..1 range, so changing
+                // only maxValue left a full song with just eleven positions.
+                // Rebuild both values together whenever the selected song has
+                // a different duration, without treating the clamp as input.
+                if(std::abs(slider->get_maxValue() - maximum) > 0.001f ||
+                   slider->get_numberOfSteps() != steps)
+                {
+                    suppressScrubberCallback_ = true;
+                    slider->set_maxValue(maximum);
+                    slider->set_numberOfSteps(steps);
+                    suppressScrubberCallback_ = false;
+                }
             }
-            if(std::abs(playbackScrubber_->get_Value() - previewSongTime_) > 0.04)
+            const bool userStillScrubbing =
+                UnityEngine::Time::get_realtimeSinceStartup() <
+                scrubberFollowResumeTime_;
+            if(!userStillScrubbing &&
+               std::abs(playbackScrubber_->get_Value() - previewSongTime_) > 0.04)
             {
                 suppressScrubberCallback_ = true;
                 playbackScrubber_->set_Value(static_cast<float>(previewSongTime_));
