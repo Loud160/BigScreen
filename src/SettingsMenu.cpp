@@ -52,7 +52,7 @@ namespace BigScreen {
         };
 
         std::array<std::string_view, 4> SettingsTabNames{
-            "General", "Screen", "Playback", "Update"
+            "General", "Screen", "Environment", "Update"
         };
 
         std::string ResolutionLabel(int height)
@@ -290,14 +290,43 @@ namespace BigScreen {
 
         auto* generalContainer = createTabPage(0);
         auto* screenContainer = createTabPage(1);
-        auto* playbackContainer = createTabPage(2);
+        auto* environmentContainer = createTabPage(2);
         auto* updateContainer = createTabPage(3);
         if(!generalContainer || !screenContainer ||
-           !playbackContainer || !updateContainer)
+           !environmentContainer || !updateContainer)
         {
             PaperLogger.error("Could not create all Big Screen settings tabs");
             return;
         }
+
+        // Performance limits are global playback preferences rather than
+        // environment behavior. Create them first so they remain at the top of
+        // General regardless of settings added to that page later.
+        playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
+            generalContainer,
+            "Video Frame Rate Limit",
+            PlaybackFpsLabel(settings.PlaybackFpsLimit()),
+            PlaybackFpsChoices,
+            [](StringW value)
+            {
+                Settings::Instance().SetPlaybackFpsLimit(PlaybackFpsValue(value));
+            });
+        BSML::Lite::AddHoverHint(
+            playbackFpsDropdown_,
+            "Maximum displayed video frame rate. Lower values reduce software conversion and texture-upload load; videos below the limit retain their native frame rate.");
+
+        resolutionDropdown_ = BSML::Lite::CreateDropdown(
+            generalContainer,
+            "Video Resolution",
+            ResolutionLabel(settings.ResolutionHeight()),
+            ResolutionChoices,
+            [](StringW value)
+            {
+                Settings::Instance().SetResolutionHeight(ResolutionValue(value));
+            });
+        BSML::Lite::AddHoverHint(
+            resolutionDropdown_,
+            "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -480,7 +509,7 @@ namespace BigScreen {
             "Lets environment lights and objects remain partially visible through the video.");
 
         lightShowToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Map Light Show",
             settings.MapLightShowEnabled(),
             [](bool enabled)
@@ -493,7 +522,7 @@ namespace BigScreen {
             "Keeps the selected map's lighting events active while its video plays.");
 
         hideBackWallLightsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Back Wall Lights",
             settings.HideBackWallLights(),
             [](bool enabled)
@@ -505,7 +534,7 @@ namespace BigScreen {
             "Turns off legacy lighting groups 0 and 4 (light IDs 1 and 5), which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
 
         hideRingLightsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Ring Lights",
             settings.HideRingLights(),
             [](bool enabled)
@@ -517,7 +546,7 @@ namespace BigScreen {
             "Turns off legacy lighting group 1 (light ID 2), which supplies the ring lights. Takes effect when the next map starts.");
 
         hideSideLaserLightsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Side Laser Lights",
             settings.HideSideLaserLights(),
             [](bool enabled)
@@ -529,7 +558,7 @@ namespace BigScreen {
             "Turns off the legacy left/right laser groups 2 and 3 (light IDs 3 and 4). Use this when their beams cross the video. Takes effect when the next map starts.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Use Big Mirror Override",
             settings.EnvironmentOverrideEnabled(),
             [](bool enabled)
@@ -541,7 +570,7 @@ namespace BigScreen {
             "When disabled, the map's intended background is used and may partially block the video.");
 
         glassDesertOverrideToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Force Glass Desert",
             settings.GlassDesertOverrideEnabled(),
             [](bool enabled)
@@ -553,7 +582,7 @@ namespace BigScreen {
             "Loads Glass Desert for video gameplay so its open 360-style layout can be tested. This takes priority over the Big Mirror override and applies when the next map starts.");
 
         disableEnvironmentMotionToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Disable Rotation and Motion",
             settings.DisableEnvironmentMotion(),
             [](bool enabled)
@@ -565,7 +594,7 @@ namespace BigScreen {
             "When enabled, stops rotating and moving background scenery in video maps. Takes effect when the next map starts.");
 
         hideTrackRingsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Track Rings",
             settings.HideTrackRings(),
             [](bool enabled)
@@ -577,7 +606,7 @@ namespace BigScreen {
             "Hides the overhead ring and arch geometry that can cross in front of the video screen. Takes effect when the next map starts.");
 
         hideSideBarsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Side Bars",
             settings.HideSideBars(),
             [](bool enabled)
@@ -589,7 +618,7 @@ namespace BigScreen {
             "Hides Big Mirror's paired near-building structures when they obstruct the sides of the video. Takes effect when the next map starts.");
 
         hideSpectrogramBarsToggle_ = BSML::Lite::CreateToggle(
-            playbackContainer,
+            environmentContainer,
             "Hide Spectrogram Bars",
             settings.HideSpectrogramBars(),
             [](bool enabled)
@@ -599,32 +628,6 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             hideSpectrogramBarsToggle_,
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
-
-        playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
-            playbackContainer,
-            "Video Frame Rate Limit",
-            PlaybackFpsLabel(settings.PlaybackFpsLimit()),
-            PlaybackFpsChoices,
-            [](StringW value)
-            {
-                Settings::Instance().SetPlaybackFpsLimit(PlaybackFpsValue(value));
-            });
-        BSML::Lite::AddHoverHint(
-            playbackFpsDropdown_,
-            "Maximum displayed video frame rate. Lower values reduce software conversion and texture-upload load; videos below the limit retain their native frame rate.");
-
-        resolutionDropdown_ = BSML::Lite::CreateDropdown(
-            playbackContainer,
-            "Video Resolution",
-            ResolutionLabel(settings.ResolutionHeight()),
-            ResolutionChoices,
-            [](StringW value)
-            {
-                Settings::Instance().SetResolutionHeight(ResolutionValue(value));
-            });
-        BSML::Lite::AddHoverHint(
-            resolutionDropdown_,
-            "720p is recommended. 1080p may cause performance issues and decrease battery life.");
 
         nightlyWarningModal_ = BSML::Lite::CreateModal(
             viewController,
