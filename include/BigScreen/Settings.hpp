@@ -14,6 +14,23 @@ namespace BigScreen {
         bool curved = false;
         float curvature = 0.35f;
         bool maintainAspectRatio = false;
+        float screenRoll = 0.0f;
+        float videoRotation = 0.0f;
+        float videoZoom = 1.0f;
+        float videoOffsetX = 0.0f;
+        float videoOffsetY = 0.0f;
+        float videoTilt = 0.0f;
+        bool stretchVideoToFit = false;
+        bool undocked = false;
+        bool undockedConfigured = false;
+        float undockedPositionX = 0.0f;
+        float undockedPositionY = 3.0f;
+        float undockedPositionZ = 8.0f;
+        float undockedRotationX = 0.0f;
+        float undockedRotationY = 0.0f;
+        float undockedRotationZ = 0.0f;
+        float undockedWidth = 5.333333f;
+        float undockedHeight = 3.0f;
     };
 
     /// Persistent, user-facing behavior shared by the main-menu page, map
@@ -34,6 +51,7 @@ namespace BigScreen {
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
+        bool AdvancedOptionsEnabled() const { return advancedOptionsEnabled_; }
         int ActiveScreenLayout() const { return activeScreenLayout_; }
         const ScreenLayoutProfile& ActiveLayout() const {
             return screenLayouts_[activeScreenLayout_];
@@ -47,6 +65,14 @@ namespace BigScreen {
         bool CurvedScreenEnabled() const { return ActiveLayout().curved; }
         float ScreenCurvature() const { return ActiveLayout().curvature; }
         bool MaintainCurveAspectRatio() const { return ActiveLayout().maintainAspectRatio; }
+        float ScreenRoll() const { return ActiveLayout().screenRoll; }
+        float VideoRotation() const { return ActiveLayout().videoRotation; }
+        float VideoZoom() const { return ActiveLayout().videoZoom; }
+        float VideoOffsetX() const { return ActiveLayout().videoOffsetX; }
+        float VideoOffsetY() const { return ActiveLayout().videoOffsetY; }
+        float VideoTilt() const { return ActiveLayout().videoTilt; }
+        bool StretchVideoToFit() const { return ActiveLayout().stretchVideoToFit; }
+        bool UndockedScreenEnabled() const { return ActiveLayout().undocked; }
         bool AllowChromaOverride() const { return allowChromaOverride_; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
@@ -70,6 +96,7 @@ namespace BigScreen {
         void SetDistractionFreeMenu(bool value);
         void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
+        void SetAdvancedOptionsEnabled(bool value);
         void SetActiveScreenLayout(int value);
         void SetScreenDistanceOffset(float value);
         void SetScreenHorizontalOffset(float value);
@@ -79,6 +106,18 @@ namespace BigScreen {
         void SetCurvedScreenEnabled(bool value);
         void SetScreenCurvature(float value);
         void SetMaintainCurveAspectRatio(bool value);
+        void SetScreenRoll(float value);
+        void SetVideoRotation(float value);
+        void SetVideoZoom(float value);
+        void SetVideoOffsetX(float value);
+        void SetVideoOffsetY(float value);
+        void SetVideoTilt(float value);
+        void SetStretchVideoToFit(bool value);
+        void SetUndockedScreenEnabled(bool value);
+        void SaveUndockedScreen(
+            float positionX, float positionY, float positionZ,
+            float rotationX, float rotationY, float rotationZ,
+            float width, float height);
         void SetAllowChromaOverride(bool value);
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
@@ -110,7 +149,8 @@ namespace BigScreen {
         bool distractionFreeMenu_ = true;
         bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
-        std::array<ScreenLayoutProfile, 3> screenLayouts_{};
+        bool advancedOptionsEnabled_ = false;
+        std::array<ScreenLayoutProfile, 5> screenLayouts_{};
         int activeScreenLayout_ = 0;
         // Only maps that actually contain mapper-authored Cinema presentation
         // fields can take ownership; ordinary video maps remain on the selected

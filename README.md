@@ -25,8 +25,9 @@ Big Screen plays H.264 MP4 video on a configurable world-space screen, synchroni
 | 🎬 | Any song can have video | Assign video to OST, DLC, custom, and WIP songs without modifying Beat Saber audio or beatmaps. |
 | 🔎 | In-headset YouTube workflow | Search YouTube in the Quest browser, paste a normal or share URL, preview the thumbnail, and download with visible progress and readable errors. |
 | 📁 | Local video support | Register compatible MP4s from custom-map folders or the global Video Import folder; user-owned local files are never deleted by Remove Video. |
-| 🖥️ | Three screen layouts | Save three independent flat/curved layouts and switch them from the mod, song-selection header, or pause menu. |
-| 🎛️ | Detailed screen control | Adjust size, distance, X/Y position, tilt, curvature, curve aspect behavior, and transparency. Flat screens reach 4.0x; curved screens reach 2.5x. |
+| 🖥️ | Five screen layouts | Save five independent flat/curved layouts and switch them from the mod, song-selection header, or pause menu. |
+| 🎛️ | Detailed screen control | Adjust size, distance, X/Y position, tilt, rotation, curvature, curve aspect behavior, and transparency. Advanced controls can freely position and reshape an undocked screen. |
+| 🔍 | Independent video framing | Rotate, zoom, pan, perspective-tilt, letterbox, or stretch the picture inside the screen without changing the decoded resolution. |
 | ⏱️ | Audio-clock synchronization | Configure offset, playback speed, automatic fit-to-song timing, and transparent or black lead-in. |
 | 💡 | Video-friendly environments | Keep or suppress map lights, force Big Mirror, stop background motion, and hide geometry or light groups that obstruct large screens. |
 | 🎞️ | Preview and Replay support | Preview videos while browsing songs and keep them present during Replay playback and recording. |
@@ -55,7 +56,7 @@ Start with the [documentation index](docs/README.md), or jump directly to:
 3. Leave **Big Screen Enabled**, **Video In Map**, and **Preview Video** on.
 4. Open **Video Library**, select a song, and either choose a compatible local MP4 or paste a YouTube URL.
 5. After assignment/download, use the synchronized preview to adjust **Video Playback Offset**, **Playback Speed**, and **Fit to Song**.
-6. Open **Screen** to position the blank preview surface and save up to three layouts.
+6. Open **Screen** to position the blank preview surface and save up to five layouts. Enable **Advanced Options** only if you need independent video framing or a freely positioned screen.
 7. Select the song normally. Big Screen's header controls can globally enable previews/gameplay video and change layouts without reopening the mod.
 
 ## Ways to add a video

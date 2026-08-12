@@ -4,6 +4,8 @@
 #include <functional>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ScreenPreview.hpp"
+#include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "GlobalNamespace/MainFlowCoordinator.hpp"
 #include "GlobalNamespace/SimpleDialogPromptViewController.hpp"
@@ -105,7 +107,15 @@ namespace BigScreen {
             }
         }
         if(disable)
+        {
             Settings::Instance().SetModEnabled(false);
+            // The circuit breaker must perform the same immediate teardown as
+            // the menu's master switch. Merely persisting false would leave a
+            // decoder, preview, or undocked editor raycaster alive because the
+            // Update hook stops dispatching mod work as soon as it sees false.
+            SelectionVideoToggle::Instance().ModEnabledChanged(false);
+            ScreenPreview::Instance().SetEnabled(false);
+        }
 
         std::pair<std::string, std::string> message;
         {

@@ -25,7 +25,9 @@
 - [ ] Mapper download, pasted URL download, cancellation, thumbnail, progress, and understandable errors work.
 - [ ] Map-folder local file, Video Import file, invalid-file HELP, assignment replacement, and unregister behavior work.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
-- [ ] All three layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
+- [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
+- [ ] Advanced video rotation/zoom/pan/tilt/stretch values are layout-scoped and black/transparent letterboxing follows Video Transparency.
+- [ ] Undocked move/rotate/resize saves only after Save Screen; cancel, focus loss, layout change, and menu exit restore the last saved placement and leave no raycastable overlay.
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
 - [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.
 - [ ] 480p/720p/1080p and 15/30/60 FPS produce expected diagnostics; Automatic Performance steps down without changing saved settings.

@@ -108,8 +108,10 @@ namespace BigScreen {
             "videoEnabled",
             ReadBool(document, "videoEnabledByDefault", true));
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
-        // Profile 1 migrates the original single-layout keys. Profiles 2 and
-        // 3 begin at documented defaults until the user changes them.
+        advancedOptionsEnabled_ = ReadBool(document, "advancedOptionsEnabled", false);
+        // Profile 1 migrates the original single-layout keys. Newly introduced
+        // profiles 4 and 5 begin at documented defaults without changing the
+        // three layouts saved by earlier versions.
         for(int index = 0; index < static_cast<int>(screenLayouts_.size()); ++index)
         {
             const auto prefix = "screenLayout" + std::to_string(index + 1);
@@ -146,9 +148,43 @@ namespace BigScreen {
             layout.maintainAspectRatio = ReadBool(
                 document, (prefix + "MaintainAspect").c_str(),
                 legacy ? ReadBool(document, "maintainCurveAspectRatio", false) : false);
+            layout.screenRoll = std::clamp(ReadFloat(
+                document, (prefix + "ScreenRoll").c_str(), 0.0f), -180.0f, 180.0f);
+            layout.videoRotation = std::clamp(ReadFloat(
+                document, (prefix + "VideoRotation").c_str(), 0.0f), -180.0f, 180.0f);
+            layout.videoZoom = std::clamp(ReadFloat(
+                document, (prefix + "VideoZoom").c_str(), 1.0f), 0.5f, 3.0f);
+            layout.videoOffsetX = std::clamp(ReadFloat(
+                document, (prefix + "VideoOffsetX").c_str(), 0.0f), -1.0f, 1.0f);
+            layout.videoOffsetY = std::clamp(ReadFloat(
+                document, (prefix + "VideoOffsetY").c_str(), 0.0f), -1.0f, 1.0f);
+            layout.videoTilt = std::clamp(ReadFloat(
+                document, (prefix + "VideoTilt").c_str(), 0.0f), -75.0f, 75.0f);
+            layout.stretchVideoToFit = ReadBool(
+                document, (prefix + "StretchVideoToFit").c_str(), false);
+            layout.undocked = ReadBool(
+                document, (prefix + "Undocked").c_str(), false);
+            layout.undockedConfigured = ReadBool(
+                document, (prefix + "UndockedConfigured").c_str(), false);
+            layout.undockedPositionX = std::clamp(ReadFloat(
+                document, (prefix + "UndockedPositionX").c_str(), 0.0f), -100.0f, 100.0f);
+            layout.undockedPositionY = std::clamp(ReadFloat(
+                document, (prefix + "UndockedPositionY").c_str(), 3.0f), -100.0f, 100.0f);
+            layout.undockedPositionZ = std::clamp(ReadFloat(
+                document, (prefix + "UndockedPositionZ").c_str(), 8.0f), -100.0f, 100.0f);
+            layout.undockedRotationX = std::clamp(ReadFloat(
+                document, (prefix + "UndockedRotationX").c_str(), 0.0f), -360.0f, 360.0f);
+            layout.undockedRotationY = std::clamp(ReadFloat(
+                document, (prefix + "UndockedRotationY").c_str(), 0.0f), -360.0f, 360.0f);
+            layout.undockedRotationZ = std::clamp(ReadFloat(
+                document, (prefix + "UndockedRotationZ").c_str(), 0.0f), -360.0f, 360.0f);
+            layout.undockedWidth = std::clamp(ReadFloat(
+                document, (prefix + "UndockedWidth").c_str(), 5.333333f), 0.5f, 50.0f);
+            layout.undockedHeight = std::clamp(ReadFloat(
+                document, (prefix + "UndockedHeight").c_str(), 3.0f), 0.5f, 50.0f);
         }
         activeScreenLayout_ = std::clamp(
-            ReadInt(document, "activeScreenLayout", 0), 0, 2);
+            ReadInt(document, "activeScreenLayout", 0), 0, 4);
         allowChromaOverride_ = ReadBool(document, "allowChromaOverride", true);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
@@ -234,9 +270,15 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetAdvancedOptionsEnabled(bool value)
+    {
+        advancedOptionsEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetActiveScreenLayout(int value)
     {
-        activeScreenLayout_ = std::clamp(value, 0, 2);
+        activeScreenLayout_ = std::clamp(value, 0, 4);
         Save();
     }
 
@@ -303,6 +345,87 @@ namespace BigScreen {
     void Settings::SetMaintainCurveAspectRatio(bool value)
     {
         screenLayouts_[activeScreenLayout_].maintainAspectRatio = value;
+        Save();
+    }
+
+    void Settings::SetScreenRoll(float value)
+    {
+        screenLayouts_[activeScreenLayout_].screenRoll = std::clamp(value, -180.0f, 180.0f);
+        Save();
+    }
+
+    void Settings::SetVideoRotation(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoRotation = std::clamp(value, -180.0f, 180.0f);
+        Save();
+    }
+
+    void Settings::SetVideoZoom(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoZoom = std::clamp(value, 0.5f, 3.0f);
+        Save();
+    }
+
+    void Settings::SetVideoOffsetX(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoOffsetX = std::clamp(value, -1.0f, 1.0f);
+        Save();
+    }
+
+    void Settings::SetVideoOffsetY(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoOffsetY = std::clamp(value, -1.0f, 1.0f);
+        Save();
+    }
+
+    void Settings::SetVideoTilt(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoTilt = std::clamp(value, -75.0f, 75.0f);
+        Save();
+    }
+
+    void Settings::SetStretchVideoToFit(bool value)
+    {
+        screenLayouts_[activeScreenLayout_].stretchVideoToFit = value;
+        Save();
+    }
+
+    void Settings::SetUndockedScreenEnabled(bool value)
+    {
+        auto& layout = screenLayouts_[activeScreenLayout_];
+        layout.undocked = value;
+        if(value && !layout.undockedConfigured)
+        {
+            // A deliberately conservative first position keeps the editor in
+            // easy controller reach without covering the left or right menus.
+            layout.undockedPositionX = 0.0f;
+            layout.undockedPositionY = 3.0f;
+            layout.undockedPositionZ = 8.0f;
+            layout.undockedRotationX = 0.0f;
+            layout.undockedRotationY = 0.0f;
+            layout.undockedRotationZ = 0.0f;
+            layout.undockedWidth = 5.333333f;
+            layout.undockedHeight = 3.0f;
+            layout.undockedConfigured = true;
+        }
+        Save();
+    }
+
+    void Settings::SaveUndockedScreen(
+        float positionX, float positionY, float positionZ,
+        float rotationX, float rotationY, float rotationZ,
+        float width, float height)
+    {
+        auto& layout = screenLayouts_[activeScreenLayout_];
+        layout.undockedPositionX = std::clamp(positionX, -100.0f, 100.0f);
+        layout.undockedPositionY = std::clamp(positionY, -100.0f, 100.0f);
+        layout.undockedPositionZ = std::clamp(positionZ, -100.0f, 100.0f);
+        layout.undockedRotationX = std::clamp(rotationX, -360.0f, 360.0f);
+        layout.undockedRotationY = std::clamp(rotationY, -360.0f, 360.0f);
+        layout.undockedRotationZ = std::clamp(rotationZ, -360.0f, 360.0f);
+        layout.undockedWidth = std::clamp(width, 0.5f, 50.0f);
+        layout.undockedHeight = std::clamp(height, 0.5f, 50.0f);
+        layout.undockedConfigured = true;
         Save();
     }
 
@@ -430,6 +553,7 @@ namespace BigScreen {
         document.RemoveMember("menuScreenPreviewEnabled");
         Replace(document, "videoEnabled", videoEnabled_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
+        Replace(document, "advancedOptionsEnabled", advancedOptionsEnabled_);
         for(const auto* oldKey : {
             "screenDistanceOffset", "screenHorizontalOffset", "screenVerticalOffset",
             "screenTiltOffset", "screenScale", "curvedScreenEnabled",
@@ -448,6 +572,23 @@ namespace BigScreen {
             Replace(document, (prefix + "Curved").c_str(), layout.curved);
             Replace(document, (prefix + "Curvature").c_str(), layout.curvature);
             Replace(document, (prefix + "MaintainAspect").c_str(), layout.maintainAspectRatio);
+            Replace(document, (prefix + "ScreenRoll").c_str(), layout.screenRoll);
+            Replace(document, (prefix + "VideoRotation").c_str(), layout.videoRotation);
+            Replace(document, (prefix + "VideoZoom").c_str(), layout.videoZoom);
+            Replace(document, (prefix + "VideoOffsetX").c_str(), layout.videoOffsetX);
+            Replace(document, (prefix + "VideoOffsetY").c_str(), layout.videoOffsetY);
+            Replace(document, (prefix + "VideoTilt").c_str(), layout.videoTilt);
+            Replace(document, (prefix + "StretchVideoToFit").c_str(), layout.stretchVideoToFit);
+            Replace(document, (prefix + "Undocked").c_str(), layout.undocked);
+            Replace(document, (prefix + "UndockedConfigured").c_str(), layout.undockedConfigured);
+            Replace(document, (prefix + "UndockedPositionX").c_str(), layout.undockedPositionX);
+            Replace(document, (prefix + "UndockedPositionY").c_str(), layout.undockedPositionY);
+            Replace(document, (prefix + "UndockedPositionZ").c_str(), layout.undockedPositionZ);
+            Replace(document, (prefix + "UndockedRotationX").c_str(), layout.undockedRotationX);
+            Replace(document, (prefix + "UndockedRotationY").c_str(), layout.undockedRotationY);
+            Replace(document, (prefix + "UndockedRotationZ").c_str(), layout.undockedRotationZ);
+            Replace(document, (prefix + "UndockedWidth").c_str(), layout.undockedWidth);
+            Replace(document, (prefix + "UndockedHeight").c_str(), layout.undockedHeight);
         }
         Replace(document, "allowChromaOverride", allowChromaOverride_);
         Replace(document, "transparencyEnabled", transparencyEnabled_);

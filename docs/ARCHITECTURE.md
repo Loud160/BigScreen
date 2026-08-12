@@ -9,10 +9,20 @@ Beat Saber's audio/song position is the only video clock. That preserves pause,
 practice speed, seeking, and Replay behavior. The decoder uses a one-frame
 mailbox and drops superseded frames instead of blocking the game thread.
 
-The screen is ordinary environment-layer geometry with an RGBA texture. Output
-is scaled before entering the mailbox, reducing CPU memory traffic and Unity
-texture-upload cost. Opaque mode explicitly enables depth writing; transparent
-mode uses alpha blending.
+The screen is ordinary environment-layer geometry. A frame/background mesh and
+a separately clipped video-content mesh share one root transform. That split
+allows rotation, zoom, pan, perspective tilt, stretching, and black or fully
+transparent letterboxing without rewriting decoded pixels. Output is scaled
+before entering the mailbox, reducing CPU memory traffic and Unity texture-
+upload cost. Opaque mode explicitly enables depth writing; transparent mode
+uses alpha blending.
+
+Undocked placement is an explicit edit transaction. BSML's controller-tested
+floating-screen handle supplies move/rotation tracking, a second handle drives
+width/height, and only Save writes the active layout. The temporary canvases,
+colliders, and raycasters are destroyed on save, cancel, focus loss, layout or
+setting changes, menu exit, and mod disable; the normal playback screen is mesh
+only and therefore cannot block menu controller rays.
 
 Some tempting approaches are deliberately not used:
 

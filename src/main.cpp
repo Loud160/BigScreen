@@ -5,6 +5,7 @@
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/PauseMenuLayoutSelector.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
+#include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
@@ -47,6 +48,7 @@
 #include "GlobalNamespace/TransformSpectrogram.hpp"
 #include "System/Nullable_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "UnityEngine/Application.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
@@ -765,6 +767,24 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
+        Application_InvokeFocusChanged,
+        &UnityEngine::Application::InvokeFocusChanged,
+        void,
+        bool hasFocus)
+    {
+        Application_InvokeFocusChanged(hasFocus);
+        if(!hasFocus)
+        {
+            BigScreen::ErrorManager::Instance().Guard(
+                "cancelling screen positioning after focus loss", []()
+                {
+                    BigScreen::ScreenPreview::Instance()
+                        .CancelUndockedEditing();
+                });
+        }
+    }
+
+    MAKE_HOOK_MATCH(
         SongPreviewPlayer_Update,
         &GlobalNamespace::SongPreviewPlayer::Update,
         void,
@@ -782,6 +802,7 @@ namespace {
             BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
             BigScreen::VideoLibraryMenu::Instance().Tick(self);
             BigScreen::StorageMaintenanceMenu::Instance().Tick();
+            BigScreen::ScreenPreview::Instance().TickUndockedEditor();
         });
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
@@ -949,6 +970,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
+    INSTALL_HOOK(PaperLogger, Application_InvokeFocusChanged);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
     INSTALL_HOOK(PaperLogger, ResultsViewController_DidActivate);
     INSTALL_HOOK(PaperLogger, StandardLevelFailedController_HandleLevelFailed);

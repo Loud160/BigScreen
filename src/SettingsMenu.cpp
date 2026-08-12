@@ -54,8 +54,8 @@ namespace BigScreen {
             "60 FPS"
         };
 
-        std::array<std::string_view, 3> ScreenLayoutChoices{
-            "Layout 1", "Layout 2", "Layout 3"
+        std::array<std::string_view, 5> ScreenLayoutChoices{
+            "Layout 1", "Layout 2", "Layout 3", "Layout 4", "Layout 5"
         };
 
         std::array<std::string_view, 3> PerformanceThresholdChoices{
@@ -158,6 +158,7 @@ namespace BigScreen {
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         distractionFreeMenuToggle_ = nullptr;
+        advancedOptionsToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
         screenLayoutDropdown_ = nullptr;
@@ -171,6 +172,17 @@ namespace BigScreen {
         maintainCurveAspectToggle_ = nullptr;
         curvatureSlider_ = nullptr;
         transparencyToggle_ = nullptr;
+        advancedScreenControlsRoot_ = nullptr;
+        screenRotationSlider_ = nullptr;
+        videoRotationSlider_ = nullptr;
+        videoZoomSlider_ = nullptr;
+        videoHorizontalSlider_ = nullptr;
+        videoVerticalSlider_ = nullptr;
+        videoTiltSlider_ = nullptr;
+        stretchVideoToggle_ = nullptr;
+        undockScreenToggle_ = nullptr;
+        positionScreenButton_ = nullptr;
+        cancelPositioningButton_ = nullptr;
         lightShowToggle_ = nullptr;
         hideBackWallLightsToggle_ = nullptr;
         hideRingLightsToggle_ = nullptr;
@@ -193,6 +205,8 @@ namespace BigScreen {
         nightlyWarningModal_ = nullptr;
         localVideoInstructionsModal_ = nullptr;
         resetConfirmationModal_ = nullptr;
+        advancedWarningModal_ = nullptr;
+        undockWarningModal_ = nullptr;
         updaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
@@ -449,6 +463,32 @@ namespace BigScreen {
             distractionFreeMenuToggle_,
             "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
 
+        advancedOptionsToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Advanced Options",
+            settings.AdvancedOptionsEnabled(),
+            [this](bool enabled)
+            {
+                if(suppressAdvancedCallback_)
+                    return;
+                if(enabled)
+                {
+                    suppressAdvancedCallback_ = true;
+                    SetToggleWithoutNotification(advancedOptionsToggle_, false);
+                    suppressAdvancedCallback_ = false;
+                    if(advancedWarningModal_)
+                        advancedWarningModal_->Show();
+                    return;
+                }
+                ScreenPreview::Instance().CancelUndockedEditing();
+                Settings::Instance().SetAdvancedOptionsEnabled(false);
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
+        BSML::Lite::AddHoverHint(
+            advancedOptionsToggle_,
+            "Unlocks detailed video framing and free screen placement. These controls can conflict with mapper-authored presentation or reduce performance if used aggressively.");
+
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
             "Video In Map",
@@ -488,15 +528,16 @@ namespace BigScreen {
             [this](StringW value)
             {
                 const std::string label(value);
-                const int index = !label.empty() && label.back() >= '1' && label.back() <= '3'
+                const int index = !label.empty() && label.back() >= '1' && label.back() <= '5'
                     ? label.back() - '1' : 0;
+                ScreenPreview::Instance().CancelUndockedEditing();
                 Settings::Instance().SetActiveScreenLayout(index);
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
             });
         BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
-            "Chooses which of your three saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
+            "Chooses which of your five saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
 
         allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -529,7 +570,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             distanceSetting_,
-            "Moves the screen closer with negative values and farther away with positive values.");
+            "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
         horizontalSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -546,7 +587,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             horizontalSetting_,
-            "Moves the screen left with negative values and right with positive values.");
+            "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
         verticalSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -563,7 +604,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             verticalSetting_,
-            "Moves the screen down with negative values and up with positive values.");
+            "Moves the screen down with negative values and up with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
         tiltSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -580,7 +621,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             tiltSetting_,
-            "Adjusts the screen's vertical viewing angle in degrees.");
+            "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled.");
 
         sizeSetting_ = BSML::Lite::CreateIncrementSetting(
             screenContainer,
@@ -600,7 +641,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             sizeSetting_,
-            "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5.");
+            "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5. The resize handle replaces this control for an undocked screen.");
 
         curvedScreenToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -668,6 +709,151 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             transparencyToggle_,
             "Makes the video partly transparent so lights and scenery behind it can remain visible. Turn this off for an opaque screen that blocks objects behind it.");
+
+        auto* advancedGroup = BSML::Lite::CreateVerticalLayoutGroup(screenContainer);
+        advancedScreenControlsRoot_ = advancedGroup
+            ? advancedGroup->get_gameObject() : nullptr;
+        const BSML::Lite::TransformWrapper advancedParent = advancedGroup
+            ? BSML::Lite::TransformWrapper(advancedGroup)
+            : BSML::Lite::TransformWrapper(screenContainer);
+
+        screenRotationSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Screen Rotation", 1.0f, settings.ScreenRoll(),
+            -180.0f, 180.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetScreenRoll(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            screenRotationSlider_,
+            "Rotates a docked screen frame clockwise or counterclockwise while keeping its saved width and height. Use Position Screen to rotate an undocked screen freely.");
+
+        videoRotationSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Video Rotation", 1.0f, settings.VideoRotation(),
+            -180.0f, 180.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoRotation(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            videoRotationSlider_,
+            "Rotates the picture inside the screen without rotating or reshaping the screen itself. Empty areas use the Video Transparency setting.");
+
+        videoZoomSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Video Zoom", 0.05f, settings.VideoZoom(),
+            0.5f, 3.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoZoom(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            videoZoomSlider_,
+            "Changes the size of the picture inside the screen. Values above 1 crop the edges; values below 1 reveal more letterbox background.");
+
+        videoHorizontalSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Video X Position", 0.01f, settings.VideoOffsetX(),
+            -1.0f, 1.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoOffsetX(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            videoHorizontalSlider_,
+            "Moves the picture left or right inside the fixed screen frame. This is useful after zooming or rotating a video.");
+
+        videoVerticalSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Video Y Position", 0.01f, settings.VideoOffsetY(),
+            -1.0f, 1.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoOffsetY(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            videoVerticalSlider_,
+            "Moves the picture down or up inside the fixed screen frame. This is useful after zooming or rotating a video.");
+
+        videoTiltSlider_ = BSML::Lite::CreateSliderSetting(
+            advancedParent, "Video Tilt", 1.0f, settings.VideoTilt(),
+            -75.0f, 75.0f, 0.15f, true, {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoTilt(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            videoTiltSlider_,
+            "Tilts the picture in perspective so its top or bottom appears closer, without changing the screen frame's angle.");
+
+        stretchVideoToggle_ = BSML::Lite::CreateToggle(
+            advancedParent, "Stretch Video to Fit", settings.StretchVideoToFit(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetStretchVideoToFit(enabled);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            stretchVideoToggle_,
+            "Forces the picture to fill the screen even when their aspect ratios differ. Turn this off to preserve the video shape and use letterboxing or zoom instead.");
+
+        auto* undockRow = BSML::Lite::CreateHorizontalLayoutGroup(advancedParent);
+        if(undockRow)
+        {
+            undockRow->set_spacing(1.5f);
+            undockRow->set_childControlWidth(true);
+            undockRow->set_childControlHeight(true);
+            undockRow->set_childForceExpandWidth(true);
+            undockRow->set_childForceExpandHeight(false);
+            if(auto* layout = undockRow
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(8.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        const BSML::Lite::TransformWrapper undockParent = undockRow
+            ? BSML::Lite::TransformWrapper(undockRow)
+            : advancedParent;
+        undockScreenToggle_ = BSML::Lite::CreateToggle(
+            undockParent, "Undock Screen", settings.UndockedScreenEnabled(),
+            [this](bool enabled)
+            {
+                if(suppressUndockCallback_)
+                    return;
+                if(enabled)
+                {
+                    suppressUndockCallback_ = true;
+                    SetToggleWithoutNotification(undockScreenToggle_, false);
+                    suppressUndockCallback_ = false;
+                    if(undockWarningModal_)
+                        undockWarningModal_->Show();
+                    return;
+                }
+                ScreenPreview::Instance().CancelUndockedEditing();
+                Settings::Instance().SetUndockedScreenEnabled(false);
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
+        BSML::Lite::AddHoverHint(
+            undockScreenToggle_,
+            "Uses a freely positioned screen instead of placing it from the map's back-wall location. Each screen layout saves its own free position and shape.");
+
+        positionScreenButton_ = BSML::Lite::CreateUIButton(
+            undockParent, "Position Screen", {0.0f, 0.0f}, {20.0f, 8.0f},
+            []() { ScreenPreview::Instance().BeginUndockedEditing(); });
+        BSML::Lite::AddHoverHint(
+            positionScreenButton_,
+            "Opens the controller-based screen editor. Save the screen to keep its new position, angle, width, and height.");
+        cancelPositioningButton_ = BSML::Lite::CreateUIButton(
+            advancedParent, "Cancel Positioning", {0.0f, 0.0f}, {38.0f, 8.0f},
+            []() { ScreenPreview::Instance().CancelUndockedEditing(); });
+        BSML::Lite::AddHoverHint(
+            cancelPositioningButton_,
+            "Leaves positioning without saving and restores the last saved screen placement.");
 
         lightShowToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -782,6 +968,76 @@ namespace BigScreen {
         hideSpectrogramBarsHint_ = BSML::Lite::AddHoverHint(
             hideSpectrogramBarsToggle_,
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
+
+        advancedWarningModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 38.0f}, nullptr, false);
+        auto* advancedWarningText = BSML::Lite::CreateText(
+            advancedWarningModal_,
+            "Enable Advanced Options?\n\nThese controls allow detailed video framing and free screen placement. Extreme settings may reduce performance or interact poorly with mapper-authored effects. You can reset all settings if the screen becomes difficult to use.",
+            TMPro::FontStyles::Normal, {0.0f, 7.0f});
+        advancedWarningText->set_fontSize(3.0f);
+        advancedWarningText->set_enableWordWrapping(true);
+        advancedWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            advancedWarningModal_->get_transform(), "Cancel",
+            {18.0f, -28.0f}, {25.0f, 8.0f},
+            [this]()
+            {
+                if(advancedWarningModal_)
+                    advancedWarningModal_->Hide();
+                suppressAdvancedCallback_ = true;
+                SetToggleWithoutNotification(advancedOptionsToggle_, false);
+                suppressAdvancedCallback_ = false;
+            });
+        BSML::Lite::CreateUIButton(
+            advancedWarningModal_->get_transform(), "I Understand",
+            {48.0f, -28.0f}, {27.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().SetAdvancedOptionsEnabled(true);
+                suppressAdvancedCallback_ = true;
+                SetToggleWithoutNotification(advancedOptionsToggle_, true);
+                suppressAdvancedCallback_ = false;
+                if(advancedWarningModal_)
+                    advancedWarningModal_->Hide();
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
+
+        undockWarningModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 38.0f}, nullptr, false);
+        auto* undockWarningText = BSML::Lite::CreateText(
+            undockWarningModal_,
+            "Undock this screen?\n\nFree placement is an advanced feature. Keep the screen clear of Beat Saber's menus and use a comfortable size and distance. Leaving Big Screen or opening the Quest system menu cancels unsaved positioning.",
+            TMPro::FontStyles::Normal, {0.0f, 7.0f});
+        undockWarningText->set_fontSize(3.0f);
+        undockWarningText->set_enableWordWrapping(true);
+        undockWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            undockWarningModal_->get_transform(), "Cancel",
+            {18.0f, -28.0f}, {25.0f, 8.0f},
+            [this]()
+            {
+                if(undockWarningModal_)
+                    undockWarningModal_->Hide();
+                suppressUndockCallback_ = true;
+                SetToggleWithoutNotification(undockScreenToggle_, false);
+                suppressUndockCallback_ = false;
+            });
+        BSML::Lite::CreateUIButton(
+            undockWarningModal_->get_transform(), "I Understand",
+            {48.0f, -28.0f}, {27.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().SetUndockedScreenEnabled(true);
+                suppressUndockCallback_ = true;
+                SetToggleWithoutNotification(undockScreenToggle_, true);
+                suppressUndockCallback_ = false;
+                if(undockWarningModal_)
+                    undockWarningModal_->Hide();
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
 
         nightlyWarningModal_ = BSML::Lite::CreateModal(
             viewController,
@@ -949,7 +1205,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             resetButton_,
-            "Restores every Big Screen setting and all three screen layouts to their original values. Downloaded videos and timing assignments are not removed.");
+            "Restores every Big Screen setting and all five screen layouts to their original values. Downloaded videos and timing assignments are not removed.");
 
         resetConfirmationModal_ = BSML::Lite::CreateModal(
             viewController,
@@ -1024,6 +1280,7 @@ namespace BigScreen {
         RefreshValues();
         RefreshEnabledState();
         RefreshCurvatureControl();
+        RefreshAdvancedControls();
         RefreshUpdaterHint();
     }
 
@@ -1034,6 +1291,8 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             distractionFreeMenuToggle_,
             settings.DistractionFreeMenu());
+        SetToggleWithoutNotification(
+            advancedOptionsToggle_, settings.AdvancedOptionsEnabled());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
         SetToggleWithoutNotification(
@@ -1047,6 +1306,8 @@ namespace BigScreen {
             maintainCurveAspectToggle_,
             settings.MaintainCurveAspectRatio());
         SetToggleWithoutNotification(transparencyToggle_, settings.TransparencyEnabled());
+        SetToggleWithoutNotification(stretchVideoToggle_, settings.StretchVideoToFit());
+        SetToggleWithoutNotification(undockScreenToggle_, settings.UndockedScreenEnabled());
         SetToggleWithoutNotification(lightShowToggle_, settings.MapLightShowEnabled());
         SetToggleWithoutNotification(
             hideBackWallLightsToggle_,
@@ -1097,6 +1358,18 @@ namespace BigScreen {
             sizeSetting_->set_Value(settings.ScreenScale());
         if(curvatureSlider_)
             curvatureSlider_->set_Value(settings.ScreenCurvature());
+        if(screenRotationSlider_)
+            screenRotationSlider_->set_Value(settings.ScreenRoll());
+        if(videoRotationSlider_)
+            videoRotationSlider_->set_Value(settings.VideoRotation());
+        if(videoZoomSlider_)
+            videoZoomSlider_->set_Value(settings.VideoZoom());
+        if(videoHorizontalSlider_)
+            videoHorizontalSlider_->set_Value(settings.VideoOffsetX());
+        if(videoVerticalSlider_)
+            videoVerticalSlider_->set_Value(settings.VideoOffsetY());
+        if(videoTiltSlider_)
+            videoTiltSlider_->set_Value(settings.VideoTilt());
         if(playbackFpsDropdown_)
         {
             const int index = settings.PlaybackFpsLimit() == 15
@@ -1132,6 +1405,9 @@ namespace BigScreen {
     {
         const auto& settings = Settings::Instance();
         const bool enabled = settings.ModEnabled();
+        const bool dockedGeometryEnabled = enabled &&
+            !(settings.AdvancedOptionsEnabled() &&
+              settings.UndockedScreenEnabled());
         const bool lightingChildrenEnabled =
             enabled && settings.MapLightShowEnabled();
 
@@ -1139,6 +1415,8 @@ namespace BigScreen {
         // affecting Beat Saber is explicitly locked while the mod is off.
         if(distractionFreeMenuToggle_)
             distractionFreeMenuToggle_->set_interactable(enabled);
+        if(advancedOptionsToggle_)
+            advancedOptionsToggle_->set_interactable(enabled);
         if(videoEnabledToggle_)
             videoEnabledToggle_->set_interactable(enabled);
         if(previewToggle_)
@@ -1147,15 +1425,15 @@ namespace BigScreen {
             previewToggle_->set_interactable(enabled && settings.VideoEnabled());
         }
         if(distanceSetting_)
-            distanceSetting_->set_interactable(enabled);
+            distanceSetting_->set_interactable(dockedGeometryEnabled);
         if(horizontalSetting_)
-            horizontalSetting_->set_interactable(enabled);
+            horizontalSetting_->set_interactable(dockedGeometryEnabled);
         if(verticalSetting_)
-            verticalSetting_->set_interactable(enabled);
+            verticalSetting_->set_interactable(dockedGeometryEnabled);
         if(tiltSetting_)
-            tiltSetting_->set_interactable(enabled);
+            tiltSetting_->set_interactable(dockedGeometryEnabled);
         if(sizeSetting_)
-            sizeSetting_->set_interactable(enabled);
+            sizeSetting_->set_interactable(dockedGeometryEnabled);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
         if(screenLayoutDropdown_)
@@ -1168,6 +1446,29 @@ namespace BigScreen {
             curvatureSlider_->set_interactable(enabled);
         if(transparencyToggle_)
             transparencyToggle_->set_interactable(enabled);
+        const bool advancedEnabled = enabled && settings.AdvancedOptionsEnabled();
+        if(screenRotationSlider_)
+            screenRotationSlider_->set_interactable(
+                advancedEnabled && dockedGeometryEnabled);
+        if(videoRotationSlider_)
+            videoRotationSlider_->set_interactable(advancedEnabled);
+        if(videoZoomSlider_)
+            videoZoomSlider_->set_interactable(advancedEnabled);
+        if(videoHorizontalSlider_)
+            videoHorizontalSlider_->set_interactable(advancedEnabled);
+        if(videoVerticalSlider_)
+            videoVerticalSlider_->set_interactable(advancedEnabled);
+        if(videoTiltSlider_)
+            videoTiltSlider_->set_interactable(advancedEnabled);
+        if(stretchVideoToggle_)
+            stretchVideoToggle_->set_interactable(advancedEnabled);
+        if(undockScreenToggle_)
+            undockScreenToggle_->set_interactable(advancedEnabled);
+        if(positionScreenButton_)
+            positionScreenButton_->set_interactable(
+                advancedEnabled && settings.UndockedScreenEnabled());
+        if(cancelPositioningButton_)
+            cancelPositioningButton_->set_interactable(advancedEnabled);
         if(lightShowToggle_)
             lightShowToggle_->set_interactable(enabled);
 
@@ -1249,6 +1550,16 @@ namespace BigScreen {
             maintainCurveAspectToggle_->get_gameObject()->SetActive(curved);
         if(curvatureSlider_)
             curvatureSlider_->get_gameObject()->SetActive(curved);
+    }
+
+    void SettingsMenu::RefreshAdvancedControls()
+    {
+        if(advancedScreenControlsRoot_)
+            advancedScreenControlsRoot_->SetActive(
+                Settings::Instance().AdvancedOptionsEnabled());
+        if(cancelPositioningButton_)
+            cancelPositioningButton_->get_gameObject()->SetActive(
+                ScreenPreview::Instance().IsUndockedEditing());
     }
 
     void SettingsMenu::ShowSettingsTab(int index)

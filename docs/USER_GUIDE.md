@@ -41,7 +41,7 @@ Map completion never waits for a longer video; Beat Saber ends the map normally.
 
 ## Screen layouts and mapper overrides
 
-The Screen tab stores three independent layouts. Select the layout being edited, then adjust placement, size, tilt, curve, and transparency. The Screen Layout control on song selection changes the active global layout. During a playable video map, pause offers a session-only Video Screen switch and, when Big Screen owns geometry, a live Layout 1–3 selector.
+The Screen tab stores five independent layouts. Select the layout being edited, then adjust placement, size, tilt, curve, and transparency. Advanced Options adds independent picture rotation, zoom, pan, perspective tilt, stretch/letterbox behavior, screen rotation, and controller-based undocked placement. The Screen Layout control on song selection changes the active global layout. During a playable video map, pause offers a session-only Video Screen switch and, when Big Screen owns geometry, a live Layout 1–5 selector.
 
 Flat layouts scale from 0.5x through 4.0x. Curved layouts are limited to 2.5x. Enabling curvature on a larger flat layout immediately clamps it to 2.5x; returning to flat restores the 4.0x range.
 

@@ -65,6 +65,7 @@ namespace BigScreen {
         Float3 screenPosition{0.0f, 12.0f, 60.0f};
         Float3 screenRotation{-8.0f, 0.0f, 0.0f};
         float screenHeight = 25.0f;
+        std::optional<float> screenWidthOverride;
         float screenCurvature = 0.0f;
         // Cinema expresses mapper curvature as arc degrees. Big Screen's own
         // layout slider uses a signed bow amount, so the two representations
@@ -74,6 +75,15 @@ namespace BigScreen {
         bool maintainAspectRatioWhenCurved = false;
         int screenSegments = 32;
         bool transparent = false;
+        // Layout-scoped presentation transforms affect only the image inside
+        // the physical screen frame. Screen rotation/placement remains wholly
+        // independent so a user can rotate content without moving the frame.
+        float videoRotation = 0.0f;
+        float videoZoom = 1.0f;
+        float videoOffsetX = 0.0f;
+        float videoOffsetY = 0.0f;
+        float videoTilt = 0.0f;
+        bool stretchVideoToFit = false;
         std::optional<bool> mapperTransparency;
         std::optional<std::string> requestedEnvironment;
         std::vector<EnvironmentModification> environmentModifications;

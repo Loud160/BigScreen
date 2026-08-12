@@ -8,6 +8,8 @@ namespace UnityEngine {
     class Material;
     class Mesh;
     class Texture2D;
+    struct Quaternion;
+    struct Vector3;
 }
 namespace TMPro { class TextMeshPro; }
 
@@ -42,16 +44,26 @@ namespace BigScreen {
         /// Updates a small world-space diagnostics label attached to the
         /// screen. Passing an empty string removes it immediately.
         void SetDiagnosticsText(const std::string& text);
+        /// Moves the complete surface without rebuilding either mesh. The
+        /// undocked editor calls this every frame while a controller is held.
+        void SetWorldTransform(
+            UnityEngine::Vector3 position,
+            UnityEngine::Quaternion rotation);
 
         bool IsCreated() const { return gameObject_ != nullptr; }
 
     private:
         bool CreateMesh(const MapVideoConfig& config, float aspectRatio);
+        bool CreateVideoMesh(const MapVideoConfig& config, float sourceAspectRatio);
         bool CreateMaterialAndTexture(int width, int height, bool transparent);
+        bool CreateBackgroundMaterial(bool transparent);
 
         UnityEngine::GameObject* gameObject_ = nullptr;
+        UnityEngine::GameObject* videoObject_ = nullptr;
         UnityEngine::Mesh* mesh_ = nullptr;
+        UnityEngine::Mesh* videoMesh_ = nullptr;
         UnityEngine::Material* material_ = nullptr;
+        UnityEngine::Material* backgroundMaterial_ = nullptr;
         UnityEngine::Texture2D* texture_ = nullptr;
         UnityEngine::GameObject* diagnosticsObject_ = nullptr;
         TMPro::TextMeshPro* diagnosticsText_ = nullptr;

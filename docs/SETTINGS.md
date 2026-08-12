@@ -1,6 +1,6 @@
 # Settings reference
 
-Big Screen has five tabs: General, Screen, Environment, Update, and Storage. Settings are global unless a description explicitly says “current play” or “selected video.” Reset to Defaults resets all three layouts and every option described below.
+Big Screen has five tabs: General, Screen, Environment, Update, and Storage. Settings are global unless a description explicitly says “current play” or “selected video.” Reset to Defaults resets all five layouts and every option described below.
 
 ## General
 
@@ -32,6 +32,10 @@ Master switch. Off stops previews, downloads, screens, and environment changes w
 
 While the Big Screen menu is open, temporarily hides the neon Beat Saber sign and supported clock/battery overlays it can detect. Objects are restored on exit. Detection is defensive: stock installations and installations without those optional UI objects remain supported.
 
+### Advanced Options — default: Off
+
+Unlocks independent video framing and free screen placement after an **I Understand** confirmation. These settings are saved separately for each screen layout. Extreme zoom, tilt, curvature, or screen placement may reduce performance or interact poorly with authored map effects. Turning Advanced Options off ignores the advanced values without deleting them and cancels unsaved screen positioning.
+
 ### Video In Map — default: On
 
 Global gameplay-video master. Turning it off also disables Preview Video to avoid background decoder work. It is synchronized with the identically named song-selection header toggle.
@@ -46,7 +50,7 @@ Explains the accepted local format and where custom-map videos can be placed. Th
 
 ### Reset to Defaults
 
-Shows a confirmation dialog, then restores every global option and all three layouts. Live menu preview geometry is rebuilt from the new values so the visible screen and control values cannot disagree.
+Shows a confirmation dialog, then restores every global option and all five layouts. Live menu preview geometry is rebuilt from the new values so the visible screen and control values cannot disagree.
 
 ## Screen
 
@@ -54,7 +58,7 @@ The menu always displays a blank screen in the placement environment. Changes up
 
 ### Editing Screen Layout — default: Layout 1
 
-Chooses one of three independent layout profiles. It both selects the active layout and chooses which profile the controls edit. Layout can also be changed from song selection and, when Big Screen owns the current screen, from pause.
+Chooses one of five independent layout profiles. It both selects the active layout and chooses which profile the controls edit. Layout can also be changed from song selection and, when Big Screen owns the current screen, from pause.
 
 ### Allow Chroma Override — default: On
 
@@ -95,6 +99,42 @@ Visible only for curved screens. Positive values wrap edges toward the player; n
 ### Video Transparency — default: Off
 
 On uses partial transparency so scenery/lights behind the plane can show through. Off uses an opaque material and blocks geometry behind the screen; lighting or bloom drawn on/in front of the same plane may still appear visually over it.
+
+The following controls are visible only when **Advanced Options** is enabled. Every value belongs to the currently selected layout.
+
+### Screen Rotation — default: 0°, range: -180° to +180°
+
+Rolls the complete screen frame clockwise or counterclockwise around its viewing axis. Width and height are not swapped at 90° or 180°; the saved frame simply rotates.
+
+### Video Rotation — default: 0°, range: -180° to +180°
+
+Rotates only the picture inside the frame. It does not rotate or resize the frame. Any uncovered region is solid black when Video Transparency is off and transparent when Video Transparency is on.
+
+### Video Zoom — default: 1.0x, range: 0.5x to 3.0x
+
+Scales the picture inside the fixed frame without changing decode resolution. Values below 1 reveal more background; values above 1 crop image edges. Use Video X/Y Position to choose which portion remains visible.
+
+### Video X Position / Video Y Position — defaults: 0, ranges: -1 to +1
+
+Pan the picture horizontally or vertically inside the frame. These are most useful with Video Zoom or Video Rotation and never move the screen itself.
+
+### Video Tilt — default: 0°, range: -75° to +75°
+
+Applies perspective tilt to the picture so its top or bottom appears closer. This differs from Video Rotation, which spins the picture in its own plane, and Screen Tilt Offset, which angles the entire frame.
+
+### Stretch Video to Fit — default: Off
+
+On distorts the picture as needed to fill the full frame. Off preserves the source aspect ratio and letterboxes it unless zoom fills or crops the frame. Letterbox background follows Video Transparency.
+
+### Undock Screen — default: Off
+
+Replaces map-relative offsets with an absolute position, angle, width, and height saved for the current layout. Enabling requires confirmation. **Position Screen** opens a frame-only editor: hold the trigger on the frame to move/rotate it, drag the lower-right handle to resize it, then select **Save Screen**. The editor displays the current aspect ratio. Once saved, all editor controls are destroyed so controller rays pass through the normal playback screen.
+
+While undocked, the map-relative Distance, X/Y, Screen Tilt, Screen Size Multiplier, and Screen Rotation controls are disabled because the controller editor owns those absolute values. Curved Screen, curve amount/aspect behavior, transparency, and all video-framing controls remain available.
+
+Leaving Big Screen, changing layouts/settings, disabling the mod, or opening the Quest system menu cancels unsaved positioning and restores the last saved placement. **Cancel Positioning** provides the same safe exit. Flat/curved controls continue to apply to an undocked screen.
+
+Allow Chroma Override retains priority only when an authored map actually supplies Cinema/Chroma presentation data. With that option on, authored presentation wins; without authored presentation, the selected Big Screen layout—including an undocked screen—wins. Turning Allow Chroma Override off always forces the selected Big Screen layout.
 
 ## Environment
 
@@ -158,7 +198,7 @@ Opens a review page. **Scan Storage** finds only Big Screen-owned orphan downloa
 
 ## Song-selection header controls
 
-- **Screen Layout:** global Layout 1–3 selector; available while the mod is enabled.
+- **Screen Layout:** global Layout 1–5 selector; available while the mod is enabled.
 - **Preview Video:** same global preference as General.
 - **Video In Map:** same global master as General.
 - **Download Video:** appears when mapper metadata has a valid YouTube source but no local video. Shows preparation and byte progress, supports cancellation, and records the result in the same library as Video Library downloads.
@@ -166,7 +206,7 @@ Opens a review page. **Scan Storage** finds only Big Screen-owned orphan downloa
 ## Pause-menu controls
 
 - **Video Screen:** appears only while a map with an assigned playable video is running. It hides/restores the current screen without changing the global Video In Map setting; map lighting/environment choices stay active.
-- **Screen Layout:** appears when Big Screen, rather than mapper/Chroma presentation, owns the screen. It applies Layout 1–3 live without restarting video or changing the song clock.
+- **Screen Layout:** appears when Big Screen, rather than mapper/Chroma presentation, owns the screen. It applies Layout 1–5 live without restarting video or changing the song clock.
 
 ## Per-video editor controls
 

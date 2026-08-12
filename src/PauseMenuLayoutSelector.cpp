@@ -42,7 +42,7 @@ namespace BigScreen {
             1.0f,
             static_cast<float>(Settings::Instance().ActiveScreenLayout() + 1),
             1.0f,
-            3.0f,
+            5.0f,
             UnityEngine::Vector2{52.0f, -6.0f},
             [this](float value) { LayoutChanged(value); });
         if(selector_)
@@ -58,7 +58,7 @@ namespace BigScreen {
             }
             BSML::Lite::AddHoverHint(
                 selector_,
-                "Changes the screen to Layout 1, 2, or 3 immediately. Video playback stays synchronized with the song.");
+                "Changes the screen to Layout 1 through 5 immediately. Video playback stays synchronized with the song.");
         }
 
         videoScreenToggle_ = BSML::Lite::CreateToggle(
@@ -127,7 +127,7 @@ namespace BigScreen {
     void PauseMenuLayoutSelector::LayoutChanged(float value)
     {
         ErrorManager::Instance().Guard("changing the paused screen layout", [&]() {
-            const int layout = std::clamp(static_cast<int>(value) - 1, 0, 2);
+            const int layout = std::clamp(static_cast<int>(value) - 1, 0, 4);
             auto& settings = Settings::Instance();
             const int previousLayout = settings.ActiveScreenLayout();
             if(layout == previousLayout)

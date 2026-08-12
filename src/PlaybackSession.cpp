@@ -157,11 +157,31 @@ namespace BigScreen {
             return;
         }
 
-        config_->screenPosition.x += settings.ScreenHorizontalOffset();
-        config_->screenPosition.y += settings.ScreenVerticalOffset();
-        config_->screenPosition.z += settings.ScreenDistanceOffset();
-        config_->screenRotation.x += settings.ScreenTiltOffset();
-        config_->screenHeight *= settings.ScreenScale();
+        const auto& layout = settings.ActiveLayout();
+        if(settings.AdvancedOptionsEnabled() && layout.undocked)
+        {
+            config_->screenPosition = {
+                layout.undockedPositionX,
+                layout.undockedPositionY,
+                layout.undockedPositionZ};
+            config_->screenRotation = {
+                layout.undockedRotationX,
+                layout.undockedRotationY,
+                layout.undockedRotationZ};
+            config_->screenHeight = layout.undockedHeight;
+            config_->screenWidthOverride = layout.undockedWidth;
+        }
+        else
+        {
+            config_->screenPosition.x += settings.ScreenHorizontalOffset();
+            config_->screenPosition.y += settings.ScreenVerticalOffset();
+            config_->screenPosition.z += settings.ScreenDistanceOffset();
+            config_->screenRotation.x += settings.ScreenTiltOffset();
+            if(settings.AdvancedOptionsEnabled())
+                config_->screenRotation.z += settings.ScreenRoll();
+            config_->screenHeight *= settings.ScreenScale();
+            config_->screenWidthOverride.reset();
+        }
         config_->screenCurvature = settings.CurvedScreenEnabled()
             ? settings.ScreenCurvature()
             : 0.0f;
@@ -169,6 +189,15 @@ namespace BigScreen {
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
         config_->transparent = settings.TransparencyEnabled();
+        if(settings.AdvancedOptionsEnabled())
+        {
+            config_->videoRotation = settings.VideoRotation();
+            config_->videoZoom = settings.VideoZoom();
+            config_->videoOffsetX = settings.VideoOffsetX();
+            config_->videoOffsetY = settings.VideoOffsetY();
+            config_->videoTilt = settings.VideoTilt();
+            config_->stretchVideoToFit = settings.StretchVideoToFit();
+        }
     }
 
     bool PlaybackSession::ApplyActiveScreenLayoutLive()

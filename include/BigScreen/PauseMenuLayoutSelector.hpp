@@ -10,7 +10,7 @@ namespace GlobalNamespace {
 }
 
 namespace BigScreen {
-    /// Adds one compact Layout 1/2/3 selector to Beat Saber's pause menu only
+    /// Adds one compact Layout 1-5 selector to Beat Saber's pause menu only
     /// while a Big Screen-controlled gameplay video is active.
     class PauseMenuLayoutSelector final {
     public:

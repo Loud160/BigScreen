@@ -31,6 +31,38 @@ namespace BigScreen::CoreLogic {
             ScreenScaleMaximum(curved));
     }
 
+    struct VideoContentSize {
+        float width;
+        float height;
+    };
+
+    /// Calculates the picture's uncropped size inside a fixed screen frame.
+    /// Rotation is intentionally absent: rotating media must never swap or
+    /// mutate the saved frame dimensions. Clipping happens after this result.
+    inline VideoContentSize FitVideoContent(
+        float frameWidth,
+        float frameHeight,
+        float sourceAspectRatio,
+        bool stretchToFit,
+        float zoom)
+    {
+        frameWidth = std::max(frameWidth, 0.0001f);
+        frameHeight = std::max(frameHeight, 0.0001f);
+        sourceAspectRatio = std::max(sourceAspectRatio, 0.0001f);
+        zoom = std::clamp(zoom, 0.5f, 3.0f);
+        float width = frameWidth;
+        float height = frameHeight;
+        if(!stretchToFit)
+        {
+            const float frameAspect = frameWidth / frameHeight;
+            if(sourceAspectRatio > frameAspect)
+                height = frameWidth / sourceAspectRatio;
+            else
+                width = frameHeight * sourceAspectRatio;
+        }
+        return {width * zoom, height * zoom};
+    }
+
     /// Deterministic filesystem key. FNV-1a is not used for security; the full
     /// level ID remains the authoritative manifest key.
     inline std::string StableVideoKey(const std::string& levelId)

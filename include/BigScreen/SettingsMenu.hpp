@@ -44,6 +44,7 @@ namespace BigScreen {
         void RefreshValues();
         void RefreshEnabledState();
         void RefreshCurvatureControl();
+        void RefreshAdvancedControls();
         void RefreshUpdaterHint();
         void ShowSettingsTab(int index);
         void ResetToDefaults();
@@ -54,6 +55,7 @@ namespace BigScreen {
         int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* distractionFreeMenuToggle_ = nullptr;
+        BSML::ToggleSetting* advancedOptionsToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
         BSML::DropdownListSetting* screenLayoutDropdown_ = nullptr;
@@ -67,6 +69,17 @@ namespace BigScreen {
         BSML::ToggleSetting* maintainCurveAspectToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
         BSML::ToggleSetting* transparencyToggle_ = nullptr;
+        UnityEngine::GameObject* advancedScreenControlsRoot_ = nullptr;
+        BSML::SliderSetting* screenRotationSlider_ = nullptr;
+        BSML::SliderSetting* videoRotationSlider_ = nullptr;
+        BSML::SliderSetting* videoZoomSlider_ = nullptr;
+        BSML::SliderSetting* videoHorizontalSlider_ = nullptr;
+        BSML::SliderSetting* videoVerticalSlider_ = nullptr;
+        BSML::SliderSetting* videoTiltSlider_ = nullptr;
+        BSML::ToggleSetting* stretchVideoToggle_ = nullptr;
+        BSML::ToggleSetting* undockScreenToggle_ = nullptr;
+        UnityEngine::UI::Button* positionScreenButton_ = nullptr;
+        UnityEngine::UI::Button* cancelPositioningButton_ = nullptr;
         BSML::ToggleSetting* lightShowToggle_ = nullptr;
         BSML::ToggleSetting* hideBackWallLightsToggle_ = nullptr;
         BSML::ToggleSetting* hideRingLightsToggle_ = nullptr;
@@ -89,6 +102,8 @@ namespace BigScreen {
         BSML::ModalView* nightlyWarningModal_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
+        BSML::ModalView* advancedWarningModal_ = nullptr;
+        BSML::ModalView* undockWarningModal_ = nullptr;
         BSML::ModalView* errorModal_ = nullptr;
         TMPro::TextMeshProUGUI* errorModalText_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
@@ -96,5 +111,7 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;
         UnityEngine::UI::Button* resetButton_ = nullptr;
         bool suppressNightlyCallback_ = false;
+        bool suppressAdvancedCallback_ = false;
+        bool suppressUndockCallback_ = false;
     };
 }

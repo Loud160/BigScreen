@@ -75,6 +75,19 @@ int main()
     Expect(NormalizeScreenScale(2.5f, false) == 2.5f,
            "returning to flat mode preserves the current size");
 
+    const auto wideInSquare = FitVideoContent(4.0f, 4.0f, 16.0f / 9.0f, false, 1.0f);
+    Expect(wideInSquare.width == 4.0f && wideInSquare.height == 2.25f,
+           "aspect-preserving video is letterboxed inside a square frame");
+    const auto stretched = FitVideoContent(4.0f, 3.0f, 16.0f / 9.0f, true, 1.0f);
+    Expect(stretched.width == 4.0f && stretched.height == 3.0f,
+           "stretch mode fills both saved frame dimensions");
+    const auto zoomed = FitVideoContent(4.0f, 4.0f, 16.0f / 9.0f, false, 2.0f);
+    Expect(zoomed.width == 8.0f && zoomed.height == 4.5f,
+           "video zoom scales content without changing the frame");
+    const auto clampedZoom = FitVideoContent(4.0f, 4.0f, 1.0f, false, 99.0f);
+    Expect(clampedZoom.width == 12.0f && clampedZoom.height == 12.0f,
+           "video zoom is capped at the documented 3x limit");
+
     if(failures == 0)
         std::cout << "All Big Screen core tests passed.\n";
     return failures == 0 ? 0 : 1;

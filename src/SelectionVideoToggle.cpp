@@ -166,13 +166,13 @@ namespace BigScreen {
             1.0f,
             static_cast<float>(settings.ActiveScreenLayout() + 1),
             1.0f,
-            3.0f,
+            5.0f,
             UnityEngine::Vector2{-57.0f, 28.0f},
             [](float value)
             {
                 auto& settings = Settings::Instance();
                 settings.SetActiveScreenLayout(
-                    std::clamp(static_cast<int>(value) - 1, 0, 2));
+                    std::clamp(static_cast<int>(value) - 1, 0, 4));
                 auto& playback = PlaybackSession::Instance();
                 const bool restartPreview = playback.IsMenuPreviewActive();
                 playback.RefreshDisplaySettings();
@@ -258,7 +258,7 @@ namespace BigScreen {
             "Master switch for all song videos. Turning it off disables both in-map playback and song-selection previews.");
         BSML::Lite::AddHoverHint(
             layoutUi_,
-            "Selects Layout 1, 2, or 3 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
+            "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
         RefreshUi();
         PaperLogger.info("Created top-row Preview Video and Video In Map controls");
     }
