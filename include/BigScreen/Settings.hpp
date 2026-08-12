@@ -31,6 +31,7 @@ namespace BigScreen {
         bool GlassDesertOverrideEnabled() const { return glassDesertOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
         bool HideTrackRings() const { return hideTrackRings_; }
+        bool HideSideBars() const { return hideSideBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
@@ -51,6 +52,7 @@ namespace BigScreen {
         void SetGlassDesertOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
         void SetHideTrackRings(bool value);
+        void SetHideSideBars(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
         void SetNightlyDownloaderUpdates(bool value);
@@ -76,6 +78,7 @@ namespace BigScreen {
         bool glassDesertOverrideEnabled_ = false;
         bool environmentMotionEnabled_ = true;
         bool hideTrackRings_ = true;
+        bool hideSideBars_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
         bool nightlyDownloaderUpdates_ = false;

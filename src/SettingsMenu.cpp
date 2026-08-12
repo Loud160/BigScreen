@@ -160,6 +160,7 @@ namespace BigScreen {
         glassDesertOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
         hideTrackRingsToggle_ = nullptr;
+        hideSideBarsToggle_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
@@ -534,6 +535,18 @@ namespace BigScreen {
             hideTrackRingsToggle_,
             "Hides the overhead ring and arch geometry that can cross in front of the video screen. Takes effect when the next map starts.");
 
+        hideSideBarsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Side Bars",
+            settings.HideSideBars(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideSideBars(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideSideBarsToggle_,
+            "Hides the paired side structures and their attached effects when they would obstruct video gameplay. Takes effect when the next map starts.");
+
         playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
             playbackContainer,
             "Video Frame Rate Limit",
@@ -698,6 +711,9 @@ namespace BigScreen {
             hideTrackRingsToggle_,
             settings.HideTrackRings());
         SetToggleWithoutNotification(
+            hideSideBarsToggle_,
+            settings.HideSideBars());
+        SetToggleWithoutNotification(
             nightlyUpdatesToggle_,
             settings.NightlyDownloaderUpdates());
 
@@ -775,6 +791,8 @@ namespace BigScreen {
             environmentMotionToggle_->set_interactable(enabled);
         if(hideTrackRingsToggle_)
             hideTrackRingsToggle_->set_interactable(enabled);
+        if(hideSideBarsToggle_)
+            hideSideBarsToggle_->set_interactable(enabled);
         if(playbackFpsDropdown_)
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)

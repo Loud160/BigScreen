@@ -67,6 +67,7 @@ namespace BigScreen {
         BSML::ToggleSetting* glassDesertOverrideToggle_ = nullptr;
         BSML::ToggleSetting* environmentMotionToggle_ = nullptr;
         BSML::ToggleSetting* hideTrackRingsToggle_ = nullptr;
+        BSML::ToggleSetting* hideSideBarsToggle_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;

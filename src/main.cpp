@@ -20,6 +20,7 @@
 #include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
 #include "GlobalNamespace/LightColorBeatmapEventData.hpp"
+#include "GlobalNamespace/LightPairRotationEventEffect.hpp"
 #include "GlobalNamespace/LightWithIdMonoBehaviour.hpp"
 #include "GlobalNamespace/LightRotationBeatmapEventData.hpp"
 #include "GlobalNamespace/LightTranslationBeatmapEventData.hpp"
@@ -116,6 +117,32 @@ namespace {
             }
         }
         PaperLogger.info("Hidden {} track-lane ring objects for video gameplay", hidden);
+    }
+
+    void HideRotatingLaserRigs()
+    {
+        int hidden = 0;
+        for(auto* effect : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::LightPairRotationEventEffect*>(false))
+        {
+            if(!effect)
+                continue;
+            auto gameObject = effect->get_gameObject();
+            if(!gameObject ||
+               std::string(gameObject->get_name()) != "RotatingLasersPair" ||
+               !gameObject->get_activeSelf())
+            {
+                continue;
+            }
+
+            // Glass Desert groups the visible BaseL/BaseR towers, their fan of
+            // emitters, and the laser effects under this exact root. Removing
+            // the root avoids broad renderer filtering and leaves unrelated
+            // environment geometry and gameplay objects untouched.
+            gameObject->SetActive(false);
+            ++hidden;
+        }
+        PaperLogger.info("Hidden {} rotating laser-rig pairs for video gameplay", hidden);
     }
 
     void DisableEnvironmentLighting()
@@ -448,6 +475,11 @@ namespace {
            BigScreen::Settings::Instance().HideTrackRings())
         {
             HideTrackLaneRings();
+        }
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           BigScreen::Settings::Instance().HideSideBars())
+        {
+            HideRotatingLaserRigs();
         }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }

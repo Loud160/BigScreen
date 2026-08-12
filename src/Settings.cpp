@@ -132,6 +132,10 @@ namespace BigScreen {
         glassDesertOverrideEnabled_ = ReadBool(document, "glassDesertOverrideEnabled", false);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
         hideTrackRings_ = ReadBool(document, "hideTrackRings", true);
+        hideSideBars_ = ReadBool(
+            document,
+            "hideSideBars",
+            ReadBool(document, "hideLaserRigs", true));
         playbackFpsLimit_ = NormalizePlaybackFps(
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
@@ -165,6 +169,7 @@ namespace BigScreen {
         glassDesertOverrideEnabled_ = false;
         environmentMotionEnabled_ = true;
         hideTrackRings_ = true;
+        hideSideBars_ = true;
         playbackFpsLimit_ = 30;
         resolutionHeight_ = 720;
         nightlyDownloaderUpdates_ = false;
@@ -277,6 +282,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetHideSideBars(bool value)
+    {
+        hideSideBars_ = value;
+        Save();
+    }
+
     void Settings::SetPlaybackFpsLimit(int value)
     {
         playbackFpsLimit_ = NormalizePlaybackFps(value);
@@ -322,6 +333,8 @@ namespace BigScreen {
         Replace(document, "glassDesertOverrideEnabled", glassDesertOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
         Replace(document, "hideTrackRings", hideTrackRings_);
+        document.RemoveMember("hideLaserRigs");
+        Replace(document, "hideSideBars", hideSideBars_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
