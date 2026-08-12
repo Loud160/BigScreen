@@ -22,7 +22,7 @@ namespace GlobalNamespace {
 namespace HMUI { class ImageView; class InputFieldView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
 namespace System::Threading::Tasks { template<class TResult> class Task_1; }
-namespace UnityEngine { class AudioClip; class AudioSource; class Sprite; }
+namespace UnityEngine { class AudioClip; class AudioSource; class GameObject; class Sprite; }
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
@@ -102,6 +102,7 @@ namespace BigScreen {
         HMUI::ImageView* playbackScrubberFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
         BSML::ModalView* removeConfirmModal_ = nullptr;
+        std::vector<UnityEngine::GameObject*> videoOnlyRows_;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;

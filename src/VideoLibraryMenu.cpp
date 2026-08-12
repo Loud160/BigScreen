@@ -49,6 +49,7 @@
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ColorBlock.hpp"
+#include "UnityEngine/UI/Graphic.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/Image.hpp"
@@ -376,6 +377,41 @@ namespace BigScreen {
                 setting->toggle->SetIsOnWithoutNotify(value);
         }
 
+        void StyleToggleRow(BSML::ToggleSetting* setting)
+        {
+            if(!setting || !setting->toggle) return;
+            auto* background = BSML::Lite::CreateImage(
+                setting->get_transform(),
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            background->set_color(UnityEngine::Color::get_white());
+            background->set_preserveAspect(false);
+            background->set_raycastTarget(false);
+            if(auto rect = background->get_transform().cast<UnityEngine::RectTransform>())
+            {
+                rect->set_anchorMin({0.0f, 0.0f});
+                rect->set_anchorMax({1.0f, 1.0f});
+                rect->set_pivot({0.5f, 0.5f});
+                rect->set_anchoredPosition({0.0f, 0.0f});
+                rect->set_sizeDelta({-0.4f, -0.35f});
+                rect->SetAsFirstSibling();
+            }
+
+            // Reuse Toggle's normal Selectable transition so hovering the
+            // switch brightens the complete row just like Beat Saber's native
+            // settings. AnimatedSwitchView continues to render the on/off
+            // state above this non-interactive background.
+            setting->toggle->set_targetGraphic(background);
+            setting->toggle->set_transition(
+                UnityEngine::UI::Selectable::Transition::ColorTint);
+            auto colors = setting->toggle->get_colors();
+            colors.set_normalColor({0.18f, 0.20f, 0.23f, 0.92f});
+            colors.set_highlightedColor({0.38f, 0.41f, 0.46f, 0.96f});
+            colors.set_pressedColor({0.48f, 0.52f, 0.58f, 1.0f});
+            colors.set_selectedColor({0.30f, 0.33f, 0.38f, 0.96f});
+            colors.set_disabledColor({0.12f, 0.13f, 0.15f, 0.55f});
+            setting->toggle->set_colors(colors);
+        }
+
         template<class TLayout>
         void ConfigureGroup(TLayout* group, bool vertical)
         {
@@ -424,6 +460,7 @@ namespace BigScreen {
         browserController_ = browserController;
         editorController_ = editorController;
         navigate_ = std::move(navigate);
+        videoOnlyRows_.clear();
 
         // Qounters-style pages use one layout-owned content tree per view
         // controller. Keeping browser and editor controls on separate
@@ -564,14 +601,26 @@ namespace BigScreen {
         detailTitle_ = BSML::Lite::CreateText(
             editorBody, "", 3.6f);
         ConfigureLayout(detailTitle_, -1.0f, 7.5f, 1.0f);
+        auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(urlEntryRow, false);
+        urlEntryRow->set_spacing(0.6f);
+        ConfigureLayout(urlEntryRow, -1.0f, 8.0f, 1.0f);
+        pasteUrlButton_ = BSML::Lite::CreateUIButton(
+            urlEntryRow,
+            "Paste URL",
+            {0.0f, 0.0f},
+            {13.0f, 7.5f},
+            [this]() { PasteUrlFromClipboard(); });
+        ConfigureLayout(pasteUrlButton_, 13.0f, 7.5f, 0.0f);
+        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.45f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            editorBody, "YouTube URL", "", [this](StringW value) {
+            urlEntryRow, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
                 transientStatus_.clear();
                 if(!suppressUrlCallback_)
                     BeginUrlProbe();
             });
-        ConfigureLayout(urlInput_, -1.0f, 8.0f, 1.0f);
+        ConfigureLayout(urlInput_, 0.0f, 8.0f, 1.0f);
 
         // Keep the address field at the panel's full width. Recognition art
         // belongs in the following action row, where it cannot reduce the
@@ -586,19 +635,17 @@ namespace BigScreen {
         ConfigureLayout(urlThumbnail_, 15.0f, 8.4f, 0.0f);
         urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
         urlThumbnail_->set_preserveAspect(true);
-        pasteUrlButton_ = BSML::Lite::CreateUIButton(
-            urlPreviewRow,
-            "Paste URL",
-            {0.0f, 0.0f},
-            {15.5f, 7.5f},
-            [this]() { PasteUrlFromClipboard(); });
-        ConfigureLayout(pasteUrlButton_, 15.5f, 7.5f, 1.0f);
-        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.6f);
         downloadButton_ = BSML::Lite::CreateUIButton(
             urlPreviewRow, "Download Video", {0.0f, 0.0f}, {18.5f, 7.5f},
             [this]() { StartOrCancelDownload(); });
-        ConfigureLayout(downloadButton_, 18.5f, 7.5f, 1.0f);
+        ConfigureLayout(downloadButton_, 18.5f, 7.5f, 0.0f);
         BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
+        auto* thumbnailBalance = BSML::Lite::CreateImage(
+            urlPreviewRow,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        thumbnailBalance->set_color({0.0f, 0.0f, 0.0f, 0.0f});
+        thumbnailBalance->set_raycastTarget(false);
+        ConfigureLayout(thumbnailBalance, 15.0f, 8.4f, 0.0f);
         BSML::Lite::AddHoverHint(
             urlInput_,
             "Accepts youtube.com links and youtu.be Share links.");
@@ -674,6 +721,7 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(fitToggle_, -1.0f, 7.8f, 1.0f);
+        StyleToggleRow(fitToggle_);
         BSML::Lite::AddHoverHint(
             fitToggle_,
             "Continuously adjusts playback speed so the video ends with the song after applying Start Offset.");
@@ -695,9 +743,11 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
+        StyleToggleRow(blackLeadInToggle_);
         BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             "Off keeps the screen fully transparent until video time reaches zero. On shows solid black during that delay.");
+        videoOnlyRows_.push_back(timingToggleColumn->get_gameObject());
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Start Offset", 2, 0.25f, 0.0f,
@@ -723,6 +773,7 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
+        videoOnlyRows_.push_back(offsetSetting_->get_gameObject());
         BSML::Lite::AddHoverHint(
             offsetSetting_,
             "Negative values delay video frame zero; positive values skip forward into the video.");
@@ -742,6 +793,7 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
+        videoOnlyRows_.push_back(rateSetting_->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
         // alter video synchronization. The title, scrubber, transport button,
@@ -759,6 +811,7 @@ namespace BigScreen {
         playbackPanel->set_spacing(0.3f);
         playbackPanel->set_childForceExpandWidth(true);
         ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);
+        videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
         auto* playbackGroupTitle = BSML::Lite::CreateText(
@@ -775,6 +828,7 @@ namespace BigScreen {
         playPauseButton_ = BSML::Lite::CreateUIButton(
             playbackRow,
             "▶",
+            "PlayButton",
             {0.0f, 0.0f},
             {10.0f, 6.5f},
             [this]() { TogglePreviewPlayback(); });
@@ -785,7 +839,11 @@ namespace BigScreen {
         transportColors.set_highlightedColor({0.20f, 0.75f, 1.0f, 1.0f});
         transportColors.set_pressedColor({0.03f, 0.35f, 0.65f, 1.0f});
         transportColors.set_selectedColor({0.10f, 0.65f, 0.95f, 1.0f});
+        playPauseButton_->set_transition(
+            UnityEngine::UI::Selectable::Transition::ColorTint);
         playPauseButton_->set_colors(transportColors);
+        if(auto target = playPauseButton_->get_targetGraphic())
+            target->set_color(UnityEngine::Color::get_white());
 
         playbackScrubber_ = BSML::Lite::CreateSliderSetting(
             playbackRow,
@@ -844,14 +902,19 @@ namespace BigScreen {
             sliderRect->set_sizeDelta({0.0f, 0.0f});
 
             auto sliderColors = playbackScrubber_->slider->get_colors();
-            sliderColors.set_normalColor({0.72f, 0.75f, 0.80f, 0.48f});
-            sliderColors.set_highlightedColor({0.82f, 0.86f, 0.92f, 0.62f});
-            sliderColors.set_pressedColor({0.65f, 0.70f, 0.78f, 0.62f});
-            sliderColors.set_selectedColor({0.78f, 0.82f, 0.88f, 0.58f});
+            sliderColors.set_normalColor({0.88f, 0.90f, 0.93f, 0.72f});
+            sliderColors.set_highlightedColor({0.98f, 0.99f, 1.0f, 0.86f});
+            sliderColors.set_pressedColor({0.82f, 0.86f, 0.91f, 0.86f});
+            sliderColors.set_selectedColor({0.94f, 0.96f, 0.98f, 0.82f});
             playbackScrubber_->slider->set_colors(sliderColors);
+            auto sliderTarget = playbackScrubber_->slider->get_targetGraphic();
+            if(sliderTarget)
+                sliderTarget->set_color(UnityEngine::Color::get_white());
 
             playbackScrubberFill_ = BSML::Lite::CreateImage(
-                playbackScrubber_->slider->get_transform(),
+                sliderTarget
+                    ? sliderTarget->get_transform()
+                    : playbackScrubber_->slider->get_transform(),
                 BSML::Utilities::ImageResources::GetBlankSprite());
             playbackScrubberFill_->set_color({0.05f, 0.62f, 0.95f, 0.82f});
             playbackScrubberFill_->set_preserveAspect(false);
@@ -872,19 +935,6 @@ namespace BigScreen {
         // remaining unit of row width. Its native centered value text now
         // serves as the current/total playback clock directly on the bar.
         ConfigureLayout(playbackScrubber_, 0.0f, 6.0f, 1.0f);
-
-        removeButton_ = BSML::Lite::CreateUIButton(
-            editorBody, "Remove Video", {0.0f, 0.0f}, {31.0f, 7.0f},
-            [this]()
-            {
-                if(removeConfirmModal_)
-                    removeConfirmModal_->Show();
-            });
-        ConfigureLayout(removeButton_, -1.0f, 7.0f, 1.0f);
-        BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
-        if(auto* removeText = removeButton_->get_gameObject()
-               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
-            removeText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
 
         // Deleting an override also deletes its downloaded media, thumbnail,
         // and saved timing. Require an explicit second action so an imprecise
@@ -914,7 +964,7 @@ namespace BigScreen {
         ConfigureLayout(cancelRemoveButton, 20.0f, 8.0f, 0.0f);
         auto* confirmRemoveButton = BSML::Lite::CreateUIButton(
             removeConfirmModal_->get_transform(),
-            "Remove Video",
+            "<color=#FF3838>Remove Video</color>",
             {40.5f, -18.5f},
             {20.0f, 8.0f},
             [this]()
@@ -928,22 +978,55 @@ namespace BigScreen {
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             confirmText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
 
-        // Three equal columns make storage costs comparable at a glance and
-        // use the complete editor width instead of compressing everything into
-        // one pipe-delimited sentence.
+        auto* storageSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
+        ConfigureLayout(storageSpacer, -1.0f, 2.0f, 1.0f);
+        videoOnlyRows_.push_back(storageSpacer->get_gameObject());
+
+        // Storage values share the row with the destructive action. The button
+        // occupies the far-right edge after Free Space, leaving the three data
+        // columns to divide the rest of the full editor width evenly.
         auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(storageRow, false);
         storageRow->set_spacing(0.6f);
-        ConfigureLayout(storageRow, -1.0f, 6.0f, 1.0f);
+        ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
         detailMapStorage_ = BSML::Lite::CreateText(
             storageRow, "This Video\n0.0 MB", 2.25f);
-        ConfigureLayout(detailMapStorage_, 0.0f, 6.0f, 1.0f);
+        ConfigureLayout(detailMapStorage_, 0.0f, 7.0f, 1.0f);
         detailLibraryStorage_ = BSML::Lite::CreateText(
             storageRow, "All Videos\n0.0 MB", 2.25f);
-        ConfigureLayout(detailLibraryStorage_, 0.0f, 6.0f, 1.0f);
+        ConfigureLayout(detailLibraryStorage_, 0.0f, 7.0f, 1.0f);
         detailFreeStorage_ = BSML::Lite::CreateText(
             storageRow, "Free Space\n0.0 MB", 2.25f);
-        ConfigureLayout(detailFreeStorage_, 0.0f, 6.0f, 1.0f);
+        ConfigureLayout(detailFreeStorage_, 0.0f, 7.0f, 1.0f);
+        removeButton_ = BSML::Lite::CreateUIButton(
+            storageRow,
+            "<color=#FF3838>Remove Video</color>",
+            {0.0f, 0.0f},
+            {13.5f, 6.5f},
+            [this]()
+            {
+                if(removeConfirmModal_)
+                    removeConfirmModal_->Show();
+            });
+        ConfigureLayout(removeButton_, 13.5f, 6.5f, 0.0f);
+        BSML::Lite::SetButtonTextSize(removeButton_, 2.15f);
+        if(auto* removeText = removeButton_->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+        {
+            removeText->set_richText(true);
+            removeText->set_color(UnityEngine::Color::get_white());
+        }
+        auto removeColors = removeButton_->get_colors();
+        removeColors.set_normalColor({0.18f, 0.20f, 0.23f, 0.96f});
+        removeColors.set_highlightedColor({0.38f, 0.41f, 0.46f, 1.0f});
+        removeColors.set_pressedColor({0.50f, 0.53f, 0.58f, 1.0f});
+        removeColors.set_selectedColor({0.30f, 0.33f, 0.38f, 1.0f});
+        removeButton_->set_transition(
+            UnityEngine::UI::Selectable::Transition::ColorTint);
+        removeButton_->set_colors(removeColors);
+        if(auto target = removeButton_->get_targetGraphic())
+            target->set_color(UnityEngine::Color::get_white());
+        videoOnlyRows_.push_back(storageRow->get_gameObject());
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
@@ -1314,6 +1397,16 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride()
     {
         if(!selected_) return;
+
+        // Stop both clocks before deleting the file they are currently using.
+        // This also prevents the audio preview from continuing after the video
+        // screen disappears and lets FrameDecoder close its file handle before
+        // VideoLibrary removes the MP4.
+        StopPreviewAudio(true);
+        auto& playback = PlaybackSession::Instance();
+        if(playback.IsLibraryPreviewActive())
+            playback.Stop();
+
         auto& library = VideoLibrary::Instance();
         const auto levelId = std::string(selected_->levelID);
         const auto thumbnailPath = library.AllocateThumbnailPath(
@@ -1749,6 +1842,8 @@ namespace BigScreen {
                 (thisDownload && download.Active() &&
                     download.state != DownloadState::Probing) ||
                 (!download.Active() && !url_.empty()));
+        for(auto* row : videoOnlyRows_)
+            if(row) row->SetActive(descriptor.CanPlay());
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
         if(rateSetting_) rateSetting_->set_interactable(
             descriptor.CanPlay() && !fitToSong_);
