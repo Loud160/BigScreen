@@ -48,6 +48,7 @@
 #include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/UI/ColorBlock.hpp"
 #include "UnityEngine/UI/GridLayoutGroup.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/Image.hpp"
@@ -62,6 +63,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/ClickableText.hpp"
 #include "bsml/shared/BSML/Components/CustomListTableData.hpp"
+#include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
@@ -629,19 +631,23 @@ namespace BigScreen {
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
 
-        // Automatic fit and lead-in appearance are persistent per-video
-        // choices. Keeping them side by side avoids increasing the editor's
-        // height while placing both policies before the numeric timing fields.
-        auto* timingToggleRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
-        ConfigureGroup(timingToggleRow, false);
-        timingToggleRow->set_spacing(0.6f);
-        // A ToggleSetting prefab is normally designed to occupy an entire
-        // settings row. Without explicit widths, placing two of them beside
-        // one another makes their preferred widths additive and expands the
-        // right controller to almost two panels.
-        ConfigureLayout(timingToggleRow, 49.0f, 8.0f, 0.0f);
+        // ToggleSetting is a full-width settings-row prefab. Stack these two
+        // persistent policies instead of squeezing them side by side, which
+        // clipped both the labels and switches on the live side panel.
+        auto* timingToggleObject = ConstructLayout(
+            "<vertical tags='big-screen-timing-toggles' spacing='0.2' "
+            "horizontal-fit='Unconstrained'/>",
+            editorRoot->get_transform(),
+            "big-screen-timing-toggles");
+        auto* timingToggleColumn = timingToggleObject
+            ? timingToggleObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
+            : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(timingToggleColumn, true);
+        timingToggleColumn->set_spacing(0.2f);
+        timingToggleColumn->set_childForceExpandWidth(true);
+        ConfigureLayout(timingToggleColumn, -1.0f, 15.8f, 1.0f);
         fitToggle_ = BSML::Lite::CreateToggle(
-            timingToggleRow,
+            timingToggleColumn,
             "Fit to Song",
             false,
             [this](bool enabled)
@@ -665,12 +671,12 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(fitToggle_, 24.2f, 8.0f, 0.0f);
+        ConfigureLayout(fitToggle_, -1.0f, 7.8f, 1.0f);
         BSML::Lite::AddHoverHint(
             fitToggle_,
             "Continuously adjusts playback speed so the video ends with the song after applying Start Offset.");
         blackLeadInToggle_ = BSML::Lite::CreateToggle(
-            timingToggleRow,
+            timingToggleColumn,
             "Black Lead-In",
             false,
             [this](bool enabled)
@@ -686,7 +692,7 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(blackLeadInToggle_, 24.2f, 8.0f, 0.0f);
+        ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
         BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             "Off keeps the screen fully transparent until video time reaches zero. On shows solid black during that delay.");
@@ -766,12 +772,18 @@ namespace BigScreen {
         ConfigureLayout(playbackRow, -1.0f, 6.5f, 1.0f);
         playPauseButton_ = BSML::Lite::CreateUIButton(
             playbackRow,
-            "Play",
+            "▶",
             {0.0f, 0.0f},
-            {12.0f, 6.5f},
+            {10.0f, 6.5f},
             [this]() { TogglePreviewPlayback(); });
-        ConfigureLayout(playPauseButton_, 12.0f, 6.0f, 0.0f);
-        BSML::Lite::SetButtonTextSize(playPauseButton_, 2.5f);
+        ConfigureLayout(playPauseButton_, 10.0f, 6.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(playPauseButton_, 4.0f);
+        auto transportColors = playPauseButton_->get_colors();
+        transportColors.set_normalColor({0.05f, 0.55f, 0.90f, 1.0f});
+        transportColors.set_highlightedColor({0.20f, 0.75f, 1.0f, 1.0f});
+        transportColors.set_pressedColor({0.03f, 0.35f, 0.65f, 1.0f});
+        transportColors.set_selectedColor({0.10f, 0.65f, 0.95f, 1.0f});
+        playPauseButton_->set_colors(transportColors);
 
         playbackScrubber_ = BSML::Lite::CreateSliderSetting(
             playbackRow,
@@ -813,16 +825,107 @@ namespace BigScreen {
             playbackTimeText_->set_alignment(TMPro::TextAlignmentOptions::Center);
         }
 
+        // The stock settings slider reserves a fixed 52-unit control on the
+        // right because it normally shares a row with a label. This playback
+        // bar has its own group heading, so remove the empty label and stretch
+        // the actual draggable slider across the flexible row allocation.
+        if(auto title = playbackScrubber_->get_transform()->Find("Title"))
+            title->get_gameObject()->SetActive(false);
+        if(playbackScrubber_->slider)
+        {
+            auto sliderRect = playbackScrubber_->slider->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            sliderRect->set_anchorMin({0.0f, 0.0f});
+            sliderRect->set_anchorMax({1.0f, 1.0f});
+            sliderRect->set_pivot({0.5f, 0.5f});
+            sliderRect->set_anchoredPosition({0.0f, 0.0f});
+            sliderRect->set_sizeDelta({0.0f, 0.0f});
+
+            auto sliderColors = playbackScrubber_->slider->get_colors();
+            sliderColors.set_normalColor({0.72f, 0.75f, 0.80f, 0.48f});
+            sliderColors.set_highlightedColor({0.82f, 0.86f, 0.92f, 0.62f});
+            sliderColors.set_pressedColor({0.65f, 0.70f, 0.78f, 0.62f});
+            sliderColors.set_selectedColor({0.78f, 0.82f, 0.88f, 0.58f});
+            playbackScrubber_->slider->set_colors(sliderColors);
+
+            playbackScrubberFill_ = BSML::Lite::CreateImage(
+                playbackScrubber_->slider->get_transform(),
+                BSML::Utilities::ImageResources::GetBlankSprite());
+            playbackScrubberFill_->set_color({0.05f, 0.62f, 0.95f, 0.82f});
+            playbackScrubberFill_->set_preserveAspect(false);
+            playbackScrubberFill_->set_raycastTarget(false);
+            if(auto fillRect = playbackScrubberFill_->get_transform()
+                   .cast<UnityEngine::RectTransform>())
+            {
+                fillRect->set_anchorMin({0.0f, 0.0f});
+                fillRect->set_anchorMax({0.0f, 1.0f});
+                fillRect->set_pivot({0.0f, 0.5f});
+                fillRect->set_anchoredPosition({0.0f, 0.0f});
+                fillRect->set_sizeDelta({0.0f, -0.5f});
+                fillRect->SetAsFirstSibling();
+            }
+        }
+
         // Play/Pause reserves the left edge; the scrubber consumes every
         // remaining unit of row width. Its native centered value text now
         // serves as the current/total playback clock directly on the bar.
         ConfigureLayout(playbackScrubber_, 0.0f, 6.0f, 1.0f);
 
         removeButton_ = BSML::Lite::CreateUIButton(
-            editorBody, "Remove User Video", {0.0f, 0.0f}, {31.0f, 7.0f},
-            [this]() { RemoveOverride(); });
+            editorBody, "Remove Video", {0.0f, 0.0f}, {31.0f, 7.0f},
+            [this]()
+            {
+                if(removeConfirmModal_)
+                    removeConfirmModal_->Show();
+            });
         ConfigureLayout(removeButton_, -1.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(removeButton_, 2.8f);
+        if(auto* removeText = removeButton_->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            removeText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
+
+        // Deleting an override also deletes its downloaded media, thumbnail,
+        // and saved timing. Require an explicit second action so an imprecise
+        // controller click cannot remove those files immediately.
+        removeConfirmModal_ = BSML::Lite::CreateModal(
+            editorController,
+            {58.0f, 25.0f},
+            nullptr,
+            true);
+        auto* confirmationText = BSML::Lite::CreateText(
+            removeConfirmModal_,
+            "Remove this assigned video?\nThe downloaded video and its timing settings will be deleted.",
+            TMPro::FontStyles::Normal,
+            {0.0f, 5.0f});
+        confirmationText->set_fontSize(3.0f);
+        confirmationText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        auto* cancelRemoveButton = BSML::Lite::CreateUIButton(
+            removeConfirmModal_->get_transform(),
+            "Cancel",
+            {17.5f, -18.5f},
+            {20.0f, 8.0f},
+            [this]()
+            {
+                if(removeConfirmModal_)
+                    removeConfirmModal_->Hide();
+            });
+        ConfigureLayout(cancelRemoveButton, 20.0f, 8.0f, 0.0f);
+        auto* confirmRemoveButton = BSML::Lite::CreateUIButton(
+            removeConfirmModal_->get_transform(),
+            "Remove Video",
+            {40.5f, -18.5f},
+            {20.0f, 8.0f},
+            [this]()
+            {
+                if(removeConfirmModal_)
+                    removeConfirmModal_->Hide();
+                RemoveOverride();
+            });
+        ConfigureLayout(confirmRemoveButton, 20.0f, 8.0f, 0.0f);
+        if(auto* confirmText = confirmRemoveButton->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            confirmText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
+
         detailStorage_ = BSML::Lite::CreateText(
             editorBody, "", 2.3f);
         ConfigureLayout(detailStorage_, -1.0f, 3.0f, 1.0f);
@@ -1834,13 +1937,21 @@ namespace BigScreen {
         if(playPauseButton_)
             BSML::Lite::SetButtonText(
                 playPauseButton_,
-                playWhenAudioReady_ ? "Loading..." :
-                    previewPlaying_ ? "Pause" : "Play");
+                playWhenAudioReady_ ? "…" :
+                    previewPlaying_ ? "Ⅱ" : "▶");
         if(playbackScrubber_)
         {
             const double normalizedPosition = duration > 0.0
                 ? std::clamp(previewSongTime_ / duration, 0.0, 1.0)
                 : 0.0;
+            if(playbackScrubberFill_)
+            {
+                if(auto fillRect = playbackScrubberFill_->get_transform()
+                       .cast<UnityEngine::RectTransform>())
+                    fillRect->set_anchorMax({
+                        static_cast<float>(normalizedPosition),
+                        1.0f});
+            }
             const bool userStillScrubbing =
                 UnityEngine::Time::get_realtimeSinceStartup() <
                 scrubberFollowResumeTime_;

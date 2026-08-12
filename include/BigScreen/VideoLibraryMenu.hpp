@@ -10,6 +10,7 @@ namespace BSML {
     class ClickableText;
     class CustomListTableData;
     class IncrementSetting;
+    class ModalView;
     class SliderSetting;
     class ToggleSetting;
 }
@@ -96,7 +97,9 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;
+        HMUI::ImageView* playbackScrubberFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
+        BSML::ModalView* removeConfirmModal_ = nullptr;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
