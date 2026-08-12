@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -37,8 +38,11 @@
 #include "System/Threading/Tasks/Task_1.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
+#include "TMPro/TextOverflowModes.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/AndroidJavaClass.hpp"
+#include "UnityEngine/AndroidJavaObject.hpp"
 #include "UnityEngine/AudioClip.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/GUIUtility.hpp"
@@ -58,6 +62,7 @@
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/VerticalLayoutGroup.hpp"
 #include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
@@ -187,6 +192,34 @@ namespace BigScreen {
             return isDomain("youtube.com") ||
                    isDomain("youtu.be") ||
                    isDomain("youtube-nocookie.com");
+        }
+
+        std::string EncodeUrlQuery(const std::string& value)
+        {
+            // Encode UTF-8 bytes directly. YouTube accepts percent-encoded
+            // UTF-8, so titles and artist names outside ASCII remain intact.
+            constexpr char Hex[] = "0123456789ABCDEF";
+            std::string encoded;
+            encoded.reserve(value.size() * 3);
+            for(const unsigned char character : value)
+            {
+                if(std::isalnum(character) || character == '-' ||
+                   character == '_' || character == '.' || character == '~')
+                {
+                    encoded.push_back(static_cast<char>(character));
+                }
+                else if(character == ' ')
+                {
+                    encoded.push_back('+');
+                }
+                else
+                {
+                    encoded.push_back('%');
+                    encoded.push_back(Hex[character >> 4]);
+                    encoded.push_back(Hex[character & 0x0F]);
+                }
+            }
+            return encoded;
         }
 
         std::string Megabytes(std::uint64_t bytes)
@@ -609,13 +642,107 @@ namespace BigScreen {
         // only reduces usable space without providing a layout benefit.
         const BSML::Lite::TransformWrapper editorBody(editorRoot);
 
+        // Keep the proven single TMPro title object: Beat Saber's side-panel
+        // layout can collapse adjacent standalone text rows even while their
+        // LayoutElements retain space. Explicit padding and reduced line
+        // spacing keep both song and artist visible without either line
+        // crossing the Back divider or the first local-file row.
+        auto* titleTopSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
+        ConfigureLayout(titleTopSpacer, -1.0f, 0.5f, 1.0f);
+        auto* titleActionRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(titleActionRow, false);
+        titleActionRow->set_spacing(0.7f);
+        ConfigureLayout(titleActionRow, 54.0f, 7.5f, 1.0f);
+        if(auto* rowLayout = EnsureLayout(titleActionRow))
+        {
+            rowLayout->set_minWidth(54.0f);
+            rowLayout->set_minHeight(7.5f);
+        }
+
+        // The combined row spans both the song and artist lines. The title
+        // consumes all space not reserved for the fixed search action and
+        // auto-sizes before masking, preserving two readable lines without
+        // drawing beneath the button.
         detailTitle_ = BSML::Lite::CreateText(
-            editorBody, "", 3.6f);
-        ConfigureLayout(detailTitle_, -1.0f, 7.5f, 1.0f);
+            titleActionRow, "", 3.3f);
+        ConfigureLayout(detailTitle_, 0.0f, 7.5f, 1.0f);
+        detailTitle_->set_enableWordWrapping(false);
+        detailTitle_->set_enableAutoSizing(true);
+        detailTitle_->set_fontSizeMin(2.2f);
+        detailTitle_->set_fontSizeMax(3.3f);
+        detailTitle_->set_overflowMode(TMPro::TextOverflowModes::Masking);
+        detailTitle_->set_maxVisibleLines(2);
+        detailTitle_->set_lineSpacing(-16.0f);
+
+        searchYouTubeButton_ = BSML::Lite::CreateUIButton(
+            titleActionRow,
+            "Search YouTube",
+            {0.0f, 0.0f},
+            {16.5f, 7.4f},
+            [this]() { SearchSelectedSongOnYouTube(); });
+        ConfigureLayout(searchYouTubeButton_, 16.5f, 7.4f, 0.0f);
+        // It is created after the title for straightforward pointer setup;
+        // reorder it inside the horizontal group so the action occupies the
+        // left edge and the song/artist block receives the remaining width.
+        searchYouTubeButton_->get_transform()->SetAsFirstSibling();
+        BSML::Lite::SetButtonTextSize(searchYouTubeButton_, 2.2f);
+        if(auto* searchText = searchYouTubeButton_->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+        {
+            searchText->set_enableWordWrapping(false);
+            searchText->set_enableAutoSizing(true);
+            searchText->set_fontSizeMin(1.7f);
+            searchText->set_fontSizeMax(2.2f);
+            searchText->set_overflowMode(TMPro::TextOverflowModes::Masking);
+            searchText->set_maxVisibleLines(1);
+        }
+        BSML::Lite::AddHoverHint(
+            searchYouTubeButton_,
+            "Opens YouTube in the Quest browser and searches for this song and artist.");
+        auto* titleBottomSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
+        ConfigureLayout(titleBottomSpacer, -1.0f, 0.7f, 1.0f);
+
+        // Local files are not a separate picker. They appear as plain
+        // filename/action rows directly in the editor, and this complete
+        // layout node is removed when the selected map has no MP4 files.
+        auto* localRows = BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(localRows, true);
+        localRows->set_childForceExpandWidth(true);
+        localRows->set_spacing(0.45f);
+        ConfigureLayout(localRows, 54.0f, 0.0f, 1.0f);
+        localVideoListContent_ = localRows->get_gameObject();
+        localVideoListContent_->SetActive(false);
+
+        localVideoHelpModal_ = BSML::Lite::CreateModal(
+            editorController,
+            {64.0f, 34.0f},
+            nullptr,
+            true);
+        localVideoHelpText_ = BSML::Lite::CreateText(
+            localVideoHelpModal_,
+            "",
+            TMPro::FontStyles::Normal,
+            {0.0f, 4.0f});
+        localVideoHelpText_->set_fontSize(2.8f);
+        localVideoHelpText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        auto* closeLocalHelp = BSML::Lite::CreateUIButton(
+            localVideoHelpModal_->get_transform(),
+            "Close",
+            {32.0f, -27.0f},
+            {22.0f, 7.0f},
+            [this]()
+            {
+                if(localVideoHelpModal_)
+                    localVideoHelpModal_->Hide();
+            });
+        ConfigureLayout(closeLocalHelp, 22.0f, 7.0f, 0.0f);
+
         auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlEntryRow, false);
         urlEntryRow->set_spacing(0.6f);
         ConfigureLayout(urlEntryRow, -1.0f, 8.0f, 1.0f);
+        if(auto* urlEntryLayout = EnsureLayout(urlEntryRow))
+            urlEntryLayout->set_minHeight(8.0f);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
             urlEntryRow,
             "Paste URL",
@@ -660,14 +787,20 @@ namespace BigScreen {
         // Keep the address field at the panel's full width. Recognition art
         // belongs in the following action row, where it cannot reduce the
         // amount of the pasted URL that remains visible and editable.
+        auto* urlRowSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
+        ConfigureLayout(urlRowSpacer, -1.0f, 0.7f, 1.0f);
+        if(auto* spacerLayout = EnsureLayout(urlRowSpacer))
+            spacerLayout->set_minHeight(0.7f);
         auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlPreviewRow, false);
         urlPreviewRow->set_spacing(0.45f);
-        ConfigureLayout(urlPreviewRow, -1.0f, 9.5f, 1.0f);
+        ConfigureLayout(urlPreviewRow, -1.0f, 9.0f, 1.0f);
+        if(auto* previewRowLayout = EnsureLayout(urlPreviewRow))
+            previewRowLayout->set_minHeight(9.0f);
         urlThumbnail_ = BSML::Lite::CreateImage(
             urlPreviewRow,
             BSML::Utilities::ImageResources::GetBlankSprite());
-        ConfigureLayout(urlThumbnail_, 15.0f, 8.4f, 0.0f);
+        ConfigureLayout(urlThumbnail_, 15.0f, 7.7f, 0.0f);
         urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
         urlThumbnail_->set_preserveAspect(true);
         downloadButton_ = BSML::Lite::CreateUIButton(
@@ -975,8 +1108,11 @@ namespace BigScreen {
             sliderRect->set_anchorMin({0.0f, 0.0f});
             sliderRect->set_anchorMax({1.0f, 1.0f});
             sliderRect->set_pivot({0.5f, 0.5f});
-            sliderRect->set_anchoredPosition({0.0f, 0.0f});
-            sliderRect->set_sizeDelta({0.0f, 0.0f});
+            // Leave a little vertical clearance below the group title. The
+            // bar retains its full horizontal travel while its native slider
+            // rectangle is slightly shorter and biased toward the row center.
+            sliderRect->set_anchoredPosition({0.0f, -0.2f});
+            sliderRect->set_sizeDelta({0.0f, -0.9f});
 
             // The stock slider tints its complete track as the Selectable's
             // hover target. Preserve that graphic as a fixed light-gray bar,
@@ -1027,27 +1163,33 @@ namespace BigScreen {
         // Play/Pause reserves the left edge; the scrubber consumes every
         // remaining unit of row width. Its native centered value text now
         // serves as the current/total playback clock directly on the bar.
-        ConfigureLayout(playbackScrubber_, 0.0f, 7.4f, 1.0f);
+        ConfigureLayout(playbackScrubber_, 0.0f, 6.7f, 1.0f);
 
         // Deleting an override also deletes its downloaded media, thumbnail,
         // and saved timing. Require an explicit second action so an imprecise
         // controller click cannot remove those files immediately.
         removeConfirmModal_ = BSML::Lite::CreateModal(
             editorController,
-            {58.0f, 25.0f},
+            {64.0f, 32.0f},
             nullptr,
             true);
-        auto* confirmationText = BSML::Lite::CreateText(
+        removeConfirmationText_ = BSML::Lite::CreateText(
             removeConfirmModal_,
             "Remove this assigned video?\nThe downloaded video and its timing settings will be deleted.",
             TMPro::FontStyles::Normal,
-            {0.0f, 5.0f});
-        confirmationText->set_fontSize(3.0f);
-        confirmationText->set_alignment(TMPro::TextAlignmentOptions::Center);
+            3.3f,
+            {0.0f, 4.0f},
+            {56.0f, 16.0f});
+        removeConfirmationText_->set_enableWordWrapping(true);
+        removeConfirmationText_->set_enableAutoSizing(true);
+        removeConfirmationText_->set_fontSizeMin(2.9f);
+        removeConfirmationText_->set_fontSizeMax(3.3f);
+        removeConfirmationText_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        removeConfirmationText_->set_alignment(TMPro::TextAlignmentOptions::Center);
         auto* cancelRemoveButton = BSML::Lite::CreateUIButton(
             removeConfirmModal_->get_transform(),
             "Cancel",
-            {17.5f, -18.5f},
+            {18.0f, -25.0f},
             {20.0f, 8.0f},
             [this]()
             {
@@ -1058,7 +1200,7 @@ namespace BigScreen {
         auto* confirmRemoveButton = BSML::Lite::CreateUIButton(
             removeConfirmModal_->get_transform(),
             "<color=#FF3838>Remove Video</color>",
-            {40.5f, -18.5f},
+            {46.0f, -25.0f},
             {20.0f, 8.0f},
             [this]()
             {
@@ -1073,7 +1215,7 @@ namespace BigScreen {
 
         auto* storageSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
         ConfigureLayout(storageSpacer, -1.0f, 2.0f, 1.0f);
-        videoOnlyRows_.push_back(storageSpacer->get_gameObject());
+        storageSpacer_ = storageSpacer->get_gameObject();
 
         // Match the playback area's visual hierarchy: a full-width rounded
         // panel names the section, then keeps all three capacity values and
@@ -1091,7 +1233,7 @@ namespace BigScreen {
         storagePanel->set_spacing(0.3f);
         storagePanel->set_childForceExpandWidth(true);
         ConfigureLayout(storagePanel, -1.0f, 12.5f, 1.0f);
-        videoOnlyRows_.push_back(storagePanel->get_gameObject());
+        storagePanel_ = storagePanel->get_gameObject();
         if(playbackPanelBackground)
             if(auto* storagePanelBackground = storagePanel->get_gameObject()
                    ->GetComponent<HMUI::ImageView*>())
@@ -1109,20 +1251,24 @@ namespace BigScreen {
         ConfigureLayout(storageGroupTitle, -1.0f, 3.8f, 1.0f);
         storageGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
 
-        // The button occupies the far-right edge after Free Space, leaving
-        // the three data columns to divide the remaining width evenly.
+        // The button occupies the far-right edge. Local Videos participates in
+        // this layout only when one or more MP4 files physically exist in the
+        // selected map folder, so ordinary maps do not gain an empty column.
         auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(storageBody);
         ConfigureGroup(storageRow, false);
         storageRow->set_spacing(0.6f);
         ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
         detailMapStorage_ = BSML::Lite::CreateText(
-            storageRow, "This Video\n0.0 MB", 2.25f);
+            storageRow, "Downloaded Video\n0.0 MB", 2.15f);
         ConfigureLayout(detailMapStorage_, 0.0f, 7.0f, 1.0f);
+        detailLocalStorage_ = BSML::Lite::CreateText(
+            storageRow, "Local Videos\n0.0 MB", 2.15f);
+        ConfigureLayout(detailLocalStorage_, 0.0f, 7.0f, 1.0f);
         detailLibraryStorage_ = BSML::Lite::CreateText(
-            storageRow, "All Videos\n0.0 MB", 2.25f);
+            storageRow, "All Downloads\n0.0 MB", 2.15f);
         ConfigureLayout(detailLibraryStorage_, 0.0f, 7.0f, 1.0f);
         detailFreeStorage_ = BSML::Lite::CreateText(
-            storageRow, "Free Space\n0.0 MB", 2.25f);
+            storageRow, "Free Space\n0.0 MB", 2.15f);
         ConfigureLayout(detailFreeStorage_, 0.0f, 7.0f, 1.0f);
         removeButton_ = BSML::Lite::CreateUIButton(
             storageRow,
@@ -1155,7 +1301,7 @@ namespace BigScreen {
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
-                detailText_, detailMapStorage_, detailLibraryStorage_,
+                detailText_, detailMapStorage_, detailLocalStorage_, detailLibraryStorage_,
                 detailFreeStorage_, playbackTimeText_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
@@ -1321,6 +1467,7 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
+        RefreshLocalVideoFiles();
         ShowEditor();
         RequestSelectedAudio();
         // A mapper URL has already been supplied on the user's behalf. Probe
@@ -1531,14 +1678,304 @@ namespace BigScreen {
         }
     }
 
+    void VideoLibraryMenu::SearchSelectedSongOnYouTube()
+    {
+        if(!selected_)
+            return;
+
+        const std::string song = selected_->songName
+            ? std::string(selected_->songName)
+            : std::string{};
+        const std::string artist = selected_->songAuthorName
+            ? std::string(selected_->songAuthorName)
+            : std::string{};
+        const auto query = Trim(song + (artist.empty() ? "" : " " + artist));
+        if(query.empty())
+        {
+            transientStatus_ =
+                "This map does not provide a song or artist name to search.";
+            RefreshDetails();
+            return;
+        }
+
+        const auto url =
+            "https://www.youtube.com/results?search_query=" +
+            EncodeUrlQuery(query);
+        try
+        {
+            // Opening another Quest activity backgrounds Beat Saber. Stop the
+            // editor audition first so audio cannot continue underneath the
+            // browser or resume from an ambiguous point when the player
+            // returns to the game.
+            StopPreviewAudio(true);
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                PlaybackSession::Instance().Stop();
+
+            // Application.OpenURL returns successfully on this Quest firmware
+            // but never asks Android to launch an activity. Build the standard
+            // ACTION_VIEW intent explicitly through Unity's Java bridge. This
+            // remains browser-agnostic; Android currently resolves it to the
+            // installed Quest Browser rather than hard-coding that package.
+            const StringW urlString(url);
+            const StringW actionString("android.intent.action.VIEW");
+            auto* uriClass = UnityEngine::AndroidJavaClass::New_ctor(
+                "android.net.Uri");
+            auto* uriArguments = Array<::System::Object*>::New({
+                reinterpret_cast<::System::Object*>(
+                    static_cast<Il2CppString*>(urlString))});
+            auto* uri = uriClass->CallStatic<
+                UnityEngine::AndroidJavaObject*>(
+                    "parse",
+                    uriArguments);
+
+            ::ArrayW<::System::Object*, ::Array<::System::Object*>*>
+                intentArguments = Array<::System::Object*>::New({
+                reinterpret_cast<::System::Object*>(
+                    static_cast<Il2CppString*>(actionString)),
+                static_cast<::System::Object*>(uri)});
+            auto* intent = UnityEngine::AndroidJavaObject::New_ctor(
+                "android.content.Intent",
+                intentArguments);
+
+            auto* unityPlayer = UnityEngine::AndroidJavaClass::New_ctor(
+                "com.unity3d.player.UnityPlayer");
+            auto* activity = unityPlayer->GetStatic<
+                UnityEngine::AndroidJavaObject*>("currentActivity");
+            if(!activity || !intent)
+                throw std::runtime_error(
+                    "Unity did not expose its Android activity or intent");
+            auto* activityArguments = Array<::System::Object*>::New({
+                static_cast<::System::Object*>(intent)});
+            activity->Call("startActivity", activityArguments);
+
+            // Release Java local references after Android has accepted the
+            // activity request. The browser owns its copied Intent/Uri state.
+            activity->Dispose();
+            unityPlayer->Dispose();
+            intent->Dispose();
+            uri->Dispose();
+            uriClass->Dispose();
+            transientStatus_ = "Opened YouTube search in the Quest browser.";
+            PaperLogger.info(
+                "Opened YouTube search for '{}'",
+                query);
+        }
+        catch(const std::exception& error)
+        {
+            transientStatus_ =
+                "Quest could not open the YouTube search in a browser.";
+            PaperLogger.error(
+                "Could not launch YouTube search '{}': {}",
+                url,
+                error.what());
+        }
+        catch(...)
+        {
+            transientStatus_ =
+                "Quest could not open the YouTube search in a browser.";
+            PaperLogger.error(
+                "Could not launch YouTube search '{}'",
+                url);
+        }
+        RefreshDetails();
+    }
+
+    void VideoLibraryMenu::RefreshLocalVideoFiles()
+    {
+        localVideoFiles_ = selected_
+            ? VideoLibrary::Instance().DiscoverLocalVideos(selected_)
+            : std::vector<LocalVideoFile>{};
+        RebuildLocalVideoRows();
+    }
+
+    void VideoLibraryMenu::RebuildLocalVideoRows()
+    {
+        if(!localVideoListContent_)
+            return;
+
+        for(auto* row : localVideoRowObjects_)
+        {
+            if(!row) continue;
+            row->SetActive(false);
+            UnityEngine::Object::Destroy(row);
+        }
+        localVideoRowObjects_.clear();
+
+        const bool hasLocalFiles = !localVideoFiles_.empty();
+        localVideoListContent_->SetActive(hasLocalFiles);
+        if(auto* listLayout = localVideoListContent_
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            const float rowHeight = 8.0f;
+            const float rowSpacing = 0.45f;
+            listLayout->set_preferredHeight(hasLocalFiles
+                ? rowHeight * static_cast<float>(localVideoFiles_.size()) +
+                    rowSpacing * static_cast<float>(localVideoFiles_.size() - 1)
+                : 0.0f);
+        }
+
+        if(!hasLocalFiles)
+            return;
+
+        const BSML::Lite::TransformWrapper rows(localVideoListContent_);
+        const auto descriptor = selected_
+            ? VideoLibrary::Instance().Describe(selected_)
+            : VideoDescriptor{};
+        const float localFileFontSize = std::clamp(
+            urlInput_ && urlInput_->_textView
+                ? urlInput_->_textView->get_fontSize()
+                : 3.6f,
+            3.6f,
+            4.2f);
+
+        for(std::size_t index = 0; index < localVideoFiles_.size(); ++index)
+        {
+            const auto& file = localVideoFiles_[index];
+            const bool active = file.compatible &&
+                descriptor.activeMapFileName &&
+                *descriptor.activeMapFileName == file.fileName;
+
+            auto* row = BSML::Lite::CreateHorizontalLayoutGroup(rows);
+            ConfigureGroup(row, false);
+            row->set_spacing(0.6f);
+            ConfigureLayout(row, 54.0f, 8.0f, 1.0f);
+            localVideoRowObjects_.push_back(row->get_gameObject());
+
+            // Keep the short action at the left edge so every filename begins
+            // at the same predictable position and can consume the remainder
+            // of the complete menu row.
+            auto* action = BSML::Lite::CreateUIButton(
+                row,
+                !file.compatible ? "HELP" : active ? "ACTIVE" : "SET",
+                {0.0f, 0.0f},
+                {13.0f, 7.5f},
+                [this, index]()
+                {
+                    if(index >= localVideoFiles_.size())
+                        return;
+                    if(localVideoFiles_[index].compatible)
+                        SetLocalVideo(index);
+                    else
+                        ShowLocalVideoHelp(index);
+                });
+            ConfigureLayout(action, 13.0f, 7.5f, 0.0f);
+            BSML::Lite::SetButtonTextSize(
+                action,
+                std::min(localFileFontSize, 3.6f));
+            action->set_interactable(!active);
+
+            auto* name = BSML::Lite::CreateText(
+                row,
+                file.fileName,
+                localFileFontSize);
+            name->set_richText(false);
+            name->set_enableWordWrapping(false);
+            name->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+            name->set_alignment(TMPro::TextAlignmentOptions::MidlineLeft);
+            name->set_color(!file.compatible
+                ? UnityEngine::Color{1.0f, 0.22f, 0.22f, 1.0f}
+                : active
+                    ? UnityEngine::Color{0.20f, 1.0f, 0.36f, 1.0f}
+                    : UnityEngine::Color::get_white());
+            // Reserve the full remaining width. Names longer than the menu
+            // end in an ellipsis rather than wrapping or pushing the button.
+            ConfigureLayout(name, 39.9f, 8.0f, 1.0f);
+        }
+    }
+
+    void VideoLibraryMenu::SetLocalVideo(std::size_t index)
+    {
+        if(!selected_ || index >= localVideoFiles_.size())
+            return;
+        const auto& file = localVideoFiles_[index];
+        if(!file.compatible)
+        {
+            ShowLocalVideoHelp(index);
+            return;
+        }
+
+        // Close the decoder before replacing a managed YouTube override. The
+        // selected local MP4 itself remains user-owned and is never moved or
+        // deleted by this operation.
+        StopPreviewAudio(true);
+        auto& playback = PlaybackSession::Instance();
+        if(playback.IsLibraryPreviewActive())
+            playback.Stop();
+
+        std::string error;
+        if(!VideoLibrary::Instance().SetLocalVideoOverride(
+               selected_, file.fileName, error))
+        {
+            transientStatus_ = error.empty()
+                ? "The local video could not be assigned."
+                : error;
+            RefreshLocalVideoFiles();
+            RefreshDetails();
+            return;
+        }
+
+        EvictVideoThumbnail(
+            VideoLibrary::Instance().AllocateThumbnailPath(
+                std::string(selected_->levelID), VideoOrigin::User).string());
+
+        // A newly assigned file starts with neutral timing, exactly like a new
+        // user override. The same controls below can then tune it and persist
+        // those values in library.json without altering the map-folder MP4.
+        offset_ = 0.0;
+        rate_ = 1.0;
+        fitToSong_ = false;
+        blackDuringLeadIn_ = false;
+        suppressTimingCallbacks_ = true;
+        if(offsetSetting_) offsetSetting_->set_Value(0.0f);
+        if(rateSetting_) rateSetting_->set_Value(1.0f);
+        SetToggleWithoutNotification(fitToggle_, false);
+        SetToggleWithoutNotification(blackLeadInToggle_, false);
+        suppressTimingCallbacks_ = false;
+
+        url_.clear();
+        if(urlInput_)
+        {
+            suppressUrlCallback_ = true;
+            urlInput_->SetText("");
+            suppressUrlCallback_ = false;
+        }
+        ClearThumbnail();
+        transientStatus_ = "Local video assigned: " + file.fileName;
+        previewSongTime_ = 0.0;
+        playWhenAudioReady_ = true;
+        RefreshLocalVideoFiles();
+        RequestSelectedAudio();
+        StartSelectedPreview();
+        if(previewAudioClip_)
+            StartPreviewAudio();
+        RefreshDetails();
+    }
+
+    void VideoLibraryMenu::ShowLocalVideoHelp(std::size_t index)
+    {
+        if(index >= localVideoFiles_.size() ||
+           !localVideoHelpModal_ || !localVideoHelpText_)
+            return;
+        const auto& file = localVideoFiles_[index];
+        localVideoHelpText_->set_text(
+            file.fileName + "\n\n" +
+            (file.problem.empty()
+                ? "This MP4 is not compatible with Big Screen. Use H.264/AVC video at 1080p or lower inside a valid MP4 container."
+                : file.problem));
+        localVideoHelpModal_->Show();
+    }
+
     void VideoLibraryMenu::RemoveOverride()
     {
         if(!selected_) return;
 
-        // Stop both clocks before deleting the file they are currently using.
-        // This also prevents the audio preview from continuing after the video
-        // screen disappears and lets FrameDecoder close its file handle before
-        // VideoLibrary removes the MP4.
+        const auto removedDescriptor = VideoLibrary::Instance().Describe(selected_);
+        const bool removingLocalMapFile =
+            removedDescriptor.userOverrideIsMapLocal;
+
+        // Stop both clocks before changing the active assignment. Managed
+        // downloads may be deleted after their decoder closes; map-folder MP4s
+        // are only unregistered and always remain untouched.
         StopPreviewAudio(true);
         auto& playback = PlaybackSession::Instance();
         if(playback.IsLibraryPreviewActive())
@@ -1567,7 +2004,8 @@ namespace BigScreen {
         // file also prevents the periodic refresh from recreating the sprite
         // from a stale completed-probe snapshot.
         const auto download = DownloadManager::Instance().Snapshot();
-        if(download.levelId == std::string(selected_->levelID) &&
+        if(!removingLocalMapFile &&
+           download.levelId == std::string(selected_->levelID) &&
            !download.thumbnailPath.empty())
         {
             std::error_code thumbnailError;
@@ -1581,7 +2019,9 @@ namespace BigScreen {
             }
         }
         ClearThumbnail();
-        transientStatus_ = "User video removed.";
+        transientStatus_ = removingLocalMapFile
+            ? "Local video assignment removed. The MP4 remains in the map folder."
+            : "Downloaded user video removed.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
         offset_ = descriptor.playableConfig
@@ -1608,6 +2048,7 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
+        RefreshLocalVideoFiles();
         RefreshDetails();
         StartSelectedPreview();
     }
@@ -1824,36 +2265,59 @@ namespace BigScreen {
         const auto freeBytes = VideoLibrary::Instance().FreeBytes();
         if(detailLibraryStorage_)
             detailLibraryStorage_->set_text(
-                "All Videos\n" + StorageSize(libraryBytes));
+                "All Downloads\n" + StorageSize(libraryBytes));
         if(detailFreeStorage_)
             detailFreeStorage_->set_text(
                 "Free Space\n" + StorageSize(freeBytes));
         if(!selected_ || !detailText_)
         {
             if(detailMapStorage_)
-                detailMapStorage_->set_text("This Video\n0.0 MB");
+                detailMapStorage_->set_text("Downloaded Video\n0.0 MB");
+            if(detailLocalStorage_)
+                detailLocalStorage_->get_gameObject()->SetActive(false);
+            if(storageSpacer_)
+                storageSpacer_->SetActive(false);
+            if(storagePanel_)
+                storagePanel_->SetActive(false);
             return;
         }
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
-        std::uint64_t mapVideoBytes = 0;
-        if(descriptor.playableConfig)
-        {
-            std::error_code sizeError;
-            mapVideoBytes = std::filesystem::file_size(
-                descriptor.playableConfig->videoPath,
-                sizeError);
-            if(sizeError)
-                mapVideoBytes = 0;
-        }
+        const auto downloadedVideoBytes = selected_->levelID
+            ? VideoLibrary::Instance().ManagedBytesForLevel(
+                std::string(selected_->levelID))
+            : 0;
+        std::uint64_t localVideoBytes = 0;
+        for(const auto& localVideo : localVideoFiles_)
+            localVideoBytes += localVideo.bytes;
+        const bool hasLocalVideos = !localVideoFiles_.empty();
+        const bool showStorage = descriptor.CanPlay() ||
+            downloadedVideoBytes > 0 || hasLocalVideos;
         if(detailMapStorage_)
             detailMapStorage_->set_text(
-                "This Video\n" + StorageSize(mapVideoBytes));
+                "Downloaded Video\n" + StorageSize(downloadedVideoBytes));
+        if(detailLocalStorage_)
+        {
+            detailLocalStorage_->set_text(
+                "Local Videos\n" + StorageSize(localVideoBytes));
+            detailLocalStorage_->get_gameObject()->SetActive(hasLocalVideos);
+        }
+        if(storageSpacer_)
+            storageSpacer_->SetActive(showStorage);
+        if(storagePanel_)
+            storagePanel_->SetActive(showStorage);
         if(detailTitle_)
         {
             const auto name = selected_->songName ? std::string(selected_->songName) : "Unknown Song";
             const auto author = selected_->songAuthorName
                 ? std::string(selected_->songAuthorName) : std::string{};
             detailTitle_->set_text(author.empty() ? name : name + "\n" + author);
+        }
+        if(removeConfirmationText_)
+        {
+            removeConfirmationText_->set_text(
+                descriptor.userOverrideIsMapLocal
+                    ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the map folder."
+                    : "Remove this downloaded video?\n\nThe downloaded MP4 and its timing settings will be deleted from Big Screen storage.");
         }
         const auto download = DownloadManager::Instance().Snapshot();
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
@@ -1921,7 +2385,10 @@ namespace BigScreen {
             ? transientStatus_
             : thisDownload && download.state != DownloadState::Idle
                 ? DownloadStatus(download)
-            : descriptor.hasUserOverride ? "User video active" :
+            : descriptor.userOverrideIsMapLocal
+                ? "Local map video active: " +
+                    descriptor.activeMapFileName.value_or("selected MP4")
+            : descriptor.hasUserOverride ? "Downloaded user video active" :
               descriptor.CanPlay() ? "Mapper video ready" :
               descriptor.CanDownload() ? "Mapper video available to download" :
               "Paste a youtube.com or youtu.be URL to add a video");
@@ -2026,6 +2493,10 @@ namespace BigScreen {
             if(autoPlayedDownloadIdentity_ != completedIdentity)
             {
                 autoPlayedDownloadIdentity_ = completedIdentity;
+                // A completed YouTube download atomically replaces any local
+                // assignment. Refresh the file rows once so the old filename
+                // immediately loses its green active state.
+                RefreshLocalVideoFiles();
                 previewSongTime_ = 0.0;
                 playWhenAudioReady_ = true;
                 RequestSelectedAudio();

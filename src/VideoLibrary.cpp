@@ -1,6 +1,7 @@
 #include "BigScreen/VideoLibrary.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -14,6 +15,12 @@
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 #include "main.hpp"
+
+extern "C" {
+#include "libavcodec/avcodec.h"
+#include "libavformat/avformat.h"
+#include "libavutil/error.h"
+}
 
 namespace BigScreen {
     namespace {
@@ -55,6 +62,7 @@ namespace BigScreen {
             video.fileName = StringOr(value, "fileName");
             video.title = StringOr(value, "title");
             video.codec = StringOr(value, "codec");
+            video.mapLocal = StringOr(value, "sourceType") == "mapFile";
             video.offsetSeconds = NumberOr(value, "offsetSeconds", 0.0);
             video.playbackRate = std::clamp(
                 NumberOr(value, "playbackRate", 1.0),
@@ -103,6 +111,7 @@ namespace BigScreen {
             addString("fileName", video.fileName);
             addString("title", video.title);
             addString("codec", video.codec);
+            addString("sourceType", video.mapLocal ? "mapFile" : "managedFile");
             object.AddMember("offsetSeconds", video.offsetSeconds, allocator);
             object.AddMember("playbackRate", video.playbackRate, allocator);
             object.AddMember("fitToSong", video.fitToSong, allocator);
@@ -133,13 +142,147 @@ namespace BigScreen {
             });
         }
 
-        bool StoredFileExists(
+        bool IsPathInside(
+            const std::filesystem::path& child,
+            const std::filesystem::path& parent)
+        {
+            const auto normalizedChild = std::filesystem::absolute(child).lexically_normal();
+            const auto normalizedParent = std::filesystem::absolute(parent).lexically_normal();
+            auto childPart = normalizedChild.begin();
+            for(auto parentPart = normalizedParent.begin();
+                parentPart != normalizedParent.end(); ++parentPart, ++childPart)
+            {
+                if(childPart == normalizedChild.end() || *childPart != *parentPart)
+                    return false;
+            }
+            return true;
+        }
+
+        std::optional<std::filesystem::path> ResolveStoredFile(
             const std::filesystem::path& videoDirectory,
+            const std::filesystem::path& levelDirectory,
             const std::optional<StoredVideo>& video)
         {
-            return video &&
-                   !video->fileName.empty() &&
-                   std::filesystem::is_regular_file(videoDirectory / video->fileName);
+            if(!video || video->fileName.empty())
+                return std::nullopt;
+
+            const std::filesystem::path relative(video->fileName);
+            if(relative.is_absolute() || relative.filename() != relative)
+                return std::nullopt;
+
+            const auto parent = video->mapLocal ? levelDirectory : videoDirectory;
+            if(parent.empty())
+                return std::nullopt;
+            const auto resolved = (parent / relative).lexically_normal();
+            if(!IsPathInside(resolved, parent) ||
+               !std::filesystem::is_regular_file(resolved))
+                return std::nullopt;
+            return resolved;
+        }
+
+        std::string FfmpegError(int code)
+        {
+            char buffer[AV_ERROR_MAX_STRING_SIZE]{};
+            av_strerror(code, buffer, sizeof(buffer));
+            return buffer;
+        }
+
+        LocalVideoFile ProbeLocalVideo(const std::filesystem::path& path)
+        {
+            LocalVideoFile result;
+            result.fileName = path.filename().string();
+            result.path = path;
+            std::error_code sizeError;
+            result.bytes = std::filesystem::file_size(path, sizeError);
+
+            AVFormatContext* format = nullptr;
+            int status = avformat_open_input(&format, path.string().c_str(), nullptr, nullptr);
+            if(status < 0)
+            {
+                result.problem =
+                    "Big Screen could not open this MP4. The file may still be copying, may be damaged, or may not actually be an MP4 file. FFmpeg reported: " +
+                    FfmpegError(status);
+                return result;
+            }
+
+            const auto closeFormat = [&]()
+            {
+                if(format)
+                    avformat_close_input(&format);
+            };
+            status = avformat_find_stream_info(format, nullptr);
+            if(status < 0)
+            {
+                result.problem =
+                    "Big Screen could not read this MP4's stream information. The file may be incomplete or damaged. FFmpeg reported: " +
+                    FfmpegError(status);
+                closeFormat();
+                return result;
+            }
+
+            const std::string container = format->iformat && format->iformat->name
+                ? format->iformat->name
+                : "";
+            if(container.find("mp4") == std::string::npos)
+            {
+                result.problem =
+                    "This file has an .mp4 name, but its internal container is not MP4. Convert or remux it to a real MP4 file before using it with Big Screen.";
+                closeFormat();
+                return result;
+            }
+
+            AVCodec* decoder = nullptr;
+            const int streamIndex = av_find_best_stream(
+                format, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
+            if(streamIndex < 0 || !decoder)
+            {
+                result.problem =
+                    "This MP4 does not contain a video stream that Big Screen can decode.";
+                closeFormat();
+                return result;
+            }
+
+            const auto* parameters = format->streams[streamIndex]->codecpar;
+            result.width = parameters ? parameters->width : 0;
+            result.height = parameters ? parameters->height : 0;
+            result.codec = parameters
+                ? std::string(avcodec_get_name(parameters->codec_id))
+                : "unknown";
+            if(!parameters || parameters->codec_id != AV_CODEC_ID_H264)
+            {
+                result.problem =
+                    "This video uses " + result.codec +
+                    ". Big Screen requires H.264/AVC video inside an MP4 because that is the supported Quest software-decoding format.";
+                closeFormat();
+                return result;
+            }
+            if(result.width <= 0 || result.height <= 0)
+            {
+                result.problem = "This video reports an invalid frame size.";
+                closeFormat();
+                return result;
+            }
+            const int longEdge = std::max(result.width, result.height);
+            const int shortEdge = std::min(result.width, result.height);
+            if(longEdge > 1920 || shortEdge > 1080)
+            {
+                std::ostringstream message;
+                message << "This video is " << result.width << 'x' << result.height
+                        << ". Big Screen accepts Full HD (1920x1080) or lower; 2K and 4K files are too demanding for Quest software decoding.";
+                result.problem = message.str();
+                closeFormat();
+                return result;
+            }
+
+            const auto* stream = format->streams[streamIndex];
+            if(stream->duration > 0)
+                result.durationSeconds = stream->duration * av_q2d(stream->time_base);
+            else if(format->duration > 0)
+                result.durationSeconds =
+                    format->duration / static_cast<double>(AV_TIME_BASE);
+            result.compatible = true;
+            closeFormat();
+            return result;
         }
     }
 
@@ -180,11 +323,13 @@ namespace BigScreen {
             : std::string{};
         descriptor.songDurationSeconds = level->songDuration;
 
+        std::filesystem::path levelDirectory;
         if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(descriptor.levelId))
         {
+            levelDirectory = std::filesystem::path(custom->get_customLevelPath());
             std::string error;
             descriptor.mapperDefinition = MapVideoConfig::LoadDefinitionFromLevel(
-                std::filesystem::path(custom->get_customLevelPath()),
+                levelDirectory,
                 error);
             if(!error.empty())
                 PaperLogger.error("Video metadata rejected for '{}': {}", descriptor.levelId, error);
@@ -199,14 +344,22 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         const auto found = FindRecord(records_, descriptor.levelId);
         const LevelVideoRecords* saved = found == records_.end() ? nullptr : &found->second;
-        descriptor.hasUserOverride = saved && StoredFileExists(videoPath_, saved->user);
-        descriptor.hasMapperDownload = saved && StoredFileExists(videoPath_, saved->mapper);
+        const auto userPath = saved
+            ? ResolveStoredFile(videoPath_, levelDirectory, saved->user)
+            : std::nullopt;
+        const auto mapperPath = saved
+            ? ResolveStoredFile(videoPath_, levelDirectory, saved->mapper)
+            : std::nullopt;
+        descriptor.hasUserOverride = userPath.has_value();
+        descriptor.hasMapperDownload = mapperPath.has_value();
+        descriptor.userOverrideIsMapLocal =
+            descriptor.hasUserOverride && saved->user->mapLocal;
 
         MapVideoConfig effective = descriptor.mapperDefinition.value_or(MapVideoConfig{});
         if(descriptor.hasUserOverride)
         {
             const auto& record = *saved->user;
-            effective.videoPath = videoPath_ / record.fileName;
+            effective.videoPath = *userPath;
             effective.offsetSeconds = record.offsetSeconds;
             effective.playbackRate = record.playbackRate;
             effective.fitToSong = record.fitToSong;
@@ -215,10 +368,16 @@ namespace BigScreen {
             effective.title = record.title.empty()
                 ? std::optional<std::string>{}
                 : std::optional<std::string>{record.title};
-            descriptor.downloadUrl = record.sourceUrl;
+            if(record.sourceUrl.empty())
+                descriptor.downloadUrl.reset();
+            else
+                descriptor.downloadUrl = record.sourceUrl;
             descriptor.downloadOrigin = VideoOrigin::User;
-            descriptor.thumbnailPath = AllocateThumbnailPath(
-                descriptor.levelId, VideoOrigin::User);
+            if(record.mapLocal)
+                descriptor.activeMapFileName = record.fileName;
+            else
+                descriptor.thumbnailPath = AllocateThumbnailPath(
+                    descriptor.levelId, VideoOrigin::User);
             descriptor.playableConfig = effective;
         }
         else if(descriptor.hasMapperLocalFile)
@@ -232,12 +391,13 @@ namespace BigScreen {
             }
             descriptor.thumbnailPath = AllocateThumbnailPath(
                 descriptor.levelId, VideoOrigin::Mapper);
+            descriptor.activeMapFileName = effective.videoPath.filename().string();
             descriptor.playableConfig = effective;
         }
         else if(descriptor.hasMapperDownload)
         {
             const auto& record = *saved->mapper;
-            effective.videoPath = videoPath_ / record.fileName;
+            effective.videoPath = *mapperPath;
             effective.offsetSeconds = record.offsetSeconds;
             effective.playbackRate = record.playbackRate;
             effective.fitToSong = record.fitToSong;
@@ -311,8 +471,130 @@ namespace BigScreen {
         const auto previous = target;
         target = std::move(video);
         SaveLocked();
-        if(previous && previous->fileName != target->fileName)
+        if(previous && !previous->mapLocal && previous->fileName != target->fileName)
             std::filesystem::remove(videoPath_ / previous->fileName);
+    }
+
+    std::vector<LocalVideoFile> VideoLibrary::DiscoverLocalVideos(
+        GlobalNamespace::BeatmapLevel* level) const
+    {
+        std::vector<LocalVideoFile> files;
+        if(!level || !level->levelID)
+            return files;
+        auto* custom = SongCore::API::Loading::GetLevelByLevelID(
+            std::string(level->levelID));
+        if(!custom)
+            return files;
+
+        const std::filesystem::path directory(custom->get_customLevelPath());
+        std::error_code iteratorError;
+        for(std::filesystem::directory_iterator iterator(directory, iteratorError), end;
+            !iteratorError && iterator != end; iterator.increment(iteratorError))
+        {
+            std::error_code typeError;
+            if(!iterator->is_regular_file(typeError) || typeError)
+                continue;
+            auto extension = iterator->path().extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            if(extension == ".mp4")
+                files.push_back(ProbeLocalVideo(iterator->path()));
+        }
+        std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
+        {
+            std::string leftName = left.fileName;
+            std::string rightName = right.fileName;
+            std::transform(leftName.begin(), leftName.end(), leftName.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            std::transform(rightName.begin(), rightName.end(), rightName.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            return leftName < rightName;
+        });
+        return files;
+    }
+
+    bool VideoLibrary::SetLocalVideoOverride(
+        GlobalNamespace::BeatmapLevel* level,
+        const std::string& fileName,
+        std::string& error)
+    {
+        error.clear();
+        if(!level || !level->levelID)
+        {
+            error = "Select a custom or WIP map before assigning a local video.";
+            return false;
+        }
+        auto* custom = SongCore::API::Loading::GetLevelByLevelID(
+            std::string(level->levelID));
+        if(!custom)
+        {
+            error = "Local map-folder videos are available only for custom and WIP maps.";
+            return false;
+        }
+
+        const std::filesystem::path relative(fileName);
+        if(relative.empty() || relative.is_absolute() || relative.filename() != relative)
+        {
+            error = "The local video filename is invalid.";
+            return false;
+        }
+        const std::filesystem::path directory(custom->get_customLevelPath());
+        const auto path = (directory / relative).lexically_normal();
+        if(!IsPathInside(path, directory) || !std::filesystem::is_regular_file(path))
+        {
+            error = "The selected MP4 is no longer present in this map folder.";
+            return false;
+        }
+
+        const auto probe = ProbeLocalVideo(path);
+        if(!probe.compatible)
+        {
+            error = probe.problem.empty()
+                ? "This local MP4 is not compatible with Big Screen."
+                : probe.problem;
+            return false;
+        }
+
+        const std::string levelId(level->levelID);
+        StoredVideo video;
+        video.fileName = probe.fileName;
+        video.title = probe.fileName;
+        video.codec = probe.codec;
+        video.mapLocal = true;
+        video.durationSeconds = probe.durationSeconds;
+        video.bytes = probe.bytes;
+        video.width = probe.width;
+        video.height = probe.height;
+
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
+        found->second.songName = level->songName
+            ? std::string(level->songName)
+            : "Unknown Song";
+        found->second.songAuthor = level->songAuthorName
+            ? std::string(level->songAuthorName)
+            : std::string{};
+        const auto previous = found->second.user;
+        found->second.user = std::move(video);
+        SaveLocked();
+
+        // A map-local file is never owned or deleted by Big Screen. A managed
+        // YouTube override being explicitly replaced is removed to avoid an
+        // inaccessible orphan consuming the headset's storage.
+        if(previous && !previous->mapLocal)
+            std::filesystem::remove(videoPath_ / previous->fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
+        PaperLogger.info(
+            "Assigned local map video '{}' to '{}'",
+            probe.fileName,
+            levelId);
+        return true;
     }
 
     bool VideoLibrary::RemoveUserOverride(const std::string& levelId, bool deleteFile)
@@ -321,7 +603,7 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.user)
             return false;
-        if(deleteFile)
+        if(deleteFile && !found->second.user->mapLocal)
             std::filesystem::remove(videoPath_ / found->second.user->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -408,6 +690,35 @@ namespace BigScreen {
         return records_;
     }
 
+    std::uint64_t VideoLibrary::ManagedBytesForLevel(
+        const std::string& levelId) const
+    {
+        std::scoped_lock lock(mutex_);
+        const auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+            return 0;
+
+        std::uint64_t total = 0;
+        std::string countedFile;
+        const auto addManagedFile = [&](const std::optional<StoredVideo>& video)
+        {
+            if(!video || video->mapLocal || video->fileName.empty() ||
+               video->fileName == countedFile)
+                return;
+            const auto path = videoPath_ / video->fileName;
+            std::error_code error;
+            const auto bytes = std::filesystem::file_size(path, error);
+            if(!error)
+            {
+                total += bytes;
+                countedFile = video->fileName;
+            }
+        };
+        addManagedFile(found->second.mapper);
+        addManagedFile(found->second.user);
+        return total;
+    }
+
     std::uint64_t VideoLibrary::LibraryBytes() const
     {
         std::scoped_lock lock(mutex_);
@@ -472,7 +783,7 @@ namespace BigScreen {
     {
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
-        document.AddMember("version", 1, allocator);
+        document.AddMember("version", 2, allocator);
         rapidjson::Value levels(rapidjson::kObjectType);
         for(const auto& [levelId, record] : records_)
         {

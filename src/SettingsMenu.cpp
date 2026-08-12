@@ -18,6 +18,7 @@
 #include "HMUI/ViewController.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
+#include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/UI/Button.hpp"
@@ -145,6 +146,7 @@ namespace BigScreen {
         tabViewRoots_.fill(nullptr);
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
+        distractionFreeMenuToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
         distanceSetting_ = nullptr;
@@ -153,14 +155,17 @@ namespace BigScreen {
         tiltSetting_ = nullptr;
         sizeSetting_ = nullptr;
         curvedScreenToggle_ = nullptr;
+        maintainCurveAspectToggle_ = nullptr;
         curvatureSlider_ = nullptr;
         transparencyToggle_ = nullptr;
         lightShowToggle_ = nullptr;
         hideBackWallLightsToggle_ = nullptr;
         hideRingLightsToggle_ = nullptr;
         hideSideLaserLightsToggle_ = nullptr;
+        hideBackWallLightsHint_ = nullptr;
+        hideRingLightsHint_ = nullptr;
+        hideSideLaserLightsHint_ = nullptr;
         environmentOverrideToggle_ = nullptr;
-        glassDesertOverrideToggle_ = nullptr;
         disableEnvironmentMotionToggle_ = nullptr;
         hideTrackRingsToggle_ = nullptr;
         hideSideBarsToggle_ = nullptr;
@@ -169,6 +174,8 @@ namespace BigScreen {
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         nightlyWarningModal_ = nullptr;
+        localVideoInstructionsModal_ = nullptr;
+        resetConfirmationModal_ = nullptr;
         updaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
@@ -323,10 +330,16 @@ namespace BigScreen {
             [](StringW value)
             {
                 Settings::Instance().SetResolutionHeight(ResolutionValue(value));
+                // Resolution is fixed when FrameDecoder opens and cannot be
+                // changed on an existing RGBA texture. Recreate any active
+                // library preview immediately so the dropdown's new tier is
+                // visible without making the player leave/reselect the song.
+                // VideoLibraryMenu retains and reapplies the preview time.
+                ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             resolutionDropdown_,
-            "720p is recommended. 1080p may cause performance issues and decrease battery life.");
+            "Maximum playback resolution. Sources below the selected tier are not upscaled. 720p is recommended; 1080p may reduce performance and battery life.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -335,6 +348,11 @@ namespace BigScreen {
             [this](bool enabled)
             {
                 Settings::Instance().SetModEnabled(enabled);
+
+                // This menu-only visual override participates in the master
+                // switch just like playback and screen creation do. Turning
+                // Big Screen off must immediately restore the stock/mod UI.
+                ApplyDistractionFreeMenu();
 
                 // Hooks remain installed so the menu stays reachable, but
                 // disabling immediately tears down every screen and decoder.
@@ -346,6 +364,21 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             modEnabledToggle_,
             "Disables all Big Screen effects while keeping this settings menu available.");
+
+        distractionFreeMenuToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Distraction Free Menu",
+            settings.DistractionFreeMenu(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetDistractionFreeMenu(enabled);
+                // The player can judge the change without closing and
+                // reopening Big Screen. Apply restores when disabled.
+                ApplyDistractionFreeMenu();
+            });
+        BSML::Lite::AddHoverHint(
+            distractionFreeMenuToggle_,
+            "Hides the neon Beat Saber sign and any detected clock/battery display while this menu is open. Everything is restored when you leave.");
 
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -453,7 +486,7 @@ namespace BigScreen {
             0.1f,
             settings.ScreenScale(),
             0.5f,
-            2.0f,
+            2.5f,
             [](float value)
             {
                 Settings::Instance().SetScreenScale(value);
@@ -477,15 +510,33 @@ namespace BigScreen {
             curvedScreenToggle_,
             "Off uses a flat screen. On reveals the signed screen-curve adjustment below.");
 
-        // Keeping this directly after Curved Screen makes the vertical layout
-        // collapse cleanly when the signed curve control is irrelevant.
+        maintainCurveAspectToggle_ = BSML::Lite::CreateToggle(
+            screenContainer,
+            "Maintain Aspect Ratio",
+            settings.MaintainCurveAspectRatio(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetMaintainCurveAspectRatio(enabled);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            maintainCurveAspectToggle_,
+            "Keeps the video's original width-to-height ratio as the screen curves. Turn this off to let stronger curves widen and stretch the screen like the original behavior.");
+
+        // Both curve-specific rows stay directly below Curved Screen so the
+        // vertical layout collapses cleanly when a flat screen is selected.
+        // showButtons enables BSML's native clickable arrows; the slider keeps
+        // the full range for coarse movement while each arrow changes 0.05.
         curvatureSlider_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Curve",
             0.05f,
             settings.ScreenCurvature(),
-            -25.0f,
-            25.0f,
+            -7.0f,
+            7.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [](float value)
             {
                 Settings::Instance().SetScreenCurvature(value);
@@ -493,7 +544,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             curvatureSlider_,
-            "Positive values wrap the edges toward you; negative values bend them away. The expanded +/-25 range supports extremely strong curves.");
+            "Positive values wrap the edges toward you; negative values bend them away. The available range is -7 through +7.");
 
         transparencyToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -529,7 +580,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetHideBackWallLights(enabled);
             });
-        BSML::Lite::AddHoverHint(
+        hideBackWallLightsHint_ = BSML::Lite::AddHoverHint(
             hideBackWallLightsToggle_,
             "Turns off legacy lighting groups 0 and 4 (light IDs 1 and 5), which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
 
@@ -541,7 +592,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetHideRingLights(enabled);
             });
-        BSML::Lite::AddHoverHint(
+        hideRingLightsHint_ = BSML::Lite::AddHoverHint(
             hideRingLightsToggle_,
             "Turns off legacy lighting group 1 (light ID 2), which supplies the ring lights. Takes effect when the next map starts.");
 
@@ -553,7 +604,7 @@ namespace BigScreen {
             {
                 Settings::Instance().SetHideSideLaserLights(enabled);
             });
-        BSML::Lite::AddHoverHint(
+        hideSideLaserLightsHint_ = BSML::Lite::AddHoverHint(
             hideSideLaserLightsToggle_,
             "Turns off the legacy left/right laser groups 2 and 3 (light IDs 3 and 4). Use this when their beams cross the video. Takes effect when the next map starts.");
 
@@ -569,17 +620,10 @@ namespace BigScreen {
             environmentOverrideToggle_,
             "When disabled, the map's intended background is used and may partially block the video.");
 
-        glassDesertOverrideToggle_ = BSML::Lite::CreateToggle(
-            environmentContainer,
-            "Force Glass Desert",
-            settings.GlassDesertOverrideEnabled(),
-            [](bool enabled)
-            {
-                Settings::Instance().SetGlassDesertOverrideEnabled(enabled);
-            });
-        BSML::Lite::AddHoverHint(
-            glassDesertOverrideToggle_,
-            "Loads Glass Desert for video gameplay so its open 360-style layout can be tested. This takes priority over the Big Mirror override and applies when the next map starts.");
+        // The experimental Glass Desert override is intentionally absent from
+        // the public menu. Its persisted setting and gameplay implementation
+        // remain available so a future UI can restore the option without
+        // rebuilding the environment-selection behavior.
 
         disableEnvironmentMotionToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -715,18 +759,128 @@ namespace BigScreen {
         updaterStatus_ = BSML::Lite::CreateText(updateContainer, "", 2.5f);
         if(updaterStatus_) updaterStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
 
-        resetButton_ = BSML::Lite::CreateUIButton(
-            generalContainer,
-            "Reset to Defaults",
-            UnityEngine::Vector2{0.0f, 0.0f},
-            UnityEngine::Vector2{42.0f, 8.0f},
+        localVideoInstructionsModal_ = BSML::Lite::CreateModal(
+            viewController,
+            {70.0f, 46.0f},
+            nullptr,
+            true);
+        auto* localVideoInstructions = BSML::Lite::CreateText(
+            localVideoInstructionsModal_,
+            "<size=3.8><b>Add Your Own Video</b></size>\n\n"
+            "1. Copy an H.264/AVC MP4 (up to 1080p) into a custom or WIP map folder.\n\n"
+            "2. Select that map in Video Library.\n\n"
+            "3. Press SET next to the file, then adjust its timing if needed.\n\n"
+            "Big Screen never moves or deletes map-folder videos. Remove Video only unregisters them. This feature is not available for OST or DLC songs.",
+            TMPro::FontStyles::Normal,
+            3.1f,
+            {0.0f, 3.0f},
+            {64.0f, 34.0f});
+        // BSML text defaults to a zero-sized rectangle and permits glyphs to
+        // overflow it. Give the instructions a real content box inside the
+        // modal, wrap long lines, and allow a small automatic font reduction
+        // if localization or font metrics require it.
+        localVideoInstructions->set_enableWordWrapping(true);
+        localVideoInstructions->set_enableAutoSizing(true);
+        localVideoInstructions->set_fontSizeMin(2.7f);
+        localVideoInstructions->set_fontSizeMax(3.1f);
+        localVideoInstructions->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        localVideoInstructions->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            localVideoInstructionsModal_->get_transform(),
+            "Close",
+            {35.0f, -39.0f},
+            {22.0f, 7.0f},
             [this]()
             {
-                ResetToDefaults();
+                if(localVideoInstructionsModal_)
+                    localVideoInstructionsModal_->Hide();
+            });
+
+        // Keep the informational and destructive actions on opposite sides of
+        // one full-width footer. Stacking these similarly sized buttons made an
+        // imprecise controller click much too likely to reset the mod.
+        auto* generalActions = BSML::Lite::CreateHorizontalLayoutGroup(
+            generalContainer);
+        generalActions->set_spacing(4.0f);
+        generalActions->set_childControlWidth(true);
+        generalActions->set_childControlHeight(true);
+        generalActions->set_childForceExpandWidth(true);
+        generalActions->set_childForceExpandHeight(false);
+        if(auto* actionsLayout = generalActions
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            actionsLayout->set_preferredHeight(8.0f);
+            actionsLayout->set_flexibleWidth(1.0f);
+        }
+
+        auto* addLocalVideoButton = BSML::Lite::CreateUIButton(
+            generalActions,
+            "Add My Own Video",
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{24.0f, 8.0f},
+            [this]()
+            {
+                if(localVideoInstructionsModal_)
+                    localVideoInstructionsModal_->Show();
+            });
+        BSML::Lite::AddHoverHint(
+            addLocalVideoButton,
+            "Explains how to assign an H.264 MP4 stored inside a custom or WIP map folder.");
+
+        resetButton_ = BSML::Lite::CreateUIButton(
+            generalActions,
+            "Reset to Defaults",
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{24.0f, 8.0f},
+            [this]()
+            {
+                if(resetConfirmationModal_)
+                    resetConfirmationModal_->Show();
             });
         BSML::Lite::AddHoverHint(
             resetButton_,
             "Restores every Big Screen option, including placement, to its original value.");
+
+        resetConfirmationModal_ = BSML::Lite::CreateModal(
+            viewController,
+            {64.0f, 32.0f},
+            nullptr,
+            true);
+        auto* resetConfirmationText = BSML::Lite::CreateText(
+            resetConfirmationModal_,
+            "<b>Reset all Big Screen settings?</b>\n\n"
+            "Every option, including screen placement and environment controls, will return to its default value.",
+            TMPro::FontStyles::Normal,
+            3.2f,
+            {0.0f, 4.0f},
+            {56.0f, 16.0f});
+        resetConfirmationText->set_enableWordWrapping(true);
+        resetConfirmationText->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        resetConfirmationText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            resetConfirmationModal_->get_transform(),
+            "Cancel",
+            {18.0f, -25.0f},
+            {20.0f, 7.0f},
+            [this]()
+            {
+                if(resetConfirmationModal_)
+                    resetConfirmationModal_->Hide();
+            });
+        auto* confirmResetButton = BSML::Lite::CreateUIButton(
+            resetConfirmationModal_->get_transform(),
+            "Reset",
+            {46.0f, -25.0f},
+            {20.0f, 7.0f},
+            [this]()
+            {
+                if(resetConfirmationModal_)
+                    resetConfirmationModal_->Hide();
+                ResetToDefaults();
+            });
+        if(auto* confirmResetText = confirmResetButton->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            confirmResetText->set_color({1.0f, 0.35f, 0.35f, 1.0f});
 
         ShowSettingsTab(0);
         if(settingsTabs_)
@@ -749,9 +903,15 @@ namespace BigScreen {
     {
         const auto& settings = Settings::Instance();
         SetToggleWithoutNotification(modEnabledToggle_, settings.ModEnabled());
+        SetToggleWithoutNotification(
+            distractionFreeMenuToggle_,
+            settings.DistractionFreeMenu());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
         SetToggleWithoutNotification(curvedScreenToggle_, settings.CurvedScreenEnabled());
+        SetToggleWithoutNotification(
+            maintainCurveAspectToggle_,
+            settings.MaintainCurveAspectRatio());
         SetToggleWithoutNotification(transparencyToggle_, settings.TransparencyEnabled());
         SetToggleWithoutNotification(lightShowToggle_, settings.MapLightShowEnabled());
         SetToggleWithoutNotification(
@@ -766,9 +926,6 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             environmentOverrideToggle_,
             settings.EnvironmentOverrideEnabled());
-        SetToggleWithoutNotification(
-            glassDesertOverrideToggle_,
-            settings.GlassDesertOverrideEnabled());
         SetToggleWithoutNotification(
             disableEnvironmentMotionToggle_,
             settings.DisableEnvironmentMotion());
@@ -828,6 +985,8 @@ namespace BigScreen {
 
         // The master switch and Reset remain usable. Every setting capable of
         // affecting Beat Saber is explicitly locked while the mod is off.
+        if(distractionFreeMenuToggle_)
+            distractionFreeMenuToggle_->set_interactable(enabled);
         if(videoEnabledToggle_)
             videoEnabledToggle_->set_interactable(enabled);
         if(previewToggle_)
@@ -847,6 +1006,8 @@ namespace BigScreen {
             sizeSetting_->set_interactable(enabled);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
+        if(maintainCurveAspectToggle_)
+            maintainCurveAspectToggle_->set_interactable(enabled);
         if(curvatureSlider_)
             curvatureSlider_->set_interactable(enabled);
         if(transparencyToggle_)
@@ -864,10 +1025,19 @@ namespace BigScreen {
             hideRingLightsToggle_->set_interactable(lightingChildrenEnabled);
         if(hideSideLaserLightsToggle_)
             hideSideLaserLightsToggle_->set_interactable(lightingChildrenEnabled);
+
+        // A disabled Selectable still receives pointer-enter events, so its
+        // separately attached HoverHint must follow the same master state.
+        // The Map Light Show hint is intentionally unaffected because that
+        // master control remains available to turn lighting back on.
+        if(hideBackWallLightsHint_)
+            hideBackWallLightsHint_->set_enabled(lightingChildrenEnabled);
+        if(hideRingLightsHint_)
+            hideRingLightsHint_->set_enabled(lightingChildrenEnabled);
+        if(hideSideLaserLightsHint_)
+            hideSideLaserLightsHint_->set_enabled(lightingChildrenEnabled);
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);
-        if(glassDesertOverrideToggle_)
-            glassDesertOverrideToggle_->set_interactable(enabled);
         if(disableEnvironmentMotionToggle_)
             disableEnvironmentMotionToggle_->set_interactable(enabled);
         if(hideTrackRingsToggle_)
@@ -888,13 +1058,14 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshCurvatureControl()
     {
-        if(!curvatureSlider_)
-            return;
+        const bool curved = Settings::Instance().CurvedScreenEnabled();
 
-        // SetActive participates in the vertical layout pass, so hiding the
-        // slider also closes its row instead of leaving an empty menu gap.
-        curvatureSlider_->get_gameObject()->SetActive(
-            Settings::Instance().CurvedScreenEnabled());
+        // SetActive participates in the vertical layout pass, so hiding both
+        // curve-only rows also closes their space instead of leaving gaps.
+        if(maintainCurveAspectToggle_)
+            maintainCurveAspectToggle_->get_gameObject()->SetActive(curved);
+        if(curvatureSlider_)
+            curvatureSlider_->get_gameObject()->SetActive(curved);
     }
 
     void SettingsMenu::ShowSettingsTab(int index)
@@ -921,6 +1092,43 @@ namespace BigScreen {
         auto& settings = Settings::Instance();
         settings.Reset();
 
+        // Environment lives on an inactive tab while the reset button is
+        // pressed from General. Updating only Toggle/currentValue bypasses
+        // BSML's normal setting pipeline and can leave the hidden switches,
+        // their dependent interactable states, and their graphics showing the
+        // old values even though bigscreen.json was correctly reset. Apply
+        // these defaults through ToggleSetting so each control and callback is
+        // synchronized exactly as if the player had selected the value.
+        const auto applyEnvironmentToggle = [](BSML::ToggleSetting* control,
+                                               bool value)
+        {
+            if(control)
+                control->set_Value(value);
+        };
+        applyEnvironmentToggle(
+            transparencyToggle_, settings.TransparencyEnabled());
+        applyEnvironmentToggle(
+            hideBackWallLightsToggle_, settings.HideBackWallLights());
+        applyEnvironmentToggle(
+            hideRingLightsToggle_, settings.HideRingLights());
+        applyEnvironmentToggle(
+            hideSideLaserLightsToggle_, settings.HideSideLaserLights());
+        applyEnvironmentToggle(
+            environmentOverrideToggle_, settings.EnvironmentOverrideEnabled());
+        applyEnvironmentToggle(
+            disableEnvironmentMotionToggle_, settings.DisableEnvironmentMotion());
+        applyEnvironmentToggle(
+            hideTrackRingsToggle_, settings.HideTrackRings());
+        applyEnvironmentToggle(
+            hideSideBarsToggle_, settings.HideSideBars());
+        applyEnvironmentToggle(
+            hideSpectrogramBarsToggle_, settings.HideSpectrogramBars());
+        // Apply the master last because its callback refreshes the dependent
+        // child states. At this point those children already hold their new
+        // values, so that refresh cannot overwrite their transition.
+        applyEnvironmentToggle(
+            lightShowToggle_, settings.MapLightShowEnabled());
+
         // Rebuild the selected song config before recreating the world screen.
         // This is the missing live-effect step that left the displayed screen
         // at its previous size even though the control correctly showed 1.0.
@@ -928,10 +1136,11 @@ namespace BigScreen {
 
         // Reset changes persistent values first, then mirrors those values into
         // the already-open controls without generating a chain of fake clicks.
-        SelectionVideoToggle::Instance().ModEnabledChanged(true);
-        SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(true);
+        SelectionVideoToggle::Instance().ModEnabledChanged(settings.ModEnabled());
+        SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(settings.VideoEnabled());
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
-        ScreenPreview::Instance().SetEnabled(true);
+        ScreenPreview::Instance().SetEnabled(settings.ModEnabled());
+        ApplyDistractionFreeMenu();
         RefreshControls();
         PaperLogger.info("Reset all Big Screen settings to defaults");
     }

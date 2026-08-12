@@ -157,6 +157,9 @@ namespace BigScreen {
         config.screenCurvature = settings.CurvedScreenEnabled()
             ? settings.ScreenCurvature()
             : 0.0f;
+        config.maintainAspectRatioWhenCurved =
+            settings.CurvedScreenEnabled() &&
+            settings.MaintainCurveAspectRatio();
         config.transparent = settings.TransparencyEnabled();
 
         const auto pattern = MakePlacementPattern();

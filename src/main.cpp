@@ -31,6 +31,7 @@
 #include "GlobalNamespace/Rotate.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "GlobalNamespace/Spectrogram.hpp"
+#include "GlobalNamespace/SpectrogramRow.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
@@ -41,6 +42,7 @@
 #include "System/Nullable_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Transform.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
@@ -160,13 +162,130 @@ namespace {
             if(!gameObject || !gameObject->get_activeSelf())
                 continue;
 
-            // A Spectrogram component drives the complete audio-reactive bar
-            // object. Deactivating its GameObject hides both the bar geometry
-            // and its animation, instead of merely freezing a visible frame.
+            // The Spectrogram is only a driver. Big Mirror's visible left and
+            // right waveform meshes are referenced in _meshRenderers rather
+            // than parented below this GameObject, so disabling the driver by
+            // itself merely freezes both still-visible meshes.
+            for(auto renderer : spectrogram->__cordl_internal_get__meshRenderers())
+            {
+                if(!renderer)
+                    continue;
+                auto rendererObject = renderer->get_gameObject();
+                if(!rendererObject || !rendererObject->get_activeSelf())
+                    continue;
+                rendererObject->SetActive(false);
+                ++hidden;
+            }
+
+            // Hide the separate update driver after its referenced meshes are
+            // gone so it cannot continue doing audio-reactive material work.
+            gameObject->SetActive(false);
+            ++hidden;
+        }
+
+        // SpectrogramRow is a separate lighting-effect implementation used
+        // for the thin, jagged rows visible near Big Mirror's floor. Each row
+        // owns its own renderer array and is not referenced by Spectrogram or
+        // TransformSpectrogram, so it must be handled independently.
+        for(auto* spectrogramRow : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::SpectrogramRow*>(false))
+        {
+            if(!spectrogramRow)
+                continue;
+
+            for(auto renderer : spectrogramRow->__cordl_internal_get__meshRenderers())
+            {
+                if(!renderer)
+                    continue;
+                auto rendererObject = renderer->get_gameObject();
+                if(!rendererObject || !rendererObject->get_activeSelf())
+                    continue;
+                rendererObject->SetActive(false);
+                ++hidden;
+            }
+
+            auto rowObject = spectrogramRow->get_gameObject();
+            if(rowObject && rowObject->get_activeSelf())
+            {
+                rowObject->SetActive(false);
+                ++hidden;
+            }
+        }
+
+        // Big Mirror also builds the two large symmetric waveform/light
+        // structures from TransformSpectrogram components. They do not derive
+        // from Spectrogram, so the original pass hid the central driver while
+        // leaving this left/right pair visible below the video screen.
+        for(auto* transformSpectrogram : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::TransformSpectrogram*>(false))
+        {
+            if(!transformSpectrogram)
+                continue;
+            auto gameObject = transformSpectrogram->get_gameObject();
+            if(!gameObject || !gameObject->get_activeSelf())
+                continue;
+
+            // TransformSpectrogram animates an array of independent scene
+            // transforms. Those objects are not required to be children of
+            // the component's GameObject, so disabling only this driver stops
+            // their motion but leaves their last waveform shape rendered.
+            // Deactivate every referenced object first to remove the actual
+            // left/right spectrogram geometry from the environment.
+            for(auto referencedTransform :
+                transformSpectrogram->__cordl_internal_get__transforms())
+            {
+                if(!referencedTransform)
+                    continue;
+                auto referencedObject = referencedTransform->get_gameObject();
+                if(!referencedObject || !referencedObject->get_activeSelf())
+                    continue;
+                referencedObject->SetActive(false);
+                ++hidden;
+            }
+
             gameObject->SetActive(false);
             ++hidden;
         }
         PaperLogger.info("Hidden {} spectrogram-bar objects for video gameplay", hidden);
+    }
+
+    void HideSideLaserGeometry()
+    {
+        int hidden = 0;
+        for(auto* transform : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Transform*>(false))
+        {
+            if(!transform)
+                continue;
+            auto gameObject = transform->get_gameObject();
+            if(!gameObject || !gameObject->get_activeSelf())
+                continue;
+
+            const std::string name(gameObject->get_name());
+            const bool directionalRail =
+                name == "NeonTubeDirectionalL" ||
+                name == "NeonTubeDirectionalR" ||
+                name == "NeonTubeDirectionalFL" ||
+                name == "NeonTubeDirectionalFR";
+            const bool rotatingLaserPair =
+                name.rfind("RotatingLasersPair", 0) == 0;
+            const bool doubleColorLaser =
+                name.rfind("DoubleColorLaser", 0) == 0;
+            if(!directionalRail && !rotatingLaserPair && !doubleColorLaser)
+                continue;
+
+            // The channel filter disables the managed LightWithId components,
+            // but Big Mirror's side-light roots also contain ordinary
+            // BoxLight and BakedBloom renderers. Those children keep their
+            // initialized white glow after the controller is unregistered.
+            // Deactivate the complete roots assigned to the left/right laser
+            // channels so their live lights and baked geometry disappear.
+            gameObject->SetActive(false);
+            ++hidden;
+        }
+        PaperLogger.info(
+            "Hidden {} Big Mirror side-laser geometry roots for video gameplay",
+            hidden);
     }
 
     void DisableEnvironmentLighting()
@@ -553,6 +672,11 @@ namespace {
            BigScreen::Settings::Instance().HideSpectrogramBars())
         {
             HideSpectrogramBars();
+        }
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           BigScreen::Settings::Instance().HideSideLaserLights())
+        {
+            HideSideLaserGeometry();
         }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }

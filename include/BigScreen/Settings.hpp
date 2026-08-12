@@ -16,6 +16,7 @@ namespace BigScreen {
         void Reset();
 
         bool ModEnabled() const { return modEnabled_; }
+        bool DistractionFreeMenu() const { return distractionFreeMenu_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
         float ScreenDistanceOffset() const { return screenDistanceOffset_; }
@@ -25,6 +26,7 @@ namespace BigScreen {
         float ScreenScale() const { return screenScale_; }
         bool CurvedScreenEnabled() const { return curvedScreenEnabled_; }
         float ScreenCurvature() const { return screenCurvature_; }
+        bool MaintainCurveAspectRatio() const { return maintainCurveAspectRatio_; }
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
@@ -41,6 +43,7 @@ namespace BigScreen {
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
         void SetModEnabled(bool value);
+        void SetDistractionFreeMenu(bool value);
         void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
         void SetScreenDistanceOffset(float value);
@@ -50,6 +53,7 @@ namespace BigScreen {
         void SetScreenScale(float value);
         void SetCurvedScreenEnabled(bool value);
         void SetScreenCurvature(float value);
+        void SetMaintainCurveAspectRatio(bool value);
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
         void SetHideBackWallLights(bool value);
@@ -71,6 +75,10 @@ namespace BigScreen {
         void Save();
 
         bool modEnabled_ = true;
+        // The placement preview is easiest to judge against an uncluttered
+        // world. This affects only Big Screen's own menu lifetime and restores
+        // every stock or optional-mod object when the player leaves.
+        bool distractionFreeMenu_ = true;
         bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
         float screenDistanceOffset_ = 0.0f;
@@ -80,6 +88,7 @@ namespace BigScreen {
         float screenScale_ = 1.0f;
         bool curvedScreenEnabled_ = false;
         float screenCurvature_ = 0.35f;
+        bool maintainCurveAspectRatio_ = false;
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool hideBackWallLights_ = true;

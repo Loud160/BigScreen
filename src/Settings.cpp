@@ -7,7 +7,7 @@
 
 namespace BigScreen {
     namespace {
-        constexpr float MaximumScreenCurvature = 25.0f;
+        constexpr float MaximumScreenCurvature = 7.0f;
 
         Configuration& GetConfiguration()
         {
@@ -93,6 +93,10 @@ namespace BigScreen {
             document.SetObject();
 
         modEnabled_ = ReadBool(document, "modEnabled", true);
+        distractionFreeMenu_ = ReadBool(
+            document,
+            "distractionFreeMenu",
+            true);
         // v0.6 promotes the former per-selection default to one persistent,
         // game-wide Video switch. Read the old key as a migration fallback so
         // an upgrade preserves the user's existing choice.
@@ -120,12 +124,16 @@ namespace BigScreen {
         screenScale_ = std::clamp(
             ReadFloat(document, "screenScale", 1.0f),
             0.5f,
-            2.0f);
+            2.5f);
         curvedScreenEnabled_ = ReadBool(document, "curvedScreenEnabled", false);
         screenCurvature_ = std::clamp(
             ReadFloat(document, "screenCurvature", 0.35f),
             -MaximumScreenCurvature,
             MaximumScreenCurvature);
+        maintainCurveAspectRatio_ = ReadBool(
+            document,
+            "maintainCurveAspectRatio",
+            false);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
@@ -163,36 +171,24 @@ namespace BigScreen {
 
     void Settings::Reset()
     {
-        modEnabled_ = true;
-        videoEnabled_ = true;
-        menuPreviewEnabled_ = true;
-        screenDistanceOffset_ = 0.0f;
-        screenHorizontalOffset_ = 0.0f;
-        screenVerticalOffset_ = 0.0f;
-        screenTiltOffset_ = 0.0f;
-        screenScale_ = 1.0f;
-        curvedScreenEnabled_ = false;
-        screenCurvature_ = 0.35f;
-        transparencyEnabled_ = false;
-        mapLightShowEnabled_ = true;
-        hideBackWallLights_ = true;
-        hideRingLights_ = true;
-        hideSideLaserLights_ = true;
-        environmentOverrideEnabled_ = true;
-        glassDesertOverrideEnabled_ = false;
-        disableEnvironmentMotion_ = false;
-        hideTrackRings_ = true;
-        hideSideBars_ = true;
-        hideSpectrogramBars_ = true;
-        playbackFpsLimit_ = 30;
-        resolutionHeight_ = 720;
-        nightlyDownloaderUpdates_ = false;
+        // Reconstruct from the member initializers in Settings.hpp instead of
+        // maintaining a second handwritten defaults list here. This resets
+        // every current field, including hidden experimental settings, and
+        // makes a newly added setting participate automatically as long as it
+        // declares its intended default beside the member itself.
+        *this = Settings{};
         Save();
     }
 
     void Settings::SetModEnabled(bool value)
     {
         modEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetDistractionFreeMenu(bool value)
+    {
+        distractionFreeMenu_ = value;
         Save();
     }
 
@@ -238,7 +234,7 @@ namespace BigScreen {
 
     void Settings::SetScreenScale(float value)
     {
-        screenScale_ = std::clamp(value, 0.5f, 2.0f);
+        screenScale_ = std::clamp(value, 0.5f, 2.5f);
         Save();
     }
 
@@ -251,12 +247,18 @@ namespace BigScreen {
     void Settings::SetScreenCurvature(float value)
     {
         // Preserve the original response through +/-1 while permitting a
-        // dramatically stronger wrap when the player deliberately moves into
-        // the expanded portion of the slider.
+        // strong wrap without the impractical geometry produced by the old
+        // experimental +/-25 limit.
         screenCurvature_ = std::clamp(
             value,
             -MaximumScreenCurvature,
             MaximumScreenCurvature);
+        Save();
+    }
+
+    void Settings::SetMaintainCurveAspectRatio(bool value)
+    {
+        maintainCurveAspectRatio_ = value;
         Save();
     }
 
@@ -352,6 +354,7 @@ namespace BigScreen {
             document.SetObject();
 
         Replace(document, "modEnabled", modEnabled_);
+        Replace(document, "distractionFreeMenu", distractionFreeMenu_);
         // Remove superseded keys after migration so the configuration has one
         // unambiguous source of truth on all later launches.
         document.RemoveMember("videoEnabledByDefault");
@@ -365,6 +368,7 @@ namespace BigScreen {
         Replace(document, "screenScale", screenScale_);
         Replace(document, "curvedScreenEnabled", curvedScreenEnabled_);
         Replace(document, "screenCurvature", screenCurvature_);
+        Replace(document, "maintainCurveAspectRatio", maintainCurveAspectRatio_);
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);

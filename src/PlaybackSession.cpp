@@ -96,6 +96,9 @@ namespace BigScreen {
         config_->screenCurvature = settings.CurvedScreenEnabled()
             ? settings.ScreenCurvature()
             : 0.0f;
+        config_->maintainAspectRatioWhenCurved =
+            settings.CurvedScreenEnabled() &&
+            settings.MaintainCurveAspectRatio();
         config_->transparent = settings.TransparencyEnabled();
     }
 

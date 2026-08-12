@@ -47,6 +47,7 @@ namespace BigScreen {
         Float3 screenRotation{-8.0f, 0.0f, 0.0f};
         float screenHeight = 25.0f;
         float screenCurvature = 0.0f;
+        bool maintainAspectRatioWhenCurved = false;
         int screenSegments = 32;
         bool transparent = false;
         std::optional<std::string> requestedEnvironment;

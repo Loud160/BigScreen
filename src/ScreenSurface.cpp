@@ -23,6 +23,36 @@
 namespace BigScreen {
     namespace {
         constexpr float Pi = 3.14159265358979323846f;
+
+        float CurveEdgeShape(float u)
+        {
+            const float centered = u * 2.0f - 1.0f;
+            return 1.0f - std::cos(std::abs(centered) * Pi * 0.5f);
+        }
+
+        float CurvedWidthScale(float curvature, int segments)
+        {
+            // The screen curve is scale-invariant: for a unit-wide surface,
+            // both X and Z scale linearly with the final width. Measure that
+            // unit curve using the same segments as the actual mesh. Dividing
+            // projected width by this path-length multiplier makes the curved
+            // surface's total image width equal the original flat width.
+            float pathLength = 0.0f;
+            float previousX = -0.5f;
+            float previousZ = -curvature * 0.12f * CurveEdgeShape(0.0f);
+            for(int segment = 1; segment <= segments; ++segment)
+            {
+                const float u = static_cast<float>(segment) / segments;
+                const float x = u - 0.5f;
+                const float z = -curvature * 0.12f * CurveEdgeShape(u);
+                const float dx = x - previousX;
+                const float dz = z - previousZ;
+                pathLength += std::sqrt(dx * dx + dz * dz);
+                previousX = x;
+                previousZ = z;
+            }
+            return pathLength > 0.0001f ? 1.0f / pathLength : 1.0f;
+        }
     }
 
     bool ScreenSurface::Create(
@@ -95,7 +125,13 @@ namespace BigScreen {
         ArrayW<UnityEngine::Vector2> uvs(vertexCount);
         ArrayW<std::int32_t> triangles(indexCount);
 
-        const float width = config.screenHeight * aspectRatio;
+        const float flatWidth = config.screenHeight * aspectRatio;
+        const float width = config.maintainAspectRatioWhenCurved &&
+                            std::abs(config.screenCurvature) > 0.0001f
+            ? flatWidth * CurvedWidthScale(
+                config.screenCurvature,
+                config.screenSegments)
+            : flatWidth;
         const float halfWidth = width * 0.5f;
         const float halfHeight = config.screenHeight * 0.5f;
 
@@ -108,8 +144,7 @@ namespace BigScreen {
             // zero is a plane and +/-1 moves the outer edges by 12% of width.
             // The center remains at the configured map position, making flat
             // and curved screens share predictable placement controls.
-            const float centered = u * 2.0f - 1.0f;
-            const float edgeShape = 1.0f - std::cos(std::abs(centered) * Pi * 0.5f);
+            const float edgeShape = CurveEdgeShape(u);
             const float z = -config.screenCurvature * width * 0.12f * edgeShape;
 
             const int bottom = column * 2;

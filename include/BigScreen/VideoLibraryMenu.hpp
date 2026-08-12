@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "BigScreen/VideoLibrary.hpp"
 #include "beatsaber-hook/shared/utils/typedefs.h"
 
 namespace BSML {
@@ -26,7 +27,6 @@ namespace UnityEngine { class AudioClip; class AudioSource; class GameObject; cl
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
-    enum class VideoOrigin;
     enum class SongLibraryGroup { Custom, Wip, Ost, Dlc };
     enum class SongLibraryFilter { All, Custom, Wip, Ost, Dlc, Video };
 
@@ -62,6 +62,11 @@ namespace BigScreen {
         void BeginUrlProbe();
         void StartOrCancelDownload();
         void PasteUrlFromClipboard();
+        void SearchSelectedSongOnYouTube();
+        void RefreshLocalVideoFiles();
+        void RebuildLocalVideoRows();
+        void SetLocalVideo(std::size_t index);
+        void ShowLocalVideoHelp(std::size_t index);
         void RemoveOverride();
         bool ApplyFitToSong(bool reportStatus);
         bool SaveTiming();
@@ -95,20 +100,30 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* detailTitle_ = nullptr;
         TMPro::TextMeshProUGUI* detailText_ = nullptr;
         TMPro::TextMeshProUGUI* detailMapStorage_ = nullptr;
+        TMPro::TextMeshProUGUI* detailLocalStorage_ = nullptr;
         TMPro::TextMeshProUGUI* detailLibraryStorage_ = nullptr;
         TMPro::TextMeshProUGUI* detailFreeStorage_ = nullptr;
         TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
         TMPro::TextMeshProUGUI* pasteUrlButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* downloadButtonText_ = nullptr;
+        TMPro::TextMeshProUGUI* localVideoHelpText_ = nullptr;
+        TMPro::TextMeshProUGUI* removeConfirmationText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;
         HMUI::ImageView* playbackScrubberFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
         BSML::ModalView* removeConfirmModal_ = nullptr;
+        BSML::ModalView* localVideoHelpModal_ = nullptr;
+        UnityEngine::GameObject* localVideoListContent_ = nullptr;
+        UnityEngine::GameObject* storageSpacer_ = nullptr;
+        UnityEngine::GameObject* storagePanel_ = nullptr;
         std::vector<UnityEngine::GameObject*> videoOnlyRows_;
+        std::vector<UnityEngine::GameObject*> localVideoRowObjects_;
+        std::vector<LocalVideoFile> localVideoFiles_;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
+        UnityEngine::UI::Button* searchYouTubeButton_ = nullptr;
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::GameObject* downloadButtonPlaceholder_ = nullptr;

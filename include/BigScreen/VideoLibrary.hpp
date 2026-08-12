@@ -24,6 +24,10 @@ namespace BigScreen {
         std::string fileName;
         std::string title;
         std::string codec;
+        // Managed files are owned by Big Screen under Videos/. Map-local
+        // files are user-owned assets referenced by a relative filename and
+        // must never be deleted when their assignment is removed.
+        bool mapLocal = false;
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
         bool fitToSong = false;
@@ -69,9 +73,26 @@ namespace BigScreen {
         bool hasMapperLocalFile = false;
         bool hasMapperDownload = false;
         bool hasUserOverride = false;
+        bool userOverrideIsMapLocal = false;
+        std::optional<std::string> activeMapFileName;
 
         bool CanDownload() const { return downloadUrl.has_value(); }
         bool CanPlay() const { return playableConfig.has_value(); }
+    };
+
+    /// Result of probing one MP4 found directly inside a custom map folder.
+    /// Invalid files remain in the list so the UI can explain why they cannot
+    /// be selected instead of silently hiding them.
+    struct LocalVideoFile {
+        std::string fileName;
+        std::filesystem::path path;
+        bool compatible = false;
+        std::string problem;
+        std::string codec;
+        double durationSeconds = 0.0;
+        std::uint64_t bytes = 0;
+        int width = 0;
+        int height = 0;
     };
 
     /// Owns durable video files independently from mapper folders.
@@ -101,6 +122,12 @@ namespace BigScreen {
             const std::string& songAuthor,
             VideoOrigin origin,
             StoredVideo video);
+        std::vector<LocalVideoFile> DiscoverLocalVideos(
+            GlobalNamespace::BeatmapLevel* level) const;
+        bool SetLocalVideoOverride(
+            GlobalNamespace::BeatmapLevel* level,
+            const std::string& fileName,
+            std::string& error);
         bool RemoveUserOverride(const std::string& levelId, bool deleteFile);
         bool DeleteMapperDownload(const std::string& levelId);
         bool UpdateTiming(
@@ -112,6 +139,10 @@ namespace BigScreen {
             bool blackDuringLeadIn);
 
         std::vector<std::pair<std::string, LevelVideoRecords>> Records() const;
+        /// Returns only Big Screen-owned downloads associated with one map.
+        /// Map-folder MP4s are deliberately excluded because the editor
+        /// reports those separately as user-owned local storage.
+        std::uint64_t ManagedBytesForLevel(const std::string& levelId) const;
         std::uint64_t LibraryBytes() const;
         std::uint64_t FreeBytes() const;
 
