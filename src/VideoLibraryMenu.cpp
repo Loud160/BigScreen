@@ -676,6 +676,17 @@ namespace BigScreen {
         BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
         downloadButtonText_ = downloadButton_->get_gameObject()
             ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
+        downloadButton_->get_gameObject()->SetActive(false);
+        // Preserve the thumbnail/action row geometry while the real button is
+        // hidden. Swapping this transparent slot out when validation succeeds
+        // prevents the thumbnail from jumping sideways as the button appears.
+        auto* downloadButtonPlaceholder = BSML::Lite::CreateImage(
+            urlPreviewRow,
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        downloadButtonPlaceholder->set_color({0.0f, 0.0f, 0.0f, 0.0f});
+        downloadButtonPlaceholder->set_raycastTarget(false);
+        ConfigureLayout(downloadButtonPlaceholder, 18.5f, 7.5f, 0.0f);
+        downloadButtonPlaceholder_ = downloadButtonPlaceholder->get_gameObject();
         auto* thumbnailBalance = BSML::Lite::CreateImage(
             urlPreviewRow,
             BSML::Utilities::ImageResources::GetBlankSprite());
@@ -1254,7 +1265,14 @@ namespace BigScreen {
         suppressTimingCallbacks_ = false;
         ShowEditor();
         RequestSelectedAudio();
-        RefreshDetails();
+        // A mapper URL has already been supplied on the user's behalf. Probe
+        // it automatically so the hidden Download Video action can appear
+        // once yt-dlp confirms that the source is actually available.
+        if(!descriptor.CanPlay() && descriptor.CanDownload() &&
+           IsYouTubeUrl(url_))
+            BeginUrlProbe();
+        else
+            RefreshDetails();
         StartSelectedPreview();
         RefreshPlaybackControls();
     }
@@ -1902,10 +1920,25 @@ namespace BigScreen {
             descriptor.hasUserOverride ? "Replace Video" : "Download Video");
         if(downloadButton_)
         {
-            const bool downloadInteractable =
-                (thisDownload && download.Active() &&
-                    download.state != DownloadState::Probing) ||
-                (!download.Active() && !url_.empty());
+            const bool currentUrlWasProbed = thisDownload &&
+                !probedUrl_.empty() && url_ == probedUrl_;
+            const bool validatedProbe = currentUrlWasProbed &&
+                download.state == DownloadState::ProbeCompleted;
+            const bool validatedTransferState = currentUrlWasProbed &&
+                !download.metadataOnly &&
+                (download.state == DownloadState::Preparing ||
+                 download.state == DownloadState::Downloading ||
+                 download.state == DownloadState::Completed ||
+                 download.state == DownloadState::Cancelled ||
+                 download.state == DownloadState::Failed);
+            const bool showDownloadButton = validatedProbe ||
+                validatedTransferState;
+            downloadButton_->get_gameObject()->SetActive(showDownloadButton);
+            if(downloadButtonPlaceholder_)
+                downloadButtonPlaceholder_->SetActive(!showDownloadButton);
+
+            const bool downloadInteractable = showDownloadButton &&
+                download.state != DownloadState::Probing;
             downloadButton_->set_interactable(downloadInteractable);
 
             // The native button prefab uses a slightly muted label even when

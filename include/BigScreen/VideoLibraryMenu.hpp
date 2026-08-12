@@ -110,6 +110,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* backToListButton_ = nullptr;
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
+        UnityEngine::GameObject* downloadButtonPlaceholder_ = nullptr;
         UnityEngine::UI::Button* playPauseButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
         std::vector<BSML::ClickableText*> alphabetButtons_;
