@@ -9,10 +9,17 @@
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
+#include "GlobalNamespace/BeatmapCallbacksController.hpp"
+#include "GlobalNamespace/BeatmapEventData.hpp"
+#include "GlobalNamespace/ColorBoostBeatmapEventData.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
 #include "GlobalNamespace/EnvironmentEffectsFilterPreset.hpp"
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
+#include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
+#include "GlobalNamespace/LightColorBeatmapEventData.hpp"
+#include "GlobalNamespace/LightRotationBeatmapEventData.hpp"
+#include "GlobalNamespace/LightTranslationBeatmapEventData.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
 #include "GlobalNamespace/Rotate.hpp"
@@ -84,6 +91,54 @@ namespace {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
                !BigScreen::Settings::Instance().EnvironmentMotionEnabled();
+    }
+
+    bool ShouldSuppressMapLighting()
+    {
+        return BigScreen::Settings::Instance().ModEnabled() &&
+               BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+               !BigScreen::Settings::Instance().MapLightShowEnabled();
+    }
+
+    bool IsLightingEvent(GlobalNamespace::BeatmapEventData* eventData)
+    {
+        if(!eventData)
+            return false;
+
+        // Legacy maps encode lights, color boost, ring movement, and other
+        // environment effects as BasicBeatmapEventData. BPM changes can also
+        // use that class, so preserve type 100 because it affects song timing
+        // rather than the environment.
+        if(const auto basic =
+               il2cpp_utils::try_cast<GlobalNamespace::BasicBeatmapEventData>(eventData))
+        {
+            return (*basic)->basicBeatmapEventType.value__ != 100;
+        }
+
+        // Event-box maps use dedicated event classes. Suppress only the visual
+        // environment classes so spawn rotation, BPM changes, notes, obstacles,
+        // and every other gameplay callback continue through the normal path.
+        return il2cpp_utils::try_cast<GlobalNamespace::LightColorBeatmapEventData>(eventData).has_value() ||
+               il2cpp_utils::try_cast<GlobalNamespace::LightRotationBeatmapEventData>(eventData).has_value() ||
+               il2cpp_utils::try_cast<GlobalNamespace::LightTranslationBeatmapEventData>(eventData).has_value() ||
+               il2cpp_utils::try_cast<GlobalNamespace::ColorBoostBeatmapEventData>(eventData).has_value() ||
+               il2cpp_utils::try_cast<GlobalNamespace::FxBeatmapEventData>(eventData).has_value();
+    }
+
+    MAKE_HOOK_MATCH(
+        BeatmapCallbacksController_TriggerBeatmapEvent,
+        &GlobalNamespace::BeatmapCallbacksController::TriggerBeatmapEvent,
+        void,
+        GlobalNamespace::BeatmapCallbacksController* self,
+        GlobalNamespace::BeatmapEventData* eventData)
+    {
+        // Filtering at Beat Saber's central dispatcher avoids updating every
+        // individual light, laser, particle, and movement component. The check
+        // runs per map event, not per rendered frame, and disabling the effects
+        // therefore reduces rather than increases the level's rendering work.
+        if(ShouldSuppressMapLighting() && IsLightingEvent(eventData))
+            return;
+        BeatmapCallbacksController_TriggerBeatmapEvent(self, eventData);
     }
 
     MAKE_HOOK_MATCH(
@@ -408,6 +463,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
+    INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
