@@ -7,6 +7,8 @@
 
 namespace BigScreen {
     namespace {
+        constexpr float MaximumScreenCurvature = 25.0f;
+
         Configuration& GetConfiguration()
         {
             // Configuration keys files by mod ID. Keeping this object private
@@ -122,8 +124,8 @@ namespace BigScreen {
         curvedScreenEnabled_ = ReadBool(document, "curvedScreenEnabled", false);
         screenCurvature_ = std::clamp(
             ReadFloat(document, "screenCurvature", 0.35f),
-            -1.0f,
-            1.0f);
+            -MaximumScreenCurvature,
+            MaximumScreenCurvature);
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
@@ -225,7 +227,13 @@ namespace BigScreen {
 
     void Settings::SetScreenCurvature(float value)
     {
-        screenCurvature_ = std::clamp(value, -1.0f, 1.0f);
+        // Preserve the original response through +/-1 while permitting a
+        // dramatically stronger wrap when the player deliberately moves into
+        // the expanded portion of the slider.
+        screenCurvature_ = std::clamp(
+            value,
+            -MaximumScreenCurvature,
+            MaximumScreenCurvature);
         Save();
     }
 

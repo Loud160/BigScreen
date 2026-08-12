@@ -448,8 +448,8 @@ namespace BigScreen {
             "Screen Curve",
             0.05f,
             settings.ScreenCurvature(),
-            -1.0f,
-            1.0f,
+            -25.0f,
+            25.0f,
             [](float value)
             {
                 Settings::Instance().SetScreenCurvature(value);
@@ -457,7 +457,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             curvatureSlider_,
-            "Positive values wrap the edges toward you; negative values bend them away.");
+            "Positive values wrap the edges toward you; negative values bend them away. The expanded +/-25 range supports extremely strong curves.");
 
         transparencyToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
