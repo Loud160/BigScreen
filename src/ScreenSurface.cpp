@@ -161,6 +161,11 @@ namespace BigScreen {
         // Beat Saber lights and background geometry remain visible through the
         // video without changing the decoded pixels. A fixed 75% opacity keeps
         // lyrics and motion readable while still revealing the light show.
+        //
+        // Configure both modes completely rather than relying on shader
+        // defaults. In particular, the opaque mode must write to the depth
+        // buffer so scenery and light geometry physically behind the screen
+        // cannot be drawn through it.
         auto shader = UnityEngine::Shader::Find(
             transparent ? "Unlit/Transparent" : "Unlit/Texture");
         if(!shader && transparent)
@@ -193,7 +198,19 @@ namespace BigScreen {
             material_->SetInt("_ZWrite", 0);
             material_->DisableKeyword("_ALPHATEST_ON");
             material_->EnableKeyword("_ALPHABLEND_ON");
+            material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
             material_->set_renderQueue(3000);
+        }
+        else
+        {
+            material_->set_color(UnityEngine::Color::get_white());
+            material_->SetInt("_SrcBlend", 1); // One
+            material_->SetInt("_DstBlend", 0); // Zero
+            material_->SetInt("_ZWrite", 1);
+            material_->DisableKeyword("_ALPHATEST_ON");
+            material_->DisableKeyword("_ALPHABLEND_ON");
+            material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material_->set_renderQueue(2000);
         }
         return true;
     }
