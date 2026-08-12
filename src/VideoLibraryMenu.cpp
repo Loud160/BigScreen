@@ -969,10 +969,13 @@ namespace BigScreen {
             sliderRect->set_sizeDelta({0.0f, 0.0f});
 
             auto sliderColors = playbackScrubber_->slider->get_colors();
-            sliderColors.set_normalColor({0.0f, 0.0f, 0.0f, 1.0f});
-            sliderColors.set_highlightedColor({0.08f, 0.08f, 0.08f, 1.0f});
-            sliderColors.set_pressedColor({0.14f, 0.14f, 0.14f, 1.0f});
-            sliderColors.set_selectedColor({0.05f, 0.05f, 0.05f, 1.0f});
+            // Keep the transport track visibly separate from the dark menu.
+            // Hovering brightens the same light-gray surface instead of
+            // replacing it with the black selectable treatment used by rows.
+            sliderColors.set_normalColor({0.82f, 0.84f, 0.87f, 0.92f});
+            sliderColors.set_highlightedColor({0.94f, 0.95f, 0.97f, 1.0f});
+            sliderColors.set_pressedColor({0.72f, 0.75f, 0.79f, 0.96f});
+            sliderColors.set_selectedColor({0.88f, 0.90f, 0.93f, 0.98f});
             playbackScrubber_->slider->set_colors(sliderColors);
             auto sliderTarget = playbackScrubber_->slider->get_targetGraphic();
             if(sliderTarget)
