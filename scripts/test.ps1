@@ -12,6 +12,8 @@ if (-not $cmakeExe) {
     }
 }
 if (-not $cmakeExe) { throw "CMake was not found." }
+& (Join-Path $PSScriptRoot "fetch-quickjs-ng.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Could not prepare QuickJS-NG for host tests." }
 & $cmakeExe -S (Join-Path $root "tests") -B $build
 if ($LASTEXITCODE -ne 0) { throw "Could not configure Big Screen core tests." }
 & $cmakeExe --build $build --config Release

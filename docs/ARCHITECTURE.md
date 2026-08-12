@@ -5,6 +5,13 @@ Update hooks. FFmpeg decoding, yt-dlp work, thumbnail requests, and storage scan
 run on background workers and exchange plain data through locked mailboxes or
 atomic JSON files. No worker touches a Unity texture, view, or map object.
 
+The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.
+Big Screen registers a built-in Python module and a preferred yt-dlp JavaScript
+challenge provider, so modern YouTube extraction can run without `execve`,
+Termux, Node, Deno, or a writable executable. Each EJS evaluation owns an
+isolated QuickJS runtime with memory and time limits. yt-dlp updates are tested
+against that provider API and engine before activation.
+
 Beat Saber's audio/song position is the only video clock. That preserves pause,
 practice speed, seeking, and Replay behavior. The decoder uses a one-frame
 mailbox and drops superseded frames instead of blocking the game thread.
@@ -26,8 +33,9 @@ only and therefore cannot block menu controller rays.
 
 Some tempting approaches are deliberately not used:
 
-- Android's external executable/process model is not assumed; the downloader
-  is embedded CPython because stock Quest does not provide Python or Termux.
+- Android's external executable/process model is not assumed; `/sdcard` is
+  mounted `noexec`, and API-29+ apps cannot execute code copied to writable app
+  storage. CPython is embedded and QuickJS-NG runs in-process instead.
 - Disabling a rotating-laser component did not hide Big Mirror's visible side
   structures; live inspection showed those were separate NearBuilding roots.
 - Quantizing FFmpeg timestamps to the FPS limit caused irregular source-frame

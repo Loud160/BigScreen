@@ -33,6 +33,7 @@ def definitions(script: str, first_action: str) -> dict:
 
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+provider_source = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 download_script = extract(source, "DownloaderScript")
 probe_script = extract(source, "ProbeScript")
 updater_script = extract(source, "UpdaterScript")
@@ -52,6 +53,16 @@ for name, script in (
     ("UpdaterScript", updater_script),
 ):
     compile(script, f"<{name}>", "exec")
+
+# The Quest provider must remain an in-process bridge. Reintroducing the
+# upstream subprocess provider would appear to work on desktop while failing
+# against Android's writable-directory execution restrictions.
+compile(provider_source, "<bigscreen_jsc_provider>", "exec")
+assert "bigscreen_quickjs.execute(source)" in provider_source
+assert "subprocess" not in provider_source
+assert "import bigscreen_jsc_provider" in download_script
+assert "import bigscreen_jsc_provider" in probe_script
+assert "import yt_dlp_ejs" in source
 
 download = definitions(download_script, "\ntry:\n    publish('preparing'")
 probe = definitions(probe_script, "\ntry:\n    publish('probing'")

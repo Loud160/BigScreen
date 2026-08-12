@@ -24,6 +24,8 @@ Param(
     [Switch] $help
 )
 
+$ErrorActionPreference = "Stop"
+
 if ($help -eq $true) {
     Write-Output "`"Copy`" - Builds and copies your mod to your quest, and also starts Beat Saber with optional logging"
     Write-Output "`n-- Arguments --`n"
@@ -37,6 +39,23 @@ if ($help -eq $true) {
     & $PSScriptRoot/start-logging.ps1 -help -excludeHeader
 
     exit
+}
+
+# QPM developers often have ADB through SideQuest without adding it to the
+# system PATH. Resolve that known installation before building so a deployment
+# cannot emit repeated command-not-found messages and still appear successful.
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+    $sideQuestAdb = "$env:ProgramFiles\SideQuest\resources\app.asar.unpacked\build\platform-tools\adb.exe"
+    if (Test-Path -LiteralPath $sideQuestAdb) {
+        $env:PATH = (Split-Path -Parent $sideQuestAdb) + [IO.Path]::PathSeparator + $env:PATH
+    }
+}
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
+    throw "ADB was not found. Install Android platform-tools or SideQuest before deploying."
+}
+& adb get-state | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "No authorized Quest was available through ADB."
 }
 
 & $PSScriptRoot/build.ps1 -clean:$clean
@@ -60,6 +79,7 @@ foreach ($fileName in $modFiles) {
     } else {
         & adb push build/$fileName /sdcard/ModData/com.beatgames.beatsaber/Modloader/early_mods/$fileName
     }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 $lateModFiles = $modJson.lateModFiles
@@ -70,6 +90,7 @@ foreach ($fileName in $lateModFiles) {
     } else {
         & adb push build/$fileName /sdcard/ModData/com.beatgames.beatsaber/Modloader/mods/$fileName
     }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 # Project-owned runtime libraries must be deployed with the mod during local
@@ -87,8 +108,35 @@ foreach ($fileName in $modJson.libraryFiles) {
     }
 }
 
+# Mirror the QMOD installer's fileCopies during development deployments. A
+# native-only push is insufficient for the embedded downloader: its Python
+# standard library, CA bundle, yt-dlp baseline, and Big Screen QuickJS provider
+# live in the mod-owned Runtime directory. Deriving the source from the fixed
+# runtime destination preserves nested certifi/lib-dynload paths without a
+# second hand-maintained manifest.
+$runtimeDestination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/"
+$runtimeStage = Join-Path (Join-Path $PSScriptRoot "..") "build/downloader"
+foreach ($copy in $modJson.fileCopies) {
+    $destination = [string]$copy.destination
+    if (-not $destination.StartsWith(
+        $runtimeDestination,
+        [System.StringComparison]::Ordinal)) {
+        throw "Development deployment does not recognize fileCopy destination $destination"
+    }
+    $relative = $destination.Substring($runtimeDestination.Length).Replace('/', [IO.Path]::DirectorySeparatorChar)
+    $source = Join-Path $runtimeStage $relative
+    if (-not (Test-Path -LiteralPath $source)) {
+        throw "Development deployment could not find staged runtime file $source"
+    }
+    & adb push $source $destination
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
 
 & $PSScriptRoot/restart-game.ps1
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($log -eq $true) {
     & adb logcat -c

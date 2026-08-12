@@ -74,6 +74,11 @@ if (-not (Test-Path -LiteralPath $ffmpegStamp)) {
 
 # Stage the pinned Android CPython, yt-dlp, certificate bundle, and native
 # extension modules before CMake tries to include or link the runtime.
+& (Join-Path $PSScriptRoot "fetch-quickjs-ng.ps1")
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 & (Join-Path $PSScriptRoot "fetch-downloader-runtime.ps1")
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

@@ -70,7 +70,9 @@ Downloaded files are mod-managed. Map-folder and Video Import files remain user-
 
 ## Downloader runtime
 
-The QMOD includes CPython 3.14.6 for Android ARM64, a pinned yt-dlp baseline, certifi, and required native libraries. It runs inside Beat Saber on a background thread: Termux, a system Python installation, a YouTube login, and a connected PC are not used. Updates are offered rather than silently installed, verified against the official release SHA-256 list, import-tested after restart, and rolled back if incompatible.
+The QMOD includes CPython 3.14.6 for Android ARM64, a pinned yt-dlp baseline with yt-dlp-ejs 0.8.0, certifi, and QuickJS-NG 0.16.1 compiled directly into Big Screen. QuickJS supplies the JavaScript challenge engine required for full modern YouTube extraction without trying to launch an Android executable from `ModData`. Everything runs inside Beat Saber on downloader workers: Termux, a system Python/JavaScript installation, a YouTube login, and a connected PC are not used. Updates are offered rather than silently installed, verified against the official release SHA-256 list, tested against `YoutubeDL`, yt-dlp-ejs, and Big Screen's QuickJS provider after restart, and rolled back if incompatible.
+
+Reproducible source-build recipes are tracked with the project. QuickJS-NG is compiled from its pinned source amalgamation during every native build. `scripts/build-downloader-from-source.ps1` retrieves hash-pinned yt-dlp and yt-dlp-ejs source archives, rebuilds the EJS JavaScript payload through its upstream lockfile, assembles the zipimport runtime, and verifies every generated file against the official release Big Screen ships. Third-party source archives and generated dependencies stay in ignored build directories rather than being duplicated in Git.
 
 ## Project layout
 
@@ -90,6 +92,6 @@ Big Screen is feature-complete for its initial beta but still needs broad public
 
 ## Legal and licenses
 
-Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. Its private minimal FFmpeg 4.4.8 runtime is dynamically linked under LGPL 2.1-or-later and is built without GPL, version-3-only, or nonfree components. The corresponding license, build configuration, source changes, and the CPython, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. Its private minimal FFmpeg 4.4.8 runtime is dynamically linked under LGPL 2.1-or-later and is built without GPL, version-3-only, or nonfree components. QuickJS-NG is compiled into `libbigscreen.so` under its MIT license. The corresponding license, build configuration, source changes, and the CPython, QuickJS-NG, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
 
 Big Screen is an independent community project. It is not affiliated with or endorsed by Beat Games, Meta, Google, YouTube, the Cinema mod, or the Chroma mod. Users are responsible for complying with the rights and terms applicable to videos they download or import.

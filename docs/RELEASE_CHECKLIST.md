@@ -11,6 +11,8 @@
 ## Automated validation
 
 - [ ] Host tests pass from a clean test build directory.
+- [ ] QuickJS output, exception, and timeout tests pass; the pinned source hash was reviewed.
+- [ ] `build-downloader-from-source.ps1` rebuilds yt-dlp/yt-dlp-ejs and its full payload matches the pinned official release.
 - [ ] Clean ARM64 Quest build passes with no unresolved symbols.
 - [ ] QMOD creation passes from clean staged dependencies.
 - [ ] QMOD archive contains native libraries, full downloader runtime, manifest, and license/notices.
@@ -33,6 +35,7 @@
 - [ ] 480p/720p/1080p and 15/30/60 FPS produce expected diagnostics; Automatic Performance steps down without changing saved settings.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.
 - [ ] Stable updater check/install/restart passes; a deliberately incompatible candidate rolls back and is not reoffered.
+- [ ] A YouTube URL requiring an EJS challenge reports `Big Screen QuickJS-NG` in the log and downloads without a missing-runtime warning.
 - [ ] Two simulated internal errors trigger one disable dialog without popup spam; gameplay failures never interrupt the map.
 
 ## Publication

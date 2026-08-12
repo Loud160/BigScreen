@@ -13,6 +13,7 @@ $pythonVersion = "3.14.6"
 $pythonSha256 = "38bbe77d3167b5cd554e03b1021324926f09f3825202b065951dd7638e9c37e5"
 $ytDlpVersion = "2026.07.04"
 $ytDlpSha256 = "495be29ff4d9d4e9be7eabdfef225221e5d5282e77f2f505abc6dca80349f3fd"
+$ytDlpEjsVersion = "0.8.0"
 $certifiVersion = "2026.7.22"
 $certifiSha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
@@ -29,6 +30,9 @@ $nativeLibraryStage = Join-Path $repositoryRoot "extern/libs"
 New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $nativeLibraryStage | Out-Null
+
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Assert-Sha256([string] $Path, [string] $Expected) {
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
@@ -67,6 +71,66 @@ if ($Force -or -not (Test-Path -LiteralPath $ytDlpPackage)) {
 }
 Assert-Sha256 $ytDlpPackage $ytDlpSha256
 
+# Current yt-dlp YouTube challenge support depends on the separately versioned
+# yt-dlp-ejs package. Official standalone yt-dlp releases bundle that package,
+# so do not add a second wheel that could drift away from the downloader. Make
+# the bundled dependency and both solver payloads a hard packaging requirement.
+# yt-dlp's Unix zipimport release prepends a Python shebang. Python's zipfile
+# accounts for that prefix, while the .NET Framework ZIP reader used by Windows
+# PowerShell 5 expects the first local header at offset zero. Present only the
+# ZIP segment to .NET so the build works consistently on PowerShell 5 and 7.
+$ytDlpBytes = [System.IO.File]::ReadAllBytes($ytDlpPackage)
+$zipStart = -1
+for ($index = 0; $index -le $ytDlpBytes.Length - 4; $index++) {
+    if ($ytDlpBytes[$index] -eq 0x50 -and
+        $ytDlpBytes[$index + 1] -eq 0x4b -and
+        $ytDlpBytes[$index + 2] -eq 0x03 -and
+        $ytDlpBytes[$index + 3] -eq 0x04) {
+        $zipStart = $index
+        break
+    }
+}
+if ($zipStart -lt 0) {
+    throw "The verified yt-dlp package does not contain a ZIP payload."
+}
+$ytDlpStream = [System.IO.MemoryStream]::new(
+    $ytDlpBytes,
+    $zipStart,
+    $ytDlpBytes.Length - $zipStart,
+    $false,
+    $true)
+$ytDlpArchive = [System.IO.Compression.ZipArchive]::new(
+    $ytDlpStream,
+    [System.IO.Compression.ZipArchiveMode]::Read,
+    $false)
+try {
+    foreach ($entryName in @(
+        "yt_dlp_ejs/__init__.py",
+        "yt_dlp_ejs/_version.py",
+        "yt_dlp_ejs/yt/solver/core.min.js",
+        "yt_dlp_ejs/yt/solver/lib.min.js"
+    )) {
+        if ($null -eq $ytDlpArchive.GetEntry($entryName)) {
+            throw "The verified yt-dlp package does not contain its required $entryName dependency."
+        }
+    }
+
+    $versionEntry = $ytDlpArchive.GetEntry("yt_dlp_ejs/_version.py")
+    $versionReader = [System.IO.StreamReader]::new($versionEntry.Open())
+    try {
+        $versionSource = $versionReader.ReadToEnd()
+    }
+    finally {
+        $versionReader.Dispose()
+    }
+    if ($versionSource -notmatch "__version__\s*=\s*version\s*=\s*'$([regex]::Escape($ytDlpEjsVersion))'") {
+        throw "The verified yt-dlp package does not contain expected yt-dlp-ejs $ytDlpEjsVersion."
+    }
+}
+finally {
+    $ytDlpArchive.Dispose()
+}
+
 if ($Force -or -not (Test-Path -LiteralPath $certifiPackage)) {
     Invoke-WebRequest `
         -Uri "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-$certifiVersion-py3-none-any.whl" `
@@ -78,8 +142,6 @@ Assert-Sha256 $certifiPackage $certifiSha256
 # small production certifi package from the already hash-verified wheel while
 # staging the QMOD. Its normal where() function will then return a physical
 # on-device path without runtime monkey-patching.
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 $certifiStage = Join-Path $stageRoot "certifi"
 if (Test-Path -LiteralPath $certifiStage) {
     if ((Split-Path -Parent $certifiStage) -ne $stageRoot) {
@@ -178,6 +240,10 @@ if ($Force -or
 Copy-Item -LiteralPath $ytDlpPackage -Destination (Join-Path $stageRoot "yt-dlp-shipped") -Force
 Copy-Item -LiteralPath $certifiPackage -Destination (Join-Path $stageRoot "certifi.whl") -Force
 Copy-Item -LiteralPath (Join-Path $stdlibRoot "LICENSE.txt") -Destination (Join-Path $stageRoot "CPYTHON-LICENSE.txt") -Force
+Copy-Item `
+    -LiteralPath (Join-Path $repositoryRoot "python/bigscreen_jsc_provider.py") `
+    -Destination (Join-Path $stageRoot "bigscreen_jsc_provider.py") `
+    -Force
 
 # Extension modules are copied individually by the QMOD installer because
 # Android must dlopen them as real files. Test-only modules are deliberately
@@ -202,8 +268,10 @@ Get-ChildItem -LiteralPath $dynamicRoot -File -Filter "*.so" |
     pythonSha256 = $pythonSha256
     ytDlpVersion = $ytDlpVersion
     ytDlpSha256 = $ytDlpSha256
+    ytDlpEjsVersion = $ytDlpEjsVersion
     certifiVersion = $certifiVersion
     certifiSha256 = $certifiSha256
+    quickJsVersion = "0.16.1"
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageRoot "runtime-manifest.json") -Encoding UTF8
 
 Write-Output "Prepared CPython $pythonVersion and yt-dlp $ytDlpVersion in $stageRoot"

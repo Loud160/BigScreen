@@ -13,6 +13,8 @@
 
 #include "main.hpp"
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/QuickJsEngine.hpp"
+#include "BigScreen/QuickJsPythonModule.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -311,6 +313,9 @@ def classify(value):
 try:
     publish('preparing', 'Checking video information')
     cancelled()
+    # Importing this module registers Big Screen's in-process JavaScript
+    # challenge provider before yt-dlp creates the YouTube extractor.
+    import bigscreen_jsc_provider
     import yt_dlp
     selector = 'bestvideo[ext=mp4][vcodec^=avc1][height<=1080]'
     common = {
@@ -457,6 +462,7 @@ def classify(value):
 
 try:
     publish('probing', 'Checking YouTube URL')
+    import bigscreen_jsc_provider
     import yt_dlp
     with yt_dlp.YoutubeDL({
             'quiet': True,
@@ -647,6 +653,16 @@ os.replace(temporary, job['destination'])
            !LoadGlobalLibrary(InternalNativeRuntime / "libsqlite3_python.so", error))
             return false;
 
+        // Register the compiled bridge before CPython starts. Keeping this as
+        // a built-in module avoids Android's prohibition on executing a qjs
+        // program from writable app storage and avoids another staged .so.
+        if(PyImport_AppendInittab(
+               "bigscreen_quickjs", PyInit_bigscreen_quickjs) == -1)
+        {
+            error = "Could not register the in-process QuickJS-NG bridge.";
+            return false;
+        }
+
         PyConfig config;
         PyConfig_InitIsolatedConfig(&config);
         config.module_search_paths_set = 1;
@@ -715,9 +731,16 @@ os.replace(temporary, job['destination'])
         const auto smokeTest = []()
         {
             return PyRun_SimpleString(
-                "import importlib, sys\n"
+                "import importlib, json, sys\n"
                 "importlib.invalidate_caches()\n"
-                "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'yt_dlp' or k.startswith('yt_dlp.')]\n"
+                "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.')]\n"
+                "import bigscreen_quickjs\n"
+                "assert json.loads(bigscreen_quickjs.execute('console.log(JSON.stringify({value: 6 * 7}))'))['value'] == 42\n"
+                "import bigscreen_jsc_provider\n"
+                "import yt_dlp_ejs\n"
+                "assert isinstance(yt_dlp_ejs.version, str) and yt_dlp_ejs.version\n"
+                "from yt_dlp.extractor.youtube.jsc._registry import _jsc_providers\n"
+                "assert 'BigScreenQuickJS' in _jsc_providers.value\n"
                 "from yt_dlp import YoutubeDL\n"
                 "assert callable(YoutubeDL)\n") == 0;
         };
@@ -781,7 +804,8 @@ os.replace(temporary, job['destination'])
         PyEval_SaveThread();
         initialized_ = true;
         PaperLogger.info(
-            "Embedded CPython downloader initialized with CA bundle '{}'",
+            "Embedded CPython downloader initialized with QuickJS-NG {} and CA bundle '{}'",
+            QuickJsVersion,
             certificateBundle.string());
         return true;
     }
@@ -1032,7 +1056,7 @@ os.replace(temporary, job['destination'])
                     PyRun_SimpleString(
                         "import importlib, sys\n"
                         "importlib.invalidate_caches()\n"
-                        "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'yt_dlp' or k.startswith('yt_dlp.')]\n");
+                        "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.')]\n");
                     result = PyRun_String(
                         DownloaderScript, Py_file_input, globals, globals);
                     runtimeRolledBack = result != nullptr;

@@ -27,6 +27,19 @@ generated lock file. Each dependency remains subject to its own license. Big
 Screen does not claim authorship of those external libraries or generated Beat
 Saber headers.
 
+The downloader additionally compiles the official QuickJS-NG 0.16.1
+amalgamated source into Big Screen under its MIT license. The exact release URL
+and SHA-256 are pinned in `scripts/fetch-quickjs-ng.ps1`; none of that upstream
+engine source is represented as original Big Screen code.
+
+The shipped yt-dlp 2026.07.04 zipimport runtime includes yt-dlp-ejs 0.8.0.
+`scripts/build-downloader-from-source.ps1` and
+`scripts/build_downloader_runtime.py` provide an independent, hash-pinned
+rebuild from the corresponding upstream source archives. The process rebuilds
+the JavaScript through the upstream package-manager lockfile and compares all
+1,053 packaged files with the official release. These recipes do not claim
+authorship of yt-dlp, yt-dlp-ejs, or their bundled astring/meriyah components.
+
 ## Compatibility inputs
 
 Map metadata formats are treated as interoperability interfaces. Parsers in

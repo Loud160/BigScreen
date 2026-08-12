@@ -7,6 +7,13 @@ also use independent third-party components under their own terms:
   QMOD includes `CPYTHON-LICENSE.txt` beside the runtime.
 - **yt-dlp** — Unlicense/public-domain dedication. Big Screen ships a pinned
   baseline and can retrieve official upstream stable or nightly packages.
+- **yt-dlp-ejs 0.8.0** — Unlicense/public-domain dedication, with generated
+  solver bundles containing MIT-licensed astring and ISC-licensed meriyah.
+  The matching package is bundled inside the official yt-dlp runtime. A
+  tracked source-build recipe rebuilds it through its upstream lockfile.
+- **QuickJS-NG 0.16.1** - MIT License. Big Screen compiles the engine into its
+  native library and uses it only for yt-dlp's official JavaScript challenge
+  scripts. It is not installed or launched as a separate executable.
 - **certifi** — Mozilla Public License 2.0. Its CA bundle is installed as a
   physical package for Python/OpenSSL certificate validation.
 - **FFmpeg 4.4.8 libraries** (`avformat`, `avcodec`, `avutil`, `swscale`) — Big
@@ -21,6 +28,7 @@ also use independent third-party components under their own terms:
 - **Quest Mod Template** — Unlicense. It supplied the initial empty project
   scaffold; see `PROVENANCE.md`.
 
-The QMOD installs this notice and the CPython, yt-dlp, certifi, and FFmpeg
-license/build records beside the embedded runtime under Big Screen's ModData
-folder. This notice is informational and does not replace those complete terms.
+The QMOD installs this notice and the CPython, yt-dlp, QuickJS-NG, certifi, and
+FFmpeg license/build records beside the embedded runtime under Big Screen's
+ModData folder. This notice is informational and does not replace those
+complete terms.

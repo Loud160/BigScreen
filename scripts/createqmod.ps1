@@ -18,6 +18,10 @@ if ($help -eq $true) {
 # The runtime files are generated from pinned, hash-checked upstream artifacts.
 # Re-run staging here so packaging can never accidentally use a stale partial
 # download even when createqmod is invoked without a preceding build command.
+& $PSScriptRoot/fetch-quickjs-ng.ps1
+if (-not $?) {
+    exit 1
+}
 & $PSScriptRoot/fetch-downloader-runtime.ps1
 if (-not $?) {
     exit 1
@@ -68,6 +72,7 @@ $noticeSources = @{
     "CERTIFI-MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt" = Join-Path $repositoryRoot "licenses/YT-DLP-UNLICENSE.txt"
+    "QUICKJS-NG-MIT.txt" = Join-Path $repositoryRoot "licenses/QUICKJS-NG-MIT.txt"
 }
 foreach ($notice in $noticeSources.GetEnumerator()) {
     Copy-Item -LiteralPath $notice.Value -Destination (Join-Path $runtimeStage $notice.Key) -Force
@@ -78,6 +83,7 @@ $runtimeFiles = @(
     "certifi.whl",
     "runtime-manifest.json",
     "CPYTHON-LICENSE.txt"
+    "bigscreen_jsc_provider.py"
     "BIGSCREEN-LICENSE.txt"
     "THIRD-PARTY-NOTICES.md"
     "FFMPEG-LGPL-2.1-OR-LATER.txt"
@@ -86,6 +92,7 @@ $runtimeFiles = @(
     "CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt"
+    "QUICKJS-NG-MIT.txt"
 )
 $copies = @()
 $runtimeSourcePaths = @()

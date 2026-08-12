@@ -16,7 +16,7 @@ The current QMOD is version-specific. A newer or older Beat Saber APK can change
 4. Fully restart Beat Saber.
 5. Open **Mods > Big Screen**. If the page opens and the blank placement preview appears, the native mod and UI loaded.
 
-The package installs its native libraries through the mod loader and places the embedded downloader runtime under `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime`.
+The package installs its native libraries through the mod loader and places the embedded downloader runtime under `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime`. QuickJS-NG is already compiled into Big Screen; users do not install a separate JavaScript runtime, Termux package, or executable.
 
 ## Recommended first-run setup
 

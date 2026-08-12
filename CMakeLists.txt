@@ -5,6 +5,8 @@ option(QUEST "Build for quest" ON)
 # Globals
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED 20)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -58,6 +60,7 @@ add_library(
         SHARED
         ${cpp_file_list}
         ${c_file_list}
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/quickjs-ng/source/quickjs-amalgam.c
 )
 
 # for inline hook
@@ -67,6 +70,15 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/quickjs-ng/source)
+
+# QuickJS-NG is compiled into libbigscreen.so instead of shipped as a qjs
+# executable. Android forbids execve from both /sdcard and Beat Saber's writable
+# private directories, while an in-process engine also avoids carrying Node or
+# Deno. Do not enable QJS_BUILD_LIBC: YouTube solver scripts receive only the
+# JavaScript language runtime and Big Screen's captured console, with no direct
+# filesystem, process, or network APIs.
 
 # Big Screen embeds the official CPython Android runtime for its optional
 # downloader. Link against the exact staged ABI and package the library beside

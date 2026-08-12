@@ -25,6 +25,41 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
 ```
 
+In addition to the CPython, certifi, yt-dlp, and FFmpeg inputs, the dependency
+scripts retrieve a pinned QuickJS-NG source archive. Every downloaded artifact
+has a fixed SHA-256; review the upstream release, ABI, contents, and license
+before changing a version or expected hash.
+
+`scripts/fetch-quickjs-ng.ps1` retrieves the official QuickJS-NG 0.16.1
+amalgamated source. CMake compiles it directly into `libbigscreen.so` without
+`QJS_BUILD_LIBC`; the engine therefore has no direct file, process, or network
+APIs. `QuickJsEngineTests.cpp` validates successful output, syntax errors, and
+the interrupt deadline on the host before the Quest build begins.
+
+## Rebuilding the downloader from source
+
+Normal builds package the pinned official yt-dlp zipimport release after its
+SHA-256 and required yt-dlp-ejs files are verified. The complete independent
+source path is also tracked in this repository:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-downloader-from-source.ps1
+```
+
+The script downloads the pinned yt-dlp 2026.07.04 and yt-dlp-ejs 0.8.0 source
+archives, verifies their hashes, invokes yt-dlp-ejs's own `hatch_build.py` and
+committed lockfile, checks the resulting solver hashes, and packages yt-dlp's
+Python sources with those solvers. It then compares every archive entry and
+byte with the official release before executing the rebuilt runtime's version
+command. Output is written to `build/downloader-source/yt-dlp-source-built`.
+
+The source rebuild requires Python 3 plus one package manager/runtime supported
+by that yt-dlp-ejs release (pnpm, Deno, Bun, or npm/Node). Upstream sources and
+installed JavaScript dependencies remain under ignored `extern`/build paths;
+the reproducible recipes, URLs, versions, expected source hashes, expected
+solver hashes, and packaging logic are committed to Git. Use `-Force` after a
+reviewed version change to replace the versioned extraction.
+
 The dependency scripts download pinned Android CPython, certifi, yt-dlp, FFmpeg source, and supporting artifacts. Each expected artifact has a fixed SHA-256 in the script; a mismatch stops the build. Do not “fix” a mismatch by changing only the hash—review the upstream release, ABI, contents, and license first.
 
 `scripts/build-ffmpeg-lgpl.sh` builds FFmpeg 4.4.8 from source for Android ARM64. Set `ANDROID_NDK_ROOT` to a Linux NDK r27c directory when it is not installed at the script's documented default. The script enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components. Its outputs use `-bigscreen` SONAMEs and `BIGSCREEN_LIB*` symbol versions so Android cannot resolve them to another mod's FFmpeg libraries.
@@ -45,9 +80,10 @@ The test suite covers deterministic library keys/path rules, quality fallback, e
 
 - `libbigscreen.so` and declared native dependencies;
 - the CPython standard library and Android extension modules;
-- the immutable shipped yt-dlp baseline and certifi CA bundle;
+- the immutable shipped yt-dlp baseline containing yt-dlp-ejs, Big Screen
+  challenge-provider module, and certifi CA bundle;
 - runtime integrity manifest;
-- Big Screen and third-party notices/license texts;
+- Big Screen, QuickJS-NG, and other third-party notices/license texts;
 - all four private LGPL FFmpeg shared libraries and their build/source-change records.
 
 Inspect the archive before release:
