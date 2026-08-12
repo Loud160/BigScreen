@@ -584,6 +584,11 @@ namespace BigScreen {
         auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
         ConfigureGroup(editorRoot, true);
         editorRoot->set_childForceExpandWidth(true);
+        // Keep the editor's preferred width stable even when every video-only
+        // row is hidden. Without a persistent width constraint, Unity sizes
+        // the page from the compact Paste URL button and collapses the URL
+        // field until a downloaded video's wider controls become active.
+        ConfigureLayout(editorRoot, 50.0f, -1.0f, 1.0f, 1.0f);
         StretchToPanel(editorRoot->get_rectTransform());
 
         backToListButton_ = BSML::Lite::CreateUIButton(
@@ -604,7 +609,9 @@ namespace BigScreen {
         auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlEntryRow, false);
         urlEntryRow->set_spacing(0.6f);
-        ConfigureLayout(urlEntryRow, -1.0f, 8.0f, 1.0f);
+        // This row remains active for maps without videos, so it also anchors
+        // the content tree to the same width used by the complete editor.
+        ConfigureLayout(urlEntryRow, 50.0f, 8.0f, 1.0f);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
             urlEntryRow,
             "Paste URL",
@@ -813,7 +820,7 @@ namespace BigScreen {
         ConfigureGroup(playbackPanel, true);
         playbackPanel->set_spacing(0.3f);
         playbackPanel->set_childForceExpandWidth(true);
-        ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);
+        ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
@@ -826,16 +833,19 @@ namespace BigScreen {
 
         auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
         ConfigureGroup(playbackRow, false);
-        playbackRow->set_spacing(0.6f);
-        ConfigureLayout(playbackRow, -1.0f, 6.5f, 1.0f);
+        // A deliberate gap separates the transport button from the draggable
+        // bar. Because the scrubber is the flexible child, it gives up only
+        // the small amount of width needed for this additional padding.
+        playbackRow->set_spacing(1.25f);
+        ConfigureLayout(playbackRow, -1.0f, 7.8f, 1.0f);
         playPauseButton_ = BSML::Lite::CreateUIButton(
             playbackRow,
             "▶",
             "PlayButton",
             {0.0f, 0.0f},
-            {10.0f, 6.5f},
+            {10.0f, 7.6f},
             [this]() { TogglePreviewPlayback(); });
-        ConfigureLayout(playPauseButton_, 10.0f, 6.0f, 0.0f);
+        ConfigureLayout(playPauseButton_, 10.0f, 7.4f, 0.0f);
         BSML::Lite::SetButtonTextSize(playPauseButton_, 4.0f);
         auto transportColors = playPauseButton_->get_colors();
         transportColors.set_normalColor({0.05f, 0.55f, 0.90f, 1.0f});
@@ -886,6 +896,20 @@ namespace BigScreen {
         {
             playbackTimeText_->set_fontSize(2.4f);
             playbackTimeText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+            playbackTimeText_->set_color(UnityEngine::Color::get_black());
+            // SliderSetting normally positions its value for a labeled
+            // settings row. Stretch the combined current/total time over the
+            // complete slider allocation so it remains centered on the bar.
+            if(auto timeRect = playbackTimeText_->get_transform()
+                   .cast<UnityEngine::RectTransform>())
+            {
+                timeRect->set_anchorMin({0.0f, 0.0f});
+                timeRect->set_anchorMax({1.0f, 1.0f});
+                timeRect->set_pivot({0.5f, 0.5f});
+                timeRect->set_anchoredPosition({0.0f, 0.0f});
+                timeRect->set_sizeDelta({0.0f, 0.0f});
+                timeRect->SetAsLastSibling();
+            }
         }
 
         // The stock settings slider reserves a fixed 52-unit control on the
@@ -905,10 +929,10 @@ namespace BigScreen {
             sliderRect->set_sizeDelta({0.0f, 0.0f});
 
             auto sliderColors = playbackScrubber_->slider->get_colors();
-            sliderColors.set_normalColor({0.88f, 0.90f, 0.93f, 0.72f});
-            sliderColors.set_highlightedColor({0.98f, 0.99f, 1.0f, 0.86f});
-            sliderColors.set_pressedColor({0.82f, 0.86f, 0.91f, 0.86f});
-            sliderColors.set_selectedColor({0.94f, 0.96f, 0.98f, 0.82f});
+            sliderColors.set_normalColor({0.0f, 0.0f, 0.0f, 1.0f});
+            sliderColors.set_highlightedColor({0.08f, 0.08f, 0.08f, 1.0f});
+            sliderColors.set_pressedColor({0.14f, 0.14f, 0.14f, 1.0f});
+            sliderColors.set_selectedColor({0.05f, 0.05f, 0.05f, 1.0f});
             playbackScrubber_->slider->set_colors(sliderColors);
             auto sliderTarget = playbackScrubber_->slider->get_targetGraphic();
             if(sliderTarget)
@@ -937,7 +961,7 @@ namespace BigScreen {
         // Play/Pause reserves the left edge; the scrubber consumes every
         // remaining unit of row width. Its native centered value text now
         // serves as the current/total playback clock directly on the bar.
-        ConfigureLayout(playbackScrubber_, 0.0f, 6.0f, 1.0f);
+        ConfigureLayout(playbackScrubber_, 0.0f, 7.4f, 1.0f);
 
         // Deleting an override also deletes its downloaded media, thumbnail,
         // and saved timing. Require an explicit second action so an imprecise
