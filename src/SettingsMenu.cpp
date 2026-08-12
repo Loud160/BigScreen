@@ -161,7 +161,7 @@ namespace BigScreen {
         hideSideLaserLightsToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
         glassDesertOverrideToggle_ = nullptr;
-        environmentMotionToggle_ = nullptr;
+        disableEnvironmentMotionToggle_ = nullptr;
         hideTrackRingsToggle_ = nullptr;
         hideSideBarsToggle_ = nullptr;
         hideSpectrogramBarsToggle_ = nullptr;
@@ -552,17 +552,17 @@ namespace BigScreen {
             glassDesertOverrideToggle_,
             "Loads Glass Desert for video gameplay so its open 360-style layout can be tested. This takes priority over the Big Mirror override and applies when the next map starts.");
 
-        environmentMotionToggle_ = BSML::Lite::CreateToggle(
+        disableEnvironmentMotionToggle_ = BSML::Lite::CreateToggle(
             playbackContainer,
-            "Environment Rotation and Motion",
-            settings.EnvironmentMotionEnabled(),
+            "Disable Rotation and Motion",
+            settings.DisableEnvironmentMotion(),
             [](bool enabled)
             {
-                Settings::Instance().SetEnvironmentMotionEnabled(enabled);
+                Settings::Instance().SetDisableEnvironmentMotion(enabled);
             });
         BSML::Lite::AddHoverHint(
-            environmentMotionToggle_,
-            "Turns rotating and moving background scenery on or off for video maps.");
+            disableEnvironmentMotionToggle_,
+            "When enabled, stops rotating and moving background scenery in video maps. Takes effect when the next map starts.");
 
         hideTrackRingsToggle_ = BSML::Lite::CreateToggle(
             playbackContainer,
@@ -767,8 +767,8 @@ namespace BigScreen {
             glassDesertOverrideToggle_,
             settings.GlassDesertOverrideEnabled());
         SetToggleWithoutNotification(
-            environmentMotionToggle_,
-            settings.EnvironmentMotionEnabled());
+            disableEnvironmentMotionToggle_,
+            settings.DisableEnvironmentMotion());
         SetToggleWithoutNotification(
             hideTrackRingsToggle_,
             settings.HideTrackRings());
@@ -861,8 +861,8 @@ namespace BigScreen {
             environmentOverrideToggle_->set_interactable(enabled);
         if(glassDesertOverrideToggle_)
             glassDesertOverrideToggle_->set_interactable(enabled);
-        if(environmentMotionToggle_)
-            environmentMotionToggle_->set_interactable(enabled);
+        if(disableEnvironmentMotionToggle_)
+            disableEnvironmentMotionToggle_->set_interactable(enabled);
         if(hideTrackRingsToggle_)
             hideTrackRingsToggle_->set_interactable(enabled);
         if(hideSideBarsToggle_)

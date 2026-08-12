@@ -133,7 +133,13 @@ namespace BigScreen {
         hideSideLaserLights_ = ReadBool(document, "hideSideLaserLights", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
         glassDesertOverrideEnabled_ = ReadBool(document, "glassDesertOverrideEnabled", false);
-        environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
+        // The original control expressed the positive state: On meant motion
+        // was enabled. Migrate it by inversion so an existing user sees the
+        // same gameplay behavior under the clearer disable-style toggle.
+        disableEnvironmentMotion_ = ReadBool(
+            document,
+            "disableEnvironmentMotion",
+            !ReadBool(document, "environmentMotionEnabled", true));
         hideTrackRings_ = ReadBool(document, "hideTrackRings", true);
         hideSideBars_ = ReadBool(
             document,
@@ -174,7 +180,7 @@ namespace BigScreen {
         hideSideLaserLights_ = true;
         environmentOverrideEnabled_ = true;
         glassDesertOverrideEnabled_ = false;
-        environmentMotionEnabled_ = true;
+        disableEnvironmentMotion_ = false;
         hideTrackRings_ = true;
         hideSideBars_ = true;
         hideSpectrogramBars_ = true;
@@ -296,9 +302,9 @@ namespace BigScreen {
         Save();
     }
 
-    void Settings::SetEnvironmentMotionEnabled(bool value)
+    void Settings::SetDisableEnvironmentMotion(bool value)
     {
-        environmentMotionEnabled_ = value;
+        disableEnvironmentMotion_ = value;
         Save();
     }
 
@@ -366,7 +372,8 @@ namespace BigScreen {
         Replace(document, "hideSideLaserLights", hideSideLaserLights_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "glassDesertOverrideEnabled", glassDesertOverrideEnabled_);
-        Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
+        document.RemoveMember("environmentMotionEnabled");
+        Replace(document, "disableEnvironmentMotion", disableEnvironmentMotion_);
         Replace(document, "hideTrackRings", hideTrackRings_);
         document.RemoveMember("hideLaserRigs");
         Replace(document, "hideSideBars", hideSideBars_);

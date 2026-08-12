@@ -263,7 +263,7 @@ namespace {
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-               !BigScreen::Settings::Instance().EnvironmentMotionEnabled();
+               BigScreen::Settings::Instance().DisableEnvironmentMotion();
     }
 
     bool ShouldSuppressMapLighting()
@@ -524,7 +524,7 @@ namespace {
         // so Unity objects created here belong to the correct scene. The screen
         // remains hidden until the worker publishes its first decoded frame.
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           !BigScreen::Settings::Instance().EnvironmentMotionEnabled())
+           BigScreen::Settings::Instance().DisableEnvironmentMotion())
         {
             DisableEnvironmentMotion();
         }
