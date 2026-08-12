@@ -157,6 +157,8 @@ namespace BigScreen {
         transparencyToggle_ = nullptr;
         lightShowToggle_ = nullptr;
         hideBackWallLightsToggle_ = nullptr;
+        hideRingLightsToggle_ = nullptr;
+        hideSideLaserLightsToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
         glassDesertOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
@@ -500,7 +502,31 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             hideBackWallLightsToggle_,
-            "Blocks legacy lighting channels 0 and 4, which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
+            "Turns off legacy lighting groups 0 and 4 (light IDs 1 and 5), which control the above-track and lane/under-track lights in Big Mirror and Glass Desert. Other map lighting remains active. Takes effect when the next map starts.");
+
+        hideRingLightsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Ring Lights",
+            settings.HideRingLights(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideRingLights(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideRingLightsToggle_,
+            "Turns off legacy lighting group 1 (light ID 2), which supplies the ring lights. Takes effect when the next map starts.");
+
+        hideSideLaserLightsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Side Laser Lights",
+            settings.HideSideLaserLights(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideSideLaserLights(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideSideLaserLightsToggle_,
+            "Turns off the legacy left/right laser groups 2 and 3 (light IDs 3 and 4). Use this when their beams cross the video. Takes effect when the next map starts.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
             playbackContainer,
@@ -729,6 +755,12 @@ namespace BigScreen {
             hideBackWallLightsToggle_,
             settings.HideBackWallLights());
         SetToggleWithoutNotification(
+            hideRingLightsToggle_,
+            settings.HideRingLights());
+        SetToggleWithoutNotification(
+            hideSideLaserLightsToggle_,
+            settings.HideSideLaserLights());
+        SetToggleWithoutNotification(
             environmentOverrideToggle_,
             settings.EnvironmentOverrideEnabled());
         SetToggleWithoutNotification(
@@ -818,6 +850,12 @@ namespace BigScreen {
             lightShowToggle_->set_interactable(enabled);
         if(hideBackWallLightsToggle_)
             hideBackWallLightsToggle_->set_interactable(
+                enabled && settings.MapLightShowEnabled());
+        if(hideRingLightsToggle_)
+            hideRingLightsToggle_->set_interactable(
+                enabled && settings.MapLightShowEnabled());
+        if(hideSideLaserLightsToggle_)
+            hideSideLaserLightsToggle_->set_interactable(
                 enabled && settings.MapLightShowEnabled());
         if(environmentOverrideToggle_)
             environmentOverrideToggle_->set_interactable(enabled);

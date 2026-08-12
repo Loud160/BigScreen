@@ -129,6 +129,8 @@ namespace BigScreen {
         transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
+        hideRingLights_ = ReadBool(document, "hideRingLights", true);
+        hideSideLaserLights_ = ReadBool(document, "hideSideLaserLights", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
         glassDesertOverrideEnabled_ = ReadBool(document, "glassDesertOverrideEnabled", false);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
@@ -168,6 +170,8 @@ namespace BigScreen {
         transparencyEnabled_ = false;
         mapLightShowEnabled_ = true;
         hideBackWallLights_ = true;
+        hideRingLights_ = true;
+        hideSideLaserLights_ = true;
         environmentOverrideEnabled_ = true;
         glassDesertOverrideEnabled_ = false;
         environmentMotionEnabled_ = true;
@@ -268,6 +272,18 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetHideRingLights(bool value)
+    {
+        hideRingLights_ = value;
+        Save();
+    }
+
+    void Settings::SetHideSideLaserLights(bool value)
+    {
+        hideSideLaserLights_ = value;
+        Save();
+    }
+
     void Settings::SetEnvironmentOverrideEnabled(bool value)
     {
         environmentOverrideEnabled_ = value;
@@ -346,6 +362,8 @@ namespace BigScreen {
         Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);
+        Replace(document, "hideRingLights", hideRingLights_);
+        Replace(document, "hideSideLaserLights", hideSideLaserLights_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "glassDesertOverrideEnabled", glassDesertOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);

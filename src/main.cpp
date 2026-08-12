@@ -221,6 +221,44 @@ namespace {
             animatedLightingDisabled);
     }
 
+    bool ShouldDisableSelectedLightId(int lightId)
+    {
+        const auto& settings = BigScreen::Settings::Instance();
+
+        // Big Mirror and Glass Desert share the standard legacy mapping:
+        // events 0..4 drive light IDs 1..5. Keep the user-facing controls
+        // grouped by what the mapper sees rather than exposing raw IDs.
+        return (settings.HideBackWallLights() && (lightId == 1 || lightId == 5)) ||
+               (settings.HideRingLights() && lightId == 2) ||
+               (settings.HideSideLaserLights() && (lightId == 3 || lightId == 4));
+    }
+
+    void DisableSelectedLightingChannels()
+    {
+        int blackenedAndDisabled = 0;
+        for(auto* light : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::LightWithIdMonoBehaviour*>(false))
+        {
+            if(!light || !light->get_enabled() ||
+               !ShouldDisableSelectedLightId(light->get_lightId()))
+            {
+                continue;
+            }
+
+            // Blacken the color assigned while the environment initializes,
+            // then disable the component so OnDisable unregisters it from the
+            // manager. The unregistered light no longer receives map or Chroma
+            // updates, so selective event interception is unnecessary.
+            light->ColorWasSet(UnityEngine::Color::get_black());
+            light->set_enabled(false);
+            ++blackenedAndDisabled;
+        }
+
+        PaperLogger.info(
+            "Blackened and disabled {} lights in selected legacy channel groups",
+            blackenedAndDisabled);
+    }
+
     bool ShouldSuppressEnvironmentMotion()
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
@@ -233,33 +271,6 @@ namespace {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
                !BigScreen::Settings::Instance().MapLightShowEnabled();
-    }
-
-    bool ShouldSuppressBackWallLighting()
-    {
-        const auto& settings = BigScreen::Settings::Instance();
-        return settings.ModEnabled() &&
-               BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-               settings.MapLightShowEnabled() &&
-               settings.HideBackWallLights();
-    }
-
-    bool IsBackWallLightingEvent(GlobalNamespace::BeatmapEventData* eventData)
-    {
-        if(!eventData)
-            return false;
-
-        const auto basic =
-            il2cpp_utils::try_cast<GlobalNamespace::BasicBeatmapEventData>(eventData);
-        if(!basic)
-            return false;
-
-        // Big Mirror and Glass Desert both map legacy channels 0 and 4 to
-        // light IDs 1 and 5. Their track definition identifies these as the
-        // above-track and lane/under-track groups directly behind the screen.
-        // Preserve every other event so ring and side lighting still plays.
-        const int eventType = (*basic)->basicBeatmapEventType.value__;
-        return eventType == 0 || eventType == 4;
     }
 
     bool IsLightingEvent(GlobalNamespace::BeatmapEventData* eventData)
@@ -299,8 +310,6 @@ namespace {
         // runs per map event, not per rendered frame, and disabling the effects
         // therefore reduces rather than increases the level's rendering work.
         if(ShouldSuppressMapLighting() && IsLightingEvent(eventData))
-            return;
-        if(ShouldSuppressBackWallLighting() && IsBackWallLightingEvent(eventData))
             return;
         BeatmapCallbacksController_TriggerBeatmapEvent(self, eventData);
     }
@@ -523,6 +532,12 @@ namespace {
            !BigScreen::Settings::Instance().MapLightShowEnabled())
         {
             DisableEnvironmentLighting();
+        }
+        else if(BigScreen::PlaybackSession::Instance().HasPreparedVideo())
+        {
+            // Environments create some beams already lit. Black out and
+            // unregister only the selected groups before gameplay begins.
+            DisableSelectedLightingChannels();
         }
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
            BigScreen::Settings::Instance().HideTrackRings())

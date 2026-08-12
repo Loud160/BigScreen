@@ -28,6 +28,8 @@ namespace BigScreen {
         bool TransparencyEnabled() const { return transparencyEnabled_; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
+        bool HideRingLights() const { return hideRingLights_; }
+        bool HideSideLaserLights() const { return hideSideLaserLights_; }
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
         bool GlassDesertOverrideEnabled() const { return glassDesertOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
@@ -51,6 +53,8 @@ namespace BigScreen {
         void SetTransparencyEnabled(bool value);
         void SetMapLightShowEnabled(bool value);
         void SetHideBackWallLights(bool value);
+        void SetHideRingLights(bool value);
+        void SetHideSideLaserLights(bool value);
         void SetEnvironmentOverrideEnabled(bool value);
         void SetGlassDesertOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
@@ -79,6 +83,8 @@ namespace BigScreen {
         bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool hideBackWallLights_ = true;
+        bool hideRingLights_ = true;
+        bool hideSideLaserLights_ = true;
         bool environmentOverrideEnabled_ = true;
         bool glassDesertOverrideEnabled_ = false;
         bool environmentMotionEnabled_ = true;
