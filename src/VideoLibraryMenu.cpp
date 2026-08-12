@@ -863,6 +863,8 @@ namespace BigScreen {
         playbackPanel->set_childForceExpandWidth(true);
         ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
+        auto* playbackPanelBackground = playbackPanel->get_gameObject()
+            ->GetComponent<HMUI::ImageView*>();
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
         auto* playbackGroupTitle = BSML::Lite::CreateText(
@@ -970,22 +972,33 @@ namespace BigScreen {
             sliderRect->set_anchoredPosition({0.0f, 0.0f});
             sliderRect->set_sizeDelta({0.0f, 0.0f});
 
+            // The stock slider tints its complete track as the Selectable's
+            // hover target. Preserve that graphic as a fixed light-gray bar,
+            // then retarget ColorTint to the movable handle alone so pointing
+            // at the control turns only the handle black.
+            auto sliderTrack = playbackScrubber_->slider->get_targetGraphic();
+            if(sliderTrack)
+                sliderTrack->set_color({0.82f, 0.84f, 0.87f, 0.92f});
+
+            UnityEngine::UI::Graphic* sliderHandle = nullptr;
+            if(auto handleRect = playbackScrubber_->slider->get_handleRect())
+                sliderHandle = handleRect->get_gameObject()
+                    ->GetComponentInChildren<UnityEngine::UI::Graphic*>();
+            if(sliderHandle)
+            {
+                sliderHandle->set_color(UnityEngine::Color::get_white());
+                playbackScrubber_->slider->set_targetGraphic(sliderHandle);
+            }
             auto sliderColors = playbackScrubber_->slider->get_colors();
-            // Keep the transport track visibly separate from the dark menu.
-            // Hovering brightens the same light-gray surface instead of
-            // replacing it with the black selectable treatment used by rows.
-            sliderColors.set_normalColor({0.82f, 0.84f, 0.87f, 0.92f});
-            sliderColors.set_highlightedColor({0.94f, 0.95f, 0.97f, 1.0f});
-            sliderColors.set_pressedColor({0.72f, 0.75f, 0.79f, 0.96f});
-            sliderColors.set_selectedColor({0.88f, 0.90f, 0.93f, 0.98f});
+            sliderColors.set_normalColor(UnityEngine::Color::get_white());
+            sliderColors.set_highlightedColor(UnityEngine::Color::get_black());
+            sliderColors.set_pressedColor(UnityEngine::Color::get_black());
+            sliderColors.set_selectedColor(UnityEngine::Color::get_black());
             playbackScrubber_->slider->set_colors(sliderColors);
-            auto sliderTarget = playbackScrubber_->slider->get_targetGraphic();
-            if(sliderTarget)
-                sliderTarget->set_color(UnityEngine::Color::get_white());
 
             playbackScrubberFill_ = BSML::Lite::CreateImage(
-                sliderTarget
-                    ? sliderTarget->get_transform()
+                sliderTrack
+                    ? sliderTrack->get_transform()
                     : playbackScrubber_->slider->get_transform(),
                 BSML::Utilities::ImageResources::GetBlankSprite());
             playbackScrubberFill_->set_color({0.05f, 0.62f, 0.95f, 0.82f});
@@ -1071,6 +1084,11 @@ namespace BigScreen {
         storagePanel->set_childForceExpandWidth(true);
         ConfigureLayout(storagePanel, -1.0f, 12.5f, 1.0f);
         videoOnlyRows_.push_back(storagePanel->get_gameObject());
+        if(playbackPanelBackground)
+            if(auto* storagePanelBackground = storagePanel->get_gameObject()
+                   ->GetComponent<HMUI::ImageView*>())
+                storagePanelBackground->set_color(
+                    playbackPanelBackground->get_color());
         const BSML::Lite::TransformWrapper storageBody(storagePanel);
 
         auto* storageGroupTitle = BSML::Lite::CreateText(
