@@ -1052,10 +1052,35 @@ namespace BigScreen {
         ConfigureLayout(storageSpacer, -1.0f, 2.0f, 1.0f);
         videoOnlyRows_.push_back(storageSpacer->get_gameObject());
 
-        // Storage values share the row with the destructive action. The button
-        // occupies the far-right edge after Free Space, leaving the three data
-        // columns to divide the rest of the full editor width evenly.
-        auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        // Match the playback area's visual hierarchy: a full-width rounded
+        // panel names the section, then keeps all three capacity values and
+        // the destructive action together inside one bordered region.
+        auto* storagePanelObject = ConstructLayout(
+            "<vertical tags='big-screen-storage-panel' bg='round-rect-panel' "
+            "pad-left='0.8' pad-right='0.8' pad-top='0.5' pad-bottom='0.5' "
+            "spacing='0.3' horizontal-fit='Unconstrained'/>",
+            editorRoot->get_transform(),
+            "big-screen-storage-panel");
+        auto* storagePanel = storagePanelObject
+            ? storagePanelObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
+            : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(storagePanel, true);
+        storagePanel->set_spacing(0.3f);
+        storagePanel->set_childForceExpandWidth(true);
+        ConfigureLayout(storagePanel, -1.0f, 12.5f, 1.0f);
+        videoOnlyRows_.push_back(storagePanel->get_gameObject());
+        const BSML::Lite::TransformWrapper storageBody(storagePanel);
+
+        auto* storageGroupTitle = BSML::Lite::CreateText(
+            storageBody,
+            "Video Storage Space",
+            3.0f);
+        ConfigureLayout(storageGroupTitle, -1.0f, 3.8f, 1.0f);
+        storageGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
+
+        // The button occupies the far-right edge after Free Space, leaving
+        // the three data columns to divide the remaining width evenly.
+        auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(storageBody);
         ConfigureGroup(storageRow, false);
         storageRow->set_spacing(0.6f);
         ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
@@ -1096,7 +1121,6 @@ namespace BigScreen {
         removeButton_->set_colors(removeColors);
         if(auto target = removeButton_->get_targetGraphic())
             target->set_color(UnityEngine::Color::get_white());
-        videoOnlyRows_.push_back(storageRow->get_gameObject());
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
