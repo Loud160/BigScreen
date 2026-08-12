@@ -6,6 +6,8 @@ namespace BigScreen {
     /// One complete screen geometry preset. Keeping geometry together prevents
     /// a profile switch from briefly mixing values from two layouts.
     struct ScreenLayoutProfile {
+        bool advancedControls = false;
+        bool transparency = false;
         float distanceOffset = 0.0f;
         float horizontalOffset = 0.0f;
         float verticalOffset = 0.0f;
@@ -24,13 +26,13 @@ namespace BigScreen {
         bool undocked = false;
         bool undockedConfigured = false;
         float undockedPositionX = 0.0f;
-        float undockedPositionY = 3.0f;
-        float undockedPositionZ = 8.0f;
+        float undockedPositionY = 1.8f;
+        float undockedPositionZ = 3.2f;
         float undockedRotationX = 0.0f;
         float undockedRotationY = 0.0f;
         float undockedRotationZ = 0.0f;
-        float undockedWidth = 5.333333f;
-        float undockedHeight = 3.0f;
+        float undockedWidth = 2.4f;
+        float undockedHeight = 1.35f;
     };
 
     /// Persistent, user-facing behavior shared by the main-menu page, map
@@ -51,7 +53,7 @@ namespace BigScreen {
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
-        bool AdvancedOptionsEnabled() const { return advancedOptionsEnabled_; }
+        bool AdvancedOptionsEnabled() const { return ActiveLayout().advancedControls; }
         int ActiveScreenLayout() const { return activeScreenLayout_; }
         const ScreenLayoutProfile& ActiveLayout() const {
             return screenLayouts_[activeScreenLayout_];
@@ -74,7 +76,7 @@ namespace BigScreen {
         bool StretchVideoToFit() const { return ActiveLayout().stretchVideoToFit; }
         bool UndockedScreenEnabled() const { return ActiveLayout().undocked; }
         bool AllowChromaOverride() const { return allowChromaOverride_; }
-        bool TransparencyEnabled() const { return transparencyEnabled_; }
+        bool TransparencyEnabled() const { return ActiveLayout().transparency; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
         bool HideRingLights() const { return hideRingLights_; }
@@ -149,14 +151,12 @@ namespace BigScreen {
         bool distractionFreeMenu_ = true;
         bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
-        bool advancedOptionsEnabled_ = false;
         std::array<ScreenLayoutProfile, 5> screenLayouts_{};
         int activeScreenLayout_ = 0;
         // Only maps that actually contain mapper-authored Cinema presentation
         // fields can take ownership; ordinary video maps remain on the selected
         // Big Screen layout even though compatibility defaults to enabled.
         bool allowChromaOverride_ = true;
-        bool transparencyEnabled_ = false;
         bool mapLightShowEnabled_ = true;
         bool hideBackWallLights_ = true;
         bool hideRingLights_ = true;

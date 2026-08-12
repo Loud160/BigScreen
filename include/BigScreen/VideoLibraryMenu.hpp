@@ -49,6 +49,7 @@ namespace BigScreen {
         void Refresh();
         void Tick(GlobalNamespace::SongPreviewPlayer* songPreviewPlayer);
         void Deactivate();
+        void StopActivePreview();
         void RefreshDisplaySettings();
 
     private:

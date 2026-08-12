@@ -17,6 +17,7 @@
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "UnityEngine/Color.hpp"
+#include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Quaternion.hpp"
 #include "UnityEngine/RectTransform.hpp"
@@ -33,6 +34,33 @@ namespace BigScreen {
         constexpr int PreviewTextureWidth = 512;
         constexpr int PreviewTextureHeight = 288;
         constexpr float UiUnitsPerMeter = 50.0f;
+        // The grip is 12 UI units wide. A 5.5-unit inset shifts it half a unit
+        // right and down across the frame borders, producing a deliberate
+        // overlap that makes the control look anchored to the corner.
+        constexpr float ResizeHandleInsetUi = 5.5f;
+
+        void CenterRect(UnityEngine::RectTransform* rect)
+        {
+            if(!rect)
+                return;
+            rect->set_anchorMin({0.5f, 0.5f});
+            rect->set_anchorMax({0.5f, 0.5f});
+            rect->set_pivot({0.5f, 0.5f});
+        }
+
+        void HideNativeHandleRenderer(BSML::FloatingScreen* screen)
+        {
+            if(!screen || !screen->handle)
+                return;
+            auto* renderer = screen->handle
+                ->GetComponent<UnityEngine::MeshRenderer*>();
+            // The native cube retains the proven movement collider and BSML
+            // pointer handler. Only its renderer is hidden; Big Screen's cyan
+            // UI bar supplies the visible target without touching the native
+            // interaction state that previously worked on this headset.
+            if(renderer)
+                renderer->set_enabled(false);
+        }
 
         std::string AspectRatioLabel(float width, float height)
         {
@@ -219,7 +247,8 @@ namespace BigScreen {
         config.maintainAspectRatioWhenCurved =
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
-        config.transparent = settings.TransparencyEnabled();
+        config.transparent = settings.AdvancedOptionsEnabled() &&
+            settings.TransparencyEnabled();
         if(settings.AdvancedOptionsEnabled())
         {
             config.videoRotation = settings.VideoRotation();
@@ -258,7 +287,21 @@ namespace BigScreen {
             return;
 
         DestroyEditorUi();
-        Refresh();
+        const bool libraryPreviewActive =
+            PlaybackSession::Instance().IsLibraryPreviewActive();
+        if(libraryPreviewActive)
+        {
+            // The playing Video Library surface is the only preview that
+            // should be visible while positioning. Do not create the separate
+            // checkerboard settings surface behind it.
+            surface_.Destroy();
+            baseConfig_.reset();
+            CaptureBasePlacement();
+        }
+        else
+        {
+            Refresh();
+        }
         if(!baseConfig_)
             return;
 
@@ -296,8 +339,16 @@ namespace BigScreen {
         {
             PaperLogger.error("Could not create the undocked screen editor");
             DestroyEditorUi();
-            Refresh();
+            if(libraryPreviewActive)
+                PlaybackSession::Instance().RestoreLibraryPreviewDisplay(false);
+            else
+                Refresh();
             return;
+        }
+        if(libraryPreviewActive)
+        {
+            PlaybackSession::Instance().ApplyLibraryPreviewEditorDisplay(
+                *editorConfig_, true);
         }
         SettingsMenu::Instance().RefreshControls();
         PaperLogger.info("Started undocked editor for Layout {}",
@@ -327,45 +378,90 @@ namespace BigScreen {
         if(!editorScreen_)
             return false;
         editorScreen_->get_gameObject()->set_name("Big Screen Undocked Editor");
-        editorScreen_->set_HandleSide(BSML::Side::Full);
+        // A Full handle is technically draggable, but BSML deliberately does
+        // not render it. It also sits behind every editor control, making the
+        // entire screen feel like one unexplained invisible hit target. A Top
+        // handle gives movement one predictable grab region while leaving the
+        // Save button and resize handle independent.
+        editorScreen_->set_HandleSide(BSML::Side::Top);
         editorScreen_->set_HighlightHandle(true);
 
-        const auto blank = BSML::Utilities::ImageResources::GetBlankSprite();
+        // BSML 0.4.43's BlankSprite uses Texture2D::blackTexture. Multiplying
+        // that sprite by cyan still produces black, so it cannot be used for
+        // colored editor geometry. WhitePixel accepts the intended tint and
+        // makes the frame/handles reliably cyan on Quest.
+        const auto whitePixel =
+            BSML::Utilities::ImageResources::GetWhitePixel();
         for(auto& border : editorBorders_)
         {
-            border = BSML::Lite::CreateImage(editorScreen_->get_transform(), blank);
+            border = BSML::Lite::CreateImage(
+                editorScreen_->get_transform(), whitePixel);
             if(border)
             {
                 border->set_color({0.0f, 0.80f, 1.0f, 0.95f});
                 border->set_preserveAspect(false);
                 border->set_raycastTarget(false);
+                CenterRect(border->get_transform()
+                    .cast<UnityEngine::RectTransform>());
             }
+        }
+
+        editorMoveBar_ = BSML::Lite::CreateImage(
+            editorScreen_->get_transform(), whitePixel);
+        if(editorMoveBar_)
+        {
+            // Cyan is reserved for the screen boundary. Warm amber identifies
+            // editor parts that can actually be grabbed with the controller.
+            editorMoveBar_->set_color({1.0f, 0.56f, 0.08f, 1.0f});
+            editorMoveBar_->set_preserveAspect(false);
+            editorMoveBar_->set_raycastTarget(false);
+            CenterRect(editorMoveBar_->get_transform()
+                .cast<UnityEngine::RectTransform>());
+        }
+        editorMoveText_ = BSML::Lite::CreateText(
+            editorScreen_->get_transform(),
+            "GRAB ORANGE BAR TO MOVE OR ROTATE",
+            TMPro::FontStyles::Bold, 4.5f);
+        if(editorMoveText_)
+        {
+            editorMoveText_->set_alignment(TMPro::TextAlignmentOptions::Center);
+            editorMoveText_->set_enableWordWrapping(false);
+            editorMoveText_->set_raycastTarget(false);
+            CenterRect(editorMoveText_->get_rectTransform());
         }
 
         editorInstructions_ = BSML::Lite::CreateText(
             editorScreen_->get_transform(),
-            "Point at the frame and hold the trigger to move or rotate it.\nDrag the lower-right handle to resize. Save Screen finishes editing.",
-            TMPro::FontStyles::Normal, 4.0f);
+            "Hold the trigger on the orange bar to position the screen.\nDrag the orange corner grip to resize it.",
+            TMPro::FontStyles::Normal, 6.0f);
         if(editorInstructions_)
         {
             editorInstructions_->set_alignment(TMPro::TextAlignmentOptions::Center);
             editorInstructions_->set_enableWordWrapping(true);
             editorInstructions_->set_raycastTarget(false);
+            CenterRect(editorInstructions_->get_rectTransform());
         }
         editorAspectText_ = BSML::Lite::CreateText(
-            editorScreen_->get_transform(), "", TMPro::FontStyles::Bold, 5.0f);
+            editorScreen_->get_transform(), "", TMPro::FontStyles::Bold, 7.0f);
         if(editorAspectText_)
         {
             editorAspectText_->set_alignment(TMPro::TextAlignmentOptions::Center);
             editorAspectText_->set_raycastTarget(false);
+            CenterRect(editorAspectText_->get_rectTransform());
         }
         editorSaveButton_ = BSML::Lite::CreateUIButton(
             editorScreen_->get_transform(), "Save Screen",
-            {0.0f, 0.0f}, {34.0f, 8.0f},
+            {0.0f, 0.0f}, {40.0f, 10.0f},
             []() { ScreenPreview::Instance().SaveUndockedEditing(); });
+        if(editorSaveButton_)
+        {
+            CenterRect(editorSaveButton_->get_transform()
+                .cast<UnityEngine::RectTransform>());
+            BSML::Lite::SetButtonTextSize(editorSaveButton_, 4.5f);
+        }
 
         resizeHandleScreen_ = BSML::FloatingScreen::CreateFloatingScreen(
-            {8.0f, 8.0f}, true,
+            {14.0f, 14.0f}, true,
             editorScreen_->get_transform()->get_position(),
             editorScreen_->get_transform()->get_rotation(),
             0.0f, false);
@@ -373,18 +469,56 @@ namespace BigScreen {
             return false;
         resizeHandleScreen_->get_gameObject()->set_name(
             "Big Screen Undocked Resize Handle");
-        resizeHandleScreen_->set_HandleSide(BSML::Side::Full);
+        // Reuse the exact native Top handle that successfully moves the main
+        // screen. The small canvas is offset below the corner so this handle
+        // lands directly on the visible resize marker. Full handles were not
+        // reliably draggable on this Quest/BSML combination.
+        resizeHandleScreen_->set_HandleSide(BSML::Side::Top);
         resizeHandleScreen_->set_HighlightHandle(true);
-        if(auto* marker = BSML::Lite::CreateImage(
-               resizeHandleScreen_->get_transform(), blank,
-               {0.0f, 0.0f}, {7.0f, 7.0f}))
+        if(resizeHandleScreen_->handle)
         {
-            marker->set_color({0.0f, 0.80f, 1.0f, 1.0f});
-            marker->set_preserveAspect(false);
-            marker->set_raycastTarget(false);
+            // BSML's normal Top handle is intentionally a thin strip. Expand
+            // this native handle's BoxCollider to the full visible 13x13
+            // marker and center it inside this helper canvas. Leaving a Top
+            // handle at y=7 put half of the visible marker and its label beyond
+            // the RectMask2D boundary, which made the text appear clipped.
+            resizeHandleScreen_->handle->get_transform()
+                ->set_localPosition({0.0f, 0.0f, 0.0f});
+            resizeHandleScreen_->handle->get_transform()
+                ->set_localScale({13.0f, 13.0f, 2.0f});
+        }
+        // A conventional lower-right resize grip is clearer than a floating
+        // panel or labeled square. Draw three diagonal strokes over a fully
+        // transparent canvas; the screen's right and bottom borders already
+        // provide the two attached edges of the control.
+        struct GripStroke
+        {
+            UnityEngine::Vector2 position;
+            float length;
+        };
+        constexpr GripStroke gripStrokes[] = {
+            {{2.4f, -2.4f}, 3.0f},
+            {{0.8f, -0.8f}, 5.2f},
+            {{-0.8f, 0.8f}, 7.4f}};
+        for(const auto& stroke : gripStrokes)
+        {
+            if(auto* line = BSML::Lite::CreateImage(
+                   resizeHandleScreen_->get_transform(), whitePixel,
+                   stroke.position, {stroke.length, 0.75f}))
+            {
+                line->set_color({1.0f, 0.68f, 0.18f, 1.0f});
+                line->set_preserveAspect(false);
+                line->set_raycastTarget(false);
+                CenterRect(line->get_transform()
+                    .cast<UnityEngine::RectTransform>());
+                line->get_rectTransform()->set_localEulerAngles(
+                    {0.0f, 0.0f, 45.0f});
+            }
         }
 
         UpdateEditorOverlayLayout();
+        HideNativeHandleRenderer(editorScreen_);
+        HideNativeHandleRenderer(resizeHandleScreen_);
         PlaceResizeHandle();
         return true;
     }
@@ -398,6 +532,10 @@ namespace BigScreen {
             *editorConfig_->screenWidthOverride * UiUnitsPerMeter;
         const float height = editorConfig_->screenHeight * UiUnitsPerMeter;
         editorScreen_->set_ScreenSize({width, height});
+        // set_ScreenSize asks BSML to update its move handle and turns the
+        // primitive renderer back on. Hide only that renderer again; the Box
+        // Collider and FloatingScreenHandle remain untouched and draggable.
+        HideNativeHandleRenderer(editorScreen_);
 
         const auto setBorder = [](HMUI::ImageView* border,
                                   UnityEngine::Vector2 position,
@@ -409,17 +547,49 @@ namespace BigScreen {
             rect->set_anchoredPosition(position);
             rect->set_sizeDelta(size);
         };
-        constexpr float thickness = 1.5f;
-        setBorder(editorBorders_[0], {0.0f, height * 0.5f}, {width, thickness});
-        setBorder(editorBorders_[1], {0.0f, -height * 0.5f}, {width, thickness});
-        setBorder(editorBorders_[2], {-width * 0.5f, 0.0f}, {thickness, height});
-        setBorder(editorBorders_[3], {width * 0.5f, 0.0f}, {thickness, height});
+        // Keep the complete border inside the canvas bounds. Placing its
+        // center exactly on an edge caused half of the old 1.5-unit line to be
+        // clipped by the floating screen's mask, which could make the frame
+        // effectively disappear at a distance.
+        constexpr float thickness = 0.75f;
+        const float borderInset = thickness * 0.5f;
+        setBorder(editorBorders_[0],
+            {0.0f, height * 0.5f - borderInset}, {width, thickness});
+        setBorder(editorBorders_[1],
+            {0.0f, -height * 0.5f + borderInset}, {width, thickness});
+        setBorder(editorBorders_[2],
+            {-width * 0.5f + borderInset, 0.0f}, {thickness, height});
+        setBorder(editorBorders_[3],
+            {width * 0.5f - borderInset, 0.0f}, {thickness, height});
+
+        if(editorMoveBar_)
+        {
+            auto rect = editorMoveBar_->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            const float barWidth = width * 0.8f;
+            const float barHeight = std::max(4.0f, height / 15.0f);
+            const float barY = height * 0.5f;
+            rect->set_anchoredPosition({0.0f, barY});
+            rect->set_sizeDelta({barWidth, barHeight});
+        }
+        if(editorMoveText_)
+        {
+            auto rect = editorMoveText_->get_rectTransform();
+            // Keep the complete six-unit text box below the edge-mounted move
+            // bar. Its old center was only 2.5 units below the canvas top, so
+            // the mask cut off the upper portion of every glyph.
+            const float barHeight = std::max(4.0f, height / 15.0f);
+            rect->set_anchoredPosition({
+                0.0f,
+                height * 0.5f - std::max(6.5f, barHeight + 1.5f)});
+            rect->set_sizeDelta({std::max(46.0f, width * 0.70f), 6.0f});
+        }
 
         if(editorInstructions_)
         {
             auto rect = editorInstructions_->get_rectTransform();
-            rect->set_anchoredPosition({0.0f, height * 0.18f});
-            rect->set_sizeDelta({std::max(40.0f, width - 12.0f), 24.0f});
+            rect->set_anchoredPosition({0.0f, height * 0.17f});
+            rect->set_sizeDelta({std::max(54.0f, width - 16.0f), 28.0f});
         }
         if(editorAspectText_)
         {
@@ -427,14 +597,14 @@ namespace BigScreen {
                 "Screen Aspect Ratio  " + AspectRatioLabel(width, height));
             auto rect = editorAspectText_->get_rectTransform();
             rect->set_anchoredPosition({0.0f, -height * 0.04f});
-            rect->set_sizeDelta({std::max(36.0f, width - 12.0f), 10.0f});
+            rect->set_sizeDelta({std::max(48.0f, width - 16.0f), 12.0f});
         }
         if(editorSaveButton_)
         {
             auto rect = editorSaveButton_->get_transform()
                 .cast<UnityEngine::RectTransform>();
-            rect->set_anchoredPosition({0.0f, -height * 0.22f});
-            rect->set_sizeDelta({34.0f, 8.0f});
+            rect->set_anchoredPosition({0.0f, -height * 0.24f});
+            rect->set_sizeDelta({40.0f, 10.0f});
         }
     }
 
@@ -449,7 +619,9 @@ namespace BigScreen {
             editorConfig_->screenHeight * UiUnitsPerMeter * 0.5f;
         resizeHandleScreen_->get_transform()->SetPositionAndRotation(
             editorScreen_->get_transform()->TransformPoint(
-                {halfWidth, -halfHeight, -0.5f}),
+                {halfWidth - ResizeHandleInsetUi,
+                 -halfHeight + ResizeHandleInsetUi,
+                 -0.5f}),
             editorScreen_->get_transform()->get_rotation());
     }
 
@@ -472,26 +644,60 @@ namespace BigScreen {
         const bool resizing = resizeHandle && resizeHandle->_grabbingController;
         if(resizing)
         {
+            // The native drag target and cyan marker are both centered on the
+            // helper canvas, so its origin is the new lower-right corner.
+            const auto markerWorld = resizeHandleScreen_->get_transform()
+                ->TransformPoint({0.0f, 0.0f, 0.0f});
             const auto local = editorScreen_->get_transform()
-                ->InverseTransformPoint(
-                    resizeHandleScreen_->get_transform()->get_position());
+                ->InverseTransformPoint(markerWorld);
+            // The marker center is intentionally inset from the actual
+            // lower-right corner. Add that inset back before converting the
+            // dragged position into physical screen size.
             const float width = std::clamp(
-                std::abs(local.x) * 2.0f / UiUnitsPerMeter, 0.5f, 50.0f);
+                (std::abs(local.x) + ResizeHandleInsetUi) *
+                    2.0f / UiUnitsPerMeter,
+                0.5f, 50.0f);
             const float height = std::clamp(
-                std::abs(local.y) * 2.0f / UiUnitsPerMeter, 0.5f, 50.0f);
+                (std::abs(local.y) + ResizeHandleInsetUi) *
+                    2.0f / UiUnitsPerMeter,
+                0.5f, 50.0f);
             if(std::abs(width - *editorConfig_->screenWidthOverride) > 0.005f ||
                std::abs(height - editorConfig_->screenHeight) > 0.005f)
             {
                 editorConfig_->screenWidthOverride = width;
                 editorConfig_->screenHeight = height;
                 UpdateEditorOverlayLayout();
-                surface_.UpdateGeometry(*editorConfig_);
+                if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                {
+                    PlaybackSession::Instance()
+                        .ApplyLibraryPreviewEditorDisplay(
+                            *editorConfig_, true);
+                }
+                else
+                {
+                    surface_.UpdateGeometry(*editorConfig_);
+                }
             }
         }
 
-        surface_.SetWorldTransform(
-            editorScreen_->get_transform()->get_position(),
-            editorScreen_->get_transform()->get_rotation());
+        const auto editorPosition =
+            editorScreen_->get_transform()->get_position();
+        auto editorRotation =
+            editorScreen_->get_transform()->get_rotation();
+        editorConfig_->screenPosition = {
+            editorPosition.x, editorPosition.y, editorPosition.z};
+        const auto editorEuler = editorRotation.get_eulerAngles();
+        editorConfig_->screenRotation = {
+            editorEuler.x, editorEuler.y, editorEuler.z};
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+        {
+            PlaybackSession::Instance().ApplyLibraryPreviewEditorDisplay(
+                *editorConfig_, false);
+        }
+        else
+        {
+            surface_.SetWorldTransform(editorPosition, editorRotation);
+        }
         if(!resizing)
             PlaceResizeHandle();
     }
@@ -509,8 +715,13 @@ namespace BigScreen {
             rotation.x, rotation.y, rotation.z,
             *editorConfig_->screenWidthOverride,
             editorConfig_->screenHeight);
+        const bool libraryPreviewActive =
+            PlaybackSession::Instance().IsLibraryPreviewActive();
         DestroyEditorUi();
-        Refresh();
+        if(libraryPreviewActive)
+            PlaybackSession::Instance().RestoreLibraryPreviewDisplay(true);
+        else
+            Refresh();
         SettingsMenu::Instance().RefreshControls();
         PaperLogger.info("Saved undocked screen placement");
     }
@@ -519,8 +730,13 @@ namespace BigScreen {
     {
         if(!editorScreen_ && !resizeHandleScreen_)
             return;
+        const bool libraryPreviewActive =
+            PlaybackSession::Instance().IsLibraryPreviewActive();
         DestroyEditorUi();
-        Refresh();
+        if(libraryPreviewActive)
+            PlaybackSession::Instance().RestoreLibraryPreviewDisplay(false);
+        else
+            Refresh();
         SettingsMenu::Instance().RefreshControls();
         PaperLogger.info("Cancelled unsaved undocked screen placement");
     }
@@ -534,7 +750,9 @@ namespace BigScreen {
         resizeHandleScreen_ = nullptr;
         editorScreen_ = nullptr;
         editorBorders_.fill(nullptr);
+        editorMoveBar_ = nullptr;
         editorInstructions_ = nullptr;
+        editorMoveText_ = nullptr;
         editorAspectText_ = nullptr;
         editorSaveButton_ = nullptr;
         editorConfig_.reset();

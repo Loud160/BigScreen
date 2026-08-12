@@ -3057,4 +3057,16 @@ namespace BigScreen {
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
     }
+
+    void VideoLibraryMenu::StopActivePreview()
+    {
+        // Storage maintenance is a review task, not another song-selection
+        // state. Stop only media preview ownership here: downloads remain
+        // active and the selected editor state remains intact for when the
+        // player closes the storage panel.
+        StopPreviewAudio(true);
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Stop();
+        ScreenPreview::Instance().ActivateCurrentState();
+    }
 }

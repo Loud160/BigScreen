@@ -47,7 +47,9 @@ namespace BigScreen {
         BSML::FloatingScreen* editorScreen_ = nullptr;
         BSML::FloatingScreen* resizeHandleScreen_ = nullptr;
         std::array<HMUI::ImageView*, 4> editorBorders_{};
+        HMUI::ImageView* editorMoveBar_ = nullptr;
         TMPro::TextMeshProUGUI* editorInstructions_ = nullptr;
+        TMPro::TextMeshProUGUI* editorMoveText_ = nullptr;
         TMPro::TextMeshProUGUI* editorAspectText_ = nullptr;
         UnityEngine::UI::Button* editorSaveButton_ = nullptr;
     };

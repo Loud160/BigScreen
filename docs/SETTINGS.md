@@ -1,6 +1,6 @@
 # Settings reference
 
-Big Screen has five tabs: General, Screen, Environment, Update, and Storage. Settings are global unless a description explicitly says “current play” or “selected video.” Reset to Defaults resets all five layouts and every option described below.
+Big Screen has five tabs: General, Screen, Environment, Update, and Misc. Settings are global unless a description explicitly says “current play,” “selected video,” or “selected layout.” Reset to Defaults resets all five layouts and every option described below.
 
 ## General
 
@@ -12,18 +12,6 @@ Sets the maximum number of frames Big Screen presents per second: 15, 30, or 60.
 
 Sets the maximum output height: 480p, 720p, or 1080p. Big Screen keeps the source MP4 unchanged and downsizes decoded output in memory; switching this option does not download another file. Sources below the selected limit are not enlarged. 720p is the recommended Quest balance. 1080p consumes more CPU, memory bandwidth, battery, and texture upload time.
 
-### Automatic Performance — default: Off
-
-Monitors five-second playback windows. If missed presentation requests reach the selected trigger, the current map temporarily steps through 60→30→15 FPS and then 1080→720→480p. It never modifies the MP4 or overwrites saved preferences; the next map starts from the saved limits.
-
-### Automatic Performance Trigger — default: 10% missed frames
-
-Available when Automatic Performance is on. 5% reacts sooner, 10% is balanced, and 20% tolerates more missed frames before reducing output. This measures Big Screen presentation performance, not Beat Saber's headset refresh rate.
-
-### Show Performance Information — default: Off
-
-Displays source/output resolution and FPS, requested versus presented frames, average decode delay, and automatic reductions during gameplay. A summary is retained on results/failure screens so it can be read after playing. Enable this when tuning quality or reporting performance problems.
-
 ### Big Screen Enabled — default: On
 
 Master switch. Off stops previews, downloads, screens, and environment changes while leaving the Big Screen Mods entry available. Related controls are disabled so a partially disabled configuration cannot continue interacting with Beat Saber.
@@ -31,10 +19,6 @@ Master switch. Off stops previews, downloads, screens, and environment changes w
 ### Distraction Free Menu — default: On
 
 While the Big Screen menu is open, temporarily hides the neon Beat Saber sign and supported clock/battery overlays it can detect. Objects are restored on exit. Detection is defensive: stock installations and installations without those optional UI objects remain supported.
-
-### Advanced Options — default: Off
-
-Unlocks independent video framing and free screen placement after an **I Understand** confirmation. These settings are saved separately for each screen layout. Extreme zoom, tilt, curvature, or screen placement may reduce performance or interact poorly with authored map effects. Turning Advanced Options off ignores the advanced values without deleting them and cancels unsaved screen positioning.
 
 ### Video In Map — default: On
 
@@ -59,6 +43,10 @@ The menu always displays a blank screen in the placement environment. Changes up
 ### Editing Screen Layout — default: Layout 1
 
 Chooses one of five independent layout profiles. It both selects the active layout and chooses which profile the controls edit. Layout can also be changed from song selection and, when Big Screen owns the current screen, from pause.
+
+### Advanced Screen Controls — default: Off
+
+Enables independent video framing and free screen placement for the selected layout after an **I Understand** confirmation. Each of the five layouts saves this switch independently, allowing basic and advanced layouts to coexist. Turning it off ignores that layout's saved transparency, screen rotation, video transforms, and undocked placement without deleting their values. Extreme settings may reduce performance or interact poorly with authored map effects.
 
 ### Allow Chroma Override — default: On
 
@@ -96,11 +84,11 @@ Visible only for curved screens. On keeps the original width-to-height relations
 
 Visible only for curved screens. Positive values wrap edges toward the player; negative values bend them away. Drag the slider for coarse movement or use arrows for 0.05 fine adjustments.
 
+The following controls are visible only when **Advanced Screen Controls** is enabled. Every value belongs to the currently selected layout.
+
 ### Video Transparency — default: Off
 
 On uses partial transparency so scenery/lights behind the plane can show through. Off uses an opaque material and blocks geometry behind the screen; lighting or bloom drawn on/in front of the same plane may still appear visually over it.
-
-The following controls are visible only when **Advanced Options** is enabled. Every value belongs to the currently selected layout.
 
 ### Screen Rotation — default: 0°, range: -180° to +180°
 
@@ -190,11 +178,27 @@ The hover hint identifies the active stable/nightly channel. Checking contacts G
 
 On restart, Big Screen import-tests the candidate. An incompatible candidate is rolled back to the last working package or shipped baseline and marked rejected so the same release is not repeatedly offered. A newer version remains eligible.
 
-## Storage
+## Misc
 
-### Manage Storage
+### Storage
 
-Opens a review page. **Scan Storage** finds only Big Screen-owned orphan downloads, unused thumbnails, and abandoned temporary files. The page lists what will be removed and requires confirmation. Assigned downloads, the embedded runtime, map-folder MP4s, and Video Import MP4s are protected.
+#### Manage Storage
+
+Opens a centered review page and stops any active library preview. **Scan Storage** finds only Big Screen-owned orphan downloads, unused thumbnails, and abandoned temporary files. Candidates are checked by default; uncheck individual files to keep them, then confirm removal of only the remaining checked files. Assigned downloads, the embedded runtime, map-folder MP4s, and Video Import MP4s are protected.
+
+### Performance
+
+#### Automatic Performance — default: Off
+
+Monitors five-second playback windows. If missed presentation requests reach the selected trigger, the current map temporarily steps through 60→30→15 FPS and then 1080→720→480p. It never modifies the MP4 or overwrites saved preferences; the next map starts from the saved limits.
+
+#### Automatic Performance Trigger — default: 10% missed frames
+
+Available when Automatic Performance is on. 5% reacts sooner, 10% is balanced, and 20% tolerates more missed frames before reducing output. This measures Big Screen presentation performance, not Beat Saber's headset refresh rate.
+
+#### Show Performance Information — default: Off
+
+Displays source/output resolution and FPS, requested versus presented frames, average decode delay, and automatic reductions during gameplay. A summary is retained on results/failure screens so it can be read after playing. Enable this when tuning quality or reporting performance problems.
 
 ## Song-selection header controls
 

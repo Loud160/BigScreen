@@ -228,10 +228,17 @@ namespace BigScreen {
                 },
                 [this]()
                 {
+                    // Storage maintenance belongs on the center screen and is
+                    // intentionally non-playback UI. Stop both song audio and
+                    // video before presenting it, but leave downloads and the
+                    // right-side library state intact.
+                    VideoLibraryMenu::Instance().StopActivePreview();
                     StorageMaintenanceMenu::Instance().Show();
-                    SetRightScreenViewController(
+                    ReplaceTopViewController(
                         storageViewController,
-                        HMUI::ViewController::AnimationType::In);
+                        nullptr,
+                        HMUI::ViewController::AnimationType::In,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
                 });
             VideoLibraryMenu::Instance().CreateUi(
                 libraryBrowserViewController,
@@ -248,9 +255,11 @@ namespace BigScreen {
                 storageViewController,
                 [this]()
                 {
-                    SetRightScreenViewController(
-                        libraryBrowserViewController,
-                        HMUI::ViewController::AnimationType::Out);
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
                 });
 
             // Main, left, right, bottom, and top are supplied in that order.
@@ -270,6 +279,17 @@ namespace BigScreen {
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
         VideoLibraryMenu::Instance().Refresh();
+        // A player can leave the complete Big Screen flow through the left
+        // Back button while storage is open. Always restore the empty center
+        // controller on the next visit instead of resurrecting that old page.
+        if(get_topViewController().ptr() != centerViewController)
+        {
+            ReplaceTopViewController(
+                centerViewController,
+                nullptr,
+                HMUI::ViewController::AnimationType::None,
+                HMUI::ViewController::AnimationDirection::Horizontal);
+        }
         SetRightScreenViewController(
             libraryBrowserViewController,
             HMUI::ViewController::AnimationType::None);

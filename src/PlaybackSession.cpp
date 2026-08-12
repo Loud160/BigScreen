@@ -13,6 +13,8 @@
 #include "BigScreen/ChromaMapDetector.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
+#include "UnityEngine/Quaternion.hpp"
+#include "UnityEngine/Vector3.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 #include "main.hpp"
@@ -120,7 +122,42 @@ namespace BigScreen {
         RebuildEffectiveConfig();
     }
 
-    void PlaybackSession::RebuildEffectiveConfig()
+    bool PlaybackSession::ApplyLibraryPreviewEditorDisplay(
+        const MapVideoConfig& displayConfig,
+        bool rebuildGeometry)
+    {
+        if(!started_ || context_ != PlaybackContext::LibraryPreview)
+            return false;
+
+        if(rebuildGeometry && !surface_.UpdateGeometry(displayConfig))
+            return false;
+        if(!rebuildGeometry)
+        {
+            surface_.SetWorldTransform(
+                {
+                    displayConfig.screenPosition.x,
+                    displayConfig.screenPosition.y,
+                    displayConfig.screenPosition.z},
+                UnityEngine::Quaternion::Euler({
+                    displayConfig.screenRotation.x,
+                    displayConfig.screenRotation.y,
+                    displayConfig.screenRotation.z}));
+        }
+        return true;
+    }
+
+    bool PlaybackSession::RestoreLibraryPreviewDisplay(
+        bool useLatestSettings)
+    {
+        if(!started_ || context_ != PlaybackContext::LibraryPreview)
+            return false;
+        if(useLatestSettings)
+            RebuildEffectiveConfig(PlaybackContext::LibraryPreview);
+        return config_ && surface_.UpdateGeometry(*config_);
+    }
+
+    void PlaybackSession::RebuildEffectiveConfig(
+        PlaybackContext intendedContext)
     {
 
         if(!baseConfig_)
@@ -135,7 +172,16 @@ namespace BigScreen {
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
         // scale adjustments from accumulating on the selected song.
         const auto& settings = Settings::Instance();
-        if(MapperPresentationActive())
+        // The Video Library is also the screen-layout workbench. Its live
+        // preview must occupy the user's selected canvas, including a saved
+        // undocked canvas, even when the selected song contains Cinema or
+        // Chroma presentation metadata. Song selection and gameplay still
+        // honor Allow Chroma Override exactly as before.
+        const bool editingUserLayout =
+            intendedContext == PlaybackContext::LibraryPreview ||
+            (intendedContext == PlaybackContext::None &&
+             context_ == PlaybackContext::LibraryPreview);
+        if(MapperPresentationActive() && !editingUserLayout)
         {
             // Cinema/Chroma compatibility is deliberately all-or-nothing for
             // geometry. Mixing a mapper's close, angled screen with a user's
@@ -143,6 +189,7 @@ namespace BigScreen {
             // Transparency remains a user preference only when the mapper did
             // not explicitly choose it, matching PC Cinema's nullable field.
             config_->transparent = config_->mapperTransparency.value_or(
+                settings.AdvancedOptionsEnabled() &&
                 settings.TransparencyEnabled());
             if(!config_->cinemaCurvatureDegrees)
             {
@@ -188,7 +235,11 @@ namespace BigScreen {
         config_->maintainAspectRatioWhenCurved =
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
-        config_->transparent = settings.TransparencyEnabled();
+        // Transparency is a picture-level advanced control. Keep its saved
+        // value for this layout, but use the basic opaque presentation while
+        // Advanced Screen Controls is off.
+        config_->transparent = settings.AdvancedOptionsEnabled() &&
+            settings.TransparencyEnabled();
         if(settings.AdvancedOptionsEnabled())
         {
             config_->videoRotation = settings.VideoRotation();
@@ -255,6 +306,14 @@ namespace BigScreen {
            !config_ ||
            started_ ||
            context == PlaybackContext::None)
+            return;
+
+        // Prepare() cannot know which preview owns the upcoming surface. In
+        // the Video Library, rebuild once with that context so the decoded
+        // picture is placed on the editable user canvas rather than on a
+        // mapper-authored back-wall screen.
+        RebuildEffectiveConfig(context);
+        if(!config_)
             return;
 
         std::string error;

@@ -78,7 +78,9 @@ namespace BigScreen {
         return true;
     }
 
-    bool StorageManager::StartCleanup(std::string& error)
+    bool StorageManager::StartCleanup(
+        const std::vector<std::filesystem::path>& selectedPaths,
+        std::string& error)
     {
         std::scoped_lock lock(mutex_);
         if(snapshot_.state != StorageState::Ready)
@@ -86,10 +88,35 @@ namespace BigScreen {
             error = "Run a storage scan before cleaning.";
             return false;
         }
+        if(selectedPaths.empty())
+        {
+            error = "Select at least one listed file before cleaning.";
+            return false;
+        }
         if(worker_.joinable()) worker_.join();
-        const auto approved = snapshot_.items;
+
+        // The UI submits path identities, but deletion authority still comes
+        // exclusively from the manager's most recent scan. Intersecting the
+        // request with that immutable result prevents a stale or malformed UI
+        // path from expanding cleanup beyond files the scanner approved.
+        std::unordered_set<std::string> selected;
+        selected.reserve(selectedPaths.size());
+        for(const auto& path : selectedPaths)
+            selected.emplace(path.lexically_normal().string());
+        std::vector<StorageCleanupItem> approved;
+        approved.reserve(selected.size());
+        for(const auto& item : snapshot_.items)
+            if(selected.contains(item.path.lexically_normal().string()))
+                approved.push_back(item);
+        if(approved.empty())
+        {
+            error = "The selected files are no longer part of the current storage scan. Scan again and retry.";
+            return false;
+        }
+
         snapshot_.state = StorageState::Cleaning;
-        snapshot_.message = "Removing the approved files...";
+        snapshot_.message = "Removing " + std::to_string(approved.size()) +
+            " selected file(s)...";
         worker_ = std::thread([this, approved]() { CleanupWorker(approved); });
         return true;
     }
@@ -215,6 +242,7 @@ namespace BigScreen {
         {
             const auto root = VideoLibrary::Instance().RootPath();
             std::size_t removed = 0;
+            std::unordered_set<std::string> removedPaths;
             for(const auto& item : approved)
             {
                 // Revalidate every exact scan result immediately before
@@ -225,14 +253,38 @@ namespace BigScreen {
                     continue;
                 std::error_code error;
                 if(std::filesystem::remove(item.path, error) && !error)
+                {
                     ++removed;
+                    removedPaths.emplace(item.path.lexically_normal().string());
+                }
             }
             std::scoped_lock lock(mutex_);
-            snapshot_.state = StorageState::Completed;
-            snapshot_.items.clear();
+            snapshot_.items.erase(
+                std::remove_if(
+                    snapshot_.items.begin(),
+                    snapshot_.items.end(),
+                    [&removedPaths](const StorageCleanupItem& item)
+                    {
+                        return removedPaths.contains(
+                            item.path.lexically_normal().string());
+                    }),
+                snapshot_.items.end());
             snapshot_.removableBytes = 0;
+            for(const auto& item : snapshot_.items)
+                snapshot_.removableBytes += item.bytes;
+            snapshot_.downloadedBytes = DirectoryBytes(
+                VideoLibrary::Instance().VideoPath());
+            snapshot_.importedBytes = DirectoryBytes(
+                VideoLibrary::Instance().ImportPath());
+            snapshot_.freeBytes = VideoLibrary::Instance().FreeBytes();
+            snapshot_.state = snapshot_.items.empty()
+                ? StorageState::Completed
+                : StorageState::Ready;
             snapshot_.message = "Removed " + std::to_string(removed) +
-                " approved Big Screen file(s).";
+                " selected Big Screen file(s).";
+            if(!snapshot_.items.empty())
+                snapshot_.message += " " + std::to_string(snapshot_.items.size()) +
+                    " unselected or unavailable file(s) remain.";
         }
         catch(const std::exception& exception)
         {

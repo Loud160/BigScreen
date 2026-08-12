@@ -56,7 +56,7 @@ Start with the [documentation index](docs/README.md), or jump directly to:
 3. Leave **Big Screen Enabled**, **Video In Map**, and **Preview Video** on.
 4. Open **Video Library**, select a song, and either choose a compatible local MP4 or paste a YouTube URL.
 5. After assignment/download, use the synchronized preview to adjust **Video Playback Offset**, **Playback Speed**, and **Fit to Song**.
-6. Open **Screen** to position the blank preview surface and save up to five layouts. Enable **Advanced Options** only if you need independent video framing or a freely positioned screen.
+6. Open **Screen** to position the blank preview surface and save up to five layouts. Enable **Advanced Screen Controls** on only the layouts that need independent video framing or free placement.
 7. Select the song normally. Big Screen's header controls can globally enable previews/gameplay video and change layouts without reopening the mod.
 
 ## Ways to add a video

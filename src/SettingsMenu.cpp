@@ -22,10 +22,14 @@
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Canvas.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/TextAnchor.hpp"
 #include "UnityEngine/UI/Button.hpp"
+#include "UnityEngine/UI/ContentSizeFitter.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
+#include "UnityEngine/UI/LayoutRebuilder.hpp"
 #include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
@@ -63,7 +67,7 @@ namespace BigScreen {
         };
 
         std::array<std::string_view, 5> SettingsTabNames{
-            "General", "Screen", "Environment", "Update", "Storage"
+            "General", "Screen", "Environment", "Update", "Misc"
         };
 
         std::string ResolutionLabel(int height)
@@ -172,6 +176,7 @@ namespace BigScreen {
         maintainCurveAspectToggle_ = nullptr;
         curvatureSlider_ = nullptr;
         transparencyToggle_ = nullptr;
+        screenCanvasHeader_ = nullptr;
         advancedScreenControlsRoot_ = nullptr;
         screenRotationSlider_ = nullptr;
         videoRotationSlider_ = nullptr;
@@ -206,6 +211,7 @@ namespace BigScreen {
         localVideoInstructionsModal_ = nullptr;
         resetConfirmationModal_ = nullptr;
         advancedWarningModal_ = nullptr;
+        advancedWarningText_ = nullptr;
         undockWarningModal_ = nullptr;
         updaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
@@ -338,18 +344,143 @@ namespace BigScreen {
             return;
         }
 
+        // Scroll containers align their first child directly with the upper
+        // mask. A small real spacer keeps the first glyph row below that mask,
+        // while an explicit text rectangle prevents the paragraph from
+        // collapsing or clipping as the tab is activated.
+        auto* storageTopSpacer = BSML::Lite::CreateText(
+            storageContainer, "", 1.0f,
+            {0.0f, 0.0f}, {48.0f, 1.5f});
+        if(auto* spacerLayout = storageTopSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            spacerLayout->set_preferredHeight(1.5f);
+        auto* storageSectionTitle = BSML::Lite::CreateText(
+            storageContainer, "Storage", 4.2f);
+        if(storageSectionTitle)
+        {
+            storageSectionTitle->set_fontStyle(TMPro::FontStyles::Bold);
+            storageSectionTitle->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            storageSectionTitle->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            if(auto* layout = storageSectionTitle->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(4.8f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(
+            storageContainer);
+        if(storageRow)
+        {
+            storageRow->set_spacing(1.5f);
+            storageRow->set_childControlWidth(true);
+            storageRow->set_childControlHeight(false);
+            storageRow->set_childForceExpandWidth(true);
+            storageRow->set_childForceExpandHeight(false);
+            storageRow->set_childAlignment(
+                UnityEngine::TextAnchor::MiddleCenter);
+            if(auto* layout = storageRow->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(28.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        const BSML::Lite::TransformWrapper storageRowParent = storageRow
+            ? BSML::Lite::TransformWrapper(storageRow)
+            : BSML::Lite::TransformWrapper(storageContainer);
         auto* storageExplanation = BSML::Lite::CreateText(
-            storageContainer,
+            storageRowParent,
             "Storage Maintenance scans for unassigned Big Screen downloads, unused thumbnails, and abandoned temporary files. You will see the exact list and total size before anything is removed. Map-folder videos and files in Video Import are never deleted.",
-            3.0f);
+            2.7f,
+            {0.0f, 0.0f},
+            {36.0f, 26.0f});
         storageExplanation->set_enableWordWrapping(true);
-        storageExplanation->set_alignment(TMPro::TextAlignmentOptions::Center);
+        storageExplanation->set_enableAutoSizing(true);
+        storageExplanation->set_fontSizeMin(2.3f);
+        storageExplanation->set_fontSizeMax(2.7f);
+        storageExplanation->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        storageExplanation->set_alignment(
+            TMPro::TextAlignmentOptions::MidlineLeft);
+        if(auto* layout = storageExplanation->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            // A 3:1 flexible-width ratio makes the explanatory copy occupy
+            // three quarters of the row while preserving word wrapping.
+            layout->set_preferredWidth(0.0f);
+            layout->set_preferredHeight(26.0f);
+            layout->set_flexibleWidth(3.0f);
+        }
         auto* manageStorageButton = BSML::Lite::CreateUIButton(
-            storageContainer, "Manage Storage", {0.0f, 0.0f}, {38.0f, 8.0f},
+            storageRowParent, "Manage Storage", {0.0f, 0.0f}, {18.0f, 8.0f},
             [callback = std::move(onManageStorage)]() { if(callback) callback(); });
+        BSML::Lite::SetButtonTextSize(manageStorageButton, 2.5f);
+        if(auto* layout = manageStorageButton
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            // An explicit width keeps the selectable/hover rectangle around
+            // the complete label instead of stretching only a narrow flex
+            // sliver beneath its center.
+            layout->set_minWidth(18.0f);
+            layout->set_preferredWidth(18.0f);
+            layout->set_preferredHeight(8.0f);
+            layout->set_flexibleWidth(0.0f);
+        }
         BSML::Lite::AddHoverHint(
             manageStorageButton,
             "Opens a review page that scans for safe-to-remove Big Screen files. Nothing is deleted without confirmation.");
+
+        // Preserve an unmistakable visual break between the compact storage
+        // row and the next section without relying on layout-group spacing,
+        // which is shared by every row in the scroll container.
+        auto* storageSectionSpacer = BSML::Lite::CreateText(
+            storageContainer, "", 1.0f,
+            {0.0f, 0.0f}, {48.0f, 2.0f});
+        if(auto* spacerLayout = storageSectionSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            spacerLayout->set_preferredHeight(2.0f);
+
+        auto* performanceSectionTitle = BSML::Lite::CreateText(
+            storageContainer, "Performance", 4.2f);
+        if(performanceSectionTitle)
+        {
+            performanceSectionTitle->set_fontStyle(TMPro::FontStyles::Bold);
+            performanceSectionTitle->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            performanceSectionTitle->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            if(auto* layout = performanceSectionTitle->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(6.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+
+        auto* performanceGroup = BSML::Lite::CreateVerticalLayoutGroup(
+            storageContainer);
+        if(performanceGroup)
+        {
+            performanceGroup->set_spacing(0.35f);
+            performanceGroup->set_childControlWidth(true);
+            performanceGroup->set_childControlHeight(true);
+            performanceGroup->set_childForceExpandWidth(true);
+            performanceGroup->set_childForceExpandHeight(false);
+            if(auto* fitter = performanceGroup->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
+            {
+                fitter->set_horizontalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
+                fitter->set_verticalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::PreferredSize);
+            }
+            if(auto* layout = performanceGroup->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+                layout->set_flexibleWidth(1.0f);
+        }
+        const BSML::Lite::TransformWrapper performanceParent = performanceGroup
+            ? BSML::Lite::TransformWrapper(performanceGroup)
+            : BSML::Lite::TransformWrapper(storageContainer);
 
         // Performance limits are global playback preferences rather than
         // environment behavior. Create them first so they remain at the top of
@@ -387,7 +518,7 @@ namespace BigScreen {
             "Sets the highest resolution used during playback. It does not download another copy or change the saved MP4. Lower-resolution videos are not enlarged. 720p is recommended; 1080p may reduce performance and battery life.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
-            generalContainer,
+            performanceParent,
             "Automatic Performance",
             settings.AutomaticPerformanceEnabled(),
             [this](bool enabled)
@@ -399,7 +530,7 @@ namespace BigScreen {
             automaticPerformanceToggle_,
             "Temporarily lowers video frame rate and then resolution when playback cannot keep up. Your saved quality choices are restored for the next map.");
         automaticPerformanceThresholdDropdown_ = BSML::Lite::CreateDropdown(
-            generalContainer,
+            performanceParent,
             "Automatic Performance Trigger",
             std::to_string(settings.AutomaticPerformanceThreshold()) + "% missed frames",
             PerformanceThresholdChoices,
@@ -413,7 +544,7 @@ namespace BigScreen {
             automaticPerformanceThresholdDropdown_,
             "Chooses how many video frames may be missed during five seconds before Automatic Performance lowers quality. A lower percentage reacts sooner.");
         performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
-            generalContainer,
+            performanceParent,
             "Show Performance Information",
             settings.PerformanceDiagnosticsEnabled(),
             [](bool enabled)
@@ -463,32 +594,6 @@ namespace BigScreen {
             distractionFreeMenuToggle_,
             "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
 
-        advancedOptionsToggle_ = BSML::Lite::CreateToggle(
-            generalContainer,
-            "Advanced Options",
-            settings.AdvancedOptionsEnabled(),
-            [this](bool enabled)
-            {
-                if(suppressAdvancedCallback_)
-                    return;
-                if(enabled)
-                {
-                    suppressAdvancedCallback_ = true;
-                    SetToggleWithoutNotification(advancedOptionsToggle_, false);
-                    suppressAdvancedCallback_ = false;
-                    if(advancedWarningModal_)
-                        advancedWarningModal_->Show();
-                    return;
-                }
-                ScreenPreview::Instance().CancelUndockedEditing();
-                Settings::Instance().SetAdvancedOptionsEnabled(false);
-                ApplyDisplaySettingsAndRefreshPreview();
-                RefreshControls();
-            });
-        BSML::Lite::AddHoverHint(
-            advancedOptionsToggle_,
-            "Unlocks detailed video framing and free screen placement. These controls can conflict with mapper-authored presentation or reduce performance if used aggressively.");
-
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
             "Video In Map",
@@ -520,6 +625,15 @@ namespace BigScreen {
             previewToggle_,
             "Plays assigned videos while browsing songs. This requires Video In Map to be enabled and is also available on the song-selection screen.");
 
+        // Keep a small layout-owned inset above the conditional title. The
+        // scroll mask otherwise clips the top of the first line of text.
+        auto* screenTopSpacer = BSML::Lite::CreateText(
+            screenContainer, "", 1.0f,
+            {0.0f, 0.0f}, {48.0f, 1.5f});
+        if(auto* spacerLayout = screenTopSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            spacerLayout->set_preferredHeight(1.5f);
+
         screenLayoutDropdown_ = BSML::Lite::CreateDropdown(
             screenContainer,
             "Editing Screen Layout",
@@ -538,6 +652,65 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
             "Chooses which of your five saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
+
+        advancedOptionsToggle_ = BSML::Lite::CreateToggle(
+            screenContainer,
+            "Advanced Screen Controls",
+            settings.AdvancedOptionsEnabled(),
+            [this](bool enabled)
+            {
+                if(suppressAdvancedCallback_)
+                    return;
+                if(enabled)
+                {
+                    suppressAdvancedCallback_ = true;
+                    SetToggleWithoutNotification(advancedOptionsToggle_, false);
+                    suppressAdvancedCallback_ = false;
+                    if(advancedWarningText_)
+                    {
+                        advancedWarningText_->set_text(
+                            "Enable Screen " +
+                            std::to_string(
+                                Settings::Instance().ActiveScreenLayout() + 1) +
+                            " Advanced Controls?\n\nThis enables detailed video framing and free screen placement for the selected layout. Extreme settings may reduce performance or interact poorly with mapper-authored effects. Other layouts are not changed.");
+                    }
+                    if(advancedWarningModal_)
+                        advancedWarningModal_->Show();
+                    return;
+                }
+                ScreenPreview::Instance().CancelUndockedEditing();
+                Settings::Instance().SetAdvancedOptionsEnabled(false);
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+            });
+        BSML::Lite::AddHoverHint(
+            advancedOptionsToggle_,
+            "Enables detailed video framing and free placement for the selected screen layout. Other layouts keep their own basic or advanced setting.");
+
+        // The selector and its per-layout advanced switch deliberately come
+        // first. Besides making their relationship obvious, those rows keep
+        // this conditional heading below the scroll view's upper clipping
+        // boundary instead of cutting off the top of its letters.
+        auto* screenCanvasTitle = BSML::Lite::CreateText(
+            screenContainer, "Screen Canvas", 4.2f);
+        if(screenCanvasTitle)
+        {
+            screenCanvasTitle->set_fontStyle(TMPro::FontStyles::Bold);
+            screenCanvasTitle->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            screenCanvasTitle->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            screenCanvasHeader_ = screenCanvasTitle->get_gameObject();
+            if(auto* layout = screenCanvasHeader_
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(6.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+            // Creation order keeps the selector and its toggle adjacent in
+            // code. Visually, move the heading directly below the protective
+            // spacer and above both rows.
+            screenCanvasHeader_->get_transform()->SetSiblingIndex(1);
+        }
 
         allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -697,22 +870,35 @@ namespace BigScreen {
             curvatureSlider_,
             "Positive values wrap the edges toward you; negative values bend them away. The available range is -7 through +7.");
 
-        transparencyToggle_ = BSML::Lite::CreateToggle(
-            screenContainer,
-            "Video Transparency",
-            settings.TransparencyEnabled(),
-            [](bool enabled)
-            {
-                Settings::Instance().SetTransparencyEnabled(enabled);
-                ApplyDisplaySettingsAndRefreshPreview();
-            });
-        BSML::Lite::AddHoverHint(
-            transparencyToggle_,
-            "Makes the video partly transparent so lights and scenery behind it can remain visible. Turn this off for an opaque screen that blocks objects behind it.");
-
         auto* advancedGroup = BSML::Lite::CreateVerticalLayoutGroup(screenContainer);
         advancedScreenControlsRoot_ = advancedGroup
             ? advancedGroup->get_gameObject() : nullptr;
+        if(advancedGroup)
+        {
+            advancedGroup->set_spacing(0.35f);
+            advancedGroup->set_childControlWidth(true);
+            advancedGroup->set_childControlHeight(true);
+            advancedGroup->set_childForceExpandWidth(true);
+            advancedGroup->set_childForceExpandHeight(false);
+
+            // BSML's VerticalTag fits width by default but does not fit its
+            // height. That is appropriate for an anchored page, but this group
+            // is one child inside a scroll view. Without vertical fitting its
+            // RectTransform remains effectively zero-height: all advanced rows
+            // render at the same bottom boundary and the scroll view never
+            // includes them in its content range.
+            if(auto* fitter = advancedGroup->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
+            {
+                fitter->set_horizontalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
+                fitter->set_verticalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::PreferredSize);
+            }
+            if(auto* layout = advancedGroup->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+                layout->set_flexibleWidth(1.0f);
+        }
         const BSML::Lite::TransformWrapper advancedParent = advancedGroup
             ? BSML::Lite::TransformWrapper(advancedGroup)
             : BSML::Lite::TransformWrapper(screenContainer);
@@ -855,6 +1041,48 @@ namespace BigScreen {
             cancelPositioningButton_,
             "Leaves positioning without saving and restores the last saved screen placement.");
 
+        auto* videoControlsTitle = BSML::Lite::CreateText(
+            advancedParent, "Video Controls", 4.2f);
+        if(videoControlsTitle)
+        {
+            videoControlsTitle->set_fontStyle(TMPro::FontStyles::Bold);
+            videoControlsTitle->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            videoControlsTitle->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            if(auto* layout = videoControlsTitle->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(6.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+
+        transparencyToggle_ = BSML::Lite::CreateToggle(
+            advancedParent,
+            "Video Transparency",
+            settings.TransparencyEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetTransparencyEnabled(enabled);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            transparencyToggle_,
+            "Makes the video partly transparent so lights and scenery behind it can remain visible. Turn this off for an opaque picture that blocks the environment behind the screen.");
+
+        // The controls above are created in callback-friendly groups, then
+        // placed into their user-facing sections. Keep frame rotation and free
+        // positioning under Screen Canvas; begin Video Controls with its title
+        // and transparency setting, followed by every picture-only transform.
+        if(undockRow)
+            undockRow->get_transform()->SetSiblingIndex(1);
+        if(cancelPositioningButton_)
+            cancelPositioningButton_->get_transform()->SetSiblingIndex(2);
+        if(videoControlsTitle)
+            videoControlsTitle->get_transform()->SetSiblingIndex(3);
+        if(transparencyToggle_)
+            transparencyToggle_->get_transform()->SetSiblingIndex(4);
+
         lightShowToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
             "Map Light Show",
@@ -971,13 +1199,19 @@ namespace BigScreen {
 
         advancedWarningModal_ = BSML::Lite::CreateModal(
             viewController, {72.0f, 38.0f}, nullptr, false);
-        auto* advancedWarningText = BSML::Lite::CreateText(
+        advancedWarningText_ = BSML::Lite::CreateText(
             advancedWarningModal_,
-            "Enable Advanced Options?\n\nThese controls allow detailed video framing and free screen placement. Extreme settings may reduce performance or interact poorly with mapper-authored effects. You can reset all settings if the screen becomes difficult to use.",
-            TMPro::FontStyles::Normal, {0.0f, 7.0f});
-        advancedWarningText->set_fontSize(3.0f);
-        advancedWarningText->set_enableWordWrapping(true);
-        advancedWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
+            "Enable Screen 1 Advanced Controls?\n\nThis enables detailed video framing and free screen placement for the selected layout. Extreme settings may reduce performance or interact poorly with mapper-authored effects. Other layouts are not changed.",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 6.0f},
+            {64.0f, 23.0f});
+        advancedWarningText_->set_enableWordWrapping(true);
+        advancedWarningText_->set_enableAutoSizing(true);
+        advancedWarningText_->set_fontSizeMin(2.5f);
+        advancedWarningText_->set_fontSizeMax(3.0f);
+        advancedWarningText_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        advancedWarningText_->set_alignment(TMPro::TextAlignmentOptions::Center);
         BSML::Lite::CreateUIButton(
             advancedWarningModal_->get_transform(), "Cancel",
             {18.0f, -28.0f}, {25.0f, 8.0f},
@@ -1009,9 +1243,15 @@ namespace BigScreen {
         auto* undockWarningText = BSML::Lite::CreateText(
             undockWarningModal_,
             "Undock this screen?\n\nFree placement is an advanced feature. Keep the screen clear of Beat Saber's menus and use a comfortable size and distance. Leaving Big Screen or opening the Quest system menu cancels unsaved positioning.",
-            TMPro::FontStyles::Normal, {0.0f, 7.0f});
-        undockWarningText->set_fontSize(3.0f);
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 6.0f},
+            {64.0f, 23.0f});
         undockWarningText->set_enableWordWrapping(true);
+        undockWarningText->set_enableAutoSizing(true);
+        undockWarningText->set_fontSizeMin(2.5f);
+        undockWarningText->set_fontSizeMax(3.0f);
+        undockWarningText->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
         undockWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
         BSML::Lite::CreateUIButton(
             undockWarningModal_->get_transform(), "Cancel",
@@ -1408,6 +1648,8 @@ namespace BigScreen {
         const bool dockedGeometryEnabled = enabled &&
             !(settings.AdvancedOptionsEnabled() &&
               settings.UndockedScreenEnabled());
+        const bool advancedEnabled =
+            enabled && settings.AdvancedOptionsEnabled();
         const bool lightingChildrenEnabled =
             enabled && settings.MapLightShowEnabled();
 
@@ -1445,8 +1687,7 @@ namespace BigScreen {
         if(curvatureSlider_)
             curvatureSlider_->set_interactable(enabled);
         if(transparencyToggle_)
-            transparencyToggle_->set_interactable(enabled);
-        const bool advancedEnabled = enabled && settings.AdvancedOptionsEnabled();
+            transparencyToggle_->set_interactable(advancedEnabled);
         if(screenRotationSlider_)
             screenRotationSlider_->set_interactable(
                 advancedEnabled && dockedGeometryEnabled);
@@ -1554,9 +1795,29 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshAdvancedControls()
     {
+        const bool advancedEnabled =
+            Settings::Instance().AdvancedOptionsEnabled();
+        if(screenCanvasHeader_)
+            screenCanvasHeader_->SetActive(advancedEnabled);
         if(advancedScreenControlsRoot_)
-            advancedScreenControlsRoot_->SetActive(
-                Settings::Instance().AdvancedOptionsEnabled());
+        {
+            advancedScreenControlsRoot_->SetActive(advancedEnabled);
+
+            // Visibility changes alter the scroll content's preferred height.
+            // Rebuild from the nested group outward so the scrollbar receives
+            // the new range during the same click instead of retaining the
+            // shorter basic-options range until the menu is reopened.
+            auto advancedRect = advancedScreenControlsRoot_->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            UnityEngine::UI::LayoutRebuilder::ForceRebuildLayoutImmediate(
+                advancedRect);
+            auto parentRect = advancedScreenControlsRoot_->get_transform()
+                ->get_parent().cast<UnityEngine::RectTransform>();
+            if(parentRect)
+                UnityEngine::UI::LayoutRebuilder::ForceRebuildLayoutImmediate(
+                    parentRect);
+            UnityEngine::Canvas::ForceUpdateCanvases();
+        }
         if(cancelPositioningButton_)
             cancelPositioningButton_->get_gameObject()->SetActive(
                 ScreenPreview::Instance().IsUndockedEditing());

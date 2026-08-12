@@ -34,7 +34,9 @@ namespace BigScreen {
         ~StorageManager();
 
         bool StartScan(std::string& error);
-        bool StartCleanup(std::string& error);
+        bool StartCleanup(
+            const std::vector<std::filesystem::path>& selectedPaths,
+            std::string& error);
         StorageSnapshot Snapshot() const;
 
     private:

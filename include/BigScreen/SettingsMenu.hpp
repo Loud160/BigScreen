@@ -69,6 +69,7 @@ namespace BigScreen {
         BSML::ToggleSetting* maintainCurveAspectToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
         BSML::ToggleSetting* transparencyToggle_ = nullptr;
+        UnityEngine::GameObject* screenCanvasHeader_ = nullptr;
         UnityEngine::GameObject* advancedScreenControlsRoot_ = nullptr;
         BSML::SliderSetting* screenRotationSlider_ = nullptr;
         BSML::SliderSetting* videoRotationSlider_ = nullptr;
@@ -103,6 +104,7 @@ namespace BigScreen {
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
         BSML::ModalView* advancedWarningModal_ = nullptr;
+        TMPro::TextMeshProUGUI* advancedWarningText_ = nullptr;
         BSML::ModalView* undockWarningModal_ = nullptr;
         BSML::ModalView* errorModal_ = nullptr;
         TMPro::TextMeshProUGUI* errorModalText_ = nullptr;

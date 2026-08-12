@@ -41,7 +41,7 @@ Map completion never waits for a longer video; Beat Saber ends the map normally.
 
 ## Screen layouts and mapper overrides
 
-The Screen tab stores five independent layouts. Select the layout being edited, then adjust placement, size, tilt, curve, and transparency. Advanced Options adds independent picture rotation, zoom, pan, perspective tilt, stretch/letterbox behavior, screen rotation, and controller-based undocked placement. The Screen Layout control on song selection changes the active global layout. During a playable video map, pause offers a session-only Video Screen switch and, when Big Screen owns geometry, a live Layout 1–5 selector.
+The Screen tab stores five independent layouts. Select the layout being edited, then adjust its basic placement, size, tilt, and curve. Each layout has its own Advanced Screen Controls switch. Enabling it adds per-layout transparency, independent picture rotation, zoom, pan, perspective tilt, stretch/letterbox behavior, screen rotation, and controller-based undocked placement. The Screen Layout control on song selection changes the active global layout. During a playable video map, pause offers a session-only Video Screen switch and, when Big Screen owns geometry, a live Layout 1–5 selector.
 
 Flat layouts scale from 0.5x through 4.0x. Curved layouts are limited to 2.5x. Enabling curvature on a larger flat layout immediately clamps it to 2.5x; returning to flat restores the 4.0x range.
 
@@ -53,8 +53,8 @@ Allow Chroma Override is enabled by default. For maps with Cinema/Chroma present
 
 Show Performance Information displays source/output resolution and FPS, missed frames, decode delay, and automatic reductions during gameplay and on the results/failure screen.
 
-## Storage
+## Misc: storage and performance
 
 The selected-song storage row distinguishes the current map's managed download, local-file bytes when local files exist, total Big Screen video-library usage, and free Quest storage. Values under 1 GB are displayed in MB.
 
-The Storage tab opens a review page. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Cleanup requires confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected.
+The Misc tab contains Storage and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains Automatic Performance, its missed-frame trigger, and the optional playback-information overlay.

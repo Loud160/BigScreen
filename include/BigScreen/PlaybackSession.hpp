@@ -48,6 +48,17 @@ namespace BigScreen {
         /// Rebuilds the selected map's effective display configuration from
         /// mapper-authored metadata and the latest global settings.
         void RefreshDisplaySettings();
+        /// Temporarily applies the free-position editor's unsaved geometry to
+        /// an active Video Library preview without restarting its decoder or
+        /// audio. Returns false when the library preview does not own a live
+        /// video surface.
+        bool ApplyLibraryPreviewEditorDisplay(
+            const MapVideoConfig& displayConfig,
+            bool rebuildGeometry);
+        /// Restores an active library preview after positioning. Saving first
+        /// rebuilds from the newly persisted layout; cancelling reuses the
+        /// unchanged effective configuration from before editing began.
+        bool RestoreLibraryPreviewDisplay(bool useLatestSettings);
         /// Applies the currently selected user layout to a running gameplay
         /// surface without reopening FFmpeg or changing the playback clock.
         bool ApplyActiveScreenLayoutLive();
@@ -83,7 +94,8 @@ namespace BigScreen {
 
     private:
         PlaybackSession() = default;
-        void RebuildEffectiveConfig();
+        void RebuildEffectiveConfig(
+            PlaybackContext intendedContext = PlaybackContext::None);
         bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
         void CaptureDiagnosticsSummary();
 

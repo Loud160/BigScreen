@@ -1,6 +1,7 @@
 #include "BigScreen/Settings.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 
 #include "BigScreen/CoreLogic.hpp"
@@ -11,6 +12,15 @@
 namespace BigScreen {
     namespace {
         constexpr float MaximumScreenCurvature = 7.0f;
+        constexpr float InitialUndockedY = 1.8f;
+        constexpr float InitialUndockedZ = 3.2f;
+        constexpr float InitialUndockedWidth = 2.4f;
+        constexpr float InitialUndockedHeight = 1.35f;
+
+        bool NearlyEqual(float left, float right)
+        {
+            return std::abs(left - right) < 0.0005f;
+        }
 
         Configuration& GetConfiguration()
         {
@@ -108,7 +118,13 @@ namespace BigScreen {
             "videoEnabled",
             ReadBool(document, "videoEnabledByDefault", true));
         menuPreviewEnabled_ = ReadBool(document, "showMenuPreview", true);
-        advancedOptionsEnabled_ = ReadBool(document, "advancedOptionsEnabled", false);
+        // These two values were global in early builds. Use them only as the
+        // migration fallback for every profile; Save writes the new per-layout
+        // keys and removes the obsolete global keys after this load finishes.
+        const bool legacyAdvancedControls = ReadBool(
+            document, "advancedOptionsEnabled", false);
+        const bool legacyTransparency = ReadBool(
+            document, "transparencyEnabled", false);
         // Profile 1 migrates the original single-layout keys. Newly introduced
         // profiles 4 and 5 begin at documented defaults without changing the
         // three layouts saved by earlier versions.
@@ -117,6 +133,14 @@ namespace BigScreen {
             const auto prefix = "screenLayout" + std::to_string(index + 1);
             auto& layout = screenLayouts_[index];
             const bool legacy = index == 0;
+            layout.advancedControls = ReadBool(
+                document,
+                (prefix + "AdvancedControls").c_str(),
+                legacyAdvancedControls);
+            layout.transparency = ReadBool(
+                document,
+                (prefix + "Transparency").c_str(),
+                legacyTransparency);
             layout.distanceOffset = std::clamp(ReadFloat(
                 document, (prefix + "Distance").c_str(),
                 legacy ? ReadFloat(document, "screenDistanceOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
@@ -169,9 +193,9 @@ namespace BigScreen {
             layout.undockedPositionX = std::clamp(ReadFloat(
                 document, (prefix + "UndockedPositionX").c_str(), 0.0f), -100.0f, 100.0f);
             layout.undockedPositionY = std::clamp(ReadFloat(
-                document, (prefix + "UndockedPositionY").c_str(), 3.0f), -100.0f, 100.0f);
+                document, (prefix + "UndockedPositionY").c_str(), InitialUndockedY), -100.0f, 100.0f);
             layout.undockedPositionZ = std::clamp(ReadFloat(
-                document, (prefix + "UndockedPositionZ").c_str(), 8.0f), -100.0f, 100.0f);
+                document, (prefix + "UndockedPositionZ").c_str(), InitialUndockedZ), -100.0f, 100.0f);
             layout.undockedRotationX = std::clamp(ReadFloat(
                 document, (prefix + "UndockedRotationX").c_str(), 0.0f), -360.0f, 360.0f);
             layout.undockedRotationY = std::clamp(ReadFloat(
@@ -179,14 +203,38 @@ namespace BigScreen {
             layout.undockedRotationZ = std::clamp(ReadFloat(
                 document, (prefix + "UndockedRotationZ").c_str(), 0.0f), -360.0f, 360.0f);
             layout.undockedWidth = std::clamp(ReadFloat(
-                document, (prefix + "UndockedWidth").c_str(), 5.333333f), 0.5f, 50.0f);
+                document, (prefix + "UndockedWidth").c_str(), InitialUndockedWidth), 0.5f, 50.0f);
             layout.undockedHeight = std::clamp(ReadFloat(
-                document, (prefix + "UndockedHeight").c_str(), 3.0f), 0.5f, 50.0f);
+                document, (prefix + "UndockedHeight").c_str(), InitialUndockedHeight), 0.5f, 50.0f);
+
+            // Early development builds initialized free positioning eight
+            // metres away with a screen over five metres wide. That made the
+            // controller overlay difficult to read and is exactly the value
+            // already stored by testers who enabled the feature once. Migrate
+            // only that exact legacy preset; genuinely placed screens retain
+            // their saved transform and dimensions.
+            const bool legacyUndockedPreset =
+                layout.undockedConfigured &&
+                NearlyEqual(layout.undockedPositionX, 0.0f) &&
+                NearlyEqual(layout.undockedPositionY, 3.0f) &&
+                NearlyEqual(layout.undockedPositionZ, 8.0f) &&
+                NearlyEqual(layout.undockedRotationX, 0.0f) &&
+                NearlyEqual(layout.undockedRotationY, 0.0f) &&
+                NearlyEqual(layout.undockedRotationZ, 0.0f) &&
+                NearlyEqual(layout.undockedWidth, 5.333333f) &&
+                NearlyEqual(layout.undockedHeight, 3.0f);
+            if(legacyUndockedPreset)
+            {
+                layout.undockedPositionY = InitialUndockedY;
+                layout.undockedPositionZ = InitialUndockedZ;
+                layout.undockedWidth = InitialUndockedWidth;
+                layout.undockedHeight = InitialUndockedHeight;
+                layout.undockedConfigured = false;
+            }
         }
         activeScreenLayout_ = std::clamp(
             ReadInt(document, "activeScreenLayout", 0), 0, 4);
         allowChromaOverride_ = ReadBool(document, "allowChromaOverride", true);
-        transparencyEnabled_ = ReadBool(document, "transparencyEnabled", false);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
         hideRingLights_ = ReadBool(document, "hideRingLights", true);
@@ -272,7 +320,7 @@ namespace BigScreen {
 
     void Settings::SetAdvancedOptionsEnabled(bool value)
     {
-        advancedOptionsEnabled_ = value;
+        screenLayouts_[activeScreenLayout_].advancedControls = value;
         Save();
     }
 
@@ -396,17 +444,17 @@ namespace BigScreen {
         layout.undocked = value;
         if(value && !layout.undockedConfigured)
         {
-            // A deliberately conservative first position keeps the editor in
-            // easy controller reach without covering the left or right menus.
+            // Start close enough for the instructions and grab handles to be
+            // readable, but small enough that the screen cannot cover both
+            // side menus before the player has positioned it.
             layout.undockedPositionX = 0.0f;
-            layout.undockedPositionY = 3.0f;
-            layout.undockedPositionZ = 8.0f;
+            layout.undockedPositionY = InitialUndockedY;
+            layout.undockedPositionZ = InitialUndockedZ;
             layout.undockedRotationX = 0.0f;
             layout.undockedRotationY = 0.0f;
             layout.undockedRotationZ = 0.0f;
-            layout.undockedWidth = 5.333333f;
-            layout.undockedHeight = 3.0f;
-            layout.undockedConfigured = true;
+            layout.undockedWidth = InitialUndockedWidth;
+            layout.undockedHeight = InitialUndockedHeight;
         }
         Save();
     }
@@ -437,7 +485,7 @@ namespace BigScreen {
 
     void Settings::SetTransparencyEnabled(bool value)
     {
-        transparencyEnabled_ = value;
+        screenLayouts_[activeScreenLayout_].transparency = value;
         Save();
     }
 
@@ -553,7 +601,8 @@ namespace BigScreen {
         document.RemoveMember("menuScreenPreviewEnabled");
         Replace(document, "videoEnabled", videoEnabled_);
         Replace(document, "showMenuPreview", menuPreviewEnabled_);
-        Replace(document, "advancedOptionsEnabled", advancedOptionsEnabled_);
+        document.RemoveMember("advancedOptionsEnabled");
+        document.RemoveMember("transparencyEnabled");
         for(const auto* oldKey : {
             "screenDistanceOffset", "screenHorizontalOffset", "screenVerticalOffset",
             "screenTiltOffset", "screenScale", "curvedScreenEnabled",
@@ -564,6 +613,8 @@ namespace BigScreen {
         {
             const auto prefix = "screenLayout" + std::to_string(index + 1);
             const auto& layout = screenLayouts_[index];
+            Replace(document, (prefix + "AdvancedControls").c_str(), layout.advancedControls);
+            Replace(document, (prefix + "Transparency").c_str(), layout.transparency);
             Replace(document, (prefix + "Distance").c_str(), layout.distanceOffset);
             Replace(document, (prefix + "Horizontal").c_str(), layout.horizontalOffset);
             Replace(document, (prefix + "Vertical").c_str(), layout.verticalOffset);
@@ -591,7 +642,6 @@ namespace BigScreen {
             Replace(document, (prefix + "UndockedHeight").c_str(), layout.undockedHeight);
         }
         Replace(document, "allowChromaOverride", allowChromaOverride_);
-        Replace(document, "transparencyEnabled", transparencyEnabled_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);
         Replace(document, "hideRingLights", hideRingLights_);
