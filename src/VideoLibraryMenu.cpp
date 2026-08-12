@@ -741,7 +741,7 @@ namespace BigScreen {
         auto* playbackPanelObject = ConstructLayout(
             "<vertical tags='big-screen-playback-panel' bg='round-rect-panel' "
             "pad-left='0.8' pad-right='0.8' pad-top='0.5' pad-bottom='0.5' "
-            "spacing='0.3'/>",
+            "spacing='0.3' horizontal-fit='Unconstrained'/>",
             editorRoot->get_transform(),
             "big-screen-playback-panel");
         auto* playbackPanel = playbackPanelObject
@@ -750,20 +750,20 @@ namespace BigScreen {
         ConfigureGroup(playbackPanel, true);
         playbackPanel->set_spacing(0.3f);
         playbackPanel->set_childForceExpandWidth(true);
-        ConfigureLayout(playbackPanel, 49.0f, 12.5f, 0.0f);
+        ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
         auto* playbackGroupTitle = BSML::Lite::CreateText(
             playbackBody,
             "Playback Position",
             3.0f);
-        ConfigureLayout(playbackGroupTitle, 47.0f, 3.8f, 0.0f);
+        ConfigureLayout(playbackGroupTitle, -1.0f, 3.8f, 1.0f);
         playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
         ConfigureGroup(playbackRow, false);
         playbackRow->set_spacing(0.6f);
-        ConfigureLayout(playbackRow, 47.0f, 6.5f, 0.0f);
+        ConfigureLayout(playbackRow, -1.0f, 6.5f, 1.0f);
         playPauseButton_ = BSML::Lite::CreateUIButton(
             playbackRow,
             "Play",
