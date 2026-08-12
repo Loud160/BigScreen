@@ -1,5 +1,9 @@
 # Changelog
 
+- Fixed development deployments leaving an older Big Screen binary in the
+  opposite Scotland2 load phase. Loading both copies initialized CPython twice
+  and could abort Beat Saber during startup.
+
 ## 0.6.6 — unreleased beta
 
 - Quest-native H.264 video playback for OST, DLC, custom, and WIP songs.

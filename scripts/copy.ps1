@@ -72,6 +72,22 @@ if ($LASTEXITCODE -ne 0) {
 $modJson = Get-Content "./mod.json" -Raw | ConvertFrom-Json
 
 $modFiles = $modJson.modFiles
+$lateModFiles = $modJson.lateModFiles
+
+# A development build can move a native mod between Scotland2's early and late
+# phases while an older copy remains in the other folder. Scotland2 treats both
+# files as independent mods, which caused Big Screen to initialize its embedded
+# CPython runtime twice and abort Beat Saber during startup. The manifest is the
+# source of truth: remove only this project's same-named file from the opposite
+# phase before copying the selected build.
+foreach ($fileName in $modFiles) {
+    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Modloader/mods/$fileName"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+foreach ($fileName in $lateModFiles) {
+    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Modloader/early_mods/$fileName"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 foreach ($fileName in $modFiles) {
     if ($useDebug -eq $true) {
@@ -81,8 +97,6 @@ foreach ($fileName in $modFiles) {
     }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-
-$lateModFiles = $modJson.lateModFiles
 
 foreach ($fileName in $lateModFiles) {
     if ($useDebug -eq $true) {

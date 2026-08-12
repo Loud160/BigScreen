@@ -12,6 +12,7 @@ root = pathlib.Path(sys.argv[1]).resolve()
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
+copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
 settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
@@ -41,6 +42,12 @@ for warning in ("-Wall", "-Wextra", "-Wpedantic"):
 assert '$pythonVersion = "3.14.7"' in runtime_fetch
 assert "python-3.14.7/prefix" in cmake
 assert "libpython3.14.so" in cmake
+
+# A stale copy in the opposite Scotland2 phase loads Big Screen twice and
+# initializes CPython twice, which aborts Beat Saber during startup.
+assert 'Modloader/mods/$fileName' in copy_script
+assert 'Modloader/early_mods/$fileName' in copy_script
+assert copy_script.count("adb shell rm -f --") == 2
 
 # Every per-screen field must be both loaded and written. Reset deliberately
 # reconstructs Settings{} so new member initializers remain the defaults list.
