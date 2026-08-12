@@ -635,6 +635,26 @@ namespace BigScreen {
                     BeginUrlProbe();
             });
         ConfigureLayout(urlInput_, 0.0f, 8.0f, 1.0f);
+        // The stock input field is almost indistinguishable from the menu
+        // behind it on the side screen. Add a low-opacity, very light gray
+        // plate behind only the editable URL control; keeping it non-raycast
+        // means the field retains its complete clickable area.
+        auto* urlFieldBackground = BSML::Lite::CreateImage(
+            urlInput_->get_transform(),
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        urlFieldBackground->set_color({0.88f, 0.90f, 0.93f, 0.24f});
+        urlFieldBackground->set_preserveAspect(false);
+        urlFieldBackground->set_raycastTarget(false);
+        if(auto backgroundRect = urlFieldBackground->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            backgroundRect->set_anchorMin({0.0f, 0.0f});
+            backgroundRect->set_anchorMax({1.0f, 1.0f});
+            backgroundRect->set_pivot({0.5f, 0.5f});
+            backgroundRect->set_anchoredPosition({0.0f, 0.0f});
+            backgroundRect->set_sizeDelta({-0.35f, -0.35f});
+            backgroundRect->SetAsFirstSibling();
+        }
 
         // Keep the address field at the panel's full width. Recognition art
         // belongs in the following action row, where it cannot reduce the
@@ -1321,6 +1341,11 @@ namespace BigScreen {
         }
         else
         {
+            // Bind the asynchronous probe result to the exact text currently
+            // in the field. Clearing or replacing that text invalidates this
+            // identity, preventing a completed older probe from restoring a
+            // stale thumbnail during RefreshDetails.
+            probedUrl_ = url_;
             transientStatus_.clear();
         }
         RefreshDetails();
@@ -1514,6 +1539,7 @@ namespace BigScreen {
     void VideoLibraryMenu::ClearThumbnail()
     {
         loadedThumbnailPath_.clear();
+        probedUrl_.clear();
         if(loadedThumbnailSprite_)
         {
             UnityEngine::Object::Destroy(loadedThumbnailSprite_);
@@ -1780,7 +1806,8 @@ namespace BigScreen {
         std::string detailThumbnailPath;
         std::string detailThumbnailIdentity;
         if(thisDownload && download.state == DownloadState::ProbeCompleted &&
-           !download.thumbnailPath.empty())
+           !download.thumbnailPath.empty() && !probedUrl_.empty() &&
+           url_ == probedUrl_)
         {
             detailThumbnailPath = download.thumbnailPath;
             detailThumbnailIdentity = download.thumbnailPath + "|" + download.title;

@@ -126,6 +126,7 @@ namespace BigScreen {
         std::string url_;
         std::string transientStatus_;
         std::string loadedThumbnailPath_;
+        std::string probedUrl_;
         std::string completedVideoThumbnailIdentity_;
         std::string audioLoadLevelId_;
         std::string autoPlayedDownloadIdentity_;
