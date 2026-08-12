@@ -1073,7 +1073,7 @@ namespace BigScreen {
 
         auto* storageGroupTitle = BSML::Lite::CreateText(
             storageBody,
-            "Video Storage Space",
+            "Video Storage",
             3.0f);
         ConfigureLayout(storageGroupTitle, -1.0f, 3.8f, 1.0f);
         storageGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
