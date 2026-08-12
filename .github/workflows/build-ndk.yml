@@ -36,14 +36,15 @@ jobs:
 
     - uses: seanmiddleditch/gha-setup-ninja@3b1f8f94a2f8254bd26914c4ab9474d4f0015f67 # v6
 
-    # Use canary NDK to avoid lesser known compile bugs
-    - name: Setup canary NDK
-      id: setup-ndk
-      uses: ./.github/actions/canary-ndk
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+    - name: Install pinned Android NDK r27d
+      run: sdkmanager "ndk;27.3.13750724"
 
     - name: Create ndkpath.txt
       run: |
-        echo ${{ steps.setup-ndk.outputs.ndk-path }} > ${GITHUB_WORKSPACE}/ndkpath.txt
+        echo "${ANDROID_SDK_ROOT}/ndk/27.3.13750724" > ${GITHUB_WORKSPACE}/ndkpath.txt
         cat ${GITHUB_WORKSPACE}/ndkpath.txt
 
     # get version from pushed tag
@@ -64,7 +65,7 @@ jobs:
 
     - name: Build isolated LGPL FFmpeg runtime
       run: |
-        ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}" ./scripts/build-ffmpeg-lgpl.sh
+        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" ./scripts/build-ffmpeg-lgpl.sh
 
     - name: Build & Create Qmod
       shell: pwsh

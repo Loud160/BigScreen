@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cctype>
 #include <iomanip>
@@ -146,6 +147,48 @@ namespace BigScreen::CoreLogic {
         if(resolution > 720) return {true, {fps, 720}};
         if(resolution > 480) return {true, {fps, 480}};
         return {false, {fps, resolution}};
+    }
+
+    /// Estimates how many distinct source images should have been displayed
+    /// during an interval. Output requests above the media's effective cadence
+    /// are intentional frame reuse, not decoder misses. playbackRate converts
+    /// source cadence into Beat Saber's song-clock domain.
+    inline double ExpectedPresentationRate(
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int outputFramesPerSecond)
+    {
+        if(sourceFramesPerSecond <= 0.0 || playbackRate <= 0.0 ||
+           outputFramesPerSecond <= 0)
+            return 0.0;
+        const double effectiveSourceRate = sourceFramesPerSecond * playbackRate;
+        return std::min(
+            effectiveSourceRate,
+            static_cast<double>(outputFramesPerSecond));
+    }
+
+    inline std::uint64_t ExpectedPresentedFrames(
+        double activeSongSeconds,
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int outputFramesPerSecond)
+    {
+        if(activeSongSeconds <= 0.0)
+            return 0;
+        const double expectedRate = ExpectedPresentationRate(
+            sourceFramesPerSecond, playbackRate, outputFramesPerSecond);
+        return static_cast<std::uint64_t>(std::floor(
+            activeSongSeconds * expectedRate + 0.000001));
+    }
+
+    inline double MissedFramePercent(
+        std::uint64_t expectedFrames,
+        std::uint64_t presentedFrames)
+    {
+        if(expectedFrames == 0 || presentedFrames >= expectedFrames)
+            return 0.0;
+        return 100.0 * static_cast<double>(expectedFrames - presentedFrames) /
+               static_cast<double>(expectedFrames);
     }
 
     /// The circuit breaker counts internal failures, not error text. Two

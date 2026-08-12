@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -116,5 +117,6 @@ namespace BigScreen {
         std::atomic<bool> initialized_{false};
         std::string currentUpdateVersion_ = "2026.07.04";
         std::optional<std::string> updateNotice_;
+        std::chrono::steady_clock::time_point lastStatusRefresh_{};
     };
 }

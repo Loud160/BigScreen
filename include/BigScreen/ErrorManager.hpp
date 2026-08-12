@@ -59,5 +59,7 @@ namespace BigScreen {
         std::chrono::steady_clock::time_point lastInternalError_{};
         std::optional<std::pair<std::string, std::string>> pendingDialog_;
         bool dialogVisible_ = false;
+        bool dialogFailureLogged_ = false;
+        std::chrono::steady_clock::time_point nextDialogAttempt_{};
     };
 }

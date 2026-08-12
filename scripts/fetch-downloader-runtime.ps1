@@ -9,8 +9,8 @@ $ErrorActionPreference = "Stop"
 # Termux or an executable that does not exist on a stock Quest. Keep every
 # network artifact pinned and hash-checked so a normal source build is
 # reproducible and cannot silently package a partial or substituted download.
-$pythonVersion = "3.14.6"
-$pythonSha256 = "38bbe77d3167b5cd554e03b1021324926f09f3825202b065951dd7638e9c37e5"
+$pythonVersion = "3.14.7"
+$pythonSha256 = "6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb"
 $ytDlpVersion = "2026.07.04"
 $ytDlpSha256 = "495be29ff4d9d4e9be7eabdfef225221e5d5282e77f2f505abc6dca80349f3fd"
 $ytDlpEjsVersion = "0.8.0"

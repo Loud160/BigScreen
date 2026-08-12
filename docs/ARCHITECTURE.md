@@ -14,8 +14,21 @@ yt-dlp updates are staged transactionally and tested with both real EJS solver
 bundles, the provider API, and the engine before activation.
 
 Beat Saber's audio/song position is the only video clock. That preserves pause,
-practice speed, seeking, and Replay behavior. The decoder uses a one-frame
-mailbox and drops superseded frames instead of blocking the game thread.
+practice speed, seeking, and Replay behavior. The decoder uses each frame's
+container duration when available, with nominal FPS only as a fallback, so VFR
+sources do not inherit a false constant cadence. It uses a one-frame mailbox,
+drops superseded frames instead of blocking the game thread, and recycles a
+bounded pool of RGBA vectors instead of allocating a multi-megabyte buffer for
+every presented frame. Gameplay transitions pre-open and prime FFmpeg before
+the song clock begins; Unity geometry is still created only in the gameplay
+scene.
+
+Menu state is event-driven or deliberately rate-limited. Resolved map video
+descriptors and video thumbnails are cached, the thumbnail cache has a bounded
+LRU, storage totals are sampled at most once per second, and download status is
+published and consumed at bounded rates. Terminal downloader state remains a
+durable atomic write; transient progress does not fsync Android flash for every
+network block.
 
 The screen is ordinary environment-layer geometry. A frame/background mesh and
 a separately clipped video-content mesh share one root transform. That split

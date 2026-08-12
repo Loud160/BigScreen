@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -98,7 +99,13 @@ namespace BigScreen {
         // These sprites are created only from the configured video's cached
         // YouTube thumbnail. Beat Saber's song/album cover is deliberately not
         // consulted: a blank row therefore means that song has no video.
-        std::unordered_map<std::string, UnityEngine::Sprite*> VideoThumbnailSprites;
+        struct CachedVideoThumbnail {
+            UnityEngine::Sprite* sprite = nullptr;
+            std::uint64_t lastUse = 0;
+        };
+        constexpr std::size_t MaximumCachedVideoThumbnails = 64;
+        std::uint64_t VideoThumbnailUseCounter = 0;
+        std::unordered_map<std::string, CachedVideoThumbnail> VideoThumbnailSprites;
         std::unordered_set<std::string> FailedVideoThumbnailLoads;
 
         struct RowVideoThumbnail {
@@ -113,11 +120,48 @@ namespace BigScreen {
             if(const auto cached = VideoThumbnailSprites.find(path);
                cached != VideoThumbnailSprites.end())
             {
-                if(cached->second)
-                    UnityEngine::Object::Destroy(cached->second);
+                if(cached->second.sprite)
+                    UnityEngine::Object::Destroy(cached->second.sprite);
                 VideoThumbnailSprites.erase(cached);
             }
             FailedVideoThumbnailLoads.erase(path);
+        }
+
+        UnityEngine::Sprite* FindCachedVideoThumbnail(const std::string& path)
+        {
+            const auto found = VideoThumbnailSprites.find(path);
+            if(found == VideoThumbnailSprites.end())
+                return nullptr;
+            found->second.lastUse = ++VideoThumbnailUseCounter;
+            return found->second.sprite;
+        }
+
+        void CacheVideoThumbnail(
+            const std::string& path,
+            UnityEngine::Sprite* sprite)
+        {
+            if(!sprite)
+                return;
+            if(VideoThumbnailSprites.size() >= MaximumCachedVideoThumbnails)
+            {
+                const auto oldest = std::min_element(
+                    VideoThumbnailSprites.begin(),
+                    VideoThumbnailSprites.end(),
+                    [](const auto& left, const auto& right)
+                    {
+                        return left.second.lastUse < right.second.lastUse;
+                    });
+                if(oldest != VideoThumbnailSprites.end())
+                {
+                    if(oldest->second.sprite)
+                        UnityEngine::Object::Destroy(oldest->second.sprite);
+                    FailedVideoThumbnailLoads.erase(oldest->first);
+                    VideoThumbnailSprites.erase(oldest);
+                }
+            }
+            VideoThumbnailSprites.insert_or_assign(
+                path,
+                CachedVideoThumbnail{sprite, ++VideoThumbnailUseCounter});
         }
 
         std::string Lower(std::string value)
@@ -1460,10 +1504,8 @@ namespace BigScreen {
             if((descriptor.CanPlay() || descriptor.CanDownload()) &&
                descriptor.thumbnailPath)
             {
-                const auto found = VideoThumbnailSprites.find(
+                videoThumbnail = FindCachedVideoThumbnail(
                     descriptor.thumbnailPath->string());
-                if(found != VideoThumbnailSprites.end())
-                    videoThumbnail = found->second;
             }
             list_->data->Add(BSML::CustomCellInfo::construct(
                 name,
@@ -2280,11 +2322,8 @@ namespace BigScreen {
 
             const std::string path = metadata->second.path->string();
             UnityEngine::Sprite* sprite = nullptr;
-            if(const auto loaded = VideoThumbnailSprites.find(path);
-               loaded != VideoThumbnailSprites.end())
-            {
-                sprite = loaded->second;
-            }
+            if(auto* loaded = FindCachedVideoThumbnail(path))
+                sprite = loaded;
             else if(std::filesystem::is_regular_file(*metadata->second.path) &&
                     !FailedVideoThumbnailLoads.contains(path))
             {
@@ -2292,7 +2331,7 @@ namespace BigScreen {
                 {
                     sprite = BSML::Lite::FileToSprite(path);
                     if(sprite)
-                        VideoThumbnailSprites.emplace(path, sprite);
+                        CacheVideoThumbnail(path, sprite);
                     else
                         FailedVideoThumbnailLoads.emplace(path);
                 }
@@ -2952,8 +2991,11 @@ namespace BigScreen {
     {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
-        if(!editorVisible_)
+        if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
+        {
+            thumbnailTickCounter_ = 0;
             RefreshVisibleVideoThumbnails();
+        }
 
         if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
         {

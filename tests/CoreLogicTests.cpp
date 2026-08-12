@@ -54,6 +54,24 @@ int main()
     auto [changedMin, tierMin] = NextPerformanceTier(15, 480);
     Expect(!changedMin && tierMin.second == 480, "minimum tier is stable");
 
+    // A higher output cap reuses source frames; it must not manufacture misses.
+    Expect(ExpectedPresentedFrames(5.0, 30.0, 1.0, 60) == 150,
+           "30 FPS media expects 150 distinct frames over five seconds");
+    Expect(ExpectedPresentedFrames(5.0, 24.0, 1.0, 30) == 120,
+           "24 FPS media is source-limited under a 30 FPS cap");
+    Expect(ExpectedPresentedFrames(5.0, 60.0, 1.0, 30) == 150,
+           "60 FPS media is output-limited under a 30 FPS cap");
+    Expect(ExpectedPresentedFrames(5.0, 30.0, 0.5, 60) == 75,
+           "slow playback reduces source-frame demand");
+    Expect(ExpectedPresentedFrames(5.0, 30.0, 2.0, 60) == 300,
+           "fast playback increases demand up to the output cap");
+    Expect(MissedFramePercent(150, 150) == 0.0,
+           "presenting every expected frame reports no misses");
+    Expect(MissedFramePercent(150, 165) == 0.0,
+           "extra startup or seek frames do not create negative misses");
+    Expect(std::abs(MissedFramePercent(150, 135) - 10.0) < 0.001,
+           "miss percentage uses expected source-aware cadence");
+
     Expect(IsSecondFailureWithin(std::chrono::seconds(179)),
            "a second internal failure inside three minutes trips");
     Expect(!IsSecondFailureWithin(std::chrono::seconds(181)),

@@ -717,17 +717,21 @@ namespace BigScreen {
             return false;
         }
 
-        // A black lead-in temporarily replaces the material's texture and
-        // opacity. Restore the actual video appearance before publishing the
-        // first non-negative frame.
-        material_->set_mainTexture(texture_);
-        material_->set_color(transparent_
-            ? UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f}
-            : UnityEngine::Color::get_white());
-        if(backgroundMaterial_)
-            backgroundMaterial_->set_color(transparent_
-                ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
-                : UnityEngine::Color::get_black());
+        // Only a lead-in changes these invariant material properties. Avoid
+        // sending identical texture/color updates through IL2CPP every frame.
+        if(leadInActive_)
+        {
+            material_->set_mainTexture(texture_);
+            material_->set_color(transparent_
+                ? UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f}
+                : UnityEngine::Color::get_white());
+            if(backgroundMaterial_)
+                backgroundMaterial_->set_color(transparent_
+                    ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
+                    : UnityEngine::Color::get_black());
+            leadInActive_ = false;
+            leadInBlack_ = false;
+        }
 
         // LoadRawTextureData copies into Unity's CPU-side texture buffer. Apply
         // performs the GPU upload on the main thread, as required by Unity.
@@ -742,11 +746,19 @@ namespace BigScreen {
     {
         if(!black)
         {
+            leadInActive_ = true;
+            leadInBlack_ = false;
             SetVisible(false);
             return;
         }
         if(!material_)
             return;
+
+        if(leadInActive_ && leadInBlack_)
+        {
+            SetVisible(true);
+            return;
+        }
 
         // Unity owns this shared 2x2 texture, so it costs no per-video upload
         // or allocation and must not be destroyed with the screen surface.
@@ -757,6 +769,8 @@ namespace BigScreen {
         // layer opaque until Upload restores its configured transparency.
         if(backgroundMaterial_)
             backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+        leadInActive_ = true;
+        leadInBlack_ = true;
         SetVisible(true);
     }
 
@@ -813,6 +827,8 @@ namespace BigScreen {
         screenHeight_ = 0.0f;
         transparent_ = false;
         visible_ = false;
+        leadInActive_ = false;
+        leadInBlack_ = false;
     }
 
     void ScreenSurface::SetDiagnosticsText(const std::string& text)

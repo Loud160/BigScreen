@@ -168,5 +168,6 @@ namespace BigScreen {
         bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;
+        int thumbnailTickCounter_ = 0;
     };
 }

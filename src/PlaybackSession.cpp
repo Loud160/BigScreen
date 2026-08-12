@@ -19,6 +19,10 @@
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 #include "main.hpp"
 
+extern "C" {
+#include "libavutil/avutil.h"
+}
+
 namespace BigScreen {
     PlaybackSession& PlaybackSession::Instance()
     {
@@ -50,7 +54,11 @@ namespace BigScreen {
             decoder_.SourceWidth(), decoder_.SourceHeight(),
             decoder_.Width(), decoder_.Height(),
             decoder_.SourceFramesPerSecond(), effectiveFpsLimit_,
-            requestedFrames_, presentedFrames_,
+            requestedFrames_,
+            static_cast<std::uint64_t>(std::floor(
+                expectedFrameAccumulator_ + 0.000001)),
+            presentedFrames_,
+            decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(), automaticReductions_};
     }
 
@@ -317,12 +325,18 @@ namespace BigScreen {
             return;
 
         std::string error;
-        effectiveFpsLimit_ = Settings::Instance().PlaybackFpsLimit();
-        effectiveResolutionHeight_ = Settings::Instance().ResolutionHeight();
-        if(!decoder_.Open(
-               config_->videoPath,
-               effectiveResolutionHeight_,
-               error))
+        if(context == PlaybackContext::Gameplay && gameplayPrewarmFailed_)
+        {
+            gameplayPrewarmFailed_ = false;
+            ErrorManager::Instance().ReportUserVisible(
+                "Video playback error",
+                "Big Screen could not prepare this video's H.264 stream. " +
+                    gameplayPrewarmError_);
+            gameplayPrewarmError_.clear();
+            return;
+        }
+        if(!(context == PlaybackContext::Gameplay && gameplayDecoderPrewarmed_) &&
+           !OpenDecoder(error))
         {
             PaperLogger.error("Could not start video playback: {}", error);
             ErrorManager::Instance().ReportUserVisible(
@@ -330,6 +344,9 @@ namespace BigScreen {
                 "Big Screen could not open this video's H.264 stream. " + error);
             return;
         }
+        gameplayDecoderPrewarmed_ = false;
+        gameplayPrewarmFailed_ = false;
+        gameplayPrewarmError_.clear();
 
         if(!surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
         {
@@ -348,8 +365,9 @@ namespace BigScreen {
         lastTickSongTime_ = 0.0;
         context_ = context;
         requestedFrames_ = 0;
+        expectedFrameAccumulator_ = 0.0;
         presentedFrames_ = 0;
-        windowRequestedFrames_ = 0;
+        windowExpectedFrameAccumulator_ = 0.0;
         windowPresentedFrames_ = 0;
         performanceWindowStartSongTime_ = 0.0;
         automaticReductions_ = 0;
@@ -381,19 +399,52 @@ namespace BigScreen {
                 effectiveFpsLimit_);
             decoder_.Request(initialMediaTime);
             ++requestedFrames_;
-            ++windowRequestedFrames_;
             lastPresentationSlot_ = static_cast<std::int64_t>(std::floor(
                 initialSongTime * fpsLimit + 0.000001));
             lastTickSongTime_ = initialSongTime;
         }
         PaperLogger.info(
-            "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s)",
+            "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s, FFmpeg {})",
             decoder_.Width(),
             decoder_.Height(),
             context == PlaybackContext::MenuPreview ? "song-menu" :
                 context == PlaybackContext::LibraryPreview ? "library-preview" : "gameplay",
             effectiveFpsLimit_,
-            decoder_.DurationSeconds());
+            decoder_.DurationSeconds(),
+            av_version_info());
+    }
+
+    bool PlaybackSession::OpenDecoder(std::string& error)
+    {
+        effectiveFpsLimit_ = Settings::Instance().PlaybackFpsLimit();
+        effectiveResolutionHeight_ = Settings::Instance().ResolutionHeight();
+        return decoder_.Open(
+            config_->videoPath,
+            effectiveResolutionHeight_,
+            error);
+    }
+
+    void PlaybackSession::PrewarmGameplay()
+    {
+        if(!Settings::Instance().ModEnabled() || !config_ || started_)
+            return;
+        std::string error;
+        gameplayDecoderPrewarmed_ = OpenDecoder(error);
+        if(!gameplayDecoderPrewarmed_)
+        {
+            gameplayPrewarmFailed_ = true;
+            gameplayPrewarmError_ = error;
+            PaperLogger.error("Could not prewarm gameplay video: {}", error);
+            // Start() reports this after AudioTimeSyncController has marked
+            // gameplay active. ErrorManager can then defer the dialog until
+            // the map ends instead of interrupting the scene transition.
+            return;
+        }
+        const double initialMediaTime = config_->MediaTimeForSong(
+            0.0, decoder_.DurationSeconds());
+        if(initialMediaTime >= 0.0)
+            decoder_.Request(initialMediaTime);
+        PaperLogger.info("Prewarmed gameplay video decoder before scene activation");
     }
 
     void PlaybackSession::Tick(double songTimeSeconds)
@@ -465,13 +516,31 @@ namespace BigScreen {
             lastPresentationSlot_.has_value() &&
             (songTimeSeconds + 0.01 < lastTickSongTime_ ||
              songTimeSeconds - lastTickSongTime_ > 0.75);
+        if(clockDiscontinuity)
+        {
+            // A practice/replay seek starts a fresh automatic-performance
+            // sample. Mixing frames from before and after a large clock jump
+            // could create an artificial miss spike and lower quality.
+            windowExpectedFrameAccumulator_ = 0.0;
+            windowPresentedFrames_ = 0;
+            performanceWindowStartSongTime_ = songTimeSeconds;
+        }
+        if(!clockDiscontinuity && songTimeSeconds > lastTickSongTime_)
+        {
+            const double activeDelta = songTimeSeconds - lastTickSongTime_;
+            const double expectedRate = CoreLogic::ExpectedPresentationRate(
+                decoder_.SourceFramesPerSecond(),
+                config_->playbackRate,
+                effectiveFpsLimit_);
+            expectedFrameAccumulator_ += activeDelta * expectedRate;
+            windowExpectedFrameAccumulator_ += activeDelta * expectedRate;
+        }
         if(!lastPresentationSlot_ ||
            clockDiscontinuity ||
            presentationSlot != *lastPresentationSlot_)
         {
             decoder_.Request(mediaTime);
             ++requestedFrames_;
-            ++windowRequestedFrames_;
             lastPresentationSlot_ = presentationSlot;
         }
         lastTickSongTime_ = songTimeSeconds;
@@ -482,10 +551,8 @@ namespace BigScreen {
         {
             diagnosticsFrameCounter_ = 0;
             const auto d = Diagnostics();
-            const auto missed = d.requestedFrames > d.presentedFrames
-                ? d.requestedFrames - d.presentedFrames : 0;
-            const double missedPercent = d.requestedFrames == 0
-                ? 0.0 : 100.0 * missed / static_cast<double>(d.requestedFrames);
+            const double missedPercent = CoreLogic::MissedFramePercent(
+                d.expectedFrames, d.presentedFrames);
             std::ostringstream text;
             text << d.sourceWidth << 'x' << d.sourceHeight << " @ "
                  << std::fixed << std::setprecision(1) << d.sourceFps
@@ -510,14 +577,13 @@ namespace BigScreen {
                 performanceWindowStartSongTime_ = songTimeSeconds;
             else if(songTimeSeconds - performanceWindowStartSongTime_ >= 5.0)
             {
-                const auto missed = windowRequestedFrames_ > windowPresentedFrames_
-                    ? windowRequestedFrames_ - windowPresentedFrames_ : 0;
-                const double missedPercent = windowRequestedFrames_ == 0
-                    ? 0.0
-                    : 100.0 * missed / static_cast<double>(windowRequestedFrames_);
+                const auto expectedFrames = static_cast<std::uint64_t>(std::floor(
+                    windowExpectedFrameAccumulator_ + 0.000001));
+                const double missedPercent = CoreLogic::MissedFramePercent(
+                    expectedFrames, windowPresentedFrames_);
                 if(missedPercent >= Settings::Instance().AutomaticPerformanceThreshold())
                     ApplyAutomaticPerformanceReduction(mediaTime);
-                windowRequestedFrames_ = 0;
+                windowExpectedFrameAccumulator_ = 0.0;
                 windowPresentedFrames_ = 0;
                 performanceWindowStartSongTime_ = songTimeSeconds;
             }
@@ -527,14 +593,14 @@ namespace BigScreen {
         if(!decoder_.TryTake(frame))
             return;
 
-        ++presentedFrames_;
-        ++windowPresentedFrames_;
-
         if(surface_.Upload(frame))
         {
+            ++presentedFrames_;
+            ++windowPresentedFrames_;
             firstFrameUploaded_ = true;
             surface_.SetVisible(true);
         }
+        decoder_.Recycle(std::move(frame));
     }
 
     void PlaybackSession::Stop()
@@ -547,6 +613,9 @@ namespace BigScreen {
         // the menu or the next level.
         surface_.Destroy();
         decoder_.Close();
+        gameplayDecoderPrewarmed_ = false;
+        gameplayPrewarmFailed_ = false;
+        gameplayPrewarmError_.clear();
         started_ = false;
         playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
@@ -597,11 +666,8 @@ namespace BigScreen {
     void PlaybackSession::CaptureDiagnosticsSummary()
     {
         const auto diagnostics = Diagnostics();
-        const auto missed = diagnostics.requestedFrames > diagnostics.presentedFrames
-            ? diagnostics.requestedFrames - diagnostics.presentedFrames : 0;
-        const double missedPercent = diagnostics.requestedFrames == 0
-            ? 0.0
-            : 100.0 * missed / static_cast<double>(diagnostics.requestedFrames);
+        const double missedPercent = CoreLogic::MissedFramePercent(
+            diagnostics.expectedFrames, diagnostics.presentedFrames);
         std::ostringstream text;
         text << diagnostics.sourceWidth << 'x' << diagnostics.sourceHeight
              << " @ " << std::fixed << std::setprecision(1)
@@ -609,10 +675,12 @@ namespace BigScreen {
              << diagnostics.outputWidth << 'x' << diagnostics.outputHeight
              << " @ " << diagnostics.outputFpsLimit << " FPS output\n"
              << "Presented " << diagnostics.presentedFrames << " / "
-             << diagnostics.requestedFrames << " frames  |  Missed "
+             << diagnostics.expectedFrames << " expected frames  |  Missed "
              << std::setprecision(1) << missedPercent << "%  |  Decode "
              << std::setprecision(2) << diagnostics.averageDecodeMilliseconds
-             << " ms";
+             << " ms  |  RGBA allocations "
+             << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
+             << av_version_info();
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
         lastDiagnosticsSummary_ = text.str();

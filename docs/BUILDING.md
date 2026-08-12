@@ -10,7 +10,7 @@ The tracked package targets Beat Saber `1.37.0_9064817954`, ARM64 Quest, and C++
 - Windows PowerShell 5.1 on Windows or PowerShell 7 (`pwsh`) on Linux
 - CMake and Ninja
 - QPM-RS and the Android NDK expected by the Quest modding toolchain
-- Linux or WSL with `make`, `curl`, and Android NDK r27c for the private FFmpeg build
+- Linux or WSL with `make`, `curl`, and Android NDK r27d (27.3.13750724) for the private FFmpeg build
 - Python 3 only for the optional host test that extracts and tests the embedded downloader scripts
 - ADB for deployment/log/tombstone helper scripts
 
@@ -63,9 +63,23 @@ reviewed version change to replace the versioned extraction.
 
 The dependency scripts download pinned Android CPython, certifi, yt-dlp, FFmpeg source, and supporting artifacts. Each expected artifact has a fixed SHA-256 in the script; a mismatch stops the build. Do not “fix” a mismatch by changing only the hash—review the upstream release, ABI, contents, and license first.
 
-`scripts/build-ffmpeg-lgpl.sh` builds FFmpeg 4.4.8 from source for Android ARM64. Set `ANDROID_NDK_ROOT` to a Linux NDK r27c directory when it is not installed at the script's documented default. The script enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components. Its outputs use `-bigscreen` SONAMEs and `BIGSCREEN_LIB*` symbol versions so Android cannot resolve them to another mod's FFmpeg libraries.
+`scripts/build-ffmpeg-lgpl.sh` builds FFmpeg 4.4.8 by default and also supports a separately staged FFmpeg 9.0.1 comparison runtime. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. The script enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components. Its outputs use `-bigscreen` SONAMEs and `BIGSCREEN_LIB*` symbol versions so Android cannot resolve them to another mod's FFmpeg libraries.
 
-For LGPL corresponding-source redistribution, publish the unmodified FFmpeg 4.4.8 archive identified in `extern/ffmpeg-lgpl/BUILD-INFO.txt` alongside the QMOD. The QMOD itself includes the exact build record and generated source diff. The upstream archive SHA-256 and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+For LGPL corresponding-source redistribution, publish the unmodified archive identified in the packaged `FFMPEG-BUILD-INFO.txt` alongside the QMOD. The QMOD itself includes the selected version's exact build record and generated source diff. Both upstream archive SHA-256 values and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+
+To build both variants from independent clean CMake trees and retain clearly
+named QMOD/native artifacts, run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-comparison.ps1
+```
+
+Install only one variant at a time. Compare the same map, screen resolution,
+FPS cap, headset charge/thermal state, and playback interval. The performance
+overlay and results summary report the loaded FFmpeg version, expected versus
+presented frames, missed percentage, full decode-request delay, automatic
+reductions, and RGBA allocation count. Keep 4.4.8 as the release default until
+the newer runtime is at least equivalent in repeated Quest 2 and Quest 3 tests.
 
 ## Host tests
 
@@ -73,7 +87,13 @@ For LGPL corresponding-source redistribution, publish the unmodified FFmpeg 4.4.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test.ps1
 ```
 
-The test suite covers deterministic library keys/path rules, quality fallback, error-circuit timing, URL allowlisting, Cinema metadata parsing, Chroma detection, and the embedded Python downloader scripts. Host tests do not replace an ARM64 Quest build or VR regression testing.
+The test suite covers deterministic library keys/path rules, source-aware frame
+expectations, quality fallback, error-circuit timing, URL allowlisting, Cinema
+metadata parsing, Chroma detection, embedded Python downloader behavior, and
+cross-file toolchain/licensing/settings invariants. Linux CI additionally
+generates landscape and portrait H.264 fixtures and exercises the real FFmpeg
+worker, timestamps, scaling, shutdown, and reusable RGBA buffers. Host tests do
+not replace an ARM64 Quest build or VR regression testing.
 
 ## QMOD contents
 
@@ -115,10 +135,10 @@ When the controller launch gate prevents unattended Beat Saber startup, compile 
 `core-tests.yml` runs host tests, verifies public documentation files, and uses
 pinned Node/pnpm tooling to rebuild yt-dlp plus yt-dlp-ejs from source and
 compare the full payload with the shipped release. `build-ndk.yml` restores QPM
-dependencies, uses the Quest NDK build, creates a validated QMOD, and uploads
-artifacts. Third-party actions are pinned to commit SHAs. The local canary-NDK
-composite action fixes the release URL/version; changing it requires a clean
-package build.
+dependencies, installs the pinned official Android NDK r27d, creates a
+validated QMOD, and uploads artifacts. Third-party actions are pinned to commit
+SHAs. Changing the NDK requires synchronized QPM metadata, CI, FFmpeg, clean
+builds of both FFmpeg variants, and headset regression testing.
 
 ## Threading rules
 

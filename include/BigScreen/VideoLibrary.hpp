@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "BigScreen/MapVideoConfig.hpp"
 
@@ -185,6 +187,16 @@ namespace BigScreen {
         std::filesystem::path importPath_;
         std::filesystem::path manifestPath_;
         std::vector<std::pair<std::string, LevelVideoRecords>> records_;
+        // Describe() is used by several menu controls. Map metadata and saved
+        // assignments do not change between those calls, so cache the fully
+        // resolved result and invalidate it whenever this class commits a
+        // manifest mutation. This removes repeated JSON parsing and file probes
+        // from Unity's menu update path.
+        mutable std::unordered_map<std::string, VideoDescriptor> descriptorCache_;
+        mutable std::uint64_t cachedLibraryBytes_ = 0;
+        mutable std::uint64_t cachedFreeBytes_ = 0;
+        mutable std::chrono::steady_clock::time_point libraryBytesCacheTime_{};
+        mutable std::chrono::steady_clock::time_point freeBytesCacheTime_{};
         bool recoveryScanNeeded_ = false;
         std::optional<std::string> recoveryNotice_;
     };

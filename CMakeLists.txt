@@ -63,11 +63,30 @@ add_library(
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/quickjs-ng/source/quickjs-amalgam.c
 )
 
+# Keep warnings actionable by applying them only to Big Screen's C++ sources.
+# The target also compiles upstream inline-hook code; enabling project policy
+# on that source produced hundreds of diagnostics that this repository cannot
+# fix and obscured warnings in the mod itself.
+set(BIGSCREEN_WARNING_OPTIONS
+        -Wall -Wextra -Wpedantic
+        # Beat Saber Hook intentionally exposes GNU statement-expression
+        # macros in public headers. They are required by the supported Quest
+        # toolchain and cannot be replaced from this repository; suppress only
+        # that upstream-extension diagnostic so -Werror remains useful for Big
+        # Screen's own warnings.
+        -Wno-gnu-statement-expression-from-macro-expansion
+        -Wno-gnu-zero-variadic-macro-arguments
+        -Wno-zero-length-array
+        -Wno-gnu-anonymous-struct
+        -Wno-nested-anon-types)
+set_source_files_properties(${cpp_file_list} PROPERTIES
+        COMPILE_OPTIONS "${BIGSCREEN_WARNING_OPTIONS}")
+
 # for inline hook
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${SHARED_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
@@ -84,7 +103,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
 # downloader. Link against the exact staged ABI and package the library beside
 # the mod; pure Python files are installed into Big Screen's ModData folder.
 set(BIGSCREEN_PYTHON_PREFIX
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/downloader/python-3.14.6/prefix)
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/downloader/python-3.14.7/prefix)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${BIGSCREEN_PYTHON_PREFIX}/include/python3.14)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
@@ -92,11 +111,23 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         -ldl
         -lz)
 
-# Big Screen ships a private, minimal FFmpeg 4.4.8 runtime built exclusively
+# Big Screen ships a private, minimal FFmpeg runtime built exclusively
 # from LGPL components.  Its custom SONAMEs and symbol-version namespaces keep
 # Android from resolving these calls to Hollywood's unrelated GPL FFmpeg build.
 # scripts/build-ffmpeg-lgpl.sh is the single reproducible source of these files.
-set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
+set(BIGSCREEN_FFMPEG_VERSION "4.4.8" CACHE STRING
+    "Private FFmpeg runtime used by Big Screen (4.4.8 or 9.0.1)")
+set_property(CACHE BIGSCREEN_FFMPEG_VERSION PROPERTY STRINGS 4.4.8 9.0.1)
+if(BIGSCREEN_FFMPEG_VERSION STREQUAL "4.4.8")
+    set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
+elseif(BIGSCREEN_FFMPEG_VERSION STREQUAL "9.0.1")
+    set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl-9.0.1)
+else()
+    message(FATAL_ERROR "Unsupported BIGSCREEN_FFMPEG_VERSION=${BIGSCREEN_FFMPEG_VERSION}")
+endif()
+message(STATUS "Using private FFmpeg ${BIGSCREEN_FFMPEG_VERSION}")
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        BIGSCREEN_FFMPEG_VERSION="${BIGSCREEN_FFMPEG_VERSION}")
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${BIGSCREEN_FFMPEG_DIR}/include)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         ${BIGSCREEN_FFMPEG_DIR}/lib/libavformat-bigscreen.so

@@ -130,7 +130,11 @@ namespace {
         "bigscreen_quickjs",
         "Big Screen's in-process QuickJS-NG bridge for yt-dlp.",
         -1,
-        Methods
+        Methods,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr
     };
 }
 

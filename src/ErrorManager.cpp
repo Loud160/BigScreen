@@ -43,6 +43,8 @@ namespace BigScreen {
         // Keep only the newest message. A single modal is useful; a backlog of
         // stale popups can prevent the player from reaching the disable switch.
         pendingDialog_ = std::make_pair(title, detail);
+        nextDialogAttempt_ = {};
+        dialogFailureLogged_ = false;
     }
 
     void ErrorManager::ReportInternal(
@@ -120,7 +122,8 @@ namespace BigScreen {
         std::pair<std::string, std::string> message;
         {
             std::scoped_lock lock(mutex_);
-            if(gameplayActive_ || dialogVisible_ || !pendingDialog_)
+            if(gameplayActive_ || dialogVisible_ || !pendingDialog_ ||
+               std::chrono::steady_clock::now() < nextDialogAttempt_)
                 return;
             message = *pendingDialog_;
             pendingDialog_.reset();
@@ -142,6 +145,8 @@ namespace BigScreen {
                 std::scoped_lock lock(mutex_);
                 dialogVisible_ = false;
                 pendingDialog_ = std::move(message);
+                nextDialogAttempt_ = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(250);
                 return;
             }
             prompt->Init(
@@ -159,21 +164,46 @@ namespace BigScreen {
                                 false);
                             std::scoped_lock lock(mutex_);
                             dialogVisible_ = false;
+                            dialogFailureLogged_ = false;
                         }}));
             flow->PresentViewController(
                 prompt,
                 nullptr,
                 HMUI::ViewController::AnimationDirection::Horizontal,
                 false);
+            std::scoped_lock lock(mutex_);
+            dialogFailureLogged_ = false;
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error("Could not show Big Screen error dialog: {}", exception.what());
             std::scoped_lock lock(mutex_);
+            if(!dialogFailureLogged_)
+            {
+                PaperLogger.error(
+                    "Could not show Big Screen error dialog: {}",
+                    exception.what());
+                dialogFailureLogged_ = true;
+            }
             dialogVisible_ = false;
             // Retain the message for the dedicated Big Screen modal or the
             // next main-flow frame instead of silently losing it.
             pendingDialog_ = std::move(message);
+            nextDialogAttempt_ = std::chrono::steady_clock::now() +
+                std::chrono::seconds(1);
+        }
+        catch(...)
+        {
+            std::scoped_lock lock(mutex_);
+            if(!dialogFailureLogged_)
+            {
+                PaperLogger.error(
+                    "Could not show Big Screen error dialog: unknown exception");
+                dialogFailureLogged_ = true;
+            }
+            dialogVisible_ = false;
+            pendingDialog_ = std::move(message);
+            nextDialogAttempt_ = std::chrono::steady_clock::now() +
+                std::chrono::seconds(1);
         }
     }
 
@@ -183,5 +213,7 @@ namespace BigScreen {
         disabledByCircuitBreaker_ = false;
         disableRequested_ = false;
         lastInternalError_ = {};
+        dialogFailureLogged_ = false;
+        nextDialogAttempt_ = {};
     }
 }

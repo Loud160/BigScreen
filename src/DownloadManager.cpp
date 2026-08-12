@@ -551,32 +551,44 @@ namespace BigScreen {
         }
 
         constexpr const char* DownloaderScript = R"PY(
-import json, os, re, shutil, traceback, urllib.request
+import json, os, re, shutil, time, traceback, urllib.request
 
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
 cancel_path = job['cancelPath']
 
-def publish(state, message='', **values):
+def publish(state, message='', durable=True, **values):
     data = {'state': state, 'message': message}
     data.update(values)
     temporary = status_path + '.tmp'
     with open(temporary, 'w', encoding='utf-8') as stream:
         json.dump(data, stream, ensure_ascii=False)
-        stream.flush()
-        os.fsync(stream.fileno())
+        if durable:
+            stream.flush()
+            os.fsync(stream.fileno())
     os.replace(temporary, status_path)
+
+last_progress_publish = 0.0
 
 def cancelled():
     if os.path.exists(cancel_path):
         raise RuntimeError('BIGSCREEN_CANCELLED')
 
 def progress(data):
+    global last_progress_publish
     cancelled()
     if data.get('status') == 'downloading':
+        now = time.monotonic()
+        # yt-dlp can call progress hooks for every downloaded block. Publishing
+        # at most eight times per second keeps the UI fluid without repeatedly
+        # parsing JSON or forcing transient progress to flash storage.
+        if now - last_progress_publish < 0.125:
+            return
+        last_progress_publish = now
         publish(
             'downloading',
             'Downloading video',
+            durable=False,
             downloadedBytes=data.get('downloaded_bytes') or 0,
             totalBytes=data.get('total_bytes') or data.get('total_bytes_estimate') or 0,
             speed=data.get('speed') or 0,
@@ -647,7 +659,9 @@ try:
     # challenge provider before yt-dlp creates the YouTube extractor.
     import bigscreen_jsc_provider
     import yt_dlp
-    selector = 'bestvideo[ext=mp4][vcodec^=avc1][height<=1080]'
+    # Permit either orientation up to Full HD. A portrait 1080x1920 stream has
+    # height 1920 and was incorrectly rejected by the old height-only rule.
+    selector = 'bestvideo[ext=mp4][vcodec^=avc1][width<=1920][height<=1920]'
     common = {
         'quiet': True,
         'no_warnings': True,
@@ -657,20 +671,36 @@ try:
         'nopart': False,
         'progress_hooks': [progress],
         'overwrites': True,
+        # Cancellation is observed by progress hooks. Bound individual network
+        # waits and retries so a disconnected Quest can still leave Beat Saber
+        # or shut down without waiting indefinitely for a Python worker.
+        'socket_timeout': 15,
+        'retries': 3,
+        'fragment_retries': 3,
+        'extractor_retries': 3,
     }
     with yt_dlp.YoutubeDL(dict(common, skip_download=True)) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
     age_limit = int(info.get('age_limit') or 0)
     if age_limit >= 18 and not job.get('explicitContentAllowed', False):
         raise PermissionError('Big Screen blocked this age-restricted video because explicit content is disabled in Beat Saber parental controls.')
-    formats = [f for f in (info.get('formats') or [])
-               if f.get('ext') == 'mp4'
-               and str(f.get('vcodec') or '').startswith('avc1')
-               and int(f.get('height') or 0) <= 1080
-               and f.get('acodec') == 'none']
+    formats = []
+    for candidate in info.get('formats') or []:
+        width = int(candidate.get('width') or 0)
+        height = int(candidate.get('height') or 0)
+        if (candidate.get('ext') == 'mp4'
+                and str(candidate.get('vcodec') or '').startswith('avc1')
+                and width > 0 and height > 0
+                and max(width, height) <= 1920
+                and min(width, height) <= 1080
+                and candidate.get('acodec') == 'none'):
+            formats.append(candidate)
     if not formats:
         raise RuntimeError('Requested format is not available: no H.264 MP4 video-only stream at 1080p or lower')
-    chosen = max(formats, key=lambda f: (int(f.get('height') or 0), int(f.get('width') or 0), float(f.get('tbr') or 0)))
+    chosen = max(formats, key=lambda f: (
+        int(f.get('width') or 0) * int(f.get('height') or 0),
+        max(int(f.get('width') or 0), int(f.get('height') or 0)),
+        float(f.get('tbr') or 0)))
     expected = int(chosen.get('filesize') or chosen.get('filesize_approx') or 0)
     free = shutil.disk_usage(os.path.dirname(job['finalPath'])).free
     required = expected + int(job['reserveBytes']) if expected else int(job['unknownRequiredBytes'])
@@ -1371,7 +1401,16 @@ os.replace(temporary, job['destination'])
     DownloadSnapshot DownloadManager::Snapshot()
     {
         std::scoped_lock lock(mutex_);
-        RefreshSnapshotFromDiskLocked();
+        const auto now = std::chrono::steady_clock::now();
+        // The Python worker owns the recovery file while active. Reading and
+        // reparsing it once per Unity frame added needless storage and CPU work;
+        // 10 Hz is considerably faster than a user can perceive in a progress
+        // label while terminal states are still imported directly by workers.
+        if(now - lastStatusRefresh_ >= std::chrono::milliseconds(100))
+        {
+            RefreshSnapshotFromDiskLocked();
+            lastStatusRefresh_ = now;
+        }
         return snapshot_;
     }
 

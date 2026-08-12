@@ -73,5 +73,7 @@ namespace BigScreen {
         int textureHeight_ = 0;
         bool transparent_ = false;
         bool visible_ = false;
+        bool leadInActive_ = false;
+        bool leadInBlack_ = false;
     };
 }

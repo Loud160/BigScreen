@@ -594,7 +594,10 @@ namespace {
         // selection but late enough to avoid hooking both overloaded Init APIs.
         auto& playback = BigScreen::PlaybackSession::Instance();
         if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
+        {
             playback.Prepare(self->get_beatmapLevel());
+            playback.PrewarmGameplay();
+        }
         else
             playback.Prepare(nullptr);
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
@@ -727,6 +730,7 @@ namespace {
         GlobalNamespace::AudioTimeSyncController* self,
         float startTimeOffset)
     {
+        BigScreen::Settings::Instance().Flush();
         AudioTimeSyncController_StartSong(self, startTimeOffset);
 
         if(!BigScreen::Settings::Instance().ModEnabled())
@@ -775,6 +779,7 @@ namespace {
         Application_InvokeFocusChanged(hasFocus);
         if(!hasFocus)
         {
+            BigScreen::Settings::Instance().Flush();
             BigScreen::ErrorManager::Instance().Guard(
                 "cancelling screen positioning after focus loss", []()
                 {
@@ -792,6 +797,7 @@ namespace {
     {
         SongPreviewPlayer_Update(self);
 
+        BigScreen::Settings::Instance().TickPersistence();
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
         BigScreen::ErrorManager::Instance().TickMainThread();

@@ -241,7 +241,11 @@ namespace BigScreen {
                 return result;
             }
 
+#if LIBAVCODEC_VERSION_MAJOR >= 59
+            const AVCodec* decoder = nullptr;
+#else
             AVCodec* decoder = nullptr;
+#endif
             const int streamIndex = av_find_best_stream(
                 format, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
             if(streamIndex < 0 || !decoder)
@@ -386,6 +390,21 @@ namespace BigScreen {
             : std::string{};
         descriptor.songDurationSeconds = level->songDuration;
 
+        {
+            std::scoped_lock lock(mutex_);
+            const auto cached = descriptorCache_.find(descriptor.levelId);
+            if(cached != descriptorCache_.end())
+            {
+                // Detect manual removal of the selected source without paying
+                // the much larger cost of reparsing metadata on every UI tick.
+                if(!cached->second.playableConfig ||
+                   std::filesystem::is_regular_file(
+                       cached->second.playableConfig->videoPath))
+                    return cached->second;
+                descriptorCache_.erase(cached);
+            }
+        }
+
         std::filesystem::path levelDirectory;
         if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(descriptor.levelId))
         {
@@ -479,6 +498,7 @@ namespace BigScreen {
                 descriptor.levelId, VideoOrigin::Mapper);
         }
 
+        descriptorCache_.insert_or_assign(descriptor.levelId, descriptor);
         return descriptor;
     }
 
@@ -851,6 +871,10 @@ namespace BigScreen {
     std::uint64_t VideoLibrary::LibraryBytes() const
     {
         std::scoped_lock lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        if(libraryBytesCacheTime_ != std::chrono::steady_clock::time_point{} &&
+           now - libraryBytesCacheTime_ < std::chrono::seconds(1))
+            return cachedLibraryBytes_;
         std::uint64_t total = 0;
         if(!std::filesystem::exists(videoPath_))
             return total;
@@ -859,15 +883,23 @@ namespace BigScreen {
             if(entry.is_regular_file())
                 total += entry.file_size();
         }
-        return total;
+        cachedLibraryBytes_ = total;
+        libraryBytesCacheTime_ = now;
+        return cachedLibraryBytes_;
     }
 
     std::uint64_t VideoLibrary::FreeBytes() const
     {
         std::scoped_lock lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        if(freeBytesCacheTime_ != std::chrono::steady_clock::time_point{} &&
+           now - freeBytesCacheTime_ < std::chrono::seconds(1))
+            return cachedFreeBytes_;
         std::error_code error;
         const auto info = std::filesystem::space(rootPath_, error);
-        return error ? 0 : info.available;
+        cachedFreeBytes_ = error ? 0 : info.available;
+        freeBytesCacheTime_ = now;
+        return cachedFreeBytes_;
     }
 
     bool VideoLibrary::TryLoadManifestLocked(
@@ -911,6 +943,9 @@ namespace BigScreen {
     void VideoLibrary::LoadLocked()
     {
         records_.clear();
+        descriptorCache_.clear();
+        libraryBytesCacheTime_ = {};
+        freeBytesCacheTime_ = {};
         recoveryScanNeeded_ = false;
         if(!std::filesystem::exists(manifestPath_))
             return;
@@ -967,6 +1002,11 @@ namespace BigScreen {
 
     void VideoLibrary::SaveLocked() const
     {
+        // All record mutations flow through SaveLocked. Invalidate derived UI
+        // state here once so no setter can accidentally forget either cache.
+        descriptorCache_.clear();
+        libraryBytesCacheTime_ = {};
+        freeBytesCacheTime_ = {};
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
         document.AddMember("version", 2, allocator);

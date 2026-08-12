@@ -22,7 +22,9 @@ namespace BigScreen {
         double sourceFps = 0.0;
         int outputFpsLimit = 0;
         std::uint64_t requestedFrames = 0;
+        std::uint64_t expectedFrames = 0;
         std::uint64_t presentedFrames = 0;
+        std::uint64_t rgbaBufferAllocations = 0;
         double averageDecodeMilliseconds = 0.0;
         int automaticReductions = 0;
     };
@@ -68,6 +70,10 @@ namespace BigScreen {
         void SetGameplayScreenEnabled(bool enabled);
         bool GameplayScreenEnabled() const { return gameplayScreenEnabled_; }
         void Start(PlaybackContext context);
+        /// Opens FFmpeg and starts decoding before Beat Saber's gameplay audio
+        /// clock begins. Unity geometry is intentionally deferred until the
+        /// gameplay scene exists.
+        void PrewarmGameplay();
         void Tick(double songTimeSeconds);
         void Stop();
 
@@ -96,6 +102,7 @@ namespace BigScreen {
         PlaybackSession() = default;
         void RebuildEffectiveConfig(
             PlaybackContext intendedContext = PlaybackContext::None);
+        bool OpenDecoder(std::string& error);
         bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
         void CaptureDiagnosticsSummary();
 
@@ -114,6 +121,12 @@ namespace BigScreen {
         ScreenSurface surface_;
         double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
+        bool gameplayDecoderPrewarmed_ = false;
+        // A failed prewarm already queued a safe user-visible error. Remember
+        // it through Start() so the same transition does not immediately retry
+        // the identical open and duplicate both work and error reporting.
+        bool gameplayPrewarmFailed_ = false;
+        std::string gameplayPrewarmError_;
         bool firstFrameUploaded_ = false;
         bool gameplayScreenEnabled_ = true;
         // A decoder failure hides only this session's screen. Beat Saber keeps
@@ -126,8 +139,9 @@ namespace BigScreen {
         int effectiveFpsLimit_ = 30;
         int effectiveResolutionHeight_ = 720;
         std::uint64_t requestedFrames_ = 0;
+        double expectedFrameAccumulator_ = 0.0;
         std::uint64_t presentedFrames_ = 0;
-        std::uint64_t windowRequestedFrames_ = 0;
+        double windowExpectedFrameAccumulator_ = 0.0;
         std::uint64_t windowPresentedFrames_ = 0;
         double performanceWindowStartSongTime_ = 0.0;
         int automaticReductions_ = 0;

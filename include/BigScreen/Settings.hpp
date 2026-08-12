@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 
 namespace BigScreen {
     /// One complete screen geometry preset. Keeping geometry together prevents
@@ -48,6 +49,11 @@ namespace BigScreen {
 
         void Load();
         void Reset();
+        /// Persists a pending group of rapid UI changes after its debounce
+        /// period. This is called from the existing main-thread update hook.
+        void TickPersistence();
+        /// Forces pending settings to disk before focus loss or gameplay.
+        void Flush();
 
         bool ModEnabled() const { return modEnabled_; }
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
@@ -143,6 +149,7 @@ namespace BigScreen {
         Settings() = default;
 
         void Save();
+        void WriteNow();
 
         bool modEnabled_ = true;
         // The placement preview is easiest to judge against an uncluttered
@@ -173,5 +180,7 @@ namespace BigScreen {
         int automaticPerformanceThreshold_ = 10;
         bool performanceDiagnosticsEnabled_ = false;
         bool nightlyDownloaderUpdates_ = false;
+        bool savePending_ = false;
+        std::chrono::steady_clock::time_point saveDeadline_{};
     };
 }

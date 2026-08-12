@@ -198,7 +198,7 @@ Available when Automatic Performance is on. 5% reacts sooner, 10% is balanced, a
 
 #### Show Performance Information — default: Off
 
-Displays source/output resolution and FPS, requested versus presented frames, average decode delay, and automatic reductions during gameplay. A summary is retained on results/failure screens so it can be read after playing. Enable this when tuning quality or reporting performance problems.
+Displays source/output resolution and FPS, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning quality, or reporting performance problems.
 
 ## Song-selection header controls
 

@@ -279,6 +279,15 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionShown()
     {
+        if(selectedLevel_)
+        {
+            selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
+            if(selectedDescriptor_.CanPlay() && !selectedLevelHasVideo_)
+            {
+                PlaybackSession::Instance().Prepare(selectedLevel_);
+                selectedLevelHasVideo_ = PlaybackSession::Instance().HasPreparedVideo();
+            }
+        }
         RefreshUi();
 
         // Returning from gameplay does not necessarily restart Beat Saber's
@@ -332,6 +341,9 @@ namespace BigScreen {
         resumeWaitReported_ = false;
         selectedLevelId_ = levelId;
         selectedLevel_ = level;
+        selectedDescriptor_ = level
+            ? VideoLibrary::Instance().Describe(level)
+            : VideoDescriptor{};
         inMapEnabled_ = Settings::Instance().VideoEnabled();
         playback.Prepare(level);
         selectedLevelHasVideo_ = playback.HasPreparedVideo();
@@ -369,6 +381,7 @@ namespace BigScreen {
             // user changes selection before re-enabling Big Screen.
             selectedLevelId_.clear();
             selectedLevel_ = nullptr;
+            selectedDescriptor_ = {};
             selectedLevelHasVideo_ = false;
             inMapEnabled_ = Settings::Instance().VideoEnabled();
             playback.Prepare(nullptr);
@@ -457,7 +470,7 @@ namespace BigScreen {
         }
         if(!selectedLevel_) return;
 
-        const auto descriptor = VideoLibrary::Instance().Describe(selectedLevel_);
+        const auto& descriptor = selectedDescriptor_;
         if(!descriptor.downloadUrl) return;
         DownloadRequest request;
         request.levelId = descriptor.levelId;
@@ -508,12 +521,20 @@ namespace BigScreen {
     void SelectionVideoToggle::TickDownloadUi()
     {
         if(!downloadButton_ || !downloadStatus_) return;
+        const float now = UnityEngine::Time::get_unscaledTime();
+        if(now < nextDownloadUiRefreshTime_)
+            return;
+        nextDownloadUiRefreshTime_ = now + 0.1f;
         const auto snapshot = DownloadManager::Instance().Snapshot();
         const bool forSelection = !snapshot.levelId.empty() &&
                                   snapshot.levelId == selectedLevelId_;
-        const auto descriptor = selectedLevel_
-            ? VideoLibrary::Instance().Describe(selectedLevel_)
-            : VideoDescriptor{};
+        // A completed task is the one event that changes the selected map's
+        // descriptor without a new SongCore selection callback. Refresh once,
+        // then keep using the cached result for all later UI ticks.
+        if(forSelection && snapshot.state == DownloadState::Completed &&
+           selectedLevel_ && !selectedDescriptor_.CanPlay())
+            selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
+        const auto& descriptor = selectedDescriptor_;
         const bool show = Settings::Instance().ModEnabled() &&
                           (descriptor.CanDownload() || forSelection);
         downloadButton_->get_gameObject()->SetActive(show && !descriptor.CanPlay());
@@ -657,6 +678,10 @@ namespace BigScreen {
 
     void SelectionVideoToggle::RefreshUi()
     {
+        // UI events need an immediate refresh; the normal Update hook is
+        // deliberately limited to 10 Hz to avoid reparsing custom-map metadata
+        // and rewriting unchanged Unity controls every rendered frame.
+        nextDownloadUiRefreshTime_ = 0.0f;
         if(!previewUi_ && !inMapUi_ && !layoutUi_)
             return;
 

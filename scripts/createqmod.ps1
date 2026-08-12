@@ -2,6 +2,9 @@ Param(
     [Parameter(Mandatory=$false)]
     [String] $qmodName="",
 
+    [ValidateSet("4.4.8", "9.0.1")]
+    [String] $FfmpegVersion = $(if ($env:BIGSCREEN_FFMPEG_VERSION) { $env:BIGSCREEN_FFMPEG_VERSION } else { "4.4.8" }),
+
     [Parameter(Mandatory=$false)]
     [Switch] $help
 )
@@ -63,14 +66,19 @@ $modJson.libraryFiles = $requiredLibraries
 # manifest list.
 $runtimeStage = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "build/downloader"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$ffmpegRuntime = if ($FfmpegVersion -eq "4.4.8") {
+    Join-Path $repositoryRoot "extern/ffmpeg-lgpl"
+} else {
+    Join-Path $repositoryRoot "extern/ffmpeg-lgpl-$FfmpegVersion"
+}
 # Install redistributable notices beside the embedded runtime. Users and mod
 # managers should not need the Git repository to discover dependency terms.
 $noticeSources = @{
     "BIGSCREEN-LICENSE.txt" = Join-Path $repositoryRoot "LICENSE"
     "THIRD-PARTY-NOTICES.md" = Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"
-    "FFMPEG-LGPL-2.1-OR-LATER.txt" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/COPYING.LGPLv2.1"
-    "FFMPEG-BUILD-INFO.txt" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/BUILD-INFO.txt"
-    "FFMPEG-CHANGES.diff" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/bigscreen-ffmpeg-changes.diff"
+    "FFMPEG-LGPL-2.1-OR-LATER.txt" = Join-Path $ffmpegRuntime "COPYING.LGPLv2.1"
+    "FFMPEG-BUILD-INFO.txt" = Join-Path $ffmpegRuntime "BUILD-INFO.txt"
+    "FFMPEG-CHANGES.diff" = Join-Path $ffmpegRuntime "bigscreen-ffmpeg-changes.diff"
     "CERTIFI-MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt" = Join-Path $repositoryRoot "licenses/YT-DLP-UNLICENSE.txt"

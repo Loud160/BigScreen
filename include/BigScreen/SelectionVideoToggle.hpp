@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "BigScreen/VideoLibrary.hpp"
+
 namespace BSML {
     class IncrementSetting;
     class ToggleSetting;
@@ -100,5 +102,10 @@ namespace BigScreen {
         bool inMapEnabled_ = true;
         bool resumeWhenSongAudioStarts_ = false;
         bool resumeWaitReported_ = false;
+        float nextDownloadUiRefreshTime_ = 0.0f;
+        // Map metadata is immutable while one song remains selected. Keeping
+        // its descriptor here avoids reparsing Cinema JSON and probing files
+        // ten times per second merely to redraw an unchanged download button.
+        VideoDescriptor selectedDescriptor_;
     };
 }

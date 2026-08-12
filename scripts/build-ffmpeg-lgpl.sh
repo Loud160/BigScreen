@@ -16,10 +16,26 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_dir}/.." && pwd)"
 
-ffmpeg_version="4.4.8"
+ffmpeg_version="${BIGSCREEN_FFMPEG_VERSION:-4.4.8}"
+case "${ffmpeg_version}" in
+    4.4.8)
+        ffmpeg_sha256="c73848c4ae283d9eaee7be3b276affbc3543380483555500d0dd2c9b7e1c39c3"
+        postproc_option="--disable-postproc"
+        ;;
+    9.0.1)
+        ffmpeg_sha256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
+        # libpostproc and its configure switch were removed after FFmpeg 7.
+        # The 9.x runtime is still decoder-only because --disable-everything
+        # starts from no components and the allowlist below is explicit.
+        postproc_option=""
+        ;;
+    *)
+        printf 'Unsupported FFmpeg comparison version: %s\n' "${ffmpeg_version}" >&2
+        exit 1
+        ;;
+esac
 ffmpeg_archive="ffmpeg-${ffmpeg_version}.tar.xz"
 ffmpeg_url="https://ffmpeg.org/releases/${ffmpeg_archive}"
-ffmpeg_sha256="c73848c4ae283d9eaee7be3b276affbc3543380483555500d0dd2c9b7e1c39c3"
 android_api="24"
 
 # Keep compilation in the native Linux filesystem.  Building thousands of
@@ -28,8 +44,12 @@ android_api="24"
 cache_root="${BIGSCREEN_FFMPEG_CACHE:-${HOME}/.cache/bigscreen-ffmpeg}"
 source_root="${cache_root}/ffmpeg-${ffmpeg_version}"
 pristine_root="${cache_root}/ffmpeg-${ffmpeg_version}-pristine"
-build_root="${cache_root}/build-android-arm64"
-install_root="${repository_root}/extern/ffmpeg-lgpl"
+build_root="${cache_root}/build-${ffmpeg_version}-android-arm64"
+if [[ "${ffmpeg_version}" == "4.4.8" ]]; then
+    install_root="${repository_root}/extern/ffmpeg-lgpl"
+else
+    install_root="${repository_root}/extern/ffmpeg-lgpl-${ffmpeg_version}"
+fi
 archive_path="${cache_root}/${ffmpeg_archive}"
 stamp_path="${install_root}/bigscreen-ffmpeg-${ffmpeg_version}.ready"
 
@@ -37,7 +57,7 @@ stamp_path="${install_root}/bigscreen-ffmpeg-${ffmpeg_version}.ready"
 # developers can set ANDROID_NDK_ROOT explicitly to use any equivalent Linux
 # NDK installation.  A Linux-hosted toolchain is required because FFmpeg's
 # configure/make build runs inside Linux or WSL.
-default_ndk_root="${HOME}/.cache/bigscreen-toolchains/android-ndk-r27c"
+default_ndk_root="${HOME}/.cache/bigscreen-toolchains/android-ndk-r27d"
 android_ndk_root="${ANDROID_NDK_ROOT:-${default_ndk_root}}"
 toolchain_bin="${android_ndk_root}/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
@@ -64,7 +84,7 @@ fi
 
 if [[ ! -x "${toolchain_bin}/aarch64-linux-android${android_api}-clang" ]]; then
     printf 'Android NDK clang was not found at: %s\n' "${toolchain_bin}" >&2
-    printf 'Set ANDROID_NDK_ROOT to an extracted Linux Android NDK r27c directory.\n' >&2
+    printf 'Set ANDROID_NDK_ROOT to an extracted Linux Android NDK r27d directory.\n' >&2
     exit 1
 fi
 
@@ -75,7 +95,7 @@ if [[ ! -f "${archive_path}" ]]; then
 fi
 
 # A release URL alone is not immutable.  Refuse to build if the archive does
-# not match the FFmpeg 4.4.8 source that was reviewed for this runtime.
+# not match the selected FFmpeg source that was reviewed for this runtime.
 printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_path}" | sha256sum --check --status || {
     printf 'FFmpeg source archive failed SHA-256 verification: %s\n' "${archive_path}" >&2
     exit 1
@@ -129,7 +149,7 @@ cd "${build_root}"
     --disable-avdevice \
     --disable-avfilter \
     --disable-swresample \
-    --disable-postproc \
+    ${postproc_option} \
     --disable-everything \
     --enable-avcodec \
     --enable-avformat \

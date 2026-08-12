@@ -2,6 +2,9 @@ Param(
     [Parameter(Mandatory=$false)]
     [Switch] $clean,
 
+    [ValidateSet("4.4.8", "9.0.1")]
+    [String] $FfmpegVersion = $(if ($env:BIGSCREEN_FFMPEG_VERSION) { $env:BIGSCREEN_FFMPEG_VERSION } else { "4.4.8" }),
+
     [Parameter(Mandatory=$false)]
     [Switch] $help
 )
@@ -57,7 +60,8 @@ if (-not $cmakeExe) {
 # Build the complete isolated LGPL FFmpeg runtime under WSL.  Developers may
 # pre-stage extern/ffmpeg-lgpl in CI or another Linux environment; otherwise a
 # local WSL distribution with a Linux Android NDK is required.
-$ffmpegStamp = Join-Path (Join-Path $PSScriptRoot "..") "extern/ffmpeg-lgpl/bigscreen-ffmpeg-4.4.8.ready"
+$ffmpegDirectory = if ($FfmpegVersion -eq "4.4.8") { "extern/ffmpeg-lgpl" } else { "extern/ffmpeg-lgpl-$FfmpegVersion" }
+$ffmpegStamp = Join-Path (Join-Path $PSScriptRoot "..") "$ffmpegDirectory/bigscreen-ffmpeg-$FfmpegVersion.ready"
 if (-not (Test-Path -LiteralPath $ffmpegStamp)) {
     $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
     if (-not $wslCommand) {
@@ -66,7 +70,7 @@ if (-not (Test-Path -LiteralPath $ffmpegStamp)) {
     $linuxScript = (Resolve-Path (Join-Path $PSScriptRoot "build-ffmpeg-lgpl.sh")).Path.Replace('\', '/')
     $drive = $linuxScript.Substring(0, 1).ToLowerInvariant()
     $linuxScript = "/mnt/$drive/" + $linuxScript.Substring(3)
-    & $wslCommand.Source -- bash $linuxScript
+    & $wslCommand.Source -- env "BIGSCREEN_FFMPEG_VERSION=$FfmpegVersion" bash $linuxScript
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -84,7 +88,9 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" -B build
+& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
+    "-DBIGSCREEN_FFMPEG_VERSION=$FfmpegVersion" `
+    -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

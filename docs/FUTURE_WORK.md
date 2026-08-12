@@ -1,5 +1,31 @@
 # Future work
 
+## TODO: Split oversized source files after major behavior stabilizes
+
+This refactor is deliberately deferred until the current playback, downloader,
+runtime, and performance changes have received substantial headset testing. It
+must remain visible in future release-readiness reviews so working behavior does
+not become permanently trapped in a few difficult-to-test files.
+
+Split by responsibility rather than by an arbitrary line limit:
+
+- `VideoLibraryMenu.cpp`: library flow/navigation, catalog/filter model,
+  song-list cell presenter, video-details editor, preview transport, and the
+  thumbnail cache/loader.
+- `SettingsMenu.cpp`: settings flow/navigation, individual tab builders, and
+  screen-editor integration.
+- `DownloadManager.cpp`: download coordinator, embedded CPython host, yt-dlp
+  updater/rollback, thumbnail downloader, and status persistence. Move the
+  embedded Python programs into normal `.py` sources and generate their C++ raw
+  resources during the build so they can be linted and tested directly.
+- `main.cpp`: gameplay, menu, environment, and application-lifecycle hooks.
+
+Perform the extraction incrementally in behavior-preserving commits. Run host
+tests and the Quest ARM64 build after each move, and update `ARCHITECTURE.md`,
+`BUILDING.md`, and the relevant user documentation whenever ownership or runtime
+behavior changes. Do not combine the entire split with unrelated feature work;
+that would make regressions unnecessarily difficult to isolate.
+
 - Consider a separate download-quality preference only if testing shows that
   retaining one source-quality download and downscaling during playback causes
   unacceptable gameplay cost. Avoid automatically accumulating multiple copies

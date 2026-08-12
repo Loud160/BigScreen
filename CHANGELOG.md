@@ -11,3 +11,7 @@
 - Automatic library recovery, storage maintenance, performance diagnostics/reduction, error containment, host tests, and CI.
 - Release hardening adds HTTPS YouTube mapper URL restrictions, metadata/list bounds, decoder-worker exception containment, pinned CI actions, and packaged third-party notices.
 - Downloader hardening adds bounded QuickJS input/output/stack use, exception-safe Python ownership, real EJS startup validation, transactional update activation, stale native-extension pruning, fresh QMOD verification, and source-rebuild CI.
+- Playback hardening adds source-aware/VFR timing, reusable RGBA buffers, full request-cost diagnostics, gameplay decoder prewarming, and material-state updates only when invariants change.
+- Menu and storage work is rate-limited and cached; downloader progress avoids per-block flash synchronization, network waits are bounded, and error dialogs back off safely.
+- The runtime now uses CPython 3.14.7 and one pinned Android NDK r27d toolchain. Reproducible LGPL FFmpeg 4.4.8 and 9.0.1 builds remain side by side for controlled on-headset comparison.
+- Expanded host/CI coverage validates downloader policies, repository/toolchain/license invariants, real H.264 decoding, portrait media, worker shutdown, and RGBA buffer reuse.

@@ -15,6 +15,7 @@
       }
     },
     "workspace": {
+      "ndk": "^27.3.13750724",
       "scripts": {
         "build": [
           "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1"

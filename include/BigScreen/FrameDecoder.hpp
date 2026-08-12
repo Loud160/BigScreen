@@ -24,6 +24,11 @@ namespace BigScreen {
         int width = 0;
         int height = 0;
         double presentationSeconds = 0.0;
+        // The container-provided duration is used when available so variable-
+        // frame-rate video does not inherit one guessed duration for every
+        // frame. nominalFrameSeconds_ remains the fallback for incomplete MP4
+        // timing data.
+        double durationSeconds = 0.0;
     };
 
     /// Externally-clocked FFmpeg decoder.
@@ -51,6 +56,10 @@ namespace BigScreen {
 
         void Request(double mediaSeconds);
         bool TryTake(VideoFrame& destination);
+        /// Returns a consumed RGBA allocation to the decoder. Keeping a small
+        /// pool avoids allocating and freeing a multi-megabyte 1080p vector for
+        /// every presented frame.
+        void Recycle(VideoFrame&& frame);
         /// Moves the first decoder-worker failure to the main thread. The
         /// caller can stop only the video and defer UI until gameplay ends.
         std::optional<std::string> TakeError();
@@ -65,6 +74,7 @@ namespace BigScreen {
         }
         double AverageDecodeMilliseconds() const { return averageDecodeMilliseconds_.load(); }
         double DurationSeconds() const { return durationSeconds_; }
+        std::uint64_t BufferAllocations() const { return bufferAllocations_.load(); }
 
     private:
         void WorkerMain() noexcept;
@@ -73,8 +83,11 @@ namespace BigScreen {
         bool ReadDecodedFrame();
         bool SeekNear(double mediaSeconds);
         double CurrentFrameTime() const;
+        double CurrentFrameDuration() const;
         bool ConvertCurrentFrame(VideoFrame& destination);
         void Publish(VideoFrame&& frame);
+        VideoFrame AcquireOutputFrame();
+        void RecycleBufferLocked(std::vector<std::uint8_t>&& buffer);
 
         AVFormatContext* format_ = nullptr;
         AVCodecContext* codec_ = nullptr;
@@ -95,6 +108,10 @@ namespace BigScreen {
         std::atomic<bool> open_{false};
         std::atomic<bool> stopWorker_{false};
         std::atomic<double> averageDecodeMilliseconds_{0.0};
+        // Counts only vector capacity growth, not ordinary frame reuse. This is
+        // exposed in diagnostics so on-device tests can prove the RGBA pool is
+        // stable instead of silently allocating multi-megabyte buffers again.
+        std::atomic<std::uint64_t> bufferAllocations_{0};
 
         std::mutex requestMutex_;
         std::condition_variable requestChanged_;
@@ -103,6 +120,7 @@ namespace BigScreen {
 
         std::mutex outputMutex_;
         VideoFrame newestFrame_;
+        std::vector<std::vector<std::uint8_t>> recycledBuffers_;
         bool frameWaiting_ = false;
 
         std::mutex errorMutex_;

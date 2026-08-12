@@ -13,7 +13,7 @@ if(NOT DEFINED CMAKE_ANDROID_NDK)
 endif()
 
 if(NOT DEFINED CMAKE_ANDROID_NDK)
-    message(Big time error buddy, no NDK)
+    message(FATAL_ERROR "Android NDK r27d (27.3.13750724) was not found")
 endif()
 
 string(REPLACE "\\" "/" CMAKE_ANDROID_NDK ${CMAKE_ANDROID_NDK})

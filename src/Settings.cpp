@@ -273,7 +273,10 @@ namespace BigScreen {
         if(!videoEnabled_)
             menuPreviewEnabled_ = false;
 
-        Save();
+        // Persist migrations immediately. The debounce is intended for rapid
+        // interactive changes, not startup normalization that may otherwise
+        // be lost if Beat Saber exits before its first menu update.
+        WriteNow();
     }
 
     void Settings::Reset()
@@ -285,7 +288,7 @@ namespace BigScreen {
         // declares its intended default beside the member itself.
         *this = Settings{};
         ErrorManager::Instance().ResetCircuitBreaker();
-        Save();
+        WriteNow();
     }
 
     void Settings::SetModEnabled(bool value)
@@ -294,6 +297,8 @@ namespace BigScreen {
         if(value)
             ErrorManager::Instance().ResetCircuitBreaker();
         Save();
+        if(!value)
+            Flush();
     }
 
     void Settings::SetDistractionFreeMenu(bool value)
@@ -588,6 +593,29 @@ namespace BigScreen {
 
     void Settings::Save()
     {
+        // Slider callbacks may arrive dozens of times per second. Apply values
+        // to the live preview immediately but coalesce their complete JSON
+        // rewrite into one durable save after the user stops adjusting them.
+        savePending_ = true;
+        saveDeadline_ = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(400);
+    }
+
+    void Settings::TickPersistence()
+    {
+        if(savePending_ && std::chrono::steady_clock::now() >= saveDeadline_)
+            WriteNow();
+    }
+
+    void Settings::Flush()
+    {
+        if(savePending_)
+            WriteNow();
+    }
+
+    void Settings::WriteNow()
+    {
+        savePending_ = false;
         auto& configuration = GetConfiguration();
         auto& document = configuration.config;
         if(!document.IsObject())

@@ -7,13 +7,18 @@
 - [ ] `packageVersion` exactly matches the tested Beat Saber APK.
 - [ ] Public description, screenshots/video, and compatibility statement are current.
 - [ ] Third-party artifact versions/hashes and notices were reviewed.
+- [ ] Review the tracked large-file refactor in `FUTURE_WORK.md`; either complete
+      it after major behavior is stable or explicitly carry it as documented
+      technical debt for this release.
 
 ## Automated validation
 
 - [ ] Host tests pass from a clean test build directory.
+- [ ] Linux decoder tests generate landscape/portrait H.264 fixtures and pass; RGBA allocation growth remains bounded.
 - [ ] QuickJS output, exception, timeout, recursion, source-limit, and output-limit tests pass in a Release build; the pinned source hash was reviewed.
 - [ ] `build-downloader-from-source.ps1` rebuilds yt-dlp/yt-dlp-ejs and its full payload matches the pinned official release.
 - [ ] Clean ARM64 Quest build passes with no unresolved symbols.
+- [ ] Clean ARM64 builds pass against both FFmpeg 4.4.8 and 9.0.1; the packaged build record matches the selected runtime.
 - [ ] QMOD creation passes from clean staged dependencies and replaces no prior artifact until fresh-archive validation succeeds.
 - [ ] QMOD archive exactly contains the unique manifest inputs: native libraries, full downloader runtime, manifest, and license/notices.
 - [ ] CI passes on the release commit/tag.
@@ -33,6 +38,7 @@
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
 - [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.
 - [ ] 480p/720p/1080p and 15/30/60 FPS produce expected diagnostics; Automatic Performance steps down without changing saved settings.
+- [ ] Repeated identical-map runs compare FFmpeg 4.4.8 and 9.0.1 on Quest 2 and Quest 3 before changing the release default.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.
 - [ ] Stable updater check/install/restart passes; a deliberately incompatible candidate rolls back and is not reoffered.
 - [ ] A YouTube URL requiring an EJS challenge reports `Big Screen QuickJS-NG` in the log and downloads without a missing-runtime warning.
