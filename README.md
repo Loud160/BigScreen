@@ -90,6 +90,6 @@ Big Screen is feature-complete for its initial beta but still needs broad public
 
 ## Legal and licenses
 
-Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. In particular, the packaged FFmpeg build identifies itself as GPL version 3 or later; its applicable text and the CPython, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. Its private minimal FFmpeg 4.4.8 runtime is dynamically linked under LGPL 2.1-or-later and is built without GPL, version-3-only, or nonfree components. The corresponding license, build configuration, source changes, and the CPython, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
 
 Big Screen is an independent community project. It is not affiliated with or endorsed by Beat Games, Meta, Google, YouTube, the Cinema mod, or the Chroma mod. Users are responsible for complying with the rights and terms applicable to videos they download or import.

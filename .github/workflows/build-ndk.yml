@@ -62,6 +62,10 @@ jobs:
         cache: true
         publish: false
 
+    - name: Build isolated LGPL FFmpeg runtime
+      run: |
+        ANDROID_NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}" ./scripts/build-ffmpeg-lgpl.sh
+
     - name: Build & Create Qmod
       shell: pwsh
       run: |

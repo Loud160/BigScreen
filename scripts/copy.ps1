@@ -72,6 +72,21 @@ foreach ($fileName in $lateModFiles) {
     }
 }
 
+# Project-owned runtime libraries must be deployed with the mod during local
+# development. Dependency libraries already installed by QMOD are left alone;
+# only files produced in this build directory are pushed. This is especially
+# important for the four private FFmpeg libraries because Big Screen no longer
+# falls back to Hollywood's media runtime.
+foreach ($fileName in $modJson.libraryFiles) {
+    $builtLibrary = Join-Path "build" $fileName
+    if (Test-Path -LiteralPath $builtLibrary) {
+        & adb push $builtLibrary "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs/$fileName"
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+}
+
 
 & $PSScriptRoot/restart-game.ps1
 

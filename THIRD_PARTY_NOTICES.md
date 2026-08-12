@@ -9,11 +9,12 @@ also use independent third-party components under their own terms:
   baseline and can retrieve official upstream stable or nightly packages.
 - **certifi** — Mozilla Public License 2.0. Its CA bundle is installed as a
   physical package for Python/OpenSSL certificate validation.
-- **FFmpeg libraries** (`avformat`, `avcodec`, `avutil`, `swscale`) — the
-  packaged `ffmpeg-kit-speed` v4.4.1 ARM64 build identifies itself as "GPL
-  version 3 or later" and contains `--enable-gpl --enable-version3` in its
-  embedded configuration. The QMOD therefore includes
-  `FFMPEG-GPL-3.0-OR-LATER.txt`; redistribution must honor those GPL terms.
+- **FFmpeg 4.4.8 libraries** (`avformat`, `avcodec`, `avutil`, `swscale`) — Big
+  Screen builds and dynamically links a private Android ARM64 runtime under the
+  GNU Lesser General Public License 2.1 or later. It is configured without
+  `--enable-gpl`, `--enable-version3`, or `--enable-nonfree`; it contains only
+  H.264 decoding, MP4/MOV demuxing, local-file access, and frame scaling. The
+  QMOD includes the LGPL text, exact build information, and source changes.
 - **beatsaber-hook, BSML, custom-types, SongCore, Paper, Scotland2, and generated
   Beat Saber CORDL headers** — separate Quest modding dependencies. Versions and
   resolved sources are recorded in `qpm.json` and `qpm.shared.json`.
@@ -21,5 +22,5 @@ also use independent third-party components under their own terms:
   scaffold; see `PROVENANCE.md`.
 
 The QMOD installs this notice and the CPython, yt-dlp, certifi, and FFmpeg
-license texts beside the embedded runtime under Big Screen's ModData folder.
-This notice is informational and does not replace those complete terms.
+license/build records beside the embedded runtime under Big Screen's ModData
+folder. This notice is informational and does not replace those complete terms.

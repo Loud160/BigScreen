@@ -32,8 +32,17 @@ if (-not $?) {
 $modJson = Get-Content $mod -Raw | ConvertFrom-Json
 $templateJson = Get-Content "./mod.template.json" -Raw | ConvertFrom-Json
 $modJson.version = $templateJson.version
+# Hollywood was previously declared only to supply its GPL-enabled FFmpeg
+# runtime. Big Screen now owns a completely isolated LGPL runtime, so retaining
+# that package dependency would install unused GPL software and obscure the
+# actual licensing boundary. Filter stale generated mod.json files as well as
+# removing Hollywood from qpm.json so offline packaging is deterministic.
+$modJson.dependencies = @($modJson.dependencies | Where-Object { $_.id -ne "hollywood" })
 $requiredLibraries = @(
-    "libswscale.so",
+    "libavformat-bigscreen.so",
+    "libavcodec-bigscreen.so",
+    "libavutil-bigscreen.so",
+    "libswscale-bigscreen.so",
     "libbeatsaber-hook_5_1_9.so",
     "libpython3.14.so",
     "libssl_python.so",
@@ -53,7 +62,9 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $noticeSources = @{
     "BIGSCREEN-LICENSE.txt" = Join-Path $repositoryRoot "LICENSE"
     "THIRD-PARTY-NOTICES.md" = Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"
-    "FFMPEG-GPL-3.0-OR-LATER.txt" = Join-Path $repositoryRoot "licenses/GPL-3.0-or-later.txt"
+    "FFMPEG-LGPL-2.1-OR-LATER.txt" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/COPYING.LGPLv2.1"
+    "FFMPEG-BUILD-INFO.txt" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/BUILD-INFO.txt"
+    "FFMPEG-CHANGES.diff" = Join-Path $repositoryRoot "extern/ffmpeg-lgpl/bigscreen-ffmpeg-changes.diff"
     "CERTIFI-MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt" = Join-Path $repositoryRoot "licenses/YT-DLP-UNLICENSE.txt"
@@ -69,7 +80,9 @@ $runtimeFiles = @(
     "CPYTHON-LICENSE.txt"
     "BIGSCREEN-LICENSE.txt"
     "THIRD-PARTY-NOTICES.md"
-    "FFMPEG-GPL-3.0-OR-LATER.txt"
+    "FFMPEG-LGPL-2.1-OR-LATER.txt"
+    "FFMPEG-BUILD-INFO.txt"
+    "FFMPEG-CHANGES.diff"
     "CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt"

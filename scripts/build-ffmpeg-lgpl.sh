@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+
+# Build the private FFmpeg runtime used by Big Screen.
+#
+# Big Screen deliberately builds FFmpeg itself instead of linking against the
+# GPL-configured FFmpeg libraries supplied by Hollywood.  The resulting four
+# shared libraries contain only the media features Big Screen calls and use a
+# private SONAME plus a private ELF symbol-version namespace.  Both forms of
+# isolation matter: a unique filename prevents Android from treating the two
+# FFmpeg builds as the same library, while unique symbol versions prevent the
+# dynamic linker from satisfying Big Screen's FFmpeg calls with Hollywood's
+# already-loaded, unversioned symbols.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repository_root="$(cd "${script_dir}/.." && pwd)"
+
+ffmpeg_version="4.4.8"
+ffmpeg_archive="ffmpeg-${ffmpeg_version}.tar.xz"
+ffmpeg_url="https://ffmpeg.org/releases/${ffmpeg_archive}"
+ffmpeg_sha256="c73848c4ae283d9eaee7be3b276affbc3543380483555500d0dd2c9b7e1c39c3"
+android_api="24"
+
+# Keep compilation in the native Linux filesystem.  Building thousands of
+# small FFmpeg objects through WSL's /mnt/c bridge is dramatically slower and
+# can leave partially copied trees after an interrupted Windows session.
+cache_root="${BIGSCREEN_FFMPEG_CACHE:-${HOME}/.cache/bigscreen-ffmpeg}"
+source_root="${cache_root}/ffmpeg-${ffmpeg_version}"
+pristine_root="${cache_root}/ffmpeg-${ffmpeg_version}-pristine"
+build_root="${cache_root}/build-android-arm64"
+install_root="${repository_root}/extern/ffmpeg-lgpl"
+archive_path="${cache_root}/${ffmpeg_archive}"
+stamp_path="${install_root}/bigscreen-ffmpeg-${ffmpeg_version}.ready"
+
+# The local Windows development setup keeps a Linux NDK in WSL.  CI and other
+# developers can set ANDROID_NDK_ROOT explicitly to use any equivalent Linux
+# NDK installation.  A Linux-hosted toolchain is required because FFmpeg's
+# configure/make build runs inside Linux or WSL.
+default_ndk_root="${HOME}/.cache/bigscreen-toolchains/android-ndk-r27c"
+android_ndk_root="${ANDROID_NDK_ROOT:-${default_ndk_root}}"
+toolchain_bin="${android_ndk_root}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+required_outputs=(
+    "libavutil-bigscreen.so"
+    "libavcodec-bigscreen.so"
+    "libavformat-bigscreen.so"
+    "libswscale-bigscreen.so"
+)
+
+is_complete_install() {
+    [[ -f "${stamp_path}" ]] || return 1
+    [[ -d "${install_root}/include" ]] || return 1
+    local library
+    for library in "${required_outputs[@]}"; do
+        [[ -f "${install_root}/lib/${library}" ]] || return 1
+    done
+}
+
+if is_complete_install && [[ "${1:-}" != "--force" ]]; then
+    printf 'Big Screen LGPL FFmpeg %s is already staged.\n' "${ffmpeg_version}"
+    exit 0
+fi
+
+if [[ ! -x "${toolchain_bin}/aarch64-linux-android${android_api}-clang" ]]; then
+    printf 'Android NDK clang was not found at: %s\n' "${toolchain_bin}" >&2
+    printf 'Set ANDROID_NDK_ROOT to an extracted Linux Android NDK r27c directory.\n' >&2
+    exit 1
+fi
+
+mkdir -p "${cache_root}"
+
+if [[ ! -f "${archive_path}" ]]; then
+    curl --fail --location --retry 3 --output "${archive_path}" "${ffmpeg_url}"
+fi
+
+# A release URL alone is not immutable.  Refuse to build if the archive does
+# not match the FFmpeg 4.4.8 source that was reviewed for this runtime.
+printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_path}" | sha256sum --check --status || {
+    printf 'FFmpeg source archive failed SHA-256 verification: %s\n' "${archive_path}" >&2
+    exit 1
+}
+
+rm -rf "${source_root}" "${pristine_root}" "${build_root}" "${install_root}"
+tar -xf "${archive_path}" -C "${cache_root}"
+cp -a "${source_root}" "${pristine_root}"
+
+# Android API 23 and newer supports ELF symbol versioning.  FFmpeg disables it
+# for Android by default, so enable it and give each library a private version
+# namespace.  Big Screen then records requirements such as
+# BIGSCREEN_LIBAVCODEC_58 instead of accepting any unversioned avcodec symbol.
+sed -i '/^[[:space:]]*android)$/,/^[[:space:]]*;;/ s/^[[:space:]]*disable symver$/        enable symver/' \
+    "${source_root}/configure"
+sed -i 's/^LIBAVCODEC_/BIGSCREEN_LIBAVCODEC_/' "${source_root}/libavcodec/libavcodec.v"
+sed -i 's/^LIBAVFORMAT_/BIGSCREEN_LIBAVFORMAT_/' "${source_root}/libavformat/libavformat.v"
+sed -i 's/^LIBAVUTIL_/BIGSCREEN_LIBAVUTIL_/' "${source_root}/libavutil/libavutil.v"
+sed -i 's/^LIBSWSCALE_/BIGSCREEN_LIBSWSCALE_/' "${source_root}/libswscale/libswscale.v"
+
+mkdir -p "${build_root}"
+cd "${build_root}"
+
+# This is intentionally a decoder-only configuration.  In particular, it does
+# not use --enable-gpl, --enable-version3, --enable-nonfree, libx264, libx265,
+# libvidstab, or any encoder/filter dependency.  Big Screen downloads an
+# existing H.264 MP4 stream and only needs to demux, decode, seek, and convert
+# decoded frames to RGBA.
+"${source_root}/configure" \
+    --prefix="${install_root}" \
+    --target-os=android \
+    --arch=aarch64 \
+    --cpu=armv8-a \
+    --build-suffix=-bigscreen \
+    --enable-cross-compile \
+    --sysroot="${toolchain_bin}/../sysroot" \
+    --cc="${toolchain_bin}/aarch64-linux-android${android_api}-clang" \
+    --cxx="${toolchain_bin}/aarch64-linux-android${android_api}-clang++" \
+    --ar="${toolchain_bin}/llvm-ar" \
+    --nm="${toolchain_bin}/llvm-nm" \
+    --ranlib="${toolchain_bin}/llvm-ranlib" \
+    --strip="${toolchain_bin}/llvm-strip" \
+    --enable-pic \
+    --enable-shared \
+    --disable-static \
+    --disable-programs \
+    --disable-doc \
+    --disable-debug \
+    --disable-network \
+    --disable-autodetect \
+    --disable-avdevice \
+    --disable-avfilter \
+    --disable-swresample \
+    --disable-postproc \
+    --disable-everything \
+    --enable-avcodec \
+    --enable-avformat \
+    --enable-avutil \
+    --enable-swscale \
+    --enable-decoder=h264 \
+    --enable-demuxer=mov \
+    --enable-parser=h264 \
+    --enable-protocol=file \
+    --extra-cflags='-O3 -fPIC' \
+    --extra-ldflags='-Wl,-Bsymbolic'
+
+# Treat the license boundary as a machine-checked build invariant. FFmpeg's
+# generated makefile records disabled configure features with negated entries;
+# any positive GPL/version3/nonfree entry means a future edit changed the
+# license and must stop before producing redistributable binaries.
+for forbidden_option in CONFIG_GPL CONFIG_VERSION3 CONFIG_NONFREE; do
+    if grep -q "^${forbidden_option}=yes$" "${build_root}/ffbuild/config.mak"; then
+        printf 'Forbidden FFmpeg license option was enabled: %s\n' "${forbidden_option}" >&2
+        exit 1
+    fi
+done
+
+make -j"$(nproc)"
+make install
+
+# Preserve the exact build inputs needed for LGPL corresponding-source
+# releases.  The generated diff describes every change made to upstream
+# FFmpeg, while config files capture the complete detected toolchain state.
+{
+    diff -u "${pristine_root}/configure" "${source_root}/configure" || true
+    diff -u "${pristine_root}/libavcodec/libavcodec.v" "${source_root}/libavcodec/libavcodec.v" || true
+    diff -u "${pristine_root}/libavformat/libavformat.v" "${source_root}/libavformat/libavformat.v" || true
+    diff -u "${pristine_root}/libavutil/libavutil.v" "${source_root}/libavutil/libavutil.v" || true
+    diff -u "${pristine_root}/libswscale/libswscale.v" "${source_root}/libswscale/libswscale.v" || true
+} > "${install_root}/bigscreen-ffmpeg-changes.diff"
+cp "${build_root}/config.h" "${install_root}/bigscreen-ffmpeg-config.h"
+cp "${build_root}/ffbuild/config.mak" "${install_root}/bigscreen-ffmpeg-config.mak"
+cp "${source_root}/COPYING.LGPLv2.1" "${install_root}/COPYING.LGPLv2.1"
+
+# Fail the build if a future FFmpeg/configure change silently reintroduces a
+# normal libav dependency or drops the private symbol namespace.
+for library in "${required_outputs[@]}"; do
+    library_path="${install_root}/lib/${library}"
+    [[ -f "${library_path}" ]] || {
+        printf 'Expected FFmpeg library was not produced: %s\n' "${library_path}" >&2
+        exit 1
+    }
+    dynamic_metadata="$("${toolchain_bin}/llvm-readelf" -d "${library_path}")"
+    version_metadata="$("${toolchain_bin}/llvm-readelf" --version-info "${library_path}")"
+    if grep -Eq 'Shared library: \[lib(avcodec|avformat|avutil|swscale)\.so' <<<"${dynamic_metadata}"; then
+        printf 'Unisolated FFmpeg dependency found in %s\n' "${library_path}" >&2
+        exit 1
+    fi
+    if ! grep -q 'BIGSCREEN_LIB' <<<"${version_metadata}"; then
+        printf 'Private FFmpeg symbol versions are missing from %s\n' "${library_path}" >&2
+        exit 1
+    fi
+done
+
+cat > "${install_root}/BUILD-INFO.txt" <<EOF
+FFmpeg version: ${ffmpeg_version}
+Upstream source: ${ffmpeg_url}
+Upstream SHA-256: ${ffmpeg_sha256}
+Android ABI: arm64-v8a
+Minimum Android API: ${android_api}
+NDK: $(basename "${android_ndk_root}")
+License configuration: LGPL-2.1-or-later; GPL and nonfree components disabled
+Build script: scripts/build-ffmpeg-lgpl.sh
+EOF
+
+sha256sum "${install_root}"/lib/*-bigscreen.so > "${install_root}/SHA256SUMS"
+printf 'FFmpeg %s LGPL runtime built successfully.\n' "${ffmpeg_version}" > "${stamp_path}"
+printf 'Staged Big Screen LGPL FFmpeg at %s\n' "${install_root}"

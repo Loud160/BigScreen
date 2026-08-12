@@ -54,12 +54,22 @@ if (-not $cmakeExe) {
     throw "CMake was not found in PATH or the latest Visual Studio installation."
 }
 
-# Fetch the pinned FFmpeg headers and link-time Android libraries only when
-# they are absent. Runtime copies are supplied by Big Screen's Hollywood
-# dependency; this step never packages a second, potentially conflicting set.
-& (Join-Path $PSScriptRoot "fetch-ffmpeg.ps1")
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+# Build the complete isolated LGPL FFmpeg runtime under WSL.  Developers may
+# pre-stage extern/ffmpeg-lgpl in CI or another Linux environment; otherwise a
+# local WSL distribution with a Linux Android NDK is required.
+$ffmpegStamp = Join-Path (Join-Path $PSScriptRoot "..") "extern/ffmpeg-lgpl/bigscreen-ffmpeg-4.4.8.ready"
+if (-not (Test-Path -LiteralPath $ffmpegStamp)) {
+    $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        throw "The LGPL FFmpeg runtime is not staged and WSL was not found. Run scripts/build-ffmpeg-lgpl.sh in Linux first."
+    }
+    $linuxScript = (Resolve-Path (Join-Path $PSScriptRoot "build-ffmpeg-lgpl.sh")).Path.Replace('\', '/')
+    $drive = $linuxScript.Substring(0, 1).ToLowerInvariant()
+    $linuxScript = "/mnt/$drive/" + $linuxScript.Substring(3)
+    & $wslCommand.Source -- bash $linuxScript
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 
 # Stage the pinned Android CPython, yt-dlp, certificate bundle, and native

@@ -77,11 +77,6 @@
       "additionalData": {}
     },
     {
-      "id": "hollywood",
-      "versionRange": "=1.0.1",
-      "additionalData": {}
-    },
-    {
       "id": "rapidjson",
       "versionRange": "^0.1.20250205132808",
       "additionalData": {}

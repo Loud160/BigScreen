@@ -12,7 +12,10 @@
   "modFiles": ["${binary}"],
 
   "libraryFiles": [
-    "libswscale.so",
+    "libavformat-bigscreen.so",
+    "libavcodec-bigscreen.so",
+    "libavutil-bigscreen.so",
+    "libswscale-bigscreen.so",
     "libpython3.14.so",
     "libssl_python.so",
     "libcrypto_python.so",

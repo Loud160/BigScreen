@@ -348,6 +348,24 @@ namespace BigScreen {
         std::filesystem::create_directories(thumbnailPath_);
         std::filesystem::create_directories(runtimePath_);
         std::filesystem::create_directories(importPath_);
+
+        // Builds before the private LGPL migration installed this GPL notice
+        // into Big Screen's own Runtime directory. QMOD upgrades do not remove
+        // renamed fileCopies, so clean up that obsolete mod-owned notice once;
+        // leaving it behind would incorrectly describe the current FFmpeg
+        // runtime. Never remove videos, library data, or any user-owned file.
+        std::error_code obsoleteNoticeError;
+        const auto obsoleteGplNotice = runtimePath_ / "FFMPEG-GPL-3.0-OR-LATER.txt";
+        const bool removedObsoleteNotice =
+            std::filesystem::remove(obsoleteGplNotice, obsoleteNoticeError);
+        if(removedObsoleteNotice)
+            PaperLogger.info("Removed the obsolete pre-LGPL FFmpeg license notice");
+        else if(obsoleteNoticeError)
+            PaperLogger.warn(
+                "Could not remove obsolete FFmpeg notice '{}': {}",
+                obsoleteGplNotice.string(),
+                obsoleteNoticeError.message());
+
         LoadLocked();
         PaperLogger.info(
             "Video library ready at '{}' with {} saved level entries",

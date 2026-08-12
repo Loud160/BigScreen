@@ -80,27 +80,32 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         -ldl
         -lz)
 
-# FFmpeg is a dynamic runtime dependency supplied by Hollywood. These pinned
-# headers and Android libraries are downloaded by scripts/fetch-ffmpeg.ps1 so
-# Big Screen compiles against the exact ABI present on Beat Saber 1.37 Quests.
-set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg)
+# Big Screen ships a private, minimal FFmpeg 4.4.8 runtime built exclusively
+# from LGPL components.  Its custom SONAMEs and symbol-version namespaces keep
+# Android from resolving these calls to Hollywood's unrelated GPL FFmpeg build.
+# scripts/build-ffmpeg-lgpl.sh is the single reproducible source of these files.
+set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${BIGSCREEN_FFMPEG_DIR}/include)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavformat.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavcodec.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavutil.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavformat-bigscreen.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavcodec-bigscreen.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libavutil-bigscreen.so
+        ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale-bigscreen.so
 )
 
-# Hollywood installs the matching avformat/avcodec/avutil runtime libraries,
-# but its public package does not include swscale. Copy the exact pinned
-# companion library beside our build so the qmod can install that one missing
-# runtime dependency without duplicating Hollywood's other FFmpeg libraries.
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale.so
-                $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/libswscale.so
-        COMMENT "Stage Big Screen's pinned libswscale runtime")
+# Package the entire matching set. Mixing one library from a different FFmpeg
+# build would defeat both ABI safety and the LGPL/GPL separation.
+foreach(BIGSCREEN_FFMPEG_LIBRARY
+        libavformat-bigscreen.so
+        libavcodec-bigscreen.so
+        libavutil-bigscreen.so
+        libswscale-bigscreen.so)
+        add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${BIGSCREEN_FFMPEG_DIR}/lib/${BIGSCREEN_FFMPEG_LIBRARY}
+                        $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${BIGSCREEN_FFMPEG_LIBRARY}
+                COMMENT "Stage ${BIGSCREEN_FFMPEG_LIBRARY}")
+endforeach()
 
 # beatsaber hook inline hook
 
