@@ -11,24 +11,32 @@
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
 #include "GlobalNamespace/BeatmapEventData.hpp"
+#include "GlobalNamespace/BloomPrePassLight.hpp"
 #include "GlobalNamespace/ColorBoostBeatmapEventData.hpp"
+#include "GlobalNamespace/DirectionalLight.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
 #include "GlobalNamespace/EnvironmentEffectsFilterPreset.hpp"
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
 #include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
 #include "GlobalNamespace/LightColorBeatmapEventData.hpp"
+#include "GlobalNamespace/LightWithIdMonoBehaviour.hpp"
 #include "GlobalNamespace/LightRotationBeatmapEventData.hpp"
 #include "GlobalNamespace/LightTranslationBeatmapEventData.hpp"
+#include "GlobalNamespace/LineLight.hpp"
+#include "GlobalNamespace/LightsAnimator.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
+#include "GlobalNamespace/PointLight.hpp"
 #include "GlobalNamespace/Rotate.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
+#include "GlobalNamespace/Spectrogram.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
 #include "GlobalNamespace/TrackLaneRingsRotationEffect.hpp"
 #include "GlobalNamespace/TrackLaneRingsRotationEffectSpawner.hpp"
+#include "GlobalNamespace/TransformSpectrogram.hpp"
 #include "System/Nullable_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/Object.hpp"
@@ -84,6 +92,58 @@ namespace {
         disabled += DisableLoadedComponents<GlobalNamespace::TrackLaneRingsRotationEffect>();
         disabled += DisableLoadedComponents<GlobalNamespace::Rotate>();
         PaperLogger.info("Disabled {} rotating or moving environment components", disabled);
+    }
+
+    void DisableEnvironmentLighting()
+    {
+        int blackenedAndDisabled = 0;
+        for(auto* light : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::LightWithIdMonoBehaviour*>(false))
+        {
+            if(!light || !light->get_enabled())
+                continue;
+
+            // A registered light retains its last assigned color even after
+            // map events stop. Push black through its concrete implementation
+            // before disabling it, then OnDisable unregisters it from Beat
+            // Saber's light manager so Chroma or another manager cannot relight
+            // it later in the level.
+            light->ColorWasSet(UnityEngine::Color::get_black());
+            light->set_enabled(false);
+            ++blackenedAndDisabled;
+        }
+
+        // The newer environment renderer also owns bloom, line, point, and
+        // directional lights that are not all represented by a LightWithId
+        // component. Disabling them unregisters the actual rendered geometry
+        // and clears any already-lit/default state left after scene creation.
+        int rendererLightsDisabled = 0;
+        rendererLightsDisabled += DisableLoadedComponents<GlobalNamespace::BloomPrePassLight>();
+        rendererLightsDisabled += DisableLoadedComponents<GlobalNamespace::LineLight>();
+        rendererLightsDisabled += DisableLoadedComponents<GlobalNamespace::PointLight>();
+        rendererLightsDisabled += DisableLoadedComponents<GlobalNamespace::DirectionalLight>();
+
+        int animatedLightingDisabled = 0;
+        for(auto* animator : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::LightsAnimator*>(false))
+        {
+            if(animator && animator->get_enabled())
+            {
+                animator->SetLightsColor(UnityEngine::Color::get_black());
+                animator->set_enabled(false);
+                ++animatedLightingDisabled;
+            }
+        }
+        // Spectrograms are driven directly by song audio rather than map-event
+        // callbacks, but visually form part of the environment light show.
+        animatedLightingDisabled += DisableLoadedComponents<GlobalNamespace::Spectrogram>();
+        animatedLightingDisabled += DisableLoadedComponents<GlobalNamespace::TransformSpectrogram>();
+
+        PaperLogger.info(
+            "Map lighting scene shutdown blackened {} managed lights, disabled {} renderer lights, and stopped {} animated lights",
+            blackenedAndDisabled,
+            rendererLightsDisabled,
+            animatedLightingDisabled);
     }
 
     bool ShouldSuppressEnvironmentMotion()
@@ -345,6 +405,11 @@ namespace {
            !BigScreen::Settings::Instance().EnvironmentMotionEnabled())
         {
             DisableEnvironmentMotion();
+        }
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           !BigScreen::Settings::Instance().MapLightShowEnabled())
+        {
+            DisableEnvironmentLighting();
         }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }
