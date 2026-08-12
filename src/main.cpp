@@ -34,11 +34,13 @@
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
+#include "GlobalNamespace/TrackLaneRing.hpp"
 #include "GlobalNamespace/TrackLaneRingsRotationEffect.hpp"
 #include "GlobalNamespace/TrackLaneRingsRotationEffectSpawner.hpp"
 #include "GlobalNamespace/TransformSpectrogram.hpp"
 #include "System/Nullable_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Object.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
@@ -92,6 +94,28 @@ namespace {
         disabled += DisableLoadedComponents<GlobalNamespace::TrackLaneRingsRotationEffect>();
         disabled += DisableLoadedComponents<GlobalNamespace::Rotate>();
         PaperLogger.info("Disabled {} rotating or moving environment components", disabled);
+    }
+
+    void HideTrackLaneRings()
+    {
+        int hidden = 0;
+        for(auto* ring : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::TrackLaneRing*>(false))
+        {
+            if(!ring)
+                continue;
+            auto gameObject = ring->get_gameObject();
+            if(gameObject && gameObject->get_activeSelf())
+            {
+                // The ring's MonoBehaviour only drives position and rotation;
+                // disabling it would leave its mesh visible. Deactivating the
+                // ring root hides the mesh and its child lights while keeping
+                // notes, obstacles, the platform, and unrelated side scenery.
+                gameObject->SetActive(false);
+                ++hidden;
+            }
+        }
+        PaperLogger.info("Hidden {} track-lane ring objects for video gameplay", hidden);
     }
 
     void DisableEnvironmentLighting()
@@ -410,6 +434,11 @@ namespace {
            !BigScreen::Settings::Instance().MapLightShowEnabled())
         {
             DisableEnvironmentLighting();
+        }
+        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+           BigScreen::Settings::Instance().HideTrackRings())
+        {
+            HideTrackLaneRings();
         }
         BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
     }

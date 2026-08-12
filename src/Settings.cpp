@@ -130,6 +130,7 @@ namespace BigScreen {
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         environmentOverrideEnabled_ = ReadBool(document, "environmentOverrideEnabled", true);
         environmentMotionEnabled_ = ReadBool(document, "environmentMotionEnabled", true);
+        hideTrackRings_ = ReadBool(document, "hideTrackRings", true);
         playbackFpsLimit_ = NormalizePlaybackFps(
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
@@ -161,6 +162,7 @@ namespace BigScreen {
         mapLightShowEnabled_ = true;
         environmentOverrideEnabled_ = true;
         environmentMotionEnabled_ = true;
+        hideTrackRings_ = true;
         playbackFpsLimit_ = 30;
         resolutionHeight_ = 720;
         nightlyDownloaderUpdates_ = false;
@@ -261,6 +263,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetHideTrackRings(bool value)
+    {
+        hideTrackRings_ = value;
+        Save();
+    }
+
     void Settings::SetPlaybackFpsLimit(int value)
     {
         playbackFpsLimit_ = NormalizePlaybackFps(value);
@@ -304,6 +312,7 @@ namespace BigScreen {
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "environmentOverrideEnabled", environmentOverrideEnabled_);
         Replace(document, "environmentMotionEnabled", environmentMotionEnabled_);
+        Replace(document, "hideTrackRings", hideTrackRings_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);

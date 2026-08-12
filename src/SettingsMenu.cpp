@@ -158,6 +158,7 @@ namespace BigScreen {
         lightShowToggle_ = nullptr;
         environmentOverrideToggle_ = nullptr;
         environmentMotionToggle_ = nullptr;
+        hideTrackRingsToggle_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
@@ -508,6 +509,18 @@ namespace BigScreen {
             environmentMotionToggle_,
             "Turns rotating and moving background scenery on or off for video maps.");
 
+        hideTrackRingsToggle_ = BSML::Lite::CreateToggle(
+            playbackContainer,
+            "Hide Track Rings",
+            settings.HideTrackRings(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHideTrackRings(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            hideTrackRingsToggle_,
+            "Hides the overhead ring and arch geometry that can cross in front of the video screen. Takes effect when the next map starts.");
+
         playbackFpsDropdown_ = BSML::Lite::CreateDropdown(
             playbackContainer,
             "Video Frame Rate Limit",
@@ -666,6 +679,9 @@ namespace BigScreen {
             environmentMotionToggle_,
             settings.EnvironmentMotionEnabled());
         SetToggleWithoutNotification(
+            hideTrackRingsToggle_,
+            settings.HideTrackRings());
+        SetToggleWithoutNotification(
             nightlyUpdatesToggle_,
             settings.NightlyDownloaderUpdates());
 
@@ -739,6 +755,8 @@ namespace BigScreen {
             environmentOverrideToggle_->set_interactable(enabled);
         if(environmentMotionToggle_)
             environmentMotionToggle_->set_interactable(enabled);
+        if(hideTrackRingsToggle_)
+            hideTrackRingsToggle_->set_interactable(enabled);
         if(playbackFpsDropdown_)
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)

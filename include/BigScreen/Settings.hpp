@@ -29,6 +29,7 @@ namespace BigScreen {
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool EnvironmentOverrideEnabled() const { return environmentOverrideEnabled_; }
         bool EnvironmentMotionEnabled() const { return environmentMotionEnabled_; }
+        bool HideTrackRings() const { return hideTrackRings_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
@@ -47,6 +48,7 @@ namespace BigScreen {
         void SetMapLightShowEnabled(bool value);
         void SetEnvironmentOverrideEnabled(bool value);
         void SetEnvironmentMotionEnabled(bool value);
+        void SetHideTrackRings(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
         void SetNightlyDownloaderUpdates(bool value);
@@ -70,6 +72,7 @@ namespace BigScreen {
         bool mapLightShowEnabled_ = true;
         bool environmentOverrideEnabled_ = true;
         bool environmentMotionEnabled_ = true;
+        bool hideTrackRings_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
         bool nightlyDownloaderUpdates_ = false;
