@@ -104,6 +104,9 @@ namespace BigScreen {
         bool started_ = false;
         bool firstFrameUploaded_ = false;
         bool gameplayScreenEnabled_ = true;
+        // A decoder failure hides only this session's screen. Beat Saber keeps
+        // playing and ErrorManager postpones the explanation until it is safe.
+        bool playbackFailed_ = false;
         // The presentation limiter lives above FFmpeg so decoder timestamps
         // remain untouched. Native-rate gating still occurs inside FrameDecoder.
         std::optional<std::int64_t> lastPresentationSlot_;

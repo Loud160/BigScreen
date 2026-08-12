@@ -8,7 +8,7 @@ jobs:
   host-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Configure
         run: cmake -S tests -B build-host-tests
       - name: Build
@@ -16,4 +16,4 @@ jobs:
       - name: Test
         run: ctest --test-dir build-host-tests -C Release --output-on-failure
       - name: Validate public files
-        run: test -f LICENSE && test -f THIRD_PARTY_NOTICES.md && test -f docs/USER_GUIDE.md
+        run: test -f LICENSE && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md

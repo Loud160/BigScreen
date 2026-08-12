@@ -37,6 +37,13 @@ download_script = extract(source, "DownloaderScript")
 probe_script = extract(source, "ProbeScript")
 updater_script = extract(source, "UpdaterScript")
 
+# A candidate that failed the on-device import test must not be offered every
+# startup. This is intentionally a source-level invariant because the complete
+# updater normally contacts GitHub and writes real package files.
+assert "rejected = job.get('rejectedVersion', '')" in updater_script
+assert "version == rejected" in updater_script
+assert "will wait for a newer release" in updater_script
+
 # Compile every complete raw string so a typo cannot ship as a runtime-only
 # failure on the headset.
 for name, script in (

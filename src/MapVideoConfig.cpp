@@ -1,4 +1,5 @@
 #include "BigScreen/MapVideoConfig.hpp"
+#include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -73,7 +74,8 @@ namespace BigScreen {
         std::optional<std::string> OptionalString(const JsonValue& object, std::string_view name)
         {
             const JsonValue* value = Member(object, name);
-            if(!value || !value->IsString() || value->GetStringLength() == 0)
+            if(!value || !value->IsString() || value->GetStringLength() == 0 ||
+               value->GetStringLength() > 2048)
                 return std::nullopt;
             return std::string(value->GetString(), value->GetStringLength());
         }
@@ -134,6 +136,17 @@ namespace BigScreen {
         if(metadata.empty())
             return std::nullopt;
 
+        constexpr std::uintmax_t MaximumMetadataBytes = 1024 * 1024;
+        std::error_code sizeError;
+        const auto metadataSize = std::filesystem::file_size(metadata, sizeError);
+        if(sizeError || metadataSize > MaximumMetadataBytes)
+        {
+            error = sizeError
+                ? "Could not determine the map video metadata size"
+                : "The map video metadata is larger than the 1 MB safety limit";
+            return std::nullopt;
+        }
+
         std::ifstream stream(metadata, std::ios::binary);
         if(!stream)
         {
@@ -158,6 +171,16 @@ namespace BigScreen {
         if(!videoFile && !videoId && !videoUrl)
         {
             error = "The map video metadata has no videoFile, videoID, or videoUrl";
+            return std::nullopt;
+        }
+        if(videoId && !CoreLogic::IsValidYouTubeVideoId(*videoId))
+        {
+            error = "The map videoID is not a valid YouTube video ID";
+            return std::nullopt;
+        }
+        if(videoUrl && !CoreLogic::IsSupportedYouTubeUrl(*videoUrl))
+        {
+            error = "The map videoUrl must be an HTTPS YouTube address";
             return std::nullopt;
         }
 
@@ -222,9 +245,14 @@ namespace BigScreen {
         if(const auto* environment = Member(document, "environment");
            environment && environment->IsArray())
         {
-            config.environmentModifications.reserve(environment->Size());
+            constexpr rapidjson::SizeType MaximumEnvironmentEntries = 256;
+            config.environmentModifications.reserve(
+                std::min(environment->Size(), MaximumEnvironmentEntries));
+            rapidjson::SizeType processed = 0;
             for(const auto& item : environment->GetArray())
             {
+                if(processed++ >= MaximumEnvironmentEntries)
+                    break;
                 if(!item.IsObject())
                     continue;
                 auto name = OptionalString(item, "name");
@@ -268,9 +296,9 @@ namespace BigScreen {
 
     std::optional<std::string> MapVideoConfig::DownloadUrl() const
     {
-        if(videoUrl)
+        if(videoUrl && CoreLogic::IsSupportedYouTubeUrl(*videoUrl))
             return videoUrl;
-        if(videoId)
+        if(videoId && CoreLogic::IsValidYouTubeVideoId(*videoId))
             return "https://www.youtube.com/watch?v=" + *videoId;
         return std::nullopt;
     }

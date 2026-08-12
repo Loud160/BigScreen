@@ -253,6 +253,7 @@ namespace BigScreen {
         }
 
         started_ = true;
+        playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
         lastPresentationSlot_.reset();
@@ -311,6 +312,21 @@ namespace BigScreen {
     {
         if(!Settings::Instance().ModEnabled() || !started_ || !config_)
             return;
+
+        if(playbackFailed_)
+            return;
+
+        if(auto decoderError = decoder_.TakeError())
+        {
+            playbackFailed_ = true;
+            surface_.SetVisible(false);
+            PaperLogger.error("Video decoder stopped safely: {}", *decoderError);
+            ErrorManager::Instance().ReportUserVisible(
+                "Video playback stopped",
+                "Big Screen stopped this video's screen, but the map will continue normally. " +
+                    *decoderError);
+            return;
+        }
 
         if(mapperEnvironmentApplyCountdown_ > 0 &&
            --mapperEnvironmentApplyCountdown_ == 0)
@@ -444,6 +460,7 @@ namespace BigScreen {
         surface_.Destroy();
         decoder_.Close();
         started_ = false;
+        playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
         lastPresentationSlot_.reset();

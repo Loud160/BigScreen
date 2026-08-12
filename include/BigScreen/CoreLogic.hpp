@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cctype>
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace BigScreen::CoreLogic {
@@ -50,6 +52,56 @@ namespace BigScreen::CoreLogic {
         return value.find('/') == std::string::npos &&
                value.find('\\') == std::string::npos &&
                value.find(':') == std::string::npos;
+    }
+
+    /// Accept only HTTPS YouTube addresses. Map metadata is untrusted input,
+    /// so the downloader must never become a general-purpose URL fetcher.
+    inline bool IsSupportedYouTubeUrl(std::string_view value)
+    {
+        while(!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while(!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+
+        constexpr std::string_view scheme = "https://";
+        if(value.size() <= scheme.size())
+            return false;
+        for(std::size_t i = 0; i < scheme.size(); ++i)
+        {
+            if(std::tolower(static_cast<unsigned char>(value[i])) != scheme[i])
+                return false;
+        }
+
+        value.remove_prefix(scheme.size());
+        const auto hostEnd = value.find_first_of("/?#");
+        auto host = value.substr(0, hostEnd);
+        if(host.empty() || host.find('@') != std::string_view::npos ||
+           host.find(':') != std::string_view::npos)
+            return false;
+
+        std::string lowercaseHost(host);
+        std::transform(lowercaseHost.begin(), lowercaseHost.end(), lowercaseHost.begin(),
+            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+
+        const auto isHostOrSubdomain = [&lowercaseHost](std::string_view domain)
+        {
+            return lowercaseHost == domain ||
+                (lowercaseHost.size() > domain.size() &&
+                 lowercaseHost.ends_with(std::string(".") + std::string(domain)));
+        };
+        return isHostOrSubdomain("youtube.com") ||
+               isHostOrSubdomain("youtu.be") ||
+               isHostOrSubdomain("youtube-nocookie.com");
+    }
+
+    inline bool IsValidYouTubeVideoId(std::string_view value)
+    {
+        if(value.size() != 11)
+            return false;
+        return std::all_of(value.begin(), value.end(), [](unsigned char character)
+        {
+            return std::isalnum(character) || character == '-' || character == '_';
+        });
     }
 
     /// Returns the next temporary FPS/resolution tier. The boolean is false

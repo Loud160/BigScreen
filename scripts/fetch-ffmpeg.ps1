@@ -9,11 +9,11 @@ $ErrorActionPreference = "Stop"
 # are deliberately kept under the ignored extern directory rather than copied
 # into this repository's source history.
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$ffmpegRoot = Join-Path $repositoryRoot "extern\ffmpeg"
+$ffmpegRoot = Join-Path $repositoryRoot "extern/ffmpeg"
 $includeRoot = Join-Path $ffmpegRoot "include"
 $libraryRoot = Join-Path $ffmpegRoot "lib"
 $stampFile = Join-Path $ffmpegRoot "v4.4.1.ready"
-$cacheRoot = Join-Path $repositoryRoot ".cache\ffmpeg-v4.4.1"
+$cacheRoot = Join-Path $repositoryRoot ".cache/ffmpeg-v4.4.1"
 
 if ((Test-Path -LiteralPath $stampFile) -and -not $Force) {
     return
@@ -66,7 +66,7 @@ if (-not (Test-Path -LiteralPath $downloadedInclude)) {
 }
 Copy-Item -Path (Join-Path $downloadedInclude "*") -Destination $includeRoot -Recurse -Force
 
-$androidLibraries = Join-Path $runtimeExtract "jni\arm64-v8a"
+$androidLibraries = Join-Path $runtimeExtract "jni/arm64-v8a"
 $requiredLibraries = @("libavcodec.so", "libavformat.so", "libavutil.so", "libswscale.so")
 foreach ($libraryName in $requiredLibraries) {
     $source = Join-Path $androidLibraries $libraryName

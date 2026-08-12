@@ -88,12 +88,21 @@ int main()
     // away the player's selected Big Screen layout.
     {
         std::ofstream output(metadata, std::ios::trunc);
-        output << R"({"videoID":"abc","configByMapper":true,"offset":-1000})";
+        output << R"({"videoID":"TcHvEFxk_78","configByMapper":true,"offset":-1000})";
     }
     const auto timingOnly = BigScreen::MapVideoConfig::LoadDefinitionFromLevel(
         root, error);
     Expect(timingOnly && !timingOnly->hasMapperPresentation,
            "timing-only metadata should keep the user screen layout");
+
+    {
+        std::ofstream output(metadata, std::ios::trunc);
+        output << R"({"videoUrl":"https://youtube.com.example.invalid/video"})";
+    }
+    const auto untrustedUrl = BigScreen::MapVideoConfig::LoadDefinitionFromLevel(
+        root, error);
+    Expect(!untrustedUrl && error.find("HTTPS YouTube") != std::string::npos,
+           "mapper metadata must not turn the downloader into an arbitrary URL fetcher");
 
     // A user-downloaded or locally assigned video has no reason to modify the
     // map files. Detect Chroma independently so those videos still yield the

@@ -80,7 +80,6 @@ namespace BigScreen {
         void Cancel();
         DownloadSnapshot Snapshot();
         bool IsReady() const { return initialized_; }
-        const std::string& AvailableUpdateVersion() const { return availableUpdateVersion_; }
         std::optional<std::string> TakeUpdateNotice();
 
     private:
@@ -115,7 +114,6 @@ namespace BigScreen {
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
         std::atomic<bool> initialized_{false};
-        std::string availableUpdateVersion_;
         std::string currentUpdateVersion_ = "2026.07.04";
         std::optional<std::string> updateNotice_;
     };

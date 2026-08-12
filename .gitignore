@@ -50,6 +50,8 @@ out/
 ndkpath.txt
 *.zip
 *.txt
+!licenses/
+!licenses/*.txt
 *.log
 Android.mk.backup
 

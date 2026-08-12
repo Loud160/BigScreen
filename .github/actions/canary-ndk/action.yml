@@ -12,7 +12,7 @@ runs:
   steps:
     - name: NDK cache
       id: cache
-      uses: actions/cache@v3
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${HOME}/android-ndk-r27-canary/
         key: ${{ runner.os }}-ndk-r27-canary
@@ -22,6 +22,13 @@ runs:
       env:
         CANARY_URL: https://github.com/QuestPackageManager/ndk-canary-archive/releases/download/27.0.1/android-ndk-10883340-linux-x86_64.zip
       run: wget ${CANARY_URL} -O ${HOME}/ndk.zip
+      shell: bash
+
+    - name: Verify canary NDK
+      if: ${{ !steps.cache.outputs.cache-hit }}
+      env:
+        CANARY_SHA256: af3517ddd0b518fb81803bf6a96d448031c54f99d3b6037338167c8a12da9b38
+      run: echo "${CANARY_SHA256}  ${HOME}/ndk.zip" | sha256sum --check --strict
       shell: bash
 
     - name: Unzip ndk

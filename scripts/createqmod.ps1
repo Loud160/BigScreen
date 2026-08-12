@@ -46,13 +46,33 @@ $modJson.libraryFiles = $requiredLibraries
 # mod-owned durable runtime folder. Construct the list from the staged files so
 # every official extension ships without maintaining a fragile hand-written
 # manifest list.
-$runtimeStage = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "build\downloader"
+$runtimeStage = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "build/downloader"
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+# Install redistributable notices beside the embedded runtime. Users and mod
+# managers should not need the Git repository to discover dependency terms.
+$noticeSources = @{
+    "BIGSCREEN-LICENSE.txt" = Join-Path $repositoryRoot "LICENSE"
+    "THIRD-PARTY-NOTICES.md" = Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md"
+    "FFMPEG-GPL-3.0-OR-LATER.txt" = Join-Path $repositoryRoot "licenses/GPL-3.0-or-later.txt"
+    "CERTIFI-MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/CERTIFI-MPL-2.0.txt"
+    "MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/MPL-2.0.txt"
+    "YT-DLP-UNLICENSE.txt" = Join-Path $repositoryRoot "licenses/YT-DLP-UNLICENSE.txt"
+}
+foreach ($notice in $noticeSources.GetEnumerator()) {
+    Copy-Item -LiteralPath $notice.Value -Destination (Join-Path $runtimeStage $notice.Key) -Force
+}
 $runtimeFiles = @(
     "python314.zip",
     "yt-dlp-shipped",
     "certifi.whl",
     "runtime-manifest.json",
     "CPYTHON-LICENSE.txt"
+    "BIGSCREEN-LICENSE.txt"
+    "THIRD-PARTY-NOTICES.md"
+    "FFMPEG-GPL-3.0-OR-LATER.txt"
+    "CERTIFI-MPL-2.0.txt"
+    "MPL-2.0.txt"
+    "YT-DLP-UNLICENSE.txt"
 )
 $copies = @()
 $runtimeSourcePaths = @()

@@ -37,9 +37,33 @@ elseif (-not (Test-Path -Path $mod)) {
 
 Write-Output "Creating qmod from mod.json"
 
+# Always perform an offline structural check. Windows PowerShell 5.1 lacks
+# Test-Json, but release packaging must still fail on missing critical fields.
+try {
+    $parsed = Get-Content $mod -Raw | ConvertFrom-Json -ErrorAction Stop
+}
+catch {
+    Write-Output "Error: mod.json is not valid JSON: $($_.Exception.Message)"
+    exit 1
+}
+$requiredText = @("name", "id", "author", "version", "packageId", "packageVersion")
+foreach ($property in $requiredText) {
+    if (-not $parsed.$property -or -not ($parsed.$property -is [string])) {
+        Write-Output "Error: mod.json is missing required text field '$property'"
+        exit 1
+    }
+}
+if (-not $parsed.modFiles -or $parsed.modFiles.Count -lt 1) {
+    Write-Output "Error: mod.json must declare at least one modFiles entry"
+    exit 1
+}
+
 $psVersion = $PSVersionTable.PSVersion.Major
 if ($psVersion -ge 6) {
-    $schemaUrl = "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/main/QuestPatcher.QMod/Resources/qmod.schema.json"
+    # Pin the schema revision so upstream branch changes cannot silently alter
+    # release validation semantics.
+    $schemaRevision = "eadb8d8d21caa1f8586b61da3c950a2953ebd399"
+    $schemaUrl = "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/$schemaRevision/QuestPatcher.QMod/Resources/qmod.schema.json"
     Invoke-WebRequest $schemaUrl -OutFile ./mod.schema.json
 
     $schema = "./mod.schema.json"
@@ -55,6 +79,6 @@ if ($psVersion -ge 6) {
     }
 }
 else {
-    Write-Output "Could not validate mod.json with schema: powershell version was too low (< 6)"
+    Write-Output "Offline mod.json validation passed (PowerShell 7 CI also performs schema validation)."
 }
 exit

@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "main.hpp"
+#include "BigScreen/CoreLogic.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -512,7 +513,10 @@ try:
         release = json.load(response)
     version = str(release.get('tag_name') or '')
     current = job['currentVersion']
-    if version == current and not job['install']:
+    rejected = job.get('rejectedVersion', '')
+    if version and version == rejected:
+        publish('up_to_date', 'yt-dlp ' + version + ' was rejected on this headset. Big Screen will wait for a newer release.', version=version)
+    elif version == current and not job['install']:
         publish('up_to_date', 'yt-dlp ' + current + ' is current', version=version)
     elif not job['install']:
         publish('update_available', 'yt-dlp ' + version + ' is available. Select Install Update to download it.', version=version)
@@ -767,6 +771,13 @@ os.replace(temporary, job['destination'])
                 return false;
             }
         }
+        else if(promotedCandidate)
+        {
+            // A candidate is not trusted merely because it downloaded and
+            // matched its checksum. Clear the rejection marker only after the
+            // newly activated package imports successfully on this headset.
+            std::filesystem::remove(runtime / "yt-dlp-rejected.version");
+        }
         PyEval_SaveThread();
         initialized_ = true;
         PaperLogger.info(
@@ -802,6 +813,11 @@ os.replace(temporary, job['destination'])
         if(request.levelId.empty() || request.sourceUrl.empty())
         {
             error = "A song and YouTube URL are required.";
+            return false;
+        }
+        if(!CoreLogic::IsSupportedYouTubeUrl(request.sourceUrl))
+        {
+            error = "Only HTTPS YouTube and youtu.be video addresses are supported.";
             return false;
         }
         // Join only after releasing the state mutex. A worker can have written
@@ -851,6 +867,11 @@ os.replace(temporary, job['destination'])
         if(levelId.empty() || sourceUrl.empty())
         {
             error = "A song and YouTube URL are required.";
+            return false;
+        }
+        if(!CoreLogic::IsSupportedYouTubeUrl(sourceUrl))
+        {
+            error = "Only HTTPS YouTube and youtu.be video addresses are supported.";
             return false;
         }
         if(worker_.joinable()) worker_.join();
@@ -1143,6 +1164,11 @@ os.replace(temporary, job['destination'])
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
             AddString(document, "currentVersion", currentUpdateVersion_, allocator);
+            std::string rejectedVersion;
+            std::ifstream rejected(runtime / "yt-dlp-rejected.version", std::ios::binary);
+            if(rejected)
+                std::getline(rejected, rejectedVersion);
+            AddString(document, "rejectedVersion", rejectedVersion, allocator);
             document.AddMember("nightly", nightly, allocator);
             document.AddMember("install", install, allocator);
             rapidjson::StringBuffer buffer;
@@ -1160,11 +1186,6 @@ os.replace(temporary, job['destination'])
             PyGILState_Release(gil);
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
-            std::ifstream stream(statusPath_, std::ios::binary);
-            const std::string json{std::istreambuf_iterator<char>(stream), {}};
-            rapidjson::Document status;
-            status.Parse(json.data(), json.size());
-            availableUpdateVersion_ = ReadString(status, "version");
         }
         catch(const std::exception& exception)
         {

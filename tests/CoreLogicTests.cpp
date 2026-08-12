@@ -16,6 +16,23 @@ namespace {
 
 int main()
 {
+    using BigScreen::CoreLogic::IsSupportedYouTubeUrl;
+    using BigScreen::CoreLogic::IsValidYouTubeVideoId;
+
+    Expect(IsSupportedYouTubeUrl("https://www.youtube.com/watch?v=TcHvEFxk_78"),
+           "normal YouTube watch URLs should be accepted");
+    Expect(IsSupportedYouTubeUrl("https://youtu.be/TcHvEFxk_78"),
+           "YouTube share URLs should be accepted");
+    Expect(IsSupportedYouTubeUrl("https://www.youtube-nocookie.com/embed/TcHvEFxk_78"),
+           "YouTube privacy embed URLs should be accepted");
+    Expect(!IsSupportedYouTubeUrl("http://youtube.com/watch?v=TcHvEFxk_78"),
+           "unencrypted URLs should be rejected");
+    Expect(!IsSupportedYouTubeUrl("https://youtube.com.example.invalid/video"),
+           "lookalike hosts should be rejected");
+    Expect(!IsSupportedYouTubeUrl("https://youtube.com@evil.invalid/video"),
+           "userinfo host confusion should be rejected");
+    Expect(IsValidYouTubeVideoId("TcHvEFxk_78"), "valid video IDs should be accepted");
+    Expect(!IsValidYouTubeVideoId("abc"), "short video IDs should be rejected");
     using namespace BigScreen::CoreLogic;
     Expect(StableVideoKey("custom_level_123") == StableVideoKey("custom_level_123"),
            "stable keys must be deterministic");

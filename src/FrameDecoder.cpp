@@ -37,6 +37,10 @@ namespace BigScreen {
     {
         Close();
         error.clear();
+        {
+            std::scoped_lock lock(errorMutex_);
+            workerError_.reset();
+        }
 
         int result = avformat_open_input(&format_, videoPath.string().c_str(), nullptr, nullptr);
         if(result < 0)
@@ -207,7 +211,47 @@ namespace BigScreen {
         return true;
     }
 
-    void FrameDecoder::WorkerMain()
+    std::optional<std::string> FrameDecoder::TakeError()
+    {
+        std::scoped_lock lock(errorMutex_);
+        auto result = std::move(workerError_);
+        workerError_.reset();
+        return result;
+    }
+
+    void FrameDecoder::SetWorkerError(std::string message)
+    {
+        {
+            std::scoped_lock lock(errorMutex_);
+            if(!workerError_)
+                workerError_ = std::move(message);
+        }
+        open_ = false;
+        stopWorker_ = true;
+        requestChanged_.notify_all();
+    }
+
+    void FrameDecoder::WorkerMain() noexcept
+    {
+        try
+        {
+            WorkerLoop();
+        }
+        catch(const std::bad_alloc&)
+        {
+            SetWorkerError("The video decoder ran out of memory.");
+        }
+        catch(const std::exception& exception)
+        {
+            SetWorkerError(std::string("The video decoder stopped: ") + exception.what());
+        }
+        catch(...)
+        {
+            SetWorkerError("The video decoder stopped because of an unexpected internal error.");
+        }
+    }
+
+    void FrameDecoder::WorkerLoop()
     {
         std::uint64_t handledVersion = 0;
         double lastDecodedTime = -std::numeric_limits<double>::infinity();
@@ -248,8 +292,8 @@ namespace BigScreen {
             {
                 if(!SeekNear(target))
                 {
-                    handledVersion = targetVersion;
-                    continue;
+                    SetWorkerError("FFmpeg could not seek to the requested video position.");
+                    break;
                 }
                 lastDecodedTime = -std::numeric_limits<double>::infinity();
             }
@@ -268,15 +312,17 @@ namespace BigScreen {
                     continue;
 
                 VideoFrame output;
-                if(ConvertCurrentFrame(output))
+                if(!ConvertCurrentFrame(output))
                 {
-                    const auto elapsed = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - decodeStarted).count();
-                    const auto previous = averageDecodeMilliseconds_.load();
-                    averageDecodeMilliseconds_ = previous <= 0.0
-                        ? elapsed : previous * 0.9 + elapsed * 0.1;
-                    Publish(std::move(output));
+                    SetWorkerError("FFmpeg could not convert a decoded frame for the video screen.");
+                    break;
                 }
+                const auto elapsed = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - decodeStarted).count();
+                const auto previous = averageDecodeMilliseconds_.load();
+                averageDecodeMilliseconds_ = previous <= 0.0
+                    ? elapsed : previous * 0.9 + elapsed * 0.1;
+                Publish(std::move(output));
                 handledVersion = targetVersion;
                 break;
             }

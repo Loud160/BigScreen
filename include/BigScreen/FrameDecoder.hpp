@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -49,6 +51,9 @@ namespace BigScreen {
 
         void Request(double mediaSeconds);
         bool TryTake(VideoFrame& destination);
+        /// Moves the first decoder-worker failure to the main thread. The
+        /// caller can stop only the video and defer UI until gameplay ends.
+        std::optional<std::string> TakeError();
 
         bool IsOpen() const { return open_.load(); }
         int Width() const { return width_; }
@@ -62,7 +67,9 @@ namespace BigScreen {
         double DurationSeconds() const { return durationSeconds_; }
 
     private:
-        void WorkerMain();
+        void WorkerMain() noexcept;
+        void WorkerLoop();
+        void SetWorkerError(std::string message);
         bool ReadDecodedFrame();
         bool SeekNear(double mediaSeconds);
         double CurrentFrameTime() const;
@@ -97,5 +104,8 @@ namespace BigScreen {
         std::mutex outputMutex_;
         VideoFrame newestFrame_;
         bool frameWaiting_ = false;
+
+        std::mutex errorMutex_;
+        std::optional<std::string> workerError_;
     };
 }

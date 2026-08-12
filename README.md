@@ -1,73 +1,94 @@
 # Big Screen
 
-Big Screen is a standalone Quest 2/3 Beat Saber mod that plays synchronized
-H.264 MP4 video on a configurable world-space screen. It supports OST, DLC,
-custom, and WIP songs and does not require a PC after the QMOD is installed.
+<p align="center">
+  <strong>Quest-native synchronized video screens for Beat Saber</strong><br>
+  Add a video to OST, DLC, custom, or WIP songs without requiring a PC during normal use.
+</p>
 
-## Features
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Meta%20Quest%202%20%7C%203-00b2ff">
+  <img alt="Beat Saber" src="https://img.shields.io/badge/Beat%20Saber-1.37.0-orange">
+  <img alt="Language" src="https://img.shields.io/badge/language-C%2B%2B20-blue">
+  <img alt="Status" src="https://img.shields.io/badge/status-beta-yellow">
+  <img alt="License" src="https://img.shields.io/badge/source%20license-MIT-green">
+</p>
 
-- Add a video to any song through an in-headset YouTube search/download,
-  mapper-provided metadata, a custom map folder, or the global Video Import
-  folder.
-- Synchronized previews in song selection and full playback during gameplay,
-  Replay playback, and Replay recording.
-- Three saved screen layouts with flat display size up to 4.0x or curved size
-  up to 2.5x,
-  distance, X/Y position, tilt, curvature, and optional curve aspect retention.
-- Change the active screen layout or hide the video screen for the current map
-  directly from Beat Saber's pause menu.
-- 480p/720p/1080p output and 15/30/60 FPS presentation limits. Source files are
-  retained at their downloaded/native resolution and downscaled while playing.
-- Timing offset, playback speed, fit-to-song, black/transparent lead-in, menu
-  scrubber, and synchronized song-audio preview.
-- Optional map-lighting and environment cleanup controls for large screens.
-- Automatic performance fallback and optional live/results diagnostics.
-- Atomic video-library persistence with two backups and managed-file recovery.
-- Background yt-dlp updates with official-release SHA-256 verification, archive
-  validation, CPython import testing, and automatic rollback.
-- Safe storage maintenance that previews the exact removable files before a
-  confirmed cleanup.
+Big Screen plays H.264 MP4 video on a configurable world-space screen, synchronized to Beat Saber's own song clock. It includes an entirely standalone, in-headset YouTube workflow, local-file support, Cinema/Chroma compatibility, Replay compatibility, performance controls, recovery, and storage maintenance. It contains no advertising, telemetry, account system, or subscription.
 
-## User video import
+> [!IMPORTANT]
+> The current package targets **Beat Saber 1.37.0 (`1.37.0_9064817954`)** on Quest 2 and Quest 3. Quest mods are game-version specific; do not install this build on another Beat Saber version unless a compatible build is explicitly provided.
 
-For a custom or WIP map, place an H.264/AVC MP4 (1080p or lower) directly in
-that map's folder. For any song, place the MP4 in:
+## Highlights
 
-`/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import`
-
-Open **Big Screen > Video Library**, select the song, and press **SET** beside
-the file. Files that cannot be decoded are retained and shown in red with a
-HELP explanation. Big Screen never deletes map-folder or Video Import files;
-**Remove Video** only unregisters them.
-
-## Downloader runtime
-
-The QMOD includes the official CPython 3.14.6 Android ARM64 runtime, a pinned
-yt-dlp baseline, certifi, and the native libraries required by Python. The
-runtime executes inside Beat Saber on a background thread—Termux, a system
-Python installation, and a connected PC are not used. See
-[docs/DOWNLOADER_SECURITY.md](docs/DOWNLOADER_SECURITY.md).
-
-## Building
-
-1. Install QPM-RS and the Android NDK used by the Quest modding toolchain.
-2. Run `powershell -ExecutionPolicy Bypass -File scripts/build.ps1`.
-3. Run `powershell -ExecutionPolicy Bypass -File scripts/createqmod.ps1` to
-   package a QMOD, or `scripts/copy.ps1` to deploy to a connected test headset.
-
-The runtime-fetch script pins and SHA-256 verifies every downloaded build
-artifact. A normal build does not silently accept substituted files.
+| | Capability | What it does |
+|---|---|---|
+| 🎬 | Any song can have video | Assign video to OST, DLC, custom, and WIP songs without modifying Beat Saber audio or beatmaps. |
+| 🔎 | In-headset YouTube workflow | Search YouTube in the Quest browser, paste a normal or share URL, preview the thumbnail, and download with visible progress and readable errors. |
+| 📁 | Local video support | Register compatible MP4s from custom-map folders or the global Video Import folder; user-owned local files are never deleted by Remove Video. |
+| 🖥️ | Three screen layouts | Save three independent flat/curved layouts and switch them from the mod, song-selection header, or pause menu. |
+| 🎛️ | Detailed screen control | Adjust size, distance, X/Y position, tilt, curvature, curve aspect behavior, and transparency. Flat screens reach 4.0x; curved screens reach 2.5x. |
+| ⏱️ | Audio-clock synchronization | Configure offset, playback speed, automatic fit-to-song timing, and transparent or black lead-in. |
+| 💡 | Video-friendly environments | Keep or suppress map lights, force Big Mirror, stop background motion, and hide geometry or light groups that obstruct large screens. |
+| 🎞️ | Preview and Replay support | Preview videos while browsing songs and keep them present during Replay playback and recording. |
+| 📊 | Quest performance controls | Cap output at 480p/720p/1080p and 15/30/60 FPS, view diagnostics, or let Automatic Performance step quality down temporarily. |
+| 🛟 | Recovery and containment | Atomic library writes, two backups, managed-file reconstruction, updater rollback, and deferred gameplay errors reduce the chance of lost data or interrupted maps. |
 
 ## Documentation
 
-- [User guide](docs/USER_GUIDE.md)
-- [Mapper video metadata](docs/MAPPER_FORMAT.md)
-- [Troubleshooting and logs](docs/TROUBLESHOOTING.md)
-- [Architecture and thread ownership](docs/ARCHITECTURE.md)
-- [Downloader security and rollback](docs/DOWNLOADER_SECURITY.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Future work](docs/FUTURE_WORK.md)
+Start with the [documentation index](docs/README.md), or jump directly to:
 
-Big Screen's original source is available under the [MIT License](LICENSE).
-External libraries and generated API headers remain under their respective
-licenses.
+- [Installation and first run](docs/INSTALLATION.md)
+- [Every setting and interaction](docs/SETTINGS.md)
+- [Video Library and adding videos](docs/USER_GUIDE.md)
+- [Mapper metadata format](docs/MAPPER_FORMAT.md)
+- [Troubleshooting, logs, and recovery](docs/TROUBLESHOOTING.md)
+- [Downloader security and rollback](docs/DOWNLOADER_SECURITY.md)
+- [Architecture and thread ownership](docs/ARCHITECTURE.md)
+- [Building and packaging](docs/BUILDING.md)
+- [Privacy and network access](docs/PRIVACY.md)
+- [Known limitations and future work](docs/FUTURE_WORK.md)
+
+## Quick start
+
+1. Install the compatible QMOD using a Quest Beat Saber mod manager.
+2. Start Beat Saber, open **Mods**, then open **Big Screen**.
+3. Leave **Big Screen Enabled**, **Video In Map**, and **Preview Video** on.
+4. Open **Video Library**, select a song, and either choose a compatible local MP4 or paste a YouTube URL.
+5. After assignment/download, use the synchronized preview to adjust **Video Playback Offset**, **Playback Speed**, and **Fit to Song**.
+6. Open **Screen** to position the blank preview surface and save up to three layouts.
+7. Select the song normally. Big Screen's header controls can globally enable previews/gameplay video and change layouts without reopening the mod.
+
+## Ways to add a video
+
+- **Mapper-provided:** Big Screen reads `bigscreen.json`, `cinema-video.json`, or `video.json`. If a mapper supplied only a URL, the song page offers a Cinema-style Download Video control.
+- **YouTube:** Search from the selected song, paste an HTTPS `youtube.com` or `youtu.be` URL, verify its thumbnail, then download.
+- **Custom/WIP map folder:** Put an H.264/AVC MP4 at 1080p or lower in the map folder. Select **SET** beside the filename.
+- **Video Import:** Put an MP4 in `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import`, then assign it to any song from Video Library.
+
+Downloaded files are mod-managed. Map-folder and Video Import files remain user-owned. **Remove Video** unregisters a user-owned file and never deletes it.
+
+## Downloader runtime
+
+The QMOD includes CPython 3.14.6 for Android ARM64, a pinned yt-dlp baseline, certifi, and required native libraries. It runs inside Beat Saber on a background thread: Termux, a system Python installation, a YouTube login, and a connected PC are not used. Updates are offered rather than silently installed, verified against the official release SHA-256 list, import-tested after restart, and rolled back if incompatible.
+
+## Project layout
+
+```text
+include/BigScreen/      Public declarations and testable core logic
+src/                    Native mod, UI, playback, storage, and downloader code
+tests/                  Host-side C++ and embedded-Python tests
+scripts/                Reproducible dependency, build, deploy, and QMOD scripts
+docs/                   User, mapper, architecture, security, and build manuals
+licenses/               Redistributable third-party license texts
+.github/workflows/      Host tests and Quest/NDK package build
+```
+
+## Development status
+
+Big Screen is feature-complete for its initial beta but still needs broad public headset/map coverage. The current release gate requires host tests, a clean Quest build, QMOD validation, and hands-on Quest regression testing. See [Building](docs/BUILDING.md) and the [release checklist](docs/RELEASE_CHECKLIST.md).
+
+## Legal and licenses
+
+Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. In particular, the packaged FFmpeg build identifies itself as GPL version 3 or later; its applicable text and the CPython, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+
+Big Screen is an independent community project. It is not affiliated with or endorsed by Beat Games, Meta, Google, YouTube, the Cinema mod, or the Chroma mod. Users are responsible for complying with the rights and terms applicable to videos they download or import.

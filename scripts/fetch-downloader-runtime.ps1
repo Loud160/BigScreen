@@ -17,14 +17,14 @@ $certifiVersion = "2026.7.22"
 $certifiSha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$downloadRoot = Join-Path $repositoryRoot "extern\downloader"
+$downloadRoot = Join-Path $repositoryRoot "extern/downloader"
 $pythonArchive = Join-Path $downloadRoot "python-$pythonVersion-aarch64-linux-android.tar.gz"
 $pythonExtractRoot = Join-Path $downloadRoot "python-$pythonVersion"
 $pythonPrefix = Join-Path $pythonExtractRoot "prefix"
 $ytDlpPackage = Join-Path $downloadRoot "yt-dlp-$ytDlpVersion"
 $certifiPackage = Join-Path $downloadRoot "certifi-$certifiVersion-py3-none-any.whl"
-$stageRoot = Join-Path $repositoryRoot "build\downloader"
-$nativeLibraryStage = Join-Path $repositoryRoot "extern\libs"
+$stageRoot = Join-Path $repositoryRoot "build/downloader"
+$nativeLibraryStage = Join-Path $repositoryRoot "extern/libs"
 
 New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
@@ -52,7 +52,7 @@ if ($Force -and (Test-Path -LiteralPath $pythonExtractRoot)) {
     }
     Remove-Item -LiteralPath $pythonExtractRoot -Recurse -Force
 }
-if (-not (Test-Path -LiteralPath (Join-Path $pythonPrefix "lib\libpython3.14.so"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $pythonPrefix "lib/libpython3.14.so"))) {
     New-Item -ItemType Directory -Force -Path $pythonExtractRoot | Out-Null
     & tar -xzf $pythonArchive -C $pythonExtractRoot
     if ($LASTEXITCODE -ne 0) {
