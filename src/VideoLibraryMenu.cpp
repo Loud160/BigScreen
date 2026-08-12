@@ -78,11 +78,9 @@ namespace BigScreen {
             "Show All Maps", "Custom Maps", "WIP Maps",
             "OST Maps", "DLC Maps", "Maps With Video"
         };
-        // Keep the UI slider normalized instead of assigning the song's
-        // duration as its range. HMUI's TextSlider is a settings control, and
-        // very large per-song ranges can feed unwanted preferred geometry back
-        // into its parent layout. One thousand normalized positions are still
-        // comfortably finer than a controller can place the handle in VR.
+        // Keep the UI slider normalized and translate its position to song
+        // time. One thousand positions are comfortably finer than a controller
+        // can place the handle in VR and work for songs of any duration.
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
 
@@ -637,7 +635,11 @@ namespace BigScreen {
         auto* timingToggleRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(timingToggleRow, false);
         timingToggleRow->set_spacing(0.6f);
-        ConfigureLayout(timingToggleRow, -1.0f, 8.0f, 1.0f);
+        // A ToggleSetting prefab is normally designed to occupy an entire
+        // settings row. Without explicit widths, placing two of them beside
+        // one another makes their preferred widths additive and expands the
+        // right controller to almost two panels.
+        ConfigureLayout(timingToggleRow, 49.0f, 8.0f, 0.0f);
         fitToggle_ = BSML::Lite::CreateToggle(
             timingToggleRow,
             "Fit to Song",
@@ -663,7 +665,7 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(fitToggle_, -1.0f, 8.0f, 1.0f);
+        ConfigureLayout(fitToggle_, 24.2f, 8.0f, 0.0f);
         BSML::Lite::AddHoverHint(
             fitToggle_,
             "Continuously adjusts playback speed so the video ends with the song after applying Start Offset.");
@@ -684,7 +686,7 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(blackLeadInToggle_, -1.0f, 8.0f, 1.0f);
+        ConfigureLayout(blackLeadInToggle_, 24.2f, 8.0f, 0.0f);
         BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             "Off keeps the screen fully transparent until video time reaches zero. On shows solid black during that delay.");
