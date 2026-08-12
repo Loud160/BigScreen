@@ -93,7 +93,9 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* filterText_ = nullptr;
         TMPro::TextMeshProUGUI* detailTitle_ = nullptr;
         TMPro::TextMeshProUGUI* detailText_ = nullptr;
-        TMPro::TextMeshProUGUI* detailStorage_ = nullptr;
+        TMPro::TextMeshProUGUI* detailMapStorage_ = nullptr;
+        TMPro::TextMeshProUGUI* detailLibraryStorage_ = nullptr;
+        TMPro::TextMeshProUGUI* detailFreeStorage_ = nullptr;
         TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;

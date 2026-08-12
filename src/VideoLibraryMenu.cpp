@@ -223,12 +223,14 @@ namespace BigScreen {
             return text.str();
         }
 
-        std::string StorageLabel(std::uint64_t used, std::uint64_t free)
+        std::string StorageSize(std::uint64_t bytes)
         {
             std::ostringstream text;
-            text << std::fixed << std::setprecision(1)
-                 << "Videos " << used / 1073741824.0 << " GB  |  Free "
-                 << free / 1073741824.0 << " GB";
+            text << std::fixed << std::setprecision(1);
+            if(bytes < 1073741824ULL)
+                text << bytes / 1048576.0 << " MB";
+            else
+                text << bytes / 1073741824.0 << " GB";
             return text.str();
         }
 
@@ -926,11 +928,27 @@ namespace BigScreen {
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             confirmText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
 
-        detailStorage_ = BSML::Lite::CreateText(
-            editorBody, "", 2.3f);
-        ConfigureLayout(detailStorage_, -1.0f, 3.0f, 1.0f);
+        // Three equal columns make storage costs comparable at a glance and
+        // use the complete editor width instead of compressing everything into
+        // one pipe-delimited sentence.
+        auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(storageRow, false);
+        storageRow->set_spacing(0.6f);
+        ConfigureLayout(storageRow, -1.0f, 6.0f, 1.0f);
+        detailMapStorage_ = BSML::Lite::CreateText(
+            storageRow, "This Video\n0.0 MB", 2.25f);
+        ConfigureLayout(detailMapStorage_, 0.0f, 6.0f, 1.0f);
+        detailLibraryStorage_ = BSML::Lite::CreateText(
+            storageRow, "All Videos\n0.0 MB", 2.25f);
+        ConfigureLayout(detailLibraryStorage_, 0.0f, 6.0f, 1.0f);
+        detailFreeStorage_ = BSML::Lite::CreateText(
+            storageRow, "Free Space\n0.0 MB", 2.25f);
+        ConfigureLayout(detailFreeStorage_, 0.0f, 6.0f, 1.0f);
 
-        for(auto* text : {browserTitle_, browserStorage_, filterText_, detailTitle_, detailText_, detailStorage_, playbackTimeText_})
+        for(auto* text : {
+                browserTitle_, browserStorage_, filterText_, detailTitle_,
+                detailText_, detailMapStorage_, detailLibraryStorage_,
+                detailFreeStorage_, playbackTimeText_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         RebuildCatalog();
@@ -1571,9 +1589,34 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RefreshDetails()
     {
-        if(detailStorage_) detailStorage_->set_text(StorageLabel(
-            VideoLibrary::Instance().LibraryBytes(), VideoLibrary::Instance().FreeBytes()));
-        if(!selected_ || !detailText_) return;
+        const auto libraryBytes = VideoLibrary::Instance().LibraryBytes();
+        const auto freeBytes = VideoLibrary::Instance().FreeBytes();
+        if(detailLibraryStorage_)
+            detailLibraryStorage_->set_text(
+                "All Videos\n" + StorageSize(libraryBytes));
+        if(detailFreeStorage_)
+            detailFreeStorage_->set_text(
+                "Free Space\n" + StorageSize(freeBytes));
+        if(!selected_ || !detailText_)
+        {
+            if(detailMapStorage_)
+                detailMapStorage_->set_text("This Video\n0.0 MB");
+            return;
+        }
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        std::uint64_t mapVideoBytes = 0;
+        if(descriptor.playableConfig)
+        {
+            std::error_code sizeError;
+            mapVideoBytes = std::filesystem::file_size(
+                descriptor.playableConfig->videoPath,
+                sizeError);
+            if(sizeError)
+                mapVideoBytes = 0;
+        }
+        if(detailMapStorage_)
+            detailMapStorage_->set_text(
+                "This Video\n" + StorageSize(mapVideoBytes));
         if(detailTitle_)
         {
             const auto name = selected_->songName ? std::string(selected_->songName) : "Unknown Song";
@@ -1582,7 +1625,6 @@ namespace BigScreen {
             detailTitle_->set_text(author.empty() ? name : name + "\n" + author);
         }
         const auto download = DownloadManager::Instance().Snapshot();
-        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
         if(transientStatus_ == "Stopping download..." && !download.Active())
             transientStatus_.clear();
