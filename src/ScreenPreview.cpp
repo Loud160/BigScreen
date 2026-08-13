@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "BigScreen/FrameDecoder.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
@@ -196,7 +197,12 @@ namespace BigScreen {
 
         CaptureBasePlacement();
         if(!CreateWorldScreen())
+        {
             PaperLogger.error("Could not create the full-size settings screen preview");
+            ErrorManager::Instance().RecordError(
+                "Creating the settings screen preview",
+                "Unity could not create the full-size preview surface");
+        }
     }
 
     void ScreenPreview::Suspend()
@@ -359,6 +365,9 @@ namespace BigScreen {
         if(!CreateEditorUi())
         {
             PaperLogger.error("Could not create the undocked screen editor");
+            ErrorManager::Instance().RecordError(
+                "Creating the undocked screen editor",
+                "Unity could not create the screen editor controls");
             settings.CancelScreenEditTransaction();
             DestroyEditorUi();
             if(libraryPreviewActive)

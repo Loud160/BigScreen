@@ -111,6 +111,22 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         -ldl
         -lz)
 
+# Stage the entire native CPython set beside the built mod. Development copy
+# previously looked only in build/ but fetch-downloader-runtime.ps1 placed these
+# files in extern/libs, allowing a new extension set to be deployed against an
+# older libpython already on the Quest. These are one inseparable ABI unit.
+foreach(BIGSCREEN_PYTHON_LIBRARY
+        libpython3.14.so
+        libssl_python.so
+        libcrypto_python.so
+        libsqlite3_python.so)
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${BIGSCREEN_PYTHON_PREFIX}/lib/${BIGSCREEN_PYTHON_LIBRARY}
+                    $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${BIGSCREEN_PYTHON_LIBRARY}
+            COMMENT "Stage ${BIGSCREEN_PYTHON_LIBRARY}")
+endforeach()
+
 # Big Screen ships a private, minimal FFmpeg runtime built exclusively
 # from LGPL components.  Its custom SONAMEs and symbol-version namespaces keep
 # Android from resolving these calls to Hollywood's unrelated GPL FFmpeg build.

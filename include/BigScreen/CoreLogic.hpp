@@ -1,11 +1,14 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cctype>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -36,6 +39,45 @@ namespace BigScreen::CoreLogic {
         float width;
         float height;
     };
+
+    struct FrameRateStats {
+        double minimumFps = 0.0;
+        double averageFps = 0.0;
+        double maximumFps = 0.0;
+        std::uint64_t sampledFrames = 0;
+    };
+
+    /// Gameplay statistics describe only the playable body of a map. The
+    /// caller latches samplingFinished after crossing the final note so replay
+    /// seeks or results animations cannot reopen the measurement window.
+    inline bool ShouldSampleGameplayFrame(
+        double songTimeSeconds,
+        std::optional<double> lastNoteTimeSeconds,
+        bool samplingFinished)
+    {
+        return !samplingFinished &&
+               songTimeSeconds >= 10.0 &&
+               (!lastNoteTimeSeconds || songTimeSeconds <= *lastNoteTimeSeconds);
+    }
+
+    /// Summarizes accepted Unity frame durations. The average is derived from
+    /// total frames / total elapsed time rather than averaging instantaneous
+    /// rates, which would over-weight short fast frames and hide stutters.
+    inline FrameRateStats SummarizeFrameRate(
+        double minimumFrameSeconds,
+        double maximumFrameSeconds,
+        double totalFrameSeconds,
+        std::uint64_t sampledFrames)
+    {
+        if(sampledFrames == 0 || minimumFrameSeconds <= 0.0 ||
+           maximumFrameSeconds <= 0.0 || totalFrameSeconds <= 0.0)
+            return {};
+        return {
+            1.0 / maximumFrameSeconds,
+            static_cast<double>(sampledFrames) / totalFrameSeconds,
+            1.0 / minimumFrameSeconds,
+            sampledFrames};
+    }
 
     /// Calculates the picture's uncropped size inside a fixed screen frame.
     /// Rotation is intentionally absent: rotating media must never swap or
@@ -160,6 +202,45 @@ namespace BigScreen::CoreLogic {
         return {false, {fps, resolution}};
     }
 
+    /// Records the exact path Automatic Performance used while lowering
+    /// quality. Recovery reads this small stack backwards instead of trying to
+    /// infer the user's previous setting from the current tier. The supported
+    /// 60/30/15 FPS and 1080/720/480p ladder has at most four reductions, so a
+    /// fixed array avoids allocating memory in Beat Saber's gameplay loop.
+    class AutomaticPerformanceHistory final {
+    public:
+        void Reset() noexcept { size_ = 0; }
+        bool Empty() const noexcept { return size_ == 0; }
+        std::size_t Size() const noexcept { return size_; }
+
+        bool RecordReduction(int previousFps, int previousResolution) noexcept
+        {
+            if(size_ >= tiers_.size())
+                return false;
+            tiers_[size_++] = {previousFps, previousResolution};
+            return true;
+        }
+
+        std::optional<std::pair<int, int>> RecoveryTarget() const noexcept
+        {
+            if(Empty())
+                return std::nullopt;
+            return tiers_[size_ - 1];
+        }
+
+        bool CommitRecovery() noexcept
+        {
+            if(Empty())
+                return false;
+            --size_;
+            return true;
+        }
+
+    private:
+        std::array<std::pair<int, int>, 4> tiers_{};
+        std::size_t size_ = 0;
+    };
+
     /// Estimates how many distinct source images should have been displayed
     /// during an interval. Output requests above the media's effective cadence
     /// are intentional frame reuse, not decoder misses. playbackRate converts
@@ -200,6 +281,74 @@ namespace BigScreen::CoreLogic {
             return 0.0;
         return 100.0 * static_cast<double>(expectedFrames - presentedFrames) /
                static_cast<double>(expectedFrames);
+    }
+
+    /// Returns how many visible output-frame intervals separate two images
+    /// that actually reached Unity. A value above one means intermediate video
+    /// content was skipped. This deliberately uses media timestamps instead of
+    /// worker-thread completion timing: a frame that arrives a few milliseconds
+    /// late but is still displayed is not a visible miss.
+    inline std::uint64_t PresentedFrameIntervals(
+        double previousPresentationSeconds,
+        double previousDurationSeconds,
+        double currentPresentationSeconds,
+        double playbackRate,
+        int outputFramesPerSecond)
+    {
+        if(!std::isfinite(previousPresentationSeconds) ||
+           !std::isfinite(currentPresentationSeconds) ||
+           currentPresentationSeconds <= previousPresentationSeconds ||
+           playbackRate <= 0.0 || outputFramesPerSecond <= 0)
+            return 1;
+
+        // Requests are limited in Beat Saber's song-clock domain. Convert one
+        // output interval into media time, then respect a longer source-frame
+        // duration (including variable-frame-rate samples) so intentional
+        // holds are never classified as missing pictures.
+        const double cappedMediaInterval =
+            playbackRate / static_cast<double>(outputFramesPerSecond);
+        const double sourceInterval =
+            std::isfinite(previousDurationSeconds) &&
+            previousDurationSeconds > 0.0
+                ? previousDurationSeconds
+                : 0.0;
+        const double expectedInterval = std::max(
+            cappedMediaInterval,
+            sourceInterval);
+        if(expectedInterval <= 0.0)
+            return 1;
+
+        const double elapsed =
+            currentPresentationSeconds - previousPresentationSeconds;
+        // Nearest-interval rounding tolerates ordinary MP4 time-base error
+        // (for example 29.97 FPS) without hiding a complete skipped image.
+        return std::max<std::uint64_t>(
+            1,
+            static_cast<std::uint64_t>(std::llround(elapsed / expectedInterval)));
+    }
+
+    /// Uses the shorter of Beat Saber's song duration and the loaded audio
+    /// clip. Some custom levels report slightly different values for those two
+    /// clocks, so waiting only for the map duration can leave a completed
+    /// AudioSource in a terminal state. A small tolerance lets the menu loop
+    /// before Unity tears down the channel at its exact final sample.
+    inline bool PreviewReachedLoopBoundary(
+        double songPositionSeconds,
+        double songDurationSeconds,
+        double audioClipDurationSeconds,
+        double toleranceSeconds = 0.03)
+    {
+        const double songEnd = songDurationSeconds > 0.0
+            ? songDurationSeconds
+            : audioClipDurationSeconds;
+        const double clipEnd = audioClipDurationSeconds > 0.0
+            ? audioClipDurationSeconds
+            : songDurationSeconds;
+        const double playableEnd = std::min(songEnd, clipEnd);
+        if(playableEnd <= 0.0)
+            return false;
+        return songPositionSeconds >=
+            std::max(0.0, playableEnd - std::max(0.0, toleranceSeconds));
     }
 
     /// The circuit breaker counts internal failures, not error text. Two

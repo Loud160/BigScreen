@@ -10,6 +10,11 @@ namespace BigScreen {
     /// the stock configuration and optional UI mods use the same safe path.
     void ApplyDistractionFreeMenu();
     void RestoreDistractionFreeMenu();
+    /// True only while Big Screen's own flow is the active menu hierarchy.
+    bool IsBigScreenMenuActive();
+    /// Cancels mod-owned interaction and dismisses Big Screen without routing
+    /// through controls that may be part of the failed UI operation.
+    bool ExitBigScreenMenuAfterError() noexcept;
 }
 
 /// Places Big Screen's settings and navigation on Beat Saber's left panel and

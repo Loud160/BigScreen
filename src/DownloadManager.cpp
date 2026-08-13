@@ -15,6 +15,7 @@
 
 #include "main.hpp"
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/QuickJsEngine.hpp"
 #include "BigScreen/QuickJsPythonModule.hpp"
 #include "rapidjson/document.h"
@@ -47,6 +48,54 @@ namespace BigScreen {
         };
 
         using PythonObject = std::unique_ptr<PyObject, PythonObjectDeleter>;
+
+        /// Converts the currently raised Python exception, including its
+        /// traceback, into text that can survive interpreter teardown and be
+        /// written to Big Screen's persistent log. PyRun_SimpleString prints
+        /// errors to stderr and may clear them, which previously reduced every
+        /// downloader startup failure to the same unhelpful message.
+        std::string TakePythonExceptionText()
+        {
+            PythonObject exception{PyErr_GetRaisedException()};
+            if(!exception)
+                return "Python did not provide an exception object.";
+
+            PythonObject tracebackModule{PyImport_ImportModule("traceback")};
+            if(tracebackModule)
+            {
+                PythonObject formatter{
+                    PyObject_GetAttrString(tracebackModule.get(), "format_exception")};
+                if(formatter)
+                {
+                    PythonObject lines{PyObject_CallOneArg(
+                        formatter.get(), exception.get())};
+                    if(lines)
+                    {
+                        PythonObject separator{PyUnicode_FromString("")};
+                        PythonObject formatted{separator
+                            ? PyUnicode_Join(separator.get(), lines.get())
+                            : nullptr};
+                        if(formatted)
+                        {
+                            const char* utf8 = PyUnicode_AsUTF8(formatted.get());
+                            if(utf8) return utf8;
+                        }
+                    }
+                }
+                // Formatting is best-effort. Do not let a secondary traceback
+                // formatting error hide the original exception string.
+                PyErr_Clear();
+            }
+
+            PythonObject fallback{PyObject_Str(exception.get())};
+            if(fallback)
+            {
+                const char* utf8 = PyUnicode_AsUTF8(fallback.get());
+                if(utf8) return utf8;
+            }
+            PyErr_Clear();
+            return "Python raised an exception that could not be formatted.";
+        }
 
         PythonObject CreatePythonGlobals(
             const char* json,
@@ -551,7 +600,7 @@ namespace BigScreen {
         }
 
         constexpr const char* DownloaderScript = R"PY(
-import json, os, re, shutil, time, traceback, urllib.request
+import json, os, re, shutil, time, traceback, urllib.parse, urllib.request
 
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
@@ -652,6 +701,53 @@ def classify(value):
         return 'failed', 'Network download failed: ' + text
     return 'failed', 'YouTube download failed: ' + text
 
+def diagnostic_code(value):
+    """Return a stable support code without exposing yt-dlp internals in UI."""
+    lower = clean_error(value).lower()
+    if 'bigscreen_cancelled' in lower:
+        return 'BS-DL-CANCELLED'
+    if 'http error 400' in lower:
+        return 'BS-DL-HTTP-400'
+    if 'http error 401' in lower:
+        return 'BS-DL-HTTP-401'
+    if 'http error 403' in lower:
+        return 'BS-DL-HTTP-403'
+    if 'http error 404' in lower:
+        return 'BS-DL-HTTP-404'
+    if 'http error 410' in lower:
+        return 'BS-DL-HTTP-410'
+    if 'http error 429' in lower:
+        return 'BS-DL-HTTP-429'
+    if re.search(r'http error 5\d\d', lower):
+        return 'BS-DL-HTTP-5XX'
+    if 'certificate verify failed' in lower:
+        return 'BS-DL-TLS-001'
+    if 'no space left' in lower or 'not enough free quest storage' in lower:
+        return 'BS-DL-STORAGE-001'
+    if 'requested format is not available' in lower or 'no video formats' in lower:
+        return 'BS-DL-FORMAT-001'
+    if ('private video' in lower or 'members-only' in lower or
+            'members only' in lower or 'age-restricted' in lower or
+            'sign in' in lower or 'login required' in lower):
+        return 'BS-DL-ACCESS-001'
+    return 'BS-DL-FAILED-001'
+
+def stream_summary(candidate):
+    """Describe a stream for logs without persisting its signed Google URL."""
+    client = 'unknown'
+    try:
+        query = urllib.parse.parse_qs(
+            urllib.parse.urlparse(str(candidate.get('url') or '')).query)
+        client = str((query.get('c') or ['unknown'])[0])
+    except BaseException:
+        pass
+    return 'format=%s, dimensions=%sx%s, protocol=%s, client=%s' % (
+        candidate.get('format_id') or 'unknown',
+        candidate.get('width') or 0,
+        candidate.get('height') or 0,
+        candidate.get('protocol') or 'unknown',
+        client)
+
 try:
     publish('preparing', 'Checking video information')
     cancelled()
@@ -678,6 +774,11 @@ try:
         'retries': 3,
         'fragment_retries': 3,
         'extractor_retries': 3,
+        # Pin the Android VR client so Quest downloads do not silently switch
+        # to a web client whose Google Video Server streams can require a PO
+        # token. QuickJS/EJS handles JavaScript challenges; PO tokens are a
+        # separate mechanism and are not needed by this client today.
+        'extractor_args': {'youtube': {'player_client': ['android_vr']}},
     }
     with yt_dlp.YoutubeDL(dict(common, skip_download=True)) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
@@ -707,8 +808,39 @@ try:
     if free < required:
         raise OSError('Not enough free Quest storage. Need at least %.1f MB free; %.1f MB is available.' % (required / 1048576, free / 1048576))
     options = dict(common, outtmpl=job['finalPath'], format=chosen['format_id'])
-    with yt_dlp.YoutubeDL(options) as downloader:
-        result = downloader.extract_info(job['sourceUrl'], download=True)
+    part_path = job['finalPath'] + '.part'
+    retry_detail = ''
+    try:
+        with yt_dlp.YoutubeDL(options) as downloader:
+            result = downloader.extract_info(job['sourceUrl'], download=True)
+    except BaseException as first_error:
+        # A signed Google video URL can expire or reject a resumed Range
+        # request even though metadata probing succeeded. If yt-dlp wrote a
+        # partial file and then received 403, discard only that temporary file,
+        # obtain a fresh stream URL, and retry once from byte zero. The final
+        # library video is never removed by this recovery path.
+        first_text = clean_error(first_error)
+        partial_bytes = 0
+        try:
+            partial_bytes = os.path.getsize(part_path)
+        except OSError:
+            pass
+        if 'http error 403' not in first_text.lower() or partial_bytes <= 0:
+            raise
+        cancelled()
+        os.remove(part_path)
+        retry_detail = (
+            'Initial 403 occurred after %d partial bytes; Big Screen retried '
+            'once from byte zero with a freshly extracted stream. ' %
+            partial_bytes)
+        clean_options = dict(options, continuedl=False)
+        try:
+            with yt_dlp.YoutubeDL(clean_options) as downloader:
+                result = downloader.extract_info(job['sourceUrl'], download=True)
+        except BaseException as retry_error:
+            raise RuntimeError(
+                retry_detail + 'Initial detail: ' + first_text +
+                ' Fresh retry detail: ' + clean_error(retry_error)) from retry_error
     cancelled()
     size = os.path.getsize(job['finalPath'])
 
@@ -754,10 +886,22 @@ try:
         downloadedBytes=size,
         totalBytes=size)
 except PermissionError as error:
-    publish('failed', clean_error(error))
+    code = diagnostic_code(error)
+    publish(
+        'failed', clean_error(error) + ' (' + code + ')',
+        errorCode=code,
+        diagnostic=clean_error(error))
 except BaseException as error:
     state, message = classify(error)
-    publish(state, message)
+    code = diagnostic_code(error)
+    detail = clean_error(error)
+    if 'chosen' in globals():
+        detail += ' | ' + stream_summary(chosen)
+    publish(
+        state,
+        message if state == 'cancelled' else message + ' (' + code + ')',
+        errorCode=code,
+        diagnostic=detail)
 )PY";
 
         constexpr const char* ProbeScript = R"PY(
@@ -1000,16 +1144,24 @@ os.replace(temporary, job['destination'])
     bool DownloadManager::Initialize(std::string& error)
     {
         if(initialized_) return true;
+        const auto fail = [this, &error](
+            const char* code,
+            std::string detail) -> bool
+        {
+            initializationErrorCode_ = code;
+            error = initializationErrorCode_ + ": " + std::move(detail);
+            return false;
+        };
         const auto runtime = VideoLibrary::Instance().RuntimePath();
         const auto active = runtime / "yt-dlp-active";
         const auto modLibraries = std::filesystem::path(
             "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs");
         if(!StageNativeRuntime(runtime, modLibraries, error))
-            return false;
+            return fail("BS-DL-INIT-101", std::move(error));
         if(!LoadGlobalLibrary(InternalNativeRuntime / "libcrypto_python.so", error) ||
            !LoadGlobalLibrary(InternalNativeRuntime / "libssl_python.so", error) ||
            !LoadGlobalLibrary(InternalNativeRuntime / "libsqlite3_python.so", error))
-            return false;
+            return fail("BS-DL-INIT-102", std::move(error));
 
         // Validate and publish the certificate path before CPython starts. If
         // this fails, Initialize() can safely be retried because no interpreter
@@ -1021,16 +1173,18 @@ os.replace(temporary, job['destination'])
         certificateHeader.resize(static_cast<std::size_t>(certificateStream.gcount()));
         if(certificateHeader.find("-----BEGIN CERTIFICATE-----") == std::string::npos)
         {
-            error = "The packaged certificate authority bundle is missing or invalid.";
-            return false;
+            return fail(
+                "BS-DL-INIT-103",
+                "The packaged certificate authority bundle is missing or invalid.");
         }
         const auto bundlePath = certificateBundle.string();
         if(setenv("SSL_CERT_FILE", bundlePath.c_str(), 1) != 0 ||
            setenv("REQUESTS_CA_BUNDLE", bundlePath.c_str(), 1) != 0 ||
            setenv("CURL_CA_BUNDLE", bundlePath.c_str(), 1) != 0)
         {
-            error = "Could not configure the embedded certificate authority bundle.";
-            return false;
+            return fail(
+                "BS-DL-INIT-104",
+                "Could not configure the embedded certificate authority bundle.");
         }
 
         // Promote only after every fallible native/certificate prerequisite
@@ -1039,7 +1193,7 @@ os.replace(temporary, job['destination'])
         // validation fails.
         DownloaderActivation activation{runtime};
         if(!activation.Promote(error))
-            return false;
+            return fail("BS-DL-INIT-105", std::move(error));
         const auto promotedCandidate = activation.Promoted();
         const auto candidateVersion = activation.CandidateVersion();
         std::ifstream activeVersion(active.string() + ".version");
@@ -1051,8 +1205,9 @@ os.replace(temporary, job['destination'])
         if(PyImport_AppendInittab(
                "bigscreen_quickjs", PyInit_bigscreen_quickjs) == -1)
         {
-            error = "Could not register the in-process QuickJS-NG bridge.";
-            return false;
+            return fail(
+                "BS-DL-INIT-106",
+                "Could not register the in-process QuickJS-NG bridge.");
         }
 
         PyConfig config;
@@ -1071,34 +1226,40 @@ os.replace(temporary, job['destination'])
             const auto wide = Py_DecodeLocale(path.c_str(), nullptr);
             if(!wide)
             {
-                error = "Could not encode Python runtime path";
                 PyConfig_Clear(&config);
-                return false;
+                return fail(
+                    "BS-DL-INIT-107",
+                    "Could not encode a Python runtime path.");
             }
             const auto status = PyWideStringList_Append(&config.module_search_paths, wide);
             PyMem_RawFree(wide);
             if(PyStatus_Exception(status))
             {
-                error = status.err_msg ? status.err_msg : "Could not configure Python path";
+                const std::string detail = status.err_msg
+                    ? status.err_msg
+                    : "Could not configure the Python runtime path.";
                 PyConfig_Clear(&config);
-                return false;
+                return fail("BS-DL-INIT-107", detail);
             }
         }
         auto status = Py_InitializeFromConfig(&config);
         PyConfig_Clear(&config);
         if(PyStatus_Exception(status))
         {
-            error = status.err_msg ? status.err_msg : "Python initialization failed";
-            return false;
+            return fail(
+                "BS-DL-INIT-108",
+                status.err_msg ? status.err_msg : "Python initialization failed.");
         }
 
         // A checksum proves that the archive matches the official release; it
         // does not prove that this CPython build can import that release. Test
         // the exact active module and parse both shipped EJS solver bundles
-        // before accepting it as authoritative.
-        const auto smokeTest = []()
+        // before accepting it as authoritative. Use PyRun_String rather than
+        // PyRun_SimpleString so the raised exception remains available for the
+        // persistent diagnostic log instead of being printed and discarded.
+        const auto smokeTest = []() -> std::string
         {
-            return PyRun_SimpleString(
+            constexpr const char* script =
                 "import importlib, json, sys\n"
                 "importlib.invalidate_caches()\n"
                 "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.') or k == 'yt_dlp_ejs' or k.startswith('yt_dlp_ejs.')]\n"
@@ -1111,17 +1272,33 @@ os.replace(temporary, job['destination'])
                 "from yt_dlp_ejs.yt import solver as ejs_solver\n"
                 "ejs_library, ejs_core = ejs_solver.lib(), ejs_solver.core()\n"
                 "if not ejs_library or not ejs_core: raise RuntimeError('The yt-dlp-ejs solver bundles are empty')\n"
-                "ejs_result = json.loads(bigscreen_quickjs.execute(ejs_library + '\\n' + ejs_core + '\\nconsole.log(JSON.stringify({value: 6 * 7}));'))\n"
+                // EJS's library bundle intentionally exposes a single `lib`
+                // object. The core solver expects its meriyah/astring members
+                // on globalThis, exactly as EJSBaseJCP._construct_stdin does.
+                // Evaluating library + core without this assignment caused a
+                // false startup failure even though every file was present.
+                "ejs_result = json.loads(bigscreen_quickjs.execute(ejs_library + '\\nObject.assign(globalThis, lib);\\n' + ejs_core + '\\nconsole.log(JSON.stringify({value: 6 * 7}));'))\n"
                 "if ejs_result.get('value') != 42: raise RuntimeError('The yt-dlp-ejs bundles did not execute correctly')\n"
                 "from yt_dlp.extractor.youtube.jsc._registry import _jsc_providers\n"
                 "if 'BigScreenQuickJS' not in _jsc_providers.value: raise RuntimeError('The Big Screen JavaScript provider was not registered')\n"
                 "from yt_dlp import YoutubeDL\n"
-                "if not callable(YoutubeDL): raise RuntimeError('yt-dlp did not expose YoutubeDL')\n") == 0;
+                "if not callable(YoutubeDL): raise RuntimeError('yt-dlp did not expose YoutubeDL')\n";
+            PythonObject globals{PyDict_New()};
+            if(!globals ||
+               PyDict_SetItemString(
+                   globals.get(), "__builtins__", PyEval_GetBuiltins()) < 0)
+                return TakePythonExceptionText();
+            PythonObject result{PyRun_StringFlags(
+                script,
+                Py_file_input,
+                globals.get(),
+                globals.get(),
+                nullptr)};
+            return result ? std::string{} : TakePythonExceptionText();
         };
-        if(!smokeTest())
+        auto smokeTestError = smokeTest();
+        if(!smokeTestError.empty())
         {
-            PyErr_Print();
-            PyErr_Clear();
             if(promotedCandidate)
             {
                 // Restore the one previous working package, or fall back to
@@ -1130,8 +1307,10 @@ os.replace(temporary, job['destination'])
                 std::string rollbackError;
                 if(!activation.Reject(rollbackError))
                 {
-                    error = "The new yt-dlp package failed its startup test, and Big Screen could not restore the previous package: " +
-                            rollbackError;
+                    initializationErrorCode_ = "BS-DL-INIT-112";
+                    error = initializationErrorCode_ +
+                        ": The new yt-dlp package failed its startup test, and Big Screen could not restore the previous package: " +
+                        rollbackError + " Python detail:\n" + smokeTestError;
                     PyEval_SaveThread();
                     return false;
                 }
@@ -1139,11 +1318,13 @@ os.replace(temporary, job['destination'])
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
                     std::getline(restoredVersion, currentUpdateVersion_);
-                if(!smokeTest())
+                smokeTestError = smokeTest();
+                if(!smokeTestError.empty())
                 {
-                    PyErr_Print();
-                    PyErr_Clear();
-                    error = "Neither the previous nor shipped yt-dlp package could be imported.";
+                    initializationErrorCode_ = "BS-DL-INIT-110";
+                    error = initializationErrorCode_ +
+                        ": Neither the previous nor shipped yt-dlp package could be imported. Python detail:\n" +
+                        smokeTestError;
                     PyEval_SaveThread();
                     return false;
                 }
@@ -1168,8 +1349,11 @@ os.replace(temporary, job['destination'])
                         std::filesystem::remove(active.string() + ".version", fileError);
                     if(fileError)
                     {
-                        error = "The active yt-dlp update failed its startup test and could not be removed: " +
-                                fileError.message();
+                        initializationErrorCode_ = "BS-DL-INIT-113";
+                        error = initializationErrorCode_ +
+                            ": The active yt-dlp update failed its startup test and could not be removed: " +
+                            fileError.message() + " Python detail:\n" +
+                            smokeTestError;
                         PyEval_SaveThread();
                         return false;
                     }
@@ -1178,7 +1362,8 @@ os.replace(temporary, job['destination'])
                         std::ios::binary | std::ios::trunc);
                     rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
                     currentUpdateVersion_ = "2026.07.04";
-                    if(smokeTest())
+                    smokeTestError = smokeTest();
+                    if(smokeTestError.empty())
                     {
                         std::scoped_lock lock(mutex_);
                         updateNotice_ =
@@ -1186,16 +1371,20 @@ os.replace(temporary, job['destination'])
                     }
                     else
                     {
-                        PyErr_Print();
-                        PyErr_Clear();
-                        error = "Neither the installed nor shipped yt-dlp package could be imported.";
+                        initializationErrorCode_ = "BS-DL-INIT-111";
+                        error = initializationErrorCode_ +
+                            ": Neither the installed nor shipped yt-dlp package could be imported. Python detail:\n" +
+                            smokeTestError;
                         PyEval_SaveThread();
                         return false;
                     }
                 }
                 else
                 {
-                    error = "The shipped yt-dlp package could not be imported.";
+                    initializationErrorCode_ = "BS-DL-INIT-109";
+                    error = initializationErrorCode_ +
+                        ": The shipped yt-dlp package failed its startup compatibility test. Python detail:\n" +
+                        smokeTestError;
                     PyEval_SaveThread();
                     return false;
                 }
@@ -1217,6 +1406,12 @@ os.replace(temporary, job['destination'])
         return true;
     }
 
+    std::string DownloadManager::UnavailableMessage() const
+    {
+        return "The embedded downloader runtime is not available (" +
+            initializationErrorCode_ + "). See Big Screen's error log for details.";
+    }
+
     std::optional<std::string> DownloadManager::TakeUpdateNotice()
     {
         std::scoped_lock lock(mutex_);
@@ -1229,7 +1424,7 @@ os.replace(temporary, job['destination'])
     {
         if(!initialized_)
         {
-            error = "The embedded downloader runtime is not available.";
+            error = UnavailableMessage();
             return false;
         }
         {
@@ -1283,7 +1478,7 @@ os.replace(temporary, job['destination'])
     {
         if(!initialized_)
         {
-            error = "The embedded downloader runtime is not available.";
+            error = UnavailableMessage();
             return false;
         }
         {
@@ -1330,7 +1525,7 @@ os.replace(temporary, job['destination'])
 
     bool DownloadManager::StartUpdaterCheck(bool nightly, bool install, std::string& error)
     {
-        if(!initialized_) { error = "The embedded downloader runtime is unavailable."; return false; }
+        if(!initialized_) { error = UnavailableMessage(); return false; }
         {
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
@@ -1521,6 +1716,9 @@ os.replace(temporary, job['destination'])
                             PaperLogger.error(
                                 "Could not restore the previous yt-dlp package: {}",
                                 fileError.message());
+                            ErrorManager::Instance().RecordError(
+                                "Restoring the previous yt-dlp package",
+                                fileError.message());
                         }
                     }
                 }
@@ -1542,6 +1740,23 @@ os.replace(temporary, job['destination'])
 
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
+            if(snapshot_.state == DownloadState::Failed)
+            {
+                // The status shown in VR stays concise. Persist yt-dlp's raw,
+                // sanitized failure and selected-stream facts under the same
+                // stable code so a report can be diagnosed without guessing.
+                std::ifstream diagnosticStream(statusPath_, std::ios::binary);
+                const std::string diagnosticJson{
+                    std::istreambuf_iterator<char>(diagnosticStream), {}};
+                rapidjson::Document diagnosticStatus;
+                diagnosticStatus.Parse(
+                    diagnosticJson.data(), diagnosticJson.size());
+                const auto code = ReadString(diagnosticStatus, "errorCode");
+                const auto detail = ReadString(diagnosticStatus, "diagnostic");
+                ErrorManager::Instance().RecordError(
+                    code.empty() ? "Downloader failure" : code,
+                    detail.empty() ? snapshot_.message : detail);
+            }
             if(snapshot_.state == DownloadState::Completed)
             {
                 std::ifstream stream(statusPath_, std::ios::binary);
@@ -1792,5 +2007,8 @@ os.replace(temporary, job['destination'])
         snapshot_.state = DownloadState::Failed;
         snapshot_.message = std::move(message);
         PaperLogger.error("{}", snapshot_.message);
+        ErrorManager::Instance().RecordError(
+            "Downloader operation",
+            snapshot_.message);
     }
 }

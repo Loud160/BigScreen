@@ -71,6 +71,7 @@ namespace BigScreen {
         BSML::ToggleSetting* advancedOptionsToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
+        UnityEngine::UI::Button* screenLayoutResetButton_ = nullptr;
         BSML::DropdownListSetting* screenLayoutDropdown_ = nullptr;
         BSML::ToggleSetting* allowChromaOverrideToggle_ = nullptr;
         BSML::SliderSetting* distanceSetting_ = nullptr;
@@ -115,7 +116,8 @@ namespace BigScreen {
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
-        BSML::DropdownListSetting* automaticPerformanceThresholdDropdown_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;
         BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
         BSML::ModalView* nightlyWarningModal_ = nullptr;

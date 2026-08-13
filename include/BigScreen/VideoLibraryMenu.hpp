@@ -78,8 +78,17 @@ namespace BigScreen {
         void RequestSelectedAudio();
         void TogglePreviewPlayback();
         void SeekPreview(float songTimeSeconds);
-        void StartPreviewAudio();
+        /// Starts the song audition at previewSongTime_. Normal user actions
+        /// rebuild the video session; an end-of-song loop reuses the already
+        /// open decoder and seeks its external clock back to zero.
+        void StartPreviewAudio(bool restartVideoSession = true);
+        void LoopPreviewPlayback();
         void StopPreviewAudio(bool returnToMenuMusic);
+        /// Clears Unity audio wrappers whose managed objects survived after
+        /// their native AudioClip/AudioSource was destroyed. The next Tick
+        /// can reload the selected song without treating this expected Unity
+        /// lifecycle race as a fatal failure of the entire mod menu.
+        void RecoverInvalidPreviewAudio(const char* context);
         void EnforcePausedPreviewAudio();
         void RefreshPlaybackControls();
         void JumpToLetter(char letter);
@@ -139,10 +148,14 @@ namespace BigScreen {
         std::vector<SongLibraryItem*> visible_;
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;
         GlobalNamespace::IPreviewMediaData* previewMediaData_ = nullptr;
-        GlobalNamespace::SongPreviewPlayer* songPreviewPlayer_ = nullptr;
+        // Unity can destroy menu audio objects during a flow transition while
+        // their IL2CPP wrappers remain non-null. UnityW makes every truth test
+        // validate m_CachedPtr, preventing stale references from being treated
+        // as live merely because their managed pointer still has an address.
+        UnityW<GlobalNamespace::SongPreviewPlayer> songPreviewPlayer_ = nullptr;
         System::Threading::Tasks::Task_1<UnityW<UnityEngine::AudioClip>>* audioLoadTask_ = nullptr;
-        UnityEngine::AudioClip* previewAudioClip_ = nullptr;
-        UnityEngine::AudioSource* previewAudioSource_ = nullptr;
+        UnityW<UnityEngine::AudioClip> previewAudioClip_ = nullptr;
+        UnityW<UnityEngine::AudioSource> previewAudioSource_ = nullptr;
         SongLibraryFilter filter_ = SongLibraryFilter::All;
         std::string search_;
         std::string url_;

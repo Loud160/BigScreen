@@ -26,10 +26,12 @@ $ytDlpPackage = Join-Path $downloadRoot "yt-dlp-$ytDlpVersion"
 $certifiPackage = Join-Path $downloadRoot "certifi-$certifiVersion-py3-none-any.whl"
 $stageRoot = Join-Path $repositoryRoot "build/downloader"
 $nativeLibraryStage = Join-Path $repositoryRoot "extern/libs"
+$buildLibraryStage = Join-Path $repositoryRoot "build"
 
 New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $nativeLibraryStage | Out-Null
+New-Item -ItemType Directory -Force -Path $buildLibraryStage | Out-Null
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -176,7 +178,13 @@ $pythonLib = Join-Path $pythonPrefix "lib"
     "libcrypto_python.so",
     "libsqlite3_python.so"
 ) | ForEach-Object {
-    Copy-Item -LiteralPath (Join-Path $pythonLib $_) -Destination $nativeLibraryStage -Force
+    $sourceLibrary = Join-Path $pythonLib $_
+    # QMOD packaging reads extern/libs, while direct Quest deployment reads
+    # build/. Stage the same verified bytes into both on every preparation so
+    # incremental builds cannot retain an older interpreter beside new native
+    # extensions merely because libbigscreen.so did not need relinking.
+    Copy-Item -LiteralPath $sourceLibrary -Destination $nativeLibraryStage -Force
+    Copy-Item -LiteralPath $sourceLibrary -Destination $buildLibraryStage -Force
 }
 
 $stdlibRoot = Join-Path $pythonLib "python3.14"

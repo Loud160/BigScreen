@@ -15,6 +15,8 @@
 #include <unordered_set>
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
@@ -199,16 +201,45 @@ namespace BigScreen {
         UnityEngine::AudioSource* ActiveSongAudioSource(
             GlobalNamespace::SongPreviewPlayer* player)
         {
-            if(!player) return nullptr;
+            if(!UnityW<GlobalNamespace::SongPreviewPlayer>::isAlive(player))
+                return nullptr;
             const int channel = player->__cordl_internal_get__activeChannel();
             auto controllers = player->__cordl_internal_get__audioSourceControllers();
             if(!controllers || channel < 0 ||
                channel >= static_cast<int>(controllers.size()))
                 return nullptr;
             auto* controller = controllers[channel];
-            return controller
-                ? controller->__cordl_internal_get_audioSource().ptr()
-                : nullptr;
+            if(!controller)
+                return nullptr;
+            auto source = controller->__cordl_internal_get_audioSource();
+            return source ? source.unsafePtr() : nullptr;
+        }
+
+        bool ActiveSongClipMatches(
+            GlobalNamespace::SongPreviewPlayer* player,
+            UnityEngine::AudioClip* expected)
+        {
+            if(!UnityW<GlobalNamespace::SongPreviewPlayer>::isAlive(player) ||
+               !UnityW<UnityEngine::AudioClip>::isAlive(expected))
+                return false;
+            const auto active = player->get_activeAudioClip();
+            return active && active.unsafePtr() == expected;
+        }
+
+        bool IsAlive(UnityW<UnityEngine::AudioClip> clip)
+        {
+            return UnityW<UnityEngine::AudioClip>::isAlive(clip.unsafePtr());
+        }
+
+        bool IsAlive(UnityW<UnityEngine::AudioSource> source)
+        {
+            return UnityW<UnityEngine::AudioSource>::isAlive(source.unsafePtr());
+        }
+
+        bool IsAlive(UnityW<GlobalNamespace::SongPreviewPlayer> player)
+        {
+            return UnityW<GlobalNamespace::SongPreviewPlayer>::isAlive(
+                player.unsafePtr());
         }
 
         bool IsWebUrl(const std::string& value)
@@ -638,6 +669,9 @@ namespace BigScreen {
         if(!list_)
         {
             PaperLogger.error("Could not construct the native video library list");
+            ErrorManager::Instance().RecordError(
+                "Creating the Video Library song list",
+                "Beat Saber did not create the native list control");
             list_ = BSML::Lite::CreateScrollableList(
                 listRow, {0.0f, 0.0f}, {46.0f, 50.0f},
                 [this](int row) { SelectRow(row); });
@@ -1774,6 +1808,9 @@ namespace BigScreen {
                 "Could not start download for {}: {}",
                 selectedLevelId,
                 transientStatus_);
+            ErrorManager::Instance().RecordError(
+                "Starting a video download for " + selectedLevelId,
+                transientStatus_);
         }
         else
         {
@@ -1812,6 +1849,9 @@ namespace BigScreen {
         catch(const std::exception& error)
         {
             PaperLogger.error("Could not read the Quest clipboard: {}", error.what());
+            ErrorManager::Instance().RecordError(
+                "Reading the Quest clipboard",
+                error.what());
             detailText_->set_text("Could not read the Quest clipboard.");
         }
     }
@@ -1906,6 +1946,9 @@ namespace BigScreen {
                 "Could not launch YouTube search '{}': {}",
                 url,
                 error.what());
+            ErrorManager::Instance().RecordError(
+                "Opening a YouTube search",
+                error.what());
         }
         catch(...)
         {
@@ -1914,6 +1957,9 @@ namespace BigScreen {
             PaperLogger.error(
                 "Could not launch YouTube search '{}'",
                 url);
+            ErrorManager::Instance().RecordError(
+                "Opening a YouTube search",
+                "Unknown native exception");
         }
         RefreshDetails();
     }
@@ -2116,7 +2162,7 @@ namespace BigScreen {
         RefreshLocalVideoFiles();
         RequestSelectedAudio();
         StartSelectedPreview();
-        if(previewAudioClip_)
+        if(IsAlive(previewAudioClip_))
             StartPreviewAudio();
         RefreshDetails();
     }
@@ -2681,7 +2727,7 @@ namespace BigScreen {
                 playWhenAudioReady_ = true;
                 RequestSelectedAudio();
                 StartSelectedPreview();
-                if(previewAudioClip_)
+                if(IsAlive(previewAudioClip_))
                     StartPreviewAudio();
             }
         }
@@ -2709,7 +2755,7 @@ namespace BigScreen {
         if(!selected_ || !selected_->levelID)
             return;
         const std::string levelId(selected_->levelID);
-        if(previewAudioClip_ && audioLoadLevelId_ == levelId)
+        if(IsAlive(previewAudioClip_) && audioLoadLevelId_ == levelId)
             return;
         if(audioLoadTask_ && audioLoadLevelId_ == levelId)
             return;
@@ -2737,12 +2783,12 @@ namespace BigScreen {
 
         if(previewPlaying_)
         {
-            const bool channelIsStillPlaying = previewAudioSource_ &&
-                previewAudioClip_ &&
-                previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+            const bool channelIsStillPlaying = IsAlive(previewAudioSource_) &&
+                IsAlive(previewAudioClip_) &&
+                previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
                 previewAudioSource_->get_isPlaying();
-            if(channelIsStillPlaying && songPreviewPlayer_ &&
-               songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+            if(channelIsStillPlaying && IsAlive(songPreviewPlayer_) &&
+               ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
             {
                 songPreviewPlayer_->PauseCurrentChannel();
                 previewPlaying_ = false;
@@ -2763,7 +2809,7 @@ namespace BigScreen {
             previewSongTime_ = 0.0;
 
         RequestSelectedAudio();
-        if(!previewAudioClip_ || !songPreviewPlayer_)
+        if(!IsAlive(previewAudioClip_) || !IsAlive(songPreviewPlayer_))
         {
             playWhenAudioReady_ = true;
             transientStatus_ = "Loading song audio for synchronized preview...";
@@ -2774,9 +2820,9 @@ namespace BigScreen {
         // Resume the paused Beat Saber channel when it is still ours. If the
         // menu music or another preview reclaimed the channel, rebuild the
         // crossfade at the requested scrub position instead.
-        if(previewPaused_ && previewAudioSource_ &&
-           previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
-           songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
+        if(previewPaused_ && IsAlive(previewAudioSource_) &&
+           previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
+           ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
         {
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
             songPreviewPlayer_->UnPauseCurrentChannel();
@@ -2790,9 +2836,10 @@ namespace BigScreen {
         StartPreviewAudio();
     }
 
-    void VideoLibraryMenu::StartPreviewAudio()
+    void VideoLibraryMenu::StartPreviewAudio(bool restartVideoSession)
     {
-        if(!selected_ || !previewAudioClip_ || !songPreviewPlayer_)
+        if(!selected_ || !IsAlive(previewAudioClip_) ||
+           !IsAlive(songPreviewPlayer_))
         {
             playWhenAudioReady_ = true;
             return;
@@ -2837,30 +2884,105 @@ namespace BigScreen {
             static_cast<float>(std::max(0.1, availableDuration - previewSongTime_)),
             nullptr);
         previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
-        if(previewAudioSource_)
+        if(IsAlive(previewAudioSource_))
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
         previewPlaying_ = true;
         previewPaused_ = false;
         playWhenAudioReady_ = false;
         transientStatus_.clear();
-        StartSelectedPreview();
+        if(restartVideoSession ||
+           !PlaybackSession::Instance().IsLibraryPreviewActive())
+            StartSelectedPreview();
+        else
+            PlaybackSession::Instance().Tick(previewSongTime_);
         RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::LoopPreviewPlayback()
+    {
+        if(!selected_ || !IsAlive(previewAudioClip_) ||
+           !IsAlive(songPreviewPlayer_))
+            return;
+
+        // Reset the visible transport before asking Beat Saber to create the
+        // next audio crossfade. This prevents one stale end-of-song frame from
+        // leaving the scrubber at 100 percent if the new channel starts later
+        // in this Unity update.
+        previewSongTime_ = 0.0;
+        previewPlaying_ = false;
+        previewPaused_ = false;
+        playWhenAudioReady_ = false;
+        scrubberFollowResumeTime_ = 0.0f;
+        RefreshPlaybackControls();
+
+        // Keep FFmpeg and the Unity screen alive. PlaybackSession uses Beat
+        // Saber's audio position as its external clock, so ticking zero makes
+        // the decoder worker perform its normal backwards seek without a
+        // close/reopen allocation cycle at every loop.
+        StartPreviewAudio(false);
+        PaperLogger.info("Looped Video Library preview to the beginning");
     }
 
     void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)
     {
+        // Clear ownership before calling back into Unity. A flow transition can
+        // destroy SongPreviewPlayer, AudioSource, or AudioClip between frames.
+        // If CrossfadeToDefault then throws, no later menu tick can see stale
+        // media state and attempt to use it again.
+        auto player = songPreviewPlayer_;
+        auto clip = previewAudioClip_;
         playWhenAudioReady_ = false;
         previewPlaying_ = false;
         previewPaused_ = false;
-        if(returnToMenuMusic && songPreviewPlayer_ && previewAudioClip_ &&
-           songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_)
-            songPreviewPlayer_->CrossfadeToDefault();
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
         previewMediaData_ = nullptr;
         audioLoadLevelId_.clear();
-        RefreshPlaybackControls();
+
+        try
+        {
+            if(returnToMenuMusic && player && clip &&
+               ActiveSongClipMatches(player, clip))
+                player->CrossfadeToDefault();
+        }
+        catch(const std::exception& error)
+        {
+            // Teardown must never prevent PlaybackSession::Stop() from joining
+            // the FFmpeg worker. Logging is sufficient because the menu is
+            // already leaving and showing another dialog here would be unsafe.
+            PaperLogger.warn("Could not restore menu music during preview teardown: {}", error.what());
+        }
+
+        if(active_ && editorVisible_)
+        {
+            try { RefreshPlaybackControls(); }
+            catch(const std::exception& error)
+            {
+                PaperLogger.warn("Could not refresh stopped preview controls: {}", error.what());
+            }
+        }
+    }
+
+    void VideoLibraryMenu::RecoverInvalidPreviewAudio(const char* context)
+    {
+        const bool shouldResume = previewPlaying_ || playWhenAudioReady_;
+        previewAudioSource_ = nullptr;
+        previewAudioClip_ = nullptr;
+        audioLoadTask_ = nullptr;
+        previewMediaData_ = nullptr;
+        audioLoadLevelId_.clear();
+        previewPlaying_ = false;
+        previewPaused_ = false;
+        playWhenAudioReady_ = shouldResume;
+        transientStatus_ = shouldResume
+            ? "Beat Saber replaced the preview audio. Reloading it..."
+            : "Beat Saber replaced the preview audio. Press Play to reload it.";
+        PaperLogger.warn("Recovered invalid menu preview audio during {}", context);
+        ErrorManager::Instance().RecordError(
+            "Recovering menu preview audio",
+            std::string(context) +
+                ": Unity destroyed an AudioClip or AudioSource while its managed wrapper was retained.");
     }
 
     void VideoLibraryMenu::EnforcePausedPreviewAudio()
@@ -2870,22 +2992,22 @@ namespace BigScreen {
         // focus even when SongPreviewPlayer had explicitly paused that source.
         // Big Screen's transport state remains paused, so without this guard
         // the song can become audible while the video correctly stays frozen.
-        if(!editorVisible_ || !previewPaused_ || !previewAudioClip_ ||
-           !songPreviewPlayer_)
+        if(!editorVisible_ || !previewPaused_ || !IsAlive(previewAudioClip_) ||
+           !IsAlive(songPreviewPlayer_))
             return;
 
         // SongPreviewPlayer rotates through multiple sources while crossfading.
         // Resolve its current source again after an activity resume instead of
         // assuming the pointer captured before opening the Meta menu is still
         // the channel that Beat Saber considers active.
-        if(!previewAudioSource_ ||
-           previewAudioSource_->get_clip().ptr() != previewAudioClip_)
+        if(!IsAlive(previewAudioSource_) ||
+           previewAudioSource_->get_clip().unsafePtr() != previewAudioClip_.unsafePtr())
             previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
 
         const bool bigScreenStillOwnsChannel =
-            previewAudioSource_ &&
-            previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
-            songPreviewPlayer_->get_activeAudioClip().ptr() == previewAudioClip_;
+            IsAlive(previewAudioSource_) &&
+            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
+            ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_);
         if(!bigScreenStillOwnsChannel || !previewAudioSource_->get_isPlaying())
             return;
 
@@ -2915,8 +3037,8 @@ namespace BigScreen {
             0.0,
             duration);
 
-        if(previewAudioSource_ && previewAudioClip_ &&
-           previewAudioSource_->get_clip().ptr() == previewAudioClip_)
+        if(IsAlive(previewAudioSource_) && IsAlive(previewAudioClip_) &&
+           previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr())
         {
             const bool sourceWasPlaying = previewAudioSource_->get_isPlaying();
             const double clipEnd = std::max(
@@ -2991,14 +3113,28 @@ namespace BigScreen {
     {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
+
+        // Quest recording, activity focus changes, and SongPreviewPlayer
+        // crossfades can destroy the native AudioClip/AudioSource while the
+        // IL2CPP wrapper remains non-null. Never dereference that stale wrapper
+        // and never escalate this recoverable media transition to the global
+        // menu circuit breaker.
+        if((previewAudioClip_.unsafePtr() && !IsAlive(previewAudioClip_)) ||
+           (previewAudioSource_.unsafePtr() && !IsAlive(previewAudioSource_)))
+            RecoverInvalidPreviewAudio("menu update");
+        if(editorVisible_ && playWhenAudioReady_ &&
+           !IsAlive(previewAudioClip_) && !audioLoadTask_)
+            RequestSelectedAudio();
         if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
         {
             thumbnailTickCounter_ = 0;
             RefreshVisibleVideoThumbnails();
         }
 
-        if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
+        try
         {
+          if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
+          {
             auto* completedTask = audioLoadTask_;
             audioLoadTask_ = nullptr;
             if(completedTask->get_IsCompletedSuccessfully() && selected_ &&
@@ -3006,8 +3142,11 @@ namespace BigScreen {
                audioLoadLevelId_ == std::string(selected_->levelID))
             {
                 auto clip = completedTask->get_Result();
-                previewAudioClip_ = clip ? clip.ptr() : nullptr;
-                if(!previewAudioClip_)
+                previewAudioClip_ =
+                    UnityW<UnityEngine::AudioClip>::isAlive(clip.unsafePtr())
+                        ? clip.unsafePtr()
+                        : nullptr;
+                if(!IsAlive(previewAudioClip_))
                     transientStatus_ = "Beat Saber returned no audio for this song.";
                 else if(playWhenAudioReady_)
                     StartPreviewAudio();
@@ -3018,25 +3157,33 @@ namespace BigScreen {
                 playWhenAudioReady_ = false;
             }
             RefreshDetails();
-        }
+          }
 
         // SongPreviewPlayer::Update runs immediately before this Tick. That is
         // the point where Unity can revive a source after returning from the
         // Meta shell, so enforce Big Screen's paused transport after Beat Saber
         // has applied its own per-frame audio state.
-        EnforcePausedPreviewAudio();
+          EnforcePausedPreviewAudio();
 
-        if(editorVisible_ && previewPlaying_ && previewAudioClip_)
-        {
-            if(!previewAudioSource_ ||
-               previewAudioSource_->get_clip().ptr() != previewAudioClip_)
+          if(editorVisible_ && previewPlaying_ && IsAlive(previewAudioClip_))
+          {
+            if(!IsAlive(previewAudioSource_) ||
+               previewAudioSource_->get_clip().unsafePtr() != previewAudioClip_.unsafePtr())
                 previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
 
-            if(previewAudioSource_ &&
-               previewAudioSource_->get_clip().ptr() == previewAudioClip_ &&
+            if(IsAlive(previewAudioSource_) &&
+               previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
                previewAudioSource_->get_isPlaying())
             {
                 previewSongTime_ = previewAudioSource_->get_time();
+                if(CoreLogic::PreviewReachedLoopBoundary(
+                       previewSongTime_,
+                       selected_ ? selected_->songDuration : 0.0,
+                       previewAudioClip_->get_length()))
+                {
+                    LoopPreviewPlayback();
+                    return;
+                }
                 if(PlaybackSession::Instance().IsLibraryPreviewActive())
                     PlaybackSession::Instance().Tick(previewSongTime_);
             }
@@ -3047,11 +3194,46 @@ namespace BigScreen {
                 // are tracked separately; reaching the end must clear that
                 // state so Play creates a fresh crossfade after scrubbing back
                 // instead of trying to unpause an already-stopped source.
+                const bool completedChannelStillBelongsToBigScreen =
+                    IsAlive(previewAudioSource_) && IsAlive(songPreviewPlayer_) &&
+                    previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
+                    ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_);
+                if(completedChannelStillBelongsToBigScreen ||
+                   CoreLogic::PreviewReachedLoopBoundary(
+                       previewSongTime_,
+                       selected_ ? selected_->songDuration : 0.0,
+                       previewAudioClip_->get_length(),
+                       0.10))
+                {
+                    // The proactive boundary above normally loops before the
+                    // source stops. This fallback covers a long Unity frame
+                    // that crosses the final sample in one update.
+                    LoopPreviewPlayback();
+                    return;
+                }
                 previewPlaying_ = false;
                 previewPaused_ = false;
                 playWhenAudioReady_ = false;
             }
             RefreshPlaybackControls();
+          }
+        }
+        catch(const std::exception& error)
+        {
+            const std::string detail(error.what());
+            const bool invalidUnityAudio =
+                detail.find("AudioClip") != std::string::npos ||
+                detail.find("AudioSource") != std::string::npos ||
+                detail.find("SongPreviewPlayer") != std::string::npos;
+            if(!invalidUnityAudio)
+                throw;
+
+            // Unity can invalidate an object between an alive check and the
+            // subsequent generated property call. Contain that narrow race in
+            // the preview transport: keep the video decoder/menu alive and
+            // let the next Tick request a fresh Beat Saber audio clip.
+            RecoverInvalidPreviewAudio("an audio property call");
+            return;
         }
         if(++tickCounter_ >= 30)
         {
@@ -3094,10 +3276,24 @@ namespace BigScreen {
     {
         active_ = false;
         editorVisible_ = false;
-        StopPreviewAudio(true);
+        // Decoder shutdown is deliberately independent from Unity audio and
+        // download cleanup. One subsystem throwing must not leave another
+        // subsystem's background thread alive across a scene transition.
+        try { StopPreviewAudio(true); }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Preview audio teardown failed during deactivation: {}", error.what());
+        }
         DownloadManager::Instance().Cancel();
-        if(PlaybackSession::Instance().IsLibraryPreviewActive())
-            PlaybackSession::Instance().Stop();
+        try
+        {
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                PlaybackSession::Instance().Stop();
+        }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Video decoder teardown failed during deactivation: {}", error.what());
+        }
     }
 
     void VideoLibraryMenu::StopActivePreview()
@@ -3106,9 +3302,24 @@ namespace BigScreen {
         // state. Stop only media preview ownership here: downloads remain
         // active and the selected editor state remains intact for when the
         // player closes the storage panel.
-        StopPreviewAudio(true);
-        if(PlaybackSession::Instance().IsLibraryPreviewActive())
-            PlaybackSession::Instance().Stop();
-        ScreenPreview::Instance().ActivateCurrentState();
+        try { StopPreviewAudio(true); }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Preview audio teardown failed while leaving the library: {}", error.what());
+        }
+        try
+        {
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                PlaybackSession::Instance().Stop();
+        }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Video decoder teardown failed while leaving the library: {}", error.what());
+        }
+        try { ScreenPreview::Instance().ActivateCurrentState(); }
+        catch(const std::exception& error)
+        {
+            PaperLogger.error("Could not restore the settings preview: {}", error.what());
+        }
     }
 }

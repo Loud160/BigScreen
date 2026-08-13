@@ -190,11 +190,15 @@ Opens a centered review page and stops any active library preview. **Scan Storag
 
 #### Automatic Performance — default: Off
 
-Monitors five-second playback windows. If missed presentation requests reach the selected trigger, the current map temporarily steps through 60→30→15 FPS and then 1080→720→480p. It never modifies the MP4 or overwrites saved preferences; the next map starts from the saved limits.
+Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the MP4, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
 
-#### Automatic Performance Trigger — default: 10% missed frames
+#### Frame Rate Loss Trigger — default: 5%
 
-Available when Automatic Performance is on. 5% reacts sooner, 10% is balanced, and 20% tolerates more missed frames before reducing output. This measures Big Screen presentation performance, not Beat Saber's headset refresh rate.
+Available when Automatic Performance is on. This 1–15% slider selects the video frame-rate loss at which quality steps down. Below the selected value, quality is eligible to step back up. This measures Big Screen video presentation performance, not Beat Saber's headset refresh rate.
+
+#### Scaling Response Time — default: 5.0 seconds
+
+Available when Automatic Performance is on. This 0.5–10.0 second slider controls how long either condition must continue before one quality step is taken. The same duration is used for downscaling and recovery. Short times react quickly but may change tiers more often; longer times require more sustained evidence before changing quality.
 
 #### Show Performance Information — default: Off
 

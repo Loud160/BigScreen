@@ -604,14 +604,16 @@ namespace BigScreen {
             : flatWidth;
         screenHeight_ = config.screenHeight;
 
-        // Diagnostics is parented to the screen. Reposition its lower-left
-        // anchor after a live size change without changing the text itself.
+        // Diagnostics is an overlay inside the lower part of the screen. Its
+        // RectTransform is centered on X, so placing the object at the old
+        // lower-left coordinate shifted half of the text rectangle outside
+        // the canvas. Keep the entire rectangle within the visible mesh.
         if(diagnosticsObject_)
         {
             diagnosticsObject_->get_transform()->set_localPosition({
-                -screenWidth_ * 0.48f,
-                -screenHeight_ * 0.62f,
-                -0.05f});
+                0.0f,
+                -screenHeight_ * 0.36f,
+                -0.08f});
             if(diagnosticsText_)
                 diagnosticsText_->get_rectTransform()->set_sizeDelta({
                     screenWidth_ * 11.5f,
@@ -959,10 +961,14 @@ namespace BigScreen {
             diagnosticsObject_->set_layer(gameObject_->get_layer());
             auto transform = diagnosticsObject_->get_transform();
             transform->SetParent(gameObject_->get_transform(), false);
+            // The text rectangle spans almost the full canvas width and is
+            // centered at this transform. Center X and keep its lower edge
+            // just inside the video frame so flat, curved, enlarged, and
+            // undocked layouts all show the same readable overlay.
             transform->set_localPosition({
-                -screenWidth_ * 0.48f,
-                -screenHeight_ * 0.62f,
-                -0.05f});
+                0.0f,
+                -screenHeight_ * 0.36f,
+                -0.08f});
             transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
             transform->set_localScale({0.08f, 0.08f, 0.08f});
             diagnosticsText_ = diagnosticsObject_->AddComponent<TMPro::TextMeshPro*>();

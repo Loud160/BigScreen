@@ -15,6 +15,19 @@ namespace BigScreen {
     public:
         static ErrorManager& Instance();
 
+        /// Creates the persistent, append-only error history before any other
+        /// subsystem loads. Unlike PaperLog, this file survives game restarts.
+        void InitializePersistentLog() noexcept;
+        /// Records an expected or handled failure that does not need to count
+        /// toward the internal-error circuit breaker.
+        void RecordError(
+            const std::string& context,
+            const std::string& detail) noexcept;
+        /// Appends one completed gameplay session. This is intentionally
+        /// called only at teardown, never from the per-frame playback path.
+        void RecordPerformance(
+            const std::string& mapIdentity,
+            const std::string& summary) noexcept;
         void SetGameplayActive(bool active);
         void ReportInternal(const std::string& context, const std::string& detail);
         void ReportUserVisible(const std::string& title, const std::string& detail);
@@ -23,6 +36,9 @@ namespace BigScreen {
         /// dialog. Must be called from a Unity main-thread Update hook.
         void TickMainThread();
         bool GameplayActive() const;
+        /// Prevents another update of the failed mod menu while Beat Saber is
+        /// animating its dismissal and preparing the main-flow dialog.
+        bool MenuRecoveryActive() const;
         /// Starts a fresh error window when the player deliberately turns Big
         /// Screen back on after the circuit breaker disabled it.
         void ResetCircuitBreaker();
@@ -48,6 +64,10 @@ namespace BigScreen {
 
         static constexpr const char* LogFolder =
             "/sdcard/ModData/com.beatgames.beatsaber/logs";
+        static constexpr const char* PersistentErrorLog =
+            "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/error-history.log";
+        static constexpr const char* PerformanceLog =
+            "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/performance-history.log";
 
     private:
         ErrorManager() = default;
@@ -56,10 +76,13 @@ namespace BigScreen {
         bool gameplayActive_ = false;
         bool disabledByCircuitBreaker_ = false;
         bool disableRequested_ = false;
+        bool menuExitRequested_ = false;
+        bool waitingForMenuExit_ = false;
         std::chrono::steady_clock::time_point lastInternalError_{};
         std::optional<std::pair<std::string, std::string>> pendingDialog_;
         bool dialogVisible_ = false;
         bool dialogFailureLogged_ = false;
         std::chrono::steady_clock::time_point nextDialogAttempt_{};
+        std::mutex persistentLogMutex_;
     };
 }

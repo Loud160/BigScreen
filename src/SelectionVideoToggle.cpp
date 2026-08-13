@@ -245,6 +245,9 @@ namespace BigScreen {
         if(!previewUi_ || !inMapUi_)
         {
             PaperLogger.error("Could not create both song-selection video toggles");
+            ErrorManager::Instance().RecordError(
+                "Creating song-selection video controls",
+                "Beat Saber did not create both toggle controls");
             return;
         }
 

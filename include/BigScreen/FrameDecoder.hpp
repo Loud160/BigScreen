@@ -54,6 +54,8 @@ namespace BigScreen {
             std::string& error);
         void Close();
 
+        /// Publishes the newest externally-clocked target. The worker may
+        /// intentionally coalesce obsolete targets so playback stays current.
         void Request(double mediaSeconds);
         bool TryTake(VideoFrame& destination);
         /// Returns a consumed RGBA allocation to the decoder. Keeping a small
@@ -73,6 +75,8 @@ namespace BigScreen {
             return nominalFrameSeconds_ > 0.0 ? 1.0 / nominalFrameSeconds_ : 0.0;
         }
         double AverageDecodeMilliseconds() const { return averageDecodeMilliseconds_.load(); }
+        double PeakDecodeMilliseconds() const { return peakDecodeMilliseconds_.load(); }
+        void ResetPeakDecodeMilliseconds() { peakDecodeMilliseconds_ = 0.0; }
         double DurationSeconds() const { return durationSeconds_; }
         std::uint64_t BufferAllocations() const { return bufferAllocations_.load(); }
 
@@ -108,6 +112,10 @@ namespace BigScreen {
         std::atomic<bool> open_{false};
         std::atomic<bool> stopWorker_{false};
         std::atomic<double> averageDecodeMilliseconds_{0.0};
+        // Highest complete decode-and-convert request observed since this
+        // decoder was opened. Keeping it beside the moving average explains
+        // short spikes that may have already disappeared from the average.
+        std::atomic<double> peakDecodeMilliseconds_{0.0};
         // Counts only vector capacity growth, not ordinary frame reuse. This is
         // exposed in diagnostics so on-device tests can prove the RGBA pool is
         // stable instead of silently allocating multi-megabyte buffers again.
@@ -117,7 +125,6 @@ namespace BigScreen {
         std::condition_variable requestChanged_;
         double requestedSeconds_ = 0.0;
         std::uint64_t requestVersion_ = 0;
-
         std::mutex outputMutex_;
         VideoFrame newestFrame_;
         std::vector<std::vector<std::uint8_t>> recycledBuffers_;

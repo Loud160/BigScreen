@@ -260,9 +260,12 @@ namespace BigScreen {
             ReadInt(document, "resolutionHeight", 720));
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
-        const auto threshold = ReadInt(document, "automaticPerformanceThreshold", 10);
-        automaticPerformanceThreshold_ =
-            threshold == 5 || threshold == 10 || threshold == 20 ? threshold : 10;
+        automaticPerformanceThreshold_ = std::clamp(
+            ReadInt(document, "automaticPerformanceThreshold", 5), 1, 15);
+        automaticPerformanceResponseSeconds_ = std::clamp(
+            ReadFloat(document, "automaticPerformanceResponseSeconds", 5.0f),
+            0.5f,
+            10.0f);
         performanceDiagnosticsEnabled_ = ReadBool(
             document, "performanceDiagnosticsEnabled", false);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
@@ -289,6 +292,16 @@ namespace BigScreen {
         *this = Settings{};
         ErrorManager::Instance().ResetCircuitBreaker();
         WriteNow();
+    }
+
+    void Settings::ResetActiveScreenLayout()
+    {
+        // ScreenLayoutProfile owns the authoritative defaults beside each
+        // field declaration. Reconstructing just this array entry prevents a
+        // new per-layout option from being missed here while preserving all
+        // other layouts and every game-wide setting.
+        screenLayouts_[activeScreenLayout_] = ScreenLayoutProfile{};
+        Save();
     }
 
     void Settings::SetModEnabled(bool value)
@@ -574,8 +587,19 @@ namespace BigScreen {
 
     void Settings::SetAutomaticPerformanceThreshold(int value)
     {
-        automaticPerformanceThreshold_ =
-            value == 5 || value == 10 || value == 20 ? value : 10;
+        automaticPerformanceThreshold_ = std::clamp(value, 1, 15);
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceResponseSeconds(float value)
+    {
+        // Quantize persisted values to the same tenth-second grid presented by
+        // the slider. This prevents binary float noise from accumulating after
+        // repeated arrow taps or JSON load/save cycles.
+        automaticPerformanceResponseSeconds_ = std::clamp(
+            std::round(value * 10.0f) / 10.0f,
+            0.5f,
+            10.0f);
         Save();
     }
 
@@ -734,6 +758,10 @@ namespace BigScreen {
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
+        Replace(
+            document,
+            "automaticPerformanceResponseSeconds",
+            automaticPerformanceResponseSeconds_);
         Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         try

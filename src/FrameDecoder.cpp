@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <pthread.h>
 #include <string>
 
 extern "C" {
@@ -91,10 +92,14 @@ namespace BigScreen {
             return false;
         }
 
-        // Two frame threads provide useful H.264 parallelism on Quest without
-        // taking every core away from gameplay and Replay's encoder.
-        codec_->thread_count = 2;
-        codec_->thread_type = FF_THREAD_FRAME;
+        // Big Screen already decodes on its own worker. Keep libavcodec itself
+        // single-threaded on Quest: an FFmpeg frame worker previously remained
+        // alive when a Unity teardown exception skipped PlaybackSession::Stop,
+        // and the resulting unsupervised native thread later faulted in heap
+        // memory with no actionable stack. One owned worker gives Close() one
+        // thread to join and avoids competing with Beat Saber and Replay.
+        codec_->thread_count = 1;
+        codec_->thread_type = 0;
         result = avcodec_open2(codec_, decoder, nullptr);
         if(result < 0)
         {
@@ -178,6 +183,7 @@ namespace BigScreen {
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
         averageDecodeMilliseconds_ = 0.0;
+        peakDecodeMilliseconds_ = 0.0;
         bufferAllocations_ = 0;
 
         {
@@ -248,6 +254,10 @@ namespace BigScreen {
 
     void FrameDecoder::WorkerMain() noexcept
     {
+        // Android tombstones otherwise report only a generic Thread-N name.
+        // A stable name makes any future native failure attributable without
+        // guessing whether it belonged to Big Screen or another mod.
+        pthread_setname_np(pthread_self(), "BigScreenDecode");
         try
         {
             WorkerLoop();
@@ -344,6 +354,14 @@ namespace BigScreen {
                 const auto previous = averageDecodeMilliseconds_.load();
                 averageDecodeMilliseconds_ = previous <= 0.0
                     ? elapsed : previous * 0.9 + elapsed * 0.1;
+                auto previousPeak = peakDecodeMilliseconds_.load();
+                while(elapsed > previousPeak &&
+                      !peakDecodeMilliseconds_.compare_exchange_weak(
+                          previousPeak, elapsed))
+                {
+                    // compare_exchange refreshes previousPeak after another
+                    // write. Retry only while this sample is still larger.
+                }
                 Publish(std::move(output));
                 handledVersion = targetVersion;
                 break;

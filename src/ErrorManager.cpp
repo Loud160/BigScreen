@@ -2,8 +2,14 @@
 
 #include <stdexcept>
 #include <functional>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
@@ -22,6 +28,111 @@ namespace BigScreen {
         return manager;
     }
 
+    void ErrorManager::InitializePersistentLog() noexcept
+    {
+        try
+        {
+            const std::filesystem::path logPath(PersistentErrorLog);
+            std::filesystem::create_directories(logPath.parent_path());
+            constexpr std::uintmax_t MaximumHistoryBytes = 5u * 1024u * 1024u;
+            std::error_code sizeError;
+            if(std::filesystem::exists(logPath, sizeError) && !sizeError &&
+               std::filesystem::file_size(logPath, sizeError) >
+                   MaximumHistoryBytes && !sizeError)
+            {
+                const auto previous = logPath.parent_path() /
+                    "error-history.previous.log";
+                std::error_code rotationError;
+                std::filesystem::remove(previous, rotationError);
+                rotationError.clear();
+                std::filesystem::rename(logPath, previous, rotationError);
+                if(rotationError)
+                    PaperLogger.error(
+                        "Could not rotate persistent Big Screen error history: {}",
+                        rotationError.message());
+            }
+            std::ofstream output(logPath, std::ios::app);
+            if(!output)
+                throw std::runtime_error("the error-history file could not be opened");
+            output << "\n=== Big Screen " << VERSION
+                   << " session started ===\n";
+            output.flush();
+        }
+        catch(const std::exception& exception)
+        {
+            // PaperLog is the only remaining sink if external storage is not
+            // writable. Never let diagnostics prevent the mod from starting.
+            PaperLogger.error(
+                "Could not initialize persistent Big Screen error history: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not initialize persistent Big Screen error history");
+        }
+    }
+
+    void ErrorManager::RecordError(
+        const std::string& context,
+        const std::string& detail) noexcept
+    {
+        try
+        {
+            std::scoped_lock lock(persistentLogMutex_);
+            const std::filesystem::path logPath(PersistentErrorLog);
+            std::filesystem::create_directories(logPath.parent_path());
+            std::ofstream output(logPath, std::ios::app);
+            if(!output)
+                return;
+
+            const auto now = std::chrono::system_clock::now();
+            const std::time_t time = std::chrono::system_clock::to_time_t(now);
+            const std::tm* local = std::localtime(&time);
+            if(local)
+                output << '[' << std::put_time(local, "%Y-%m-%d %H:%M:%S") << "] ";
+            output << context << ": " << detail << '\n';
+            output.flush();
+        }
+        catch(...)
+        {
+            // Diagnostics are fail-open. Reporting a logging failure through
+            // this class would recurse and could turn a storage issue into a
+            // circuit-breaker event.
+        }
+    }
+
+    void ErrorManager::RecordPerformance(
+        const std::string& mapIdentity,
+        const std::string& summary) noexcept
+    {
+        try
+        {
+            std::scoped_lock lock(persistentLogMutex_);
+            const std::filesystem::path logPath(PerformanceLog);
+            std::filesystem::create_directories(logPath.parent_path());
+            std::ofstream output(logPath, std::ios::app);
+            if(!output)
+                return;
+
+            const auto now = std::chrono::system_clock::now();
+            const std::time_t time = std::chrono::system_clock::to_time_t(now);
+            const std::tm* local = std::localtime(&time);
+            output << "\n[";
+            if(local)
+                output << std::put_time(local, "%Y-%m-%d %H:%M:%S");
+            else
+                output << "unknown time";
+            output << "] " << mapIdentity << '\n'
+                   << summary << '\n';
+            output.flush();
+        }
+        catch(...)
+        {
+            // Performance diagnostics must never affect gameplay teardown.
+        }
+    }
+
     void ErrorManager::SetGameplayActive(bool active)
     {
         std::scoped_lock lock(mutex_);
@@ -34,11 +145,18 @@ namespace BigScreen {
         return gameplayActive_;
     }
 
+    bool ErrorManager::MenuRecoveryActive() const
+    {
+        std::scoped_lock lock(mutex_);
+        return menuExitRequested_ || waitingForMenuExit_;
+    }
+
     void ErrorManager::ReportUserVisible(
         const std::string& title,
         const std::string& detail)
     {
         PaperLogger.error("{}: {}", title, detail);
+        RecordError(title, detail);
         std::scoped_lock lock(mutex_);
         // Keep only the newest message. A single modal is useful; a backlog of
         // stale popups can prevent the player from reaching the disable switch.
@@ -52,6 +170,7 @@ namespace BigScreen {
         const std::string& detail)
     {
         PaperLogger.error("Internal failure in {}: {}", context, detail);
+        RecordError("Internal failure in " + context, detail);
         const auto now = std::chrono::steady_clock::now();
         const auto signature = context + ": " + detail;
         {
@@ -67,7 +186,7 @@ namespace BigScreen {
                 pendingDialog_ = std::make_pair(
                     "Big Screen disabled itself",
                     "Big Screen encountered two internal errors within three minutes, so it turned itself off to protect Beat Saber.\n\nLast error: " +
-                    signature + "\n\nLogs: " + LogFolder +
+                    signature + "\n\nError log: " + PersistentErrorLog +
                     "\n\nYou can turn the mod back on from its General tab after reviewing the log.");
             }
             else if(!gameplayActive_)
@@ -75,8 +194,10 @@ namespace BigScreen {
                 pendingDialog_ = std::make_pair(
                     "Big Screen error",
                     "Big Screen could not complete an internal operation.\n\n" +
-                    signature + "\n\nThe error was recorded in " + LogFolder + ".");
+                    signature + "\n\nThe error was recorded in " + PersistentErrorLog + ".");
             }
+            if(!gameplayActive_)
+                menuExitRequested_ = true;
             // During gameplay the first failure remains log-only. If a second
             // failure follows soon after, one circuit-breaker dialog waits
             // until gameplay ends.
@@ -100,6 +221,8 @@ namespace BigScreen {
     void ErrorManager::TickMainThread()
     {
         bool disable = false;
+        bool requestMenuExit = false;
+        bool waitingForMenuExit = false;
         {
             std::scoped_lock lock(mutex_);
             if(!gameplayActive_ && disableRequested_)
@@ -107,6 +230,9 @@ namespace BigScreen {
                 disableRequested_ = false;
                 disable = true;
             }
+            requestMenuExit = menuExitRequested_;
+            menuExitRequested_ = false;
+            waitingForMenuExit = waitingForMenuExit_;
         }
         if(disable)
         {
@@ -117,6 +243,29 @@ namespace BigScreen {
             // Update hook stops dispatching mod work as soon as it sees false.
             SelectionVideoToggle::Instance().ModEnabledChanged(false);
             ScreenPreview::Instance().SetEnabled(false);
+        }
+
+        if(requestMenuExit && IsBigScreenMenuActive())
+        {
+            const bool dismissalStarted = ExitBigScreenMenuAfterError();
+            std::scoped_lock lock(mutex_);
+            waitingForMenuExit_ = dismissalStarted;
+            // Present the explanation only after the mod flow is gone. The
+            // dialog then belongs to Beat Saber's main screen and cannot be
+            // trapped behind the UI that just failed.
+            nextDialogAttempt_ = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(250);
+            if(dismissalStarted)
+                return;
+        }
+
+        if(waitingForMenuExit)
+        {
+            if(IsBigScreenMenuActive())
+                return;
+            std::scoped_lock lock(mutex_);
+            waitingForMenuExit_ = false;
+            nextDialogAttempt_ = {};
         }
 
         std::pair<std::string, std::string> message;
@@ -182,6 +331,9 @@ namespace BigScreen {
                 PaperLogger.error(
                     "Could not show Big Screen error dialog: {}",
                     exception.what());
+                RecordError(
+                    "Showing Big Screen error dialog",
+                    exception.what());
                 dialogFailureLogged_ = true;
             }
             dialogVisible_ = false;
@@ -198,6 +350,9 @@ namespace BigScreen {
             {
                 PaperLogger.error(
                     "Could not show Big Screen error dialog: unknown exception");
+                RecordError(
+                    "Showing Big Screen error dialog",
+                    "Unknown native exception");
                 dialogFailureLogged_ = true;
             }
             dialogVisible_ = false;
@@ -212,6 +367,8 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         disabledByCircuitBreaker_ = false;
         disableRequested_ = false;
+        menuExitRequested_ = false;
+        waitingForMenuExit_ = false;
         lastInternalError_ = {};
         dialogFailureLogged_ = false;
         nextDialogAttempt_ = {};

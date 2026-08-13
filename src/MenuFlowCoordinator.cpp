@@ -1,5 +1,7 @@
 #include "BigScreen/MenuFlowCoordinator.hpp"
 
+#include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
@@ -13,6 +15,7 @@
 #include "main.hpp"
 
 #include <cctype>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -25,6 +28,7 @@ namespace BigScreen {
         bool savedDynamicFoveation = false;
         bool distractionFreeMenuActive = false;
         std::vector<UnityW<UnityEngine::GameObject>> hiddenMenuObjects;
+        MenuFlowCoordinator* activeMenuFlow = nullptr;
 
         std::string NormalizeObjectName(StringW value)
         {
@@ -76,6 +80,9 @@ namespace BigScreen {
             {
                 PaperLogger.error(
                     "Could not restore Beat Saber's foveated-rendering state");
+                ErrorManager::Instance().RecordError(
+                    "Restoring menu foveated rendering",
+                    "Beat Saber rejected the saved foveated-rendering state");
             }
         }
 
@@ -107,9 +114,63 @@ namespace BigScreen {
             {
                 PaperLogger.error(
                     "Could not disable foveated rendering for Big Screen's menu");
+                ErrorManager::Instance().RecordError(
+                    "Disabling menu foveated rendering",
+                    "Beat Saber rejected the temporary foveated-rendering override");
                 RestoreMenuFoveation();
             }
         }
+    }
+
+    bool IsBigScreenMenuActive()
+    {
+        return activeMenuFlow != nullptr;
+    }
+
+    bool ExitBigScreenMenuAfterError() noexcept
+    {
+        auto* coordinator = activeMenuFlow;
+        if(!coordinator)
+            return false;
+        try
+        {
+            // Do not use BackButtonWasPressed here. Its unsaved-edit dialog is
+            // itself part of Big Screen's UI and may be the component that
+            // failed. Discard the transient editor state, stop both preview
+            // clocks, and dismiss directly through Beat Saber's parent flow.
+            ScreenPreview::Instance().CancelUndockedEditing();
+            VideoLibraryMenu::Instance().StopActivePreview();
+            auto parent = coordinator->__cordl_internal_get__parentFlowCoordinator();
+            if(!parent)
+                throw std::runtime_error(
+                    "Big Screen's parent menu flow was unavailable");
+            parent->DismissFlowCoordinator(
+                coordinator,
+                HMUI::ViewController::AnimationDirection::Horizontal,
+                nullptr,
+                false);
+            PaperLogger.warn(
+                "Dismissed Big Screen's menu after an internal UI failure");
+            return true;
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not dismiss Big Screen's failed menu: {}",
+                exception.what());
+            ErrorManager::Instance().RecordError(
+                "Dismissing Big Screen after a menu failure",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not dismiss Big Screen's failed menu: unknown exception");
+            ErrorManager::Instance().RecordError(
+                "Dismissing Big Screen after a menu failure",
+                "Unknown native exception");
+        }
+        return false;
     }
 
     void RestoreDistractionFreeMenu()
@@ -136,6 +197,9 @@ namespace BigScreen {
             {
                 PaperLogger.error(
                     "Could not restore one distraction-free menu object");
+                ErrorManager::Instance().RecordError(
+                    "Restoring distraction-free menu objects",
+                    "Beat Saber rejected one saved menu object");
             }
         }
         hiddenMenuObjects.clear();
@@ -186,6 +250,7 @@ namespace BigScreen {
         bool addedToHierarchy,
         bool screenSystemEnabling)
     {
+        activeMenuFlow = this;
         // Do not call HMUI::FlowCoordinator::DidActivate from a custom-types
         // override. The generated CORDL wrapper performs virtual dispatch, so
         // calling it through the base type returns to this override and grows
@@ -280,6 +345,7 @@ namespace BigScreen {
             // established one and terminated the game with an uncaught IL2CPP
             // exception. ApplyModEnabledUi is reserved for later live changes.
             ScreenPreview::Instance().ActivateCurrentState();
+            PerformancePanel::Instance().ActivateMenu();
             return;
         }
 
@@ -290,16 +356,18 @@ namespace BigScreen {
         // A player can leave the complete Big Screen flow through the left
         // Back button while storage is open. Always restore the empty center
         // controller on the next visit instead of resurrecting that old page.
-        if(get_topViewController().ptr() != centerViewController)
-        {
-            ReplaceTopViewController(
-                centerViewController,
-                nullptr,
-                HMUI::ViewController::AnimationType::None,
-                HMUI::ViewController::AnimationDirection::Horizontal);
-        }
+        // Do not query get_topViewController here. Beat Saber clears that
+        // property while transitioning through gameplay, and its generated
+        // getter throws an IL2CPP exception when Big Screen is opened after a
+        // song. The exception escaped this custom lifecycle override and
+        // aborted the entire process. SetTopScreenViewController is the direct
+        // lifecycle-safe assignment and is harmless when center is already set.
+        SetTopScreenViewController(
+            centerViewController,
+            HMUI::ViewController::AnimationType::None);
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
         ScreenPreview::Instance().ActivateCurrentState();
+        PerformancePanel::Instance().ActivateMenu();
     }
 
     void MenuFlowCoordinator::ApplyModEnabledUi(bool enabled)
@@ -311,14 +379,12 @@ namespace BigScreen {
         // not navigation needed to recover from a disabled mod. Restore the
         // empty center and remove the entire right panel until the master
         // switch is turned back on.
-        if(get_topViewController().ptr() != centerViewController)
-        {
-            ReplaceTopViewController(
-                centerViewController,
-                nullptr,
-                HMUI::ViewController::AnimationType::None,
-                HMUI::ViewController::AnimationDirection::Horizontal);
-        }
+        // The master switch can be applied during a lifecycle transition as
+        // well. Use the same direct assignment as DidActivate so a missing old
+        // top controller is never queried merely to restore the empty center.
+        SetTopScreenViewController(
+            centerViewController,
+            HMUI::ViewController::AnimationType::None);
         SetRightScreenViewController(
             enabled ? libraryBrowserViewController : nullptr,
             HMUI::ViewController::AnimationType::None);
@@ -332,6 +398,9 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        if(activeMenuFlow == this)
+            activeMenuFlow = nullptr;
+        PerformancePanel::Instance().SuspendMenu();
         // The world screen only belongs to this page. Releasing it here keeps
         // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();

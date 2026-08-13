@@ -6,6 +6,7 @@
 #include <string>
 
 #include "BigScreen/FrameDecoder.hpp"
+#include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
 
@@ -26,7 +27,22 @@ namespace BigScreen {
         std::uint64_t presentedFrames = 0;
         std::uint64_t rgbaBufferAllocations = 0;
         double averageDecodeMilliseconds = 0.0;
+        double peakDecodeMilliseconds = 0.0;
         int automaticReductions = 0;
+    };
+
+    /// Immutable snapshot used by the results-screen presentation. Keeping the
+    /// values structured avoids scraping the human-readable log line back into
+    /// fields and lets the UI change without changing the append-only log.
+    struct PlaybackResultsData {
+        PlaybackDiagnostics video;
+        double minimumGameplayFps = 0.0;
+        double averageGameplayFps = 0.0;
+        double maximumGameplayFps = 0.0;
+        std::uint64_t sampledGameplayFrames = 0;
+        std::uint64_t missedVideoFrames = 0;
+        double averageVideoFps = 0.0;
+        double missedVideoFramePercent = 0.0;
     };
 
     enum class PlaybackContext {
@@ -75,6 +91,9 @@ namespace BigScreen {
         /// gameplay scene exists.
         void PrewarmGameplay();
         void Tick(double songTimeSeconds);
+        /// Applies a new user FPS cap without reopening FFmpeg or requiring
+        /// preview pause/resume. It also starts a clean comparison window.
+        void RefreshPlaybackFpsLimitLive();
         void Stop();
 
         bool HasPreparedVideo() const { return config_.has_value(); }
@@ -91,11 +110,18 @@ namespace BigScreen {
         const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;
         PlaybackDiagnostics Diagnostics() const;
+        /// Supplies the last playable note time so headset-FPS statistics stop
+        /// before Beat Saber's results transition begins. A missing value keeps
+        /// the safe fallback of sampling until gameplay ends.
+        void SetGameplayLastNoteTime(double songTimeSeconds);
         /// Freezes the current statistics and keeps them visible beside the
         /// video during Beat Saber's failed-level overlay.
         void FinalizeDiagnosticsDisplay();
         const std::string& LastDiagnosticsSummary() const {
             return lastDiagnosticsSummary_;
+        }
+        const std::optional<PlaybackResultsData>& LastResultsData() const {
+            return lastResultsData_;
         }
 
     private:
@@ -104,9 +130,20 @@ namespace BigScreen {
             PlaybackContext intendedContext = PlaybackContext::None);
         bool OpenDecoder(std::string& error);
         bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
+        bool ApplyAutomaticPerformanceRecovery(double mediaTimeSeconds);
+        bool ApplyAutomaticPerformanceTier(
+            int nextFps,
+            int nextResolution,
+            double mediaTimeSeconds,
+            const char* failureOperation);
         void CaptureDiagnosticsSummary();
 
         std::filesystem::path levelDirectory_;
+        // Captured while the BeatmapLevel is known and retained through scene
+        // teardown so the append-only performance record identifies the map.
+        std::string preparedLevelId_;
+        std::string preparedSongName_;
+        std::string preparedSongArtist_;
         // This flag is independent of cinema-video.json. A user-assigned video
         // can make any Chroma map a Big Screen map, and Chroma still needs
         // ownership of that map's environment even when Cinema metadata is
@@ -139,18 +176,45 @@ namespace BigScreen {
         int effectiveFpsLimit_ = 30;
         int effectiveResolutionHeight_ = 720;
         std::uint64_t requestedFrames_ = 0;
-        double expectedFrameAccumulator_ = 0.0;
-        std::uint64_t presentedFrames_ = 0;
-        double windowExpectedFrameAccumulator_ = 0.0;
-        std::uint64_t windowPresentedFrames_ = 0;
+        // Presentation statistics are derived only from timestamps of images
+        // that successfully reached Unity. Thread scheduling latency is not a
+        // missed frame; a gap in delivered media timestamps is.
+        std::uint64_t deliveredPresentedFrames_ = 0;
+        std::uint64_t missedPresentedFrames_ = 0;
+        std::uint64_t windowDeliveredPresentedFrames_ = 0;
+        std::uint64_t windowMissedPresentedFrames_ = 0;
         double performanceWindowStartSongTime_ = 0.0;
+        std::uint64_t diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        std::uint64_t diagnosticsWindowMissedPresentedFrames_ = 0;
+        double diagnosticsWindowStartSongTime_ = 0.0;
+        std::optional<double> lastUploadedPresentationSeconds_;
+        double lastUploadedDurationSeconds_ = 0.0;
+        // Unity frame timing is sampled only while the active playback clock
+        // advances. The same session-local counters feed the live Video
+        // Library overlay and the final gameplay log, but only gameplay
+        // sessions are ever persisted.
+        double minimumFrameSeconds_ = 0.0;
+        double maximumFrameSeconds_ = 0.0;
+        double totalFrameSeconds_ = 0.0;
+        double lastFpsSongTime_ = 0.0;
+        std::uint64_t sampledFrames_ = 0;
         int automaticReductions_ = 0;
+        // Each successful reduction stores the exact tier it replaced. A
+        // healthy user-selected response window pops one entry, which
+        // guarantees that resolution/FPS are restored in the reverse order
+        // they were lowered. The controller continues evaluating throughout
+        // the map, so later pressure can lower quality again.
+        CoreLogic::AutomaticPerformanceHistory automaticPerformanceHistory_;
         int diagnosticsFrameCounter_ = 0;
+        bool diagnosticsVisible_ = false;
         // Quest Chroma applies difficulty environment data from an end-of-frame
         // coroutine. Delay Cinema's separate environment array a few gameplay
         // updates so it remains the final mapper-authored scene pass.
         int mapperEnvironmentApplyCountdown_ = 0;
         std::string lastDiagnosticsSummary_;
+        std::optional<PlaybackResultsData> lastResultsData_;
+        std::optional<double> gameplayLastNoteTime_;
+        bool gameplayFrameSamplingFinished_ = false;
         PlaybackContext context_ = PlaybackContext::None;
     };
 }

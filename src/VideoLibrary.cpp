@@ -1,5 +1,6 @@
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ErrorManager.hpp"
 
 #include <algorithm>
 #include <array>
@@ -414,7 +415,12 @@ namespace BigScreen {
                 levelDirectory,
                 error);
             if(!error.empty())
+            {
                 PaperLogger.error("Video metadata rejected for '{}': {}", descriptor.levelId, error);
+                ErrorManager::Instance().RecordError(
+                    "Reading video metadata for " + descriptor.levelId,
+                    error);
+            }
             if(descriptor.mapperDefinition)
             {
                 descriptor.hasMapperLocalFile = descriptor.mapperDefinition->HasLocalVideo();
@@ -963,7 +969,12 @@ namespace BigScreen {
         std::error_code error;
         std::filesystem::rename(manifestPath_, quarantine, error);
         if(error)
+        {
             PaperLogger.error("Could not quarantine invalid library manifest: {}", error.message());
+            ErrorManager::Instance().RecordError(
+                "Quarantining an invalid video library",
+                error.message());
+        }
 
         const std::array backups{
             std::filesystem::path(manifestPath_.string() + ".backup1"),
@@ -998,6 +1009,9 @@ namespace BigScreen {
         recoveryNotice_ =
             "Big Screen could not read the video library or either backup. It will rebuild every recoverable downloaded-video assignment after the song library finishes loading.";
         PaperLogger.error("Video library and both known-good backups are invalid");
+        ErrorManager::Instance().RecordError(
+            "Recovering the video library",
+            "The primary library and both known-good backups were invalid");
     }
 
     void VideoLibrary::SaveLocked() const

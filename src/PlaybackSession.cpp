@@ -8,12 +8,14 @@
 
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/CinemaEnvironment.hpp"
 #include "BigScreen/ChromaMapDetector.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "UnityEngine/Quaternion.hpp"
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -55,19 +57,23 @@ namespace BigScreen {
             decoder_.Width(), decoder_.Height(),
             decoder_.SourceFramesPerSecond(), effectiveFpsLimit_,
             requestedFrames_,
-            static_cast<std::uint64_t>(std::floor(
-                expectedFrameAccumulator_ + 0.000001)),
-            presentedFrames_,
+            deliveredPresentedFrames_ + missedPresentedFrames_,
+            deliveredPresentedFrames_,
             decoder_.BufferAllocations(),
-            decoder_.AverageDecodeMilliseconds(), automaticReductions_};
+            decoder_.AverageDecodeMilliseconds(),
+            decoder_.PeakDecodeMilliseconds(), automaticReductions_};
     }
 
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
     {
         Stop();
+        lastResultsData_.reset();
         baseConfig_.reset();
         config_.reset();
         levelDirectory_.clear();
+        preparedLevelId_.clear();
+        preparedSongName_.clear();
+        preparedSongArtist_.clear();
         chromaMapDetected_ = false;
         menuPreviewStartSongTime_ = 0.0;
 
@@ -82,6 +88,13 @@ namespace BigScreen {
             return;
 
         const std::string levelId(level->levelID);
+        preparedLevelId_ = levelId;
+        preparedSongName_ = level->songName
+            ? std::string(level->songName)
+            : std::string("Unknown song");
+        preparedSongArtist_ = level->songAuthorName
+            ? std::string(level->songAuthorName)
+            : std::string("Unknown artist");
         menuPreviewStartSongTime_ = std::max(
             0.0,
             static_cast<double>(level->previewStartTime));
@@ -365,16 +378,33 @@ namespace BigScreen {
         lastTickSongTime_ = 0.0;
         context_ = context;
         requestedFrames_ = 0;
-        expectedFrameAccumulator_ = 0.0;
-        presentedFrames_ = 0;
-        windowExpectedFrameAccumulator_ = 0.0;
-        windowPresentedFrames_ = 0;
+        deliveredPresentedFrames_ = 0;
+        missedPresentedFrames_ = 0;
+        windowDeliveredPresentedFrames_ = 0;
+        windowMissedPresentedFrames_ = 0;
         performanceWindowStartSongTime_ = 0.0;
+        diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowStartSongTime_ = 0.0;
+        lastUploadedPresentationSeconds_.reset();
+        lastUploadedDurationSeconds_ = 0.0;
+        minimumFrameSeconds_ = 0.0;
+        maximumFrameSeconds_ = 0.0;
+        totalFrameSeconds_ = 0.0;
+        lastFpsSongTime_ = 0.0;
+        sampledFrames_ = 0;
+        gameplayFrameSamplingFinished_ = false;
         automaticReductions_ = 0;
+        automaticPerformanceHistory_.Reset();
         diagnosticsFrameCounter_ = 0;
+        diagnosticsVisible_ = false;
         mapperEnvironmentApplyCountdown_ =
             context == PlaybackContext::Gameplay && MapperPresentationActive()
                 ? 3 : 0;
+
+        if(context == PlaybackContext::Gameplay &&
+           Settings::Instance().PerformanceDiagnosticsEnabled())
+            PerformancePanel::Instance().ActivateGameplay();
 
         // SongPreviewPlayer begins custom-song previews at BeatmapLevel's
         // previewStartTime rather than zero. Start the decoder worker toward
@@ -412,6 +442,9 @@ namespace BigScreen {
             effectiveFpsLimit_,
             decoder_.DurationSeconds(),
             av_version_info());
+        if(context == PlaybackContext::LibraryPreview &&
+           Settings::Instance().PerformanceDiagnosticsEnabled())
+            PerformancePanel::Instance().ShowWaitingMessage();
     }
 
     bool PlaybackSession::OpenDecoder(std::string& error)
@@ -451,6 +484,51 @@ namespace BigScreen {
     {
         if(!Settings::Instance().ModEnabled() || !started_ || !config_)
             return;
+
+        const bool diagnosticsContext =
+            context_ == PlaybackContext::Gameplay ||
+            context_ == PlaybackContext::LibraryPreview;
+        if(diagnosticsContext &&
+           Settings::Instance().PerformanceDiagnosticsEnabled())
+        {
+            // Gameplay FPS intentionally excludes the first ten seconds and
+            // everything after the final playable note. Lead-in, scene warmup,
+            // and the results transition otherwise create false minimums that
+            // do not describe the portion where the player actually performs.
+            // Library previews have no beatmap-note boundary and continue to
+            // sample whenever their audio clock advances.
+            if(context_ == PlaybackContext::Gameplay &&
+               gameplayLastNoteTime_ &&
+               songTimeSeconds > *gameplayLastNoteTime_)
+                gameplayFrameSamplingFinished_ = true;
+            const bool maySampleGameplayFrame =
+                context_ != PlaybackContext::Gameplay ||
+                CoreLogic::ShouldSampleGameplayFrame(
+                    songTimeSeconds,
+                    gameplayLastNoteTime_,
+                    gameplayFrameSamplingFinished_);
+            const double frameSeconds = UnityEngine::Time::get_unscaledDeltaTime();
+            const double songAdvance =
+                songTimeSeconds - lastFpsSongTime_;
+            lastFpsSongTime_ = songTimeSeconds;
+            // A focused Quest frame is normally well below 100 ms. Excluding
+            // longer gaps and frames where Beat Saber's song clock did not
+            // advance prevents pauses, headset sleep, and the system menu from
+            // being mislabeled as active gameplay or menu-preview FPS.
+            if(maySampleGameplayFrame &&
+               frameSeconds > 0.0001 && frameSeconds <= 0.10 &&
+               songAdvance > 0.000001 && songAdvance <= 0.10)
+            {
+                minimumFrameSeconds_ =
+                    sampledFrames_ == 0
+                        ? frameSeconds
+                        : std::min(minimumFrameSeconds_, frameSeconds);
+                maximumFrameSeconds_ =
+                    std::max(maximumFrameSeconds_, frameSeconds);
+                totalFrameSeconds_ += frameSeconds;
+                ++sampledFrames_;
+            }
+        }
 
         if(playbackFailed_)
             return;
@@ -521,19 +599,14 @@ namespace BigScreen {
             // A practice/replay seek starts a fresh automatic-performance
             // sample. Mixing frames from before and after a large clock jump
             // could create an artificial miss spike and lower quality.
-            windowExpectedFrameAccumulator_ = 0.0;
-            windowPresentedFrames_ = 0;
+            windowDeliveredPresentedFrames_ = 0;
+            windowMissedPresentedFrames_ = 0;
             performanceWindowStartSongTime_ = songTimeSeconds;
-        }
-        if(!clockDiscontinuity && songTimeSeconds > lastTickSongTime_)
-        {
-            const double activeDelta = songTimeSeconds - lastTickSongTime_;
-            const double expectedRate = CoreLogic::ExpectedPresentationRate(
-                decoder_.SourceFramesPerSecond(),
-                config_->playbackRate,
-                effectiveFpsLimit_);
-            expectedFrameAccumulator_ += activeDelta * expectedRate;
-            windowExpectedFrameAccumulator_ += activeDelta * expectedRate;
+            diagnosticsWindowDeliveredPresentedFrames_ = 0;
+            diagnosticsWindowMissedPresentedFrames_ = 0;
+            diagnosticsWindowStartSongTime_ = songTimeSeconds;
+            lastUploadedPresentationSeconds_.reset();
+            lastUploadedDurationSeconds_ = 0.0;
         }
         if(!lastPresentationSlot_ ||
            clockDiscontinuity ||
@@ -545,29 +618,84 @@ namespace BigScreen {
         }
         lastTickSongTime_ = songTimeSeconds;
 
-        if(context_ == PlaybackContext::Gameplay &&
+        if(diagnosticsContext &&
            Settings::Instance().PerformanceDiagnosticsEnabled() &&
            ++diagnosticsFrameCounter_ >= 30)
         {
             diagnosticsFrameCounter_ = 0;
             const auto d = Diagnostics();
-            const double missedPercent = CoreLogic::MissedFramePercent(
-                d.expectedFrames, d.presentedFrames);
-            std::ostringstream text;
-            text << d.sourceWidth << 'x' << d.sourceHeight << " @ "
-                 << std::fixed << std::setprecision(1) << d.sourceFps
-                 << " FPS  ->  " << d.outputWidth << 'x' << d.outputHeight
-                 << " @ " << d.outputFpsLimit << " FPS\nMissed "
-                 << std::setprecision(1) << missedPercent << "%  |  Decode "
-                 << std::setprecision(2) << d.averageDecodeMilliseconds << " ms";
-            surface_.SetDiagnosticsText(text.str());
+            // Snapshot this completed/current sample before rolling its
+            // counters. The percentage and count displayed together must
+            // always describe the same set of delivered pictures.
+            const auto currentWindowExpected =
+                diagnosticsWindowDeliveredPresentedFrames_ +
+                diagnosticsWindowMissedPresentedFrames_;
+            const auto currentWindowDelivered =
+                diagnosticsWindowDeliveredPresentedFrames_;
+            // The UI setting is a ceiling, not a target. Scale the source-
+            // aware expected cadence by the delivered/expected ratio so a
+            // healthy 24 FPS video under a 30 FPS cap reads 24 FPS—not 30.
+            // Fit-to-Song's resolved playbackRate is already included here.
+            const double expectedWindowVideoFps =
+                CoreLogic::ExpectedPresentationRate(
+                    d.sourceFps,
+                    config_->playbackRate,
+                    d.outputFpsLimit);
+            const double currentWindowVideoFps = currentWindowExpected > 0
+                ? expectedWindowVideoFps *
+                    static_cast<double>(currentWindowDelivered) /
+                    static_cast<double>(currentWindowExpected)
+                : 0.0;
+            const double currentWindowMissed = CoreLogic::MissedFramePercent(
+                currentWindowExpected,
+                currentWindowDelivered);
+            if(diagnosticsWindowStartSongTime_ <= 0.0)
+                diagnosticsWindowStartSongTime_ = songTimeSeconds;
+            bool completedDiagnosticsWindow = false;
+            if(songTimeSeconds - diagnosticsWindowStartSongTime_ >= 5.0)
+            {
+                diagnosticsWindowDeliveredPresentedFrames_ = 0;
+                diagnosticsWindowMissedPresentedFrames_ = 0;
+                diagnosticsWindowStartSongTime_ = songTimeSeconds;
+                completedDiagnosticsWindow = true;
+            }
+            const auto frameRate = CoreLogic::SummarizeFrameRate(
+                minimumFrameSeconds_,
+                maximumFrameSeconds_,
+                totalFrameSeconds_,
+                sampledFrames_);
+            PerformancePanel::Instance().SetStatistics({
+                context_ == PlaybackContext::Gameplay,
+                frameRate.minimumFps,
+                frameRate.averageFps,
+                frameRate.maximumFps,
+                frameRate.sampledFrames,
+                d.sourceWidth,
+                d.sourceHeight,
+                d.sourceFps,
+                d.outputWidth,
+                d.outputHeight,
+                d.outputFpsLimit,
+                currentWindowExpected > currentWindowDelivered
+                    ? currentWindowExpected - currentWindowDelivered
+                    : 0,
+                currentWindowExpected,
+                missedPresentedFrames_,
+                currentWindowVideoFps,
+                currentWindowMissed,
+                d.averageDecodeMilliseconds,
+                d.peakDecodeMilliseconds});
+            if(completedDiagnosticsWindow)
+                decoder_.ResetPeakDecodeMilliseconds();
+            diagnosticsVisible_ = true;
         }
-        else if(context_ == PlaybackContext::Gameplay &&
+        else if(diagnosticsContext &&
                 !Settings::Instance().PerformanceDiagnosticsEnabled() &&
-                diagnosticsFrameCounter_ != 0)
+                diagnosticsVisible_)
         {
             diagnosticsFrameCounter_ = 0;
-            surface_.SetDiagnosticsText("");
+            PerformancePanel::Instance().SetEnabled(false);
+            diagnosticsVisible_ = false;
         }
 
         if(context_ == PlaybackContext::Gameplay &&
@@ -575,16 +703,19 @@ namespace BigScreen {
         {
             if(performanceWindowStartSongTime_ <= 0.0)
                 performanceWindowStartSongTime_ = songTimeSeconds;
-            else if(songTimeSeconds - performanceWindowStartSongTime_ >= 5.0)
+            else if(songTimeSeconds - performanceWindowStartSongTime_ >=
+                    Settings::Instance().AutomaticPerformanceResponseSeconds())
             {
-                const auto expectedFrames = static_cast<std::uint64_t>(std::floor(
-                    windowExpectedFrameAccumulator_ + 0.000001));
                 const double missedPercent = CoreLogic::MissedFramePercent(
-                    expectedFrames, windowPresentedFrames_);
+                    windowDeliveredPresentedFrames_ +
+                        windowMissedPresentedFrames_,
+                    windowDeliveredPresentedFrames_);
                 if(missedPercent >= Settings::Instance().AutomaticPerformanceThreshold())
                     ApplyAutomaticPerformanceReduction(mediaTime);
-                windowExpectedFrameAccumulator_ = 0.0;
-                windowPresentedFrames_ = 0;
+                else
+                    ApplyAutomaticPerformanceRecovery(mediaTime);
+                windowDeliveredPresentedFrames_ = 0;
+                windowMissedPresentedFrames_ = 0;
                 performanceWindowStartSongTime_ = songTimeSeconds;
             }
         }
@@ -595,23 +726,96 @@ namespace BigScreen {
 
         if(surface_.Upload(frame))
         {
-            ++presentedFrames_;
-            ++windowPresentedFrames_;
+            // Count every distinct image that actually reached Unity. The
+            // timestamp comparison below accounts only for media pictures
+            // skipped between this upload and the preceding upload. Keeping
+            // those as separate monotonic totals makes the live panel, the
+            // results screen, and the persisted log mathematically identical.
+            ++deliveredPresentedFrames_;
+            ++windowDeliveredPresentedFrames_;
+            ++diagnosticsWindowDeliveredPresentedFrames_;
+            if(lastUploadedPresentationSeconds_)
+            {
+                const auto intervals = CoreLogic::PresentedFrameIntervals(
+                    *lastUploadedPresentationSeconds_,
+                    lastUploadedDurationSeconds_,
+                    frame.presentationSeconds,
+                    config_->playbackRate,
+                    effectiveFpsLimit_);
+                const auto missed = intervals > 1 ? intervals - 1 : 0;
+                missedPresentedFrames_ += missed;
+                windowMissedPresentedFrames_ += missed;
+                diagnosticsWindowMissedPresentedFrames_ += missed;
+            }
+            lastUploadedPresentationSeconds_ = frame.presentationSeconds;
+            lastUploadedDurationSeconds_ = frame.durationSeconds;
             firstFrameUploaded_ = true;
             surface_.SetVisible(true);
         }
         decoder_.Recycle(std::move(frame));
     }
 
+    void PlaybackSession::RefreshPlaybackFpsLimitLive()
+    {
+        if(!started_)
+            return;
+        const int requestedLimit = Settings::Instance().PlaybackFpsLimit();
+        if(requestedLimit == effectiveFpsLimit_)
+            return;
+
+        effectiveFpsLimit_ = requestedLimit;
+        // A manual preference change is a new quality baseline. Old automatic
+        // tiers no longer describe a reversible path from the current value.
+        automaticPerformanceHistory_.Reset();
+        lastPresentationSlot_.reset();
+        // A new cap defines a new experiment. Retaining expected/presented
+        // counts from the previous cap made the live percentage slow to react
+        // and produced misleading comparisons between 15, 30, and 60 FPS.
+        // Keep the session totals intact. Changing the cap starts a new live
+        // comparison window, but Total Missed represents the entire video run.
+        diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowStartSongTime_ = lastTickSongTime_;
+        windowDeliveredPresentedFrames_ = 0;
+        windowMissedPresentedFrames_ = 0;
+        performanceWindowStartSongTime_ = lastTickSongTime_;
+        lastUploadedPresentationSeconds_.reset();
+        lastUploadedDurationSeconds_ = 0.0;
+        diagnosticsFrameCounter_ = 29;
+        PaperLogger.info(
+            "Applied live video frame-rate cap: {} FPS",
+            effectiveFpsLimit_);
+    }
+
     void PlaybackSession::Stop()
     {
+        const bool recordGameplayPerformance =
+            started_ && context_ == PlaybackContext::Gameplay &&
+            Settings::Instance().PerformanceDiagnosticsEnabled();
         if(started_)
             CaptureDiagnosticsSummary();
+        if(recordGameplayPerformance)
+        {
+            // Append only after gameplay has ended or been exited. No file IO
+            // occurs in Tick(), so enabling diagnostics does not add storage
+            // latency to Beat Saber's real-time frame loop.
+            ErrorManager::Instance().RecordPerformance(
+                preparedSongName_ + " - " + preparedSongArtist_ +
+                    " [" + preparedLevelId_ + "]",
+                lastDiagnosticsSummary_);
+        }
+        else if(started_ && context_ == PlaybackContext::LibraryPreview &&
+                Settings::Instance().PerformanceDiagnosticsEnabled())
+        {
+            PerformancePanel::Instance().ShowWaitingMessage();
+        }
         // Unity objects must be destroyed before closing the decoder because
         // this function is called by a main-thread scene-transition hook. The
         // decoder close then joins its worker so no FFmpeg state survives into
         // the menu or the next level.
         surface_.Destroy();
+        if(context_ == PlaybackContext::Gameplay)
+            PerformancePanel::Instance().SuspendGameplay();
         decoder_.Close();
         gameplayDecoderPrewarmed_ = false;
         gameplayPrewarmFailed_ = false;
@@ -624,6 +828,19 @@ namespace BigScreen {
         lastTickSongTime_ = 0.0;
         context_ = PlaybackContext::None;
         mapperEnvironmentApplyCountdown_ = 0;
+        gameplayLastNoteTime_.reset();
+        gameplayFrameSamplingFinished_ = false;
+    }
+
+    void PlaybackSession::SetGameplayLastNoteTime(double songTimeSeconds)
+    {
+        if(songTimeSeconds < 0.0)
+            return;
+        gameplayLastNoteTime_ = songTimeSeconds;
+        gameplayFrameSamplingFinished_ = false;
+        PaperLogger.info(
+            "Gameplay FPS sampling will stop after the final note at {:.3f} seconds",
+            songTimeSeconds);
     }
 
     bool PlaybackSession::ApplyAutomaticPerformanceReduction(double mediaTimeSeconds)
@@ -633,6 +850,61 @@ namespace BigScreen {
         if(!changed)
             return false;
         const auto [nextFps, nextResolution] = tier;
+
+        const int previousFps = effectiveFpsLimit_;
+        const int previousResolution = effectiveResolutionHeight_;
+        if(!ApplyAutomaticPerformanceTier(
+               nextFps,
+               nextResolution,
+               mediaTimeSeconds,
+               "applying automatic performance reduction"))
+            return false;
+
+        if(!automaticPerformanceHistory_.RecordReduction(
+               previousFps, previousResolution))
+        {
+            // The supported quality ladder can contain only four reductions.
+            // Keep playback running if that invariant is ever changed, but log
+            // it because recovery could no longer promise an exact reversal.
+            PaperLogger.error(
+                "Automatic Performance reduction history is full at {}p / {} FPS",
+                effectiveResolutionHeight_, effectiveFpsLimit_);
+        }
+        ++automaticReductions_;
+        PaperLogger.warn(
+            "Automatic Performance reduced video output to {}p / {} FPS",
+            effectiveResolutionHeight_, effectiveFpsLimit_);
+        return true;
+    }
+
+    bool PlaybackSession::ApplyAutomaticPerformanceRecovery(double mediaTimeSeconds)
+    {
+        const auto target = automaticPerformanceHistory_.RecoveryTarget();
+        if(!target)
+            return false;
+        const auto [nextFps, nextResolution] = *target;
+        if(!ApplyAutomaticPerformanceTier(
+               nextFps,
+               nextResolution,
+               mediaTimeSeconds,
+               "restoring automatic performance quality"))
+            return false;
+
+        automaticPerformanceHistory_.CommitRecovery();
+        PaperLogger.info(
+            "Automatic Performance restored video output to {}p / {} FPS after {:.1f} seconds below the missed-frame threshold",
+            effectiveResolutionHeight_,
+            effectiveFpsLimit_,
+            Settings::Instance().AutomaticPerformanceResponseSeconds());
+        return true;
+    }
+
+    bool PlaybackSession::ApplyAutomaticPerformanceTier(
+        int nextFps,
+        int nextResolution,
+        double mediaTimeSeconds,
+        const char* failureOperation)
+    {
 
         if(nextResolution != effectiveResolutionHeight_)
         {
@@ -646,43 +918,99 @@ namespace BigScreen {
                !surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
             {
                 ErrorManager::Instance().ReportInternal(
-                    "applying automatic performance reduction",
-                    error.empty() ? "Could not recreate the lower-resolution screen" : error);
+                    failureOperation,
+                    error.empty() ? "Could not recreate the video screen at the requested quality" : error);
                 return false;
             }
             decoder_.Request(mediaTimeSeconds);
+            ++requestedFrames_;
             firstFrameUploaded_ = false;
             effectiveResolutionHeight_ = nextResolution;
+            // Recreating the decoder starts a new short-term sample but must
+            // not erase Total Missed for the current map playback.
+            diagnosticsWindowDeliveredPresentedFrames_ = 0;
+            diagnosticsWindowMissedPresentedFrames_ = 0;
+            windowDeliveredPresentedFrames_ = 0;
+            windowMissedPresentedFrames_ = 0;
+            lastUploadedPresentationSeconds_.reset();
+            lastUploadedDurationSeconds_ = 0.0;
         }
         effectiveFpsLimit_ = nextFps;
         lastPresentationSlot_.reset();
-        ++automaticReductions_;
-        PaperLogger.warn(
-            "Automatic Performance reduced video output to {}p / {} FPS",
-            effectiveResolutionHeight_, effectiveFpsLimit_);
+        // A quality boundary starts a clean short-term diagnostic sample. This
+        // keeps a live percentage from mixing pictures produced at two FPS or
+        // resolution tiers while the session-wide totals remain monotonic.
+        diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowStartSongTime_ = lastTickSongTime_;
+        lastUploadedPresentationSeconds_.reset();
+        lastUploadedDurationSeconds_ = 0.0;
         return true;
     }
 
     void PlaybackSession::CaptureDiagnosticsSummary()
     {
         const auto diagnostics = Diagnostics();
+        const auto missedFrames =
+            diagnostics.expectedFrames > diagnostics.presentedFrames
+                ? diagnostics.expectedFrames - diagnostics.presentedFrames
+                : 0;
         const double missedPercent = CoreLogic::MissedFramePercent(
             diagnostics.expectedFrames, diagnostics.presentedFrames);
+        const double expectedVideoFps = CoreLogic::ExpectedPresentationRate(
+            diagnostics.sourceFps,
+            config_ ? config_->playbackRate : 1.0,
+            diagnostics.outputFpsLimit);
+        const double averageVideoFps = diagnostics.expectedFrames > 0
+            ? expectedVideoFps *
+                static_cast<double>(diagnostics.presentedFrames) /
+                static_cast<double>(diagnostics.expectedFrames)
+            : 0.0;
         std::ostringstream text;
         text << diagnostics.sourceWidth << 'x' << diagnostics.sourceHeight
              << " @ " << std::fixed << std::setprecision(1)
              << diagnostics.sourceFps << " FPS source  |  "
              << diagnostics.outputWidth << 'x' << diagnostics.outputHeight
              << " @ " << diagnostics.outputFpsLimit << " FPS output\n"
-             << "Presented " << diagnostics.presentedFrames << " / "
-             << diagnostics.expectedFrames << " expected frames  |  Missed "
-             << std::setprecision(1) << missedPercent << "%  |  Decode "
+             << "Delivered " << diagnostics.presentedFrames << " / "
+             << diagnostics.expectedFrames << " expected pictures  |  "
+             << "Missed Frames " << missedFrames << " ("
+             << std::setprecision(2) << missedPercent << "%)  |  "
+             << "Video Average " << std::setprecision(1)
+             << averageVideoFps << " FPS  |  Decode "
              << std::setprecision(2) << diagnostics.averageDecodeMilliseconds
-             << " ms  |  RGBA allocations "
+             << " ms average / " << diagnostics.peakDecodeMilliseconds
+             << " ms peak  |  RGBA allocations "
              << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
              << av_version_info();
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
+        const auto frameRate = CoreLogic::SummarizeFrameRate(
+            minimumFrameSeconds_,
+            maximumFrameSeconds_,
+            totalFrameSeconds_,
+            sampledFrames_);
+        lastResultsData_ = PlaybackResultsData{
+            diagnostics,
+            frameRate.minimumFps,
+            frameRate.averageFps,
+            frameRate.maximumFps,
+            frameRate.sampledFrames,
+            missedFrames,
+            averageVideoFps,
+            missedPercent};
+        if(frameRate.sampledFrames > 0)
+        {
+            text << '\n'
+                 << (context_ == PlaybackContext::Gameplay
+                         ? "Gameplay"
+                         : "Menu preview")
+                 << " FPS min / avg / max "
+                 << std::setprecision(1) << frameRate.minimumFps << " / "
+                 << frameRate.averageFps << " / "
+                 << frameRate.maximumFps << "  |  Samples "
+                 << frameRate.sampledFrames;
+        }
         lastDiagnosticsSummary_ = text.str();
     }
 
@@ -691,6 +1019,46 @@ namespace BigScreen {
         if(!started_ || !Settings::Instance().PerformanceDiagnosticsEnabled())
             return;
         CaptureDiagnosticsSummary();
-        surface_.SetDiagnosticsText(lastDiagnosticsSummary_);
+        const auto diagnostics = Diagnostics();
+        const auto frameRate = CoreLogic::SummarizeFrameRate(
+            minimumFrameSeconds_,
+            maximumFrameSeconds_,
+            totalFrameSeconds_,
+            sampledFrames_);
+        const double expectedVideoFps = CoreLogic::ExpectedPresentationRate(
+            diagnostics.sourceFps,
+            config_ ? config_->playbackRate : 1.0,
+            diagnostics.outputFpsLimit);
+        const double averageVideoFps = diagnostics.expectedFrames > 0
+            ? expectedVideoFps *
+                static_cast<double>(diagnostics.presentedFrames) /
+                static_cast<double>(diagnostics.expectedFrames)
+            : 0.0;
+        PerformancePanel::Instance().SetStatistics({
+            context_ == PlaybackContext::Gameplay,
+            frameRate.minimumFps,
+            frameRate.averageFps,
+            frameRate.maximumFps,
+            frameRate.sampledFrames,
+            diagnostics.sourceWidth,
+            diagnostics.sourceHeight,
+            diagnostics.sourceFps,
+            diagnostics.outputWidth,
+            diagnostics.outputHeight,
+            diagnostics.outputFpsLimit,
+            diagnostics.expectedFrames > diagnostics.presentedFrames
+                ? diagnostics.expectedFrames - diagnostics.presentedFrames
+                : 0,
+            diagnostics.expectedFrames,
+            diagnostics.expectedFrames > diagnostics.presentedFrames
+                ? diagnostics.expectedFrames - diagnostics.presentedFrames
+                : 0,
+            averageVideoFps,
+            CoreLogic::MissedFramePercent(
+                diagnostics.expectedFrames,
+                diagnostics.presentedFrames),
+            diagnostics.averageDecodeMilliseconds,
+            diagnostics.peakDecodeMilliseconds});
+        diagnosticsVisible_ = true;
     }
 }

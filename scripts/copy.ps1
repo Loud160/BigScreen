@@ -114,11 +114,23 @@ foreach ($fileName in $lateModFiles) {
 # falls back to Hollywood's media runtime.
 foreach ($fileName in $modJson.libraryFiles) {
     $builtLibrary = Join-Path "build" $fileName
-    if (Test-Path -LiteralPath $builtLibrary) {
-        & adb push $builtLibrary "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs/$fileName"
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
+    $packagedDependency = Join-Path "extern/libs" $fileName
+    $librarySource = if (Test-Path -LiteralPath $builtLibrary) {
+        $builtLibrary
+    } elseif (Test-Path -LiteralPath $packagedDependency) {
+        $packagedDependency
+    } else {
+        $null
+    }
+    if (-not $librarySource) {
+        # Silently skipping a declared library can leave a different ABI on the
+        # headset. That exact failure mixed CPython extensions requiring
+        # _PyType_AllocNoTrack with an older libpython and disabled downloads.
+        throw "No authoritative source was found for required runtime library $fileName"
+    }
+    & adb push $librarySource "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs/$fileName"
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
     }
 }
 

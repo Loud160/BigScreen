@@ -49,7 +49,7 @@ Allow Chroma Override is enabled by default. For maps with Cinema/Chroma present
 
 ## Performance
 
-480p and 720p reduce conversion and texture-upload cost. The 15/30/60 FPS setting is a maximum; sources below it are not duplicated. Automatic Performance watches five-second windows and temporarily steps FPS down before resolution when the chosen missed-frame threshold is crossed. Saved preferences return on the next map.
+480p and 720p reduce conversion and texture-upload cost. The 15/30/60 FPS setting is a maximum; sources below it are not duplicated. Automatic Performance runs throughout the map and reevaluates after every selected response-time interval. Frame loss at or above the chosen trigger steps FPS down before resolution; an interval below the trigger restores one quality step in the exact reverse order. It can move down and up repeatedly as load changes, never rises above the saved FPS and resolution preferences, and starts the next map from those saved preferences.
 
 Show Performance Information displays source/output resolution and FPS, missed frames, decode delay, and automatic reductions during gameplay and on the results/failure screen.
 
@@ -57,4 +57,4 @@ Show Performance Information displays source/output resolution and FPS, missed f
 
 The selected-song storage row distinguishes the current map's managed download, local-file bytes when local files exist, total Big Screen video-library usage, and free Quest storage. Values under 1 GB are displayed in MB.
 
-The Misc tab contains Storage and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains Automatic Performance, its missed-frame trigger, and the optional playback-information overlay.
+The Misc tab contains Storage and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains Automatic Performance, its frame-loss trigger, the shared downscale/recovery response time, and the optional playback-information overlay.

@@ -9,6 +9,8 @@ without deliberately provoking YouTube failures.
 import json
 import pathlib
 import sys
+import tempfile
+import types
 
 
 def extract(source: str, name: str) -> str:
@@ -95,6 +97,105 @@ for option in (
     "'extractor_retries': 3",
 ):
     assert option in download_script
+
+# Quest downloads use a deterministic client that does not currently require
+# a Google Video Server PO token. A mid-transfer 403 on a resumable `.part`
+# file gets exactly one clean retry rather than leaving every future attempt
+# stuck on the same rejected byte range.
+assert "'player_client': ['android_vr']" in download_script
+assert "part_path = job['finalPath'] + '.part'" in download_script
+assert "partial_bytes <= 0" in download_script
+assert "os.remove(part_path)" in download_script
+assert "continuedl=False" in download_script
+assert "BS-DL-HTTP-403" in download_script
+assert "stream_summary(chosen)" in download_script
+
+# Execute the production script against a small fake yt-dlp implementation.
+# This exercises the recovery branch rather than merely checking its spelling:
+# metadata succeeds, the first transfer leaves a `.part` and receives 403, and
+# the second transfer must start clean and publish a completed result.
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    final_path = root / "video.mp4"
+    status_path = root / "status.json"
+    thumbnail_path = root / "thumbnail.jpg"
+    calls = []
+    candidate = {
+        "format_id": "137",
+        "ext": "mp4",
+        "vcodec": "avc1.640028",
+        "acodec": "none",
+        "width": 1920,
+        "height": 1080,
+        "filesize": 32,
+        "protocol": "https",
+        "url": "https://example.invalid/video?c=ANDROID_VR",
+    }
+    info = {
+        "title": "Recovery test",
+        "duration": 10,
+        "age_limit": 0,
+        "formats": [candidate],
+    }
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def extract_info(self, _url, download=False):
+            if not download:
+                return dict(info)
+            calls.append(self.options.get("continuedl"))
+            if len(calls) == 1:
+                pathlib.Path(str(final_path) + ".part").write_bytes(b"partial")
+                raise RuntimeError("HTTP Error 403: Forbidden")
+            assert not pathlib.Path(str(final_path) + ".part").exists()
+            final_path.write_bytes(b"complete-video")
+            return dict(info)
+
+    old_modules = {
+        name: sys.modules.get(name)
+        for name in ("bigscreen_jsc_provider", "yt_dlp")
+    }
+    sys.modules["bigscreen_jsc_provider"] = types.ModuleType(
+        "bigscreen_jsc_provider"
+    )
+    fake_yt_dlp = types.ModuleType("yt_dlp")
+    fake_yt_dlp.YoutubeDL = FakeYoutubeDL
+    sys.modules["yt_dlp"] = fake_yt_dlp
+    try:
+        namespace = {
+            "BIGSCREEN_JOB": json.dumps(
+                {
+                    "sourceUrl": "https://youtu.be/recovery",
+                    "finalPath": str(final_path),
+                    "thumbnailPath": str(thumbnail_path),
+                    "statusPath": str(status_path),
+                    "cancelPath": str(root / "cancel"),
+                    "explicitContentAllowed": True,
+                    "reserveBytes": 0,
+                    "unknownRequiredBytes": 0,
+                }
+            )
+        }
+        exec(compile(download_script, "<download-recovery-test>", "exec"), namespace)
+    finally:
+        for name, module in old_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "completed", status
+    assert calls == [True, False], calls
+    assert final_path.read_bytes() == b"complete-video"
 
 # Full HD is a maximum pixel envelope, not a landscape-only height rule.
 # Portrait 1080x1920 must be accepted while 1440p/4K stays excluded.

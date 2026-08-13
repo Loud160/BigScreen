@@ -9,6 +9,7 @@
 #include "fmt/format.h"
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
@@ -63,10 +64,6 @@ namespace BigScreen {
 
         std::array<std::string_view, 5> ScreenLayoutChoices{
             "Layout 1", "Layout 2", "Layout 3", "Layout 4", "Layout 5"
-        };
-
-        std::array<std::string_view, 3> PerformanceThresholdChoices{
-            "5% missed frames", "10% missed frames", "20% missed frames"
         };
 
         std::array<std::string_view, 5> SettingsTabNames{
@@ -192,6 +189,7 @@ namespace BigScreen {
         advancedOptionsToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
+        screenLayoutResetButton_ = nullptr;
         screenLayoutDropdown_ = nullptr;
         allowChromaOverrideToggle_ = nullptr;
         distanceSetting_ = nullptr;
@@ -236,7 +234,8 @@ namespace BigScreen {
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
-        automaticPerformanceThresholdDropdown_ = nullptr;
+        automaticPerformanceThresholdSlider_ = nullptr;
+        automaticPerformanceResponseSlider_ = nullptr;
         performanceDiagnosticsToggle_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         nightlyWarningModal_ = nullptr;
@@ -374,6 +373,9 @@ namespace BigScreen {
            !environmentContainer || !updateContainer || !storageContainer)
         {
             PaperLogger.error("Could not create all Big Screen settings tabs");
+            ErrorManager::Instance().RecordError(
+                "Creating Big Screen settings tabs",
+                "Beat Saber did not create every tab scroll container");
             return;
         }
         generalContentRoot_ = generalContainer;
@@ -527,6 +529,7 @@ namespace BigScreen {
             [](StringW value)
             {
                 Settings::Instance().SetPlaybackFpsLimit(PlaybackFpsValue(value));
+                PlaybackSession::Instance().RefreshPlaybackFpsLimitLive();
             });
         BSML::Lite::AddHoverHint(
             playbackFpsDropdown_,
@@ -562,21 +565,47 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceToggle_,
-            "Temporarily lowers video frame rate and then resolution when playback cannot keep up. Your saved quality choices are restored for the next map.");
-        automaticPerformanceThresholdDropdown_ = BSML::Lite::CreateDropdown(
+            "Continuously adjusts video quality while a map is playing. Sustained frame loss lowers frame rate and then resolution one step at a time; sustained recovery restores those exact steps in reverse order. It never exceeds your saved quality choices.");
+        automaticPerformanceThresholdSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
-            "Automatic Performance Trigger",
-            std::to_string(settings.AutomaticPerformanceThreshold()) + "% missed frames",
-            PerformanceThresholdChoices,
-            [](StringW value)
+            "Frame Rate Loss Trigger",
+            1.0f,
+            static_cast<float>(settings.AutomaticPerformanceThreshold()),
+            1.0f,
+            15.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
             {
-                const std::string text(value);
                 Settings::Instance().SetAutomaticPerformanceThreshold(
-                    text.starts_with("5%") ? 5 : text.starts_with("20%") ? 20 : 10);
+                    static_cast<int>(std::round(value)));
             });
+        automaticPerformanceThresholdSlider_->isInt = true;
+        automaticPerformanceThresholdSlider_->digits = 0;
+        automaticPerformanceThresholdSlider_->slider->UpdateVisuals();
         BSML::Lite::AddHoverHint(
-            automaticPerformanceThresholdDropdown_,
-            "Chooses how many video frames may be missed during five seconds before Automatic Performance lowers quality. A lower percentage reacts sooner.");
+            automaticPerformanceThresholdSlider_,
+            "Sets the video frame-rate loss that triggers Automatic Performance. At or above this percentage, quality moves down one step; below it, quality can move back up one step. The response-time setting controls how long either condition must continue.");
+        automaticPerformanceResponseSlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "Scaling Response Time",
+            0.1f,
+            settings.AutomaticPerformanceResponseSeconds(),
+            0.5f,
+            10.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetAutomaticPerformanceResponseSeconds(value);
+            });
+        automaticPerformanceResponseSlider_->digits = 1;
+        automaticPerformanceResponseSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceResponseSlider_,
+            "Sets how long video performance must remain at or above the trigger before quality drops one step, or below it before quality rises one step. Automatic Performance keeps reevaluating this interval throughout the map.");
         performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
             "Show Performance Information",
@@ -584,10 +613,13 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetPerformanceDiagnosticsEnabled(enabled);
+                // This panel deliberately has no saved transform. Re-enabling
+                // it recreates the panel at the safe default position.
+                PerformancePanel::Instance().SetEnabled(enabled);
             });
         BSML::Lite::AddHoverHint(
             performanceDiagnosticsToggle_,
-            "Shows video resolution, frame rate, missed frames, and decode time while playing. A summary remains visible on the failure or results screen.");
+            "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move it; pausing provides the easiest gameplay access. Turning this off and back on resets its position. Completed, failed, and exited video maps are appended to the performance log.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -606,6 +638,8 @@ namespace BigScreen {
                 // disabling immediately tears down every screen and decoder.
                 SelectionVideoToggle::Instance().ModEnabledChanged(enabled);
                 ScreenPreview::Instance().SetEnabled(enabled);
+                PerformancePanel::Instance().SetEnabled(
+                    enabled && Settings::Instance().PerformanceDiagnosticsEnabled());
                 RefreshControls();
                 PaperLogger.info("Big Screen switched {}", enabled ? "on" : "off");
             });
@@ -683,8 +717,61 @@ namespace BigScreen {
                ->GetComponent<UnityEngine::UI::LayoutElement*>())
             spacerLayout->set_preferredHeight(1.5f);
 
+        // Treat the per-layout reset and selector as one deliberate control
+        // group. The compact square button uses Beat Saber's rounded button
+        // background, producing the familiar circular-reset treatment while
+        // leaving enough separation that it cannot be mistaken for an arrow
+        // belonging to the dropdown itself.
+        auto* screenLayoutRow = BSML::Lite::CreateHorizontalLayoutGroup(
+            screenContainer);
+        if(screenLayoutRow)
+        {
+            screenLayoutRow->set_spacing(2.0f);
+            screenLayoutRow->set_childControlWidth(true);
+            screenLayoutRow->set_childControlHeight(true);
+            screenLayoutRow->set_childForceExpandWidth(false);
+            screenLayoutRow->set_childForceExpandHeight(false);
+            screenLayoutRow->set_childAlignment(
+                UnityEngine::TextAnchor::MiddleCenter);
+            if(auto* layout = screenLayoutRow->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_minWidth(90.0f);
+                layout->set_preferredWidth(90.0f);
+                layout->set_preferredHeight(8.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        const BSML::Lite::TransformWrapper screenLayoutParent = screenLayoutRow
+            ? BSML::Lite::TransformWrapper(screenLayoutRow)
+            : BSML::Lite::TransformWrapper(screenContainer);
+
+        screenLayoutResetButton_ = BSML::Lite::CreateUIButton(
+            screenLayoutParent, "↻", {0.0f, 0.0f}, {8.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().ResetActiveScreenLayout();
+                ApplyDisplaySettingsAndRefreshPreview();
+                RefreshControls();
+                PaperLogger.info(
+                    "Reset screen layout {} to defaults",
+                    Settings::Instance().ActiveScreenLayout() + 1);
+            });
+        BSML::Lite::SetButtonTextSize(screenLayoutResetButton_, 4.2f);
+        if(auto* layout = screenLayoutResetButton_
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            layout->set_minWidth(8.0f);
+            layout->set_preferredWidth(8.0f);
+            layout->set_preferredHeight(8.0f);
+            layout->set_flexibleWidth(0.0f);
+        }
+        BSML::Lite::AddHoverHint(
+            screenLayoutResetButton_,
+            "Resets only the currently selected screen layout to its default size, position, and appearance. Your other screen layouts are not changed.");
+
         screenLayoutDropdown_ = BSML::Lite::CreateDropdown(
-            screenContainer,
+            screenLayoutParent,
             "Editing Screen Layout",
             "Layout " + std::to_string(settings.ActiveScreenLayout() + 1),
             ScreenLayoutChoices,
@@ -699,6 +786,13 @@ namespace BigScreen {
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
             });
+        if(auto* layout = screenLayoutDropdown_->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            layout->set_minWidth(80.0f);
+            layout->set_preferredWidth(80.0f);
+            layout->set_flexibleWidth(1.0f);
+        }
         BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
             "Chooses which of your five saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
@@ -1824,15 +1918,12 @@ namespace BigScreen {
                 resolutionDropdown_->dropdown->SelectCellWithIdx(index);
             resolutionDropdown_->UpdateState();
         }
-        if(automaticPerformanceThresholdDropdown_)
-        {
-            const int index = settings.AutomaticPerformanceThreshold() == 5
-                ? 0 : settings.AutomaticPerformanceThreshold() == 20 ? 2 : 1;
-            automaticPerformanceThresholdDropdown_->index = index;
-            if(automaticPerformanceThresholdDropdown_->dropdown)
-                automaticPerformanceThresholdDropdown_->dropdown->SelectCellWithIdx(index);
-            automaticPerformanceThresholdDropdown_->UpdateState();
-        }
+        if(automaticPerformanceThresholdSlider_)
+            automaticPerformanceThresholdSlider_->set_Value(
+                static_cast<float>(settings.AutomaticPerformanceThreshold()));
+        if(automaticPerformanceResponseSlider_)
+            automaticPerformanceResponseSlider_->set_Value(
+                settings.AutomaticPerformanceResponseSeconds());
     }
 
     void SettingsMenu::RefreshEnabledState()
@@ -1948,6 +2039,8 @@ namespace BigScreen {
             curvedScreenToggle_->set_interactable(enabled);
         if(screenLayoutDropdown_)
             screenLayoutDropdown_->set_interactable(enabled);
+        if(screenLayoutResetButton_)
+            screenLayoutResetButton_->set_interactable(enabled);
         if(allowChromaOverrideToggle_)
             allowChromaOverrideToggle_->set_interactable(enabled);
         if(maintainCurveAspectToggle_)
@@ -2021,8 +2114,11 @@ namespace BigScreen {
             resolutionDropdown_->set_interactable(enabled);
         if(automaticPerformanceToggle_)
             automaticPerformanceToggle_->set_interactable(enabled);
-        if(automaticPerformanceThresholdDropdown_)
-            automaticPerformanceThresholdDropdown_->set_interactable(
+        if(automaticPerformanceThresholdSlider_)
+            automaticPerformanceThresholdSlider_->set_interactable(
+                enabled && settings.AutomaticPerformanceEnabled());
+        if(automaticPerformanceResponseSlider_)
+            automaticPerformanceResponseSlider_->set_interactable(
                 enabled && settings.AutomaticPerformanceEnabled());
         if(performanceDiagnosticsToggle_)
             performanceDiagnosticsToggle_->set_interactable(enabled);

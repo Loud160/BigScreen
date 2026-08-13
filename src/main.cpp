@@ -1,9 +1,12 @@
 #include "main.hpp"
 
+#include <format>
+
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/PauseMenuLayoutSelector.hpp"
+#include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
@@ -14,7 +17,9 @@
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
+#include "GlobalNamespace/BeatmapDataItem.hpp"
 #include "GlobalNamespace/BeatmapEventData.hpp"
+#include "GlobalNamespace/BeatmapObjectSpawnController.hpp"
 #include "GlobalNamespace/BloomPrePassLight.hpp"
 #include "GlobalNamespace/ColorBoostBeatmapEventData.hpp"
 #include "GlobalNamespace/DirectionalLight.hpp"
@@ -23,11 +28,14 @@
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
 #include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
+#include "GlobalNamespace/IReadonlyBeatmapData.hpp"
 #include "GlobalNamespace/LightColorBeatmapEventData.hpp"
 #include "GlobalNamespace/LightWithIdMonoBehaviour.hpp"
 #include "GlobalNamespace/LightRotationBeatmapEventData.hpp"
 #include "GlobalNamespace/LightTranslationBeatmapEventData.hpp"
+#include "GlobalNamespace/NoteData.hpp"
 #include "GlobalNamespace/LineLight.hpp"
+#include "GlobalNamespace/LevelBar.hpp"
 #include "GlobalNamespace/LightsAnimator.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
@@ -46,16 +54,23 @@
 #include "GlobalNamespace/TrackLaneRingsRotationEffect.hpp"
 #include "GlobalNamespace/TrackLaneRingsRotationEffectSpawner.hpp"
 #include "GlobalNamespace/TransformSpectrogram.hpp"
+#include "HMUI/ImageView.hpp"
 #include "System/Nullable_1.hpp"
+#include "System/Collections/Generic/LinkedList_1.hpp"
+#include "System/Collections/Generic/LinkedListNode_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/Application.hpp"
+#include "UnityEngine/Color.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
+#include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Transform.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Image.hpp"
+#include "bsml/shared/Helpers/utilities.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
 #include "custom-types/shared/register.hpp"
 #include "songcore/shared/SongCore.hpp"
@@ -84,6 +99,127 @@ bool IsMenuPreviewEnabled()
 }
 
 namespace {
+    void CenterResultsRect(UnityEngine::RectTransform* rect)
+    {
+        if(!rect)
+            return;
+        rect->set_anchorMin({0.5f, 0.5f});
+        rect->set_anchorMax({0.5f, 0.5f});
+        rect->set_pivot({0.5f, 0.5f});
+    }
+
+    HMUI::ImageView* CreateResultsImage(
+        UnityEngine::Transform* parent,
+        UnityEngine::Vector2 position,
+        UnityEngine::Vector2 size,
+        UnityEngine::Color color)
+    {
+        auto* image = BSML::Lite::CreateImage(
+            parent,
+            BSML::Utilities::ImageResources::GetWhitePixel());
+        if(!image)
+            return nullptr;
+        image->set_color(color);
+        image->set_preserveAspect(false);
+        image->set_raycastTarget(false);
+        auto rect = image->get_transform().cast<UnityEngine::RectTransform>();
+        CenterResultsRect(rect);
+        rect->set_anchoredPosition(position);
+        rect->set_sizeDelta(size);
+        return image;
+    }
+
+    TMPro::TextMeshProUGUI* CreateResultsText(
+        UnityEngine::Transform* parent,
+        std::string text,
+        UnityEngine::Vector2 position,
+        UnityEngine::Vector2 size,
+        float fontSize,
+        TMPro::TextAlignmentOptions alignment)
+    {
+        auto* label = BSML::Lite::CreateText(
+            parent, text, fontSize, position, size);
+        if(!label)
+            return nullptr;
+        label->set_alignment(alignment);
+        label->set_enableWordWrapping(false);
+        label->set_raycastTarget(false);
+        return label;
+    }
+
+    void CreateResultsPerformancePanel(
+        UnityEngine::Transform* parent,
+        float centerY,
+        const BigScreen::PlaybackResultsData& data)
+    {
+        // A compact card layout mirrors the visual hierarchy used by counter
+        // mods: one title, two clearly separated metric groups, restrained
+        // secondary labels, and a cyan accent. All elements are decorative and
+        // cannot intercept results-screen pointer input.
+        CreateResultsImage(
+            parent, {0.0f, centerY}, {98.0f, 20.0f},
+            {0.018f, 0.043f, 0.075f, 0.98f});
+        CreateResultsImage(
+            parent, {0.0f, centerY + 9.5f}, {98.0f, 0.8f},
+            {0.0f, 0.80f, 1.0f, 1.0f});
+        CreateResultsImage(
+            parent, {-24.0f, centerY - 1.3f}, {46.0f, 14.5f},
+            {0.050f, 0.095f, 0.150f, 1.0f});
+        CreateResultsImage(
+            parent, {24.0f, centerY - 1.3f}, {46.0f, 14.5f},
+            {0.050f, 0.095f, 0.150f, 1.0f});
+
+        CreateResultsText(
+            parent,
+            "<color=#75DFFF><b>BIG SCREEN PERFORMANCE</b></color>",
+            {0.0f, centerY + 6.8f}, {92.0f, 4.0f}, 3.0f,
+            TMPro::TextAlignmentOptions::Center);
+
+        const auto gameplayAverage = data.sampledGameplayFrames > 0
+            ? std::format("{:.1f}", data.averageGameplayFps)
+            : std::string("--");
+        const auto gameplayMinimum = data.sampledGameplayFrames > 0
+            ? std::format("{:.1f}", data.minimumGameplayFps)
+            : std::string("--");
+        const auto gameplayMaximum = data.sampledGameplayFrames > 0
+            ? std::format("{:.1f}", data.maximumGameplayFps)
+            : std::string("--");
+        CreateResultsText(
+            parent,
+            std::format(
+                "<color=#75DFFF><b>GAMEPLAY</b></color>\n"
+                "<size=130%><b>{}</b></size>  <color=#AEBAC8>Average FPS</color>\n"
+                "<color=#AEBAC8>Minimum</color>  <b>{}</b>     "
+                "<color=#AEBAC8>Maximum</color>  <b>{}</b>",
+                gameplayAverage, gameplayMinimum, gameplayMaximum),
+            {-24.0f, centerY - 1.3f}, {42.0f, 12.5f}, 2.65f,
+            TMPro::TextAlignmentOptions::Center);
+
+        CreateResultsText(
+            parent,
+            std::format(
+                "<color=#75DFFF><b>VIDEO</b></color>\n"
+                "<color=#AEBAC8>Source</color> <b>{}x{} @ {:.1f}</b>   "
+                "<color=#AEBAC8>Output</color> <b>{}x{} @ {} cap</b>\n"
+                "<color=#AEBAC8>Frames Skipped</color> <b>{}</b>   "
+                "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
+                "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
+                "<color=#AEBAC8>Decode</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
+                data.video.sourceWidth,
+                data.video.sourceHeight,
+                data.video.sourceFps,
+                data.video.outputWidth,
+                data.video.outputHeight,
+                data.video.outputFpsLimit,
+                data.missedVideoFrames,
+                data.missedVideoFramePercent,
+                data.averageVideoFps,
+                data.video.averageDecodeMilliseconds,
+                data.video.peakDecodeMilliseconds),
+            {24.0f, centerY - 1.3f}, {42.0f, 12.5f}, 2.3f,
+            TMPro::TextAlignmentOptions::MidlineLeft);
+    }
+
     template<typename T>
     int DisableLoadedComponents()
     {
@@ -672,6 +808,10 @@ namespace {
             PaperLogger.error(
                 "Requested {} environment is unavailable; keeping the map environment",
                 requestedName);
+            BigScreen::ErrorManager::Instance().RecordError(
+                "Applying the requested environment",
+                std::string("Environment '") + requestedName +
+                    "' was unavailable; the map environment was retained");
         }
     }
 
@@ -721,6 +861,51 @@ namespace {
             effectiveSettings,
             backButtonText,
             startPaused);
+    }
+
+    MAKE_HOOK_MATCH(
+        BeatmapObjectSpawnController_Start,
+        &GlobalNamespace::BeatmapObjectSpawnController::Start,
+        void,
+        GlobalNamespace::BeatmapObjectSpawnController* self)
+    {
+        BeatmapObjectSpawnController_Start(self);
+
+        if(!BigScreen::Settings::Instance().ModEnabled() ||
+           !BigScreen::Settings::Instance().PerformanceDiagnosticsEnabled() ||
+           !BigScreen::PlaybackSession::Instance().HasPreparedVideo() || !self)
+            return;
+
+        // Beatmap data is already sorted by song time. Walking backward avoids
+        // scanning every note and lighting event; the first NoteData found is
+        // the last playable note. This one-time map-start lookup prevents the
+        // results transition from contaminating headset-FPS minimum/maximum
+        // values without doing work in the real-time playback loop.
+        BigScreen::ErrorManager::Instance().Guard(
+            "finding the final gameplay note", [self]()
+            {
+                auto* callbacks =
+                    self->__cordl_internal_get__beatmapCallbacksController();
+                auto* beatmapData = callbacks
+                    ? callbacks->__cordl_internal_get__beatmapData()
+                    : nullptr;
+                auto* items = beatmapData
+                    ? beatmapData->get_allBeatmapDataItems()
+                    : nullptr;
+                for(auto* node = items ? items->get_Last() : nullptr;
+                    node;
+                    node = node->get_Previous())
+                {
+                    auto* item = node->get_Value();
+                    if(const auto note =
+                           il2cpp_utils::try_cast<GlobalNamespace::NoteData>(item))
+                    {
+                        BigScreen::PlaybackSession::Instance()
+                            .SetGameplayLastNoteTime((*note)->get_time());
+                        break;
+                    }
+                }
+            });
     }
 
     MAKE_HOOK_MATCH(
@@ -801,7 +986,8 @@ namespace {
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
         BigScreen::ErrorManager::Instance().TickMainThread();
-        if(!BigScreen::Settings::Instance().ModEnabled())
+        if(!BigScreen::Settings::Instance().ModEnabled() ||
+           BigScreen::ErrorManager::Instance().MenuRecoveryActive())
             return;
 
         BigScreen::ErrorManager::Instance().Guard("updating menu video UI", [&]() {
@@ -809,6 +995,7 @@ namespace {
             BigScreen::VideoLibraryMenu::Instance().Tick(self);
             BigScreen::StorageMaintenanceMenu::Instance().Tick();
             BigScreen::ScreenPreview::Instance().TickUndockedEditor();
+            BigScreen::PerformancePanel::Instance().TickInteraction();
         });
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
@@ -869,6 +1056,7 @@ namespace {
         // timeline Replay advances during playback and frame-by-frame capture.
         BigScreen::ErrorManager::Instance().Guard("updating gameplay video", [&]() {
             BigScreen::PlaybackSession::Instance().Tick(self->get_songTime());
+            BigScreen::PerformancePanel::Instance().TickInteraction();
         });
     }
 
@@ -905,18 +1093,22 @@ namespace {
         if(!firstActivation ||
            !BigScreen::Settings::Instance().PerformanceDiagnosticsEnabled())
             return;
-        const auto& summary =
-            BigScreen::PlaybackSession::Instance().LastDiagnosticsSummary();
-        if(summary.empty())
+        const auto& results =
+            BigScreen::PlaybackSession::Instance().LastResultsData();
+        if(!results)
             return;
-        auto* text = BSML::Lite::CreateText(
-            self,
-            "<b>Big Screen Performance</b>\n" + summary,
-            2.7f,
-            UnityEngine::Vector2{0.0f, -36.0f},
-            UnityEngine::Vector2{92.0f, 12.0f});
-        if(text)
-            text->set_alignment(TMPro::TextAlignmentOptions::Center);
+        // Parent the summary to Beat Saber's LevelBar (the song artwork and
+        // title strip) instead of pinning it near the bottom of the results
+        // view. The card is slightly higher than the previous raw text block,
+        // keeping its lower edge clear of the artwork and song title.
+        UnityEngine::Transform* summaryParent = self->get_transform();
+        float summaryCenterY = 40.0f;
+        if(self->____levelBar)
+        {
+            summaryParent = self->____levelBar->get_transform();
+            summaryCenterY = 21.0f;
+        }
+        CreateResultsPerformancePanel(summaryParent, summaryCenterY, *results);
     }
 
     MAKE_HOOK_MATCH(
@@ -936,6 +1128,7 @@ MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
     Paper::Logger::RegisterFileContextId(PaperLogger.tag);
+    BigScreen::ErrorManager::Instance().InitializePersistentLog();
     BigScreen::ErrorManager::Instance().Guard("loading settings", []() {
         BigScreen::Settings::Instance().Load();
     });
@@ -952,7 +1145,12 @@ MOD_EXTERN_FUNC void late_load() noexcept
     BigScreen::ErrorManager::Instance().Guard("initializing downloader", []() {
         std::string downloaderError;
         if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
+        {
             PaperLogger.error("Downloader unavailable: {}", downloaderError);
+            BigScreen::ErrorManager::Instance().RecordError(
+                "Initializing downloader",
+                downloaderError);
+        }
         else
             BigScreen::DownloadManager::Instance().StartScheduledUpdaterCheck(
                 BigScreen::Settings::Instance().NightlyDownloaderUpdates());
@@ -973,6 +1171,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK(PaperLogger, BeatmapObjectSpawnController_Start);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
     INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);

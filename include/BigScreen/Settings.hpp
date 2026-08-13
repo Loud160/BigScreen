@@ -49,6 +49,9 @@ namespace BigScreen {
 
         void Load();
         void Reset();
+        /// Restores only the selected screen profile. Global options and the
+        /// other four saved screen layouts are deliberately left unchanged.
+        void ResetActiveScreenLayout();
         /// Persists a pending group of rapid UI changes after its debounce
         /// period. This is called from the existing main-thread update hook.
         void TickPersistence();
@@ -106,6 +109,9 @@ namespace BigScreen {
         int ResolutionHeight() const { return resolutionHeight_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
+        float AutomaticPerformanceResponseSeconds() const {
+            return automaticPerformanceResponseSeconds_;
+        }
         bool PerformanceDiagnosticsEnabled() const { return performanceDiagnosticsEnabled_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
@@ -151,6 +157,7 @@ namespace BigScreen {
         void SetResolutionHeight(int value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
+        void SetAutomaticPerformanceResponseSeconds(float value);
         void SetPerformanceDiagnosticsEnabled(bool value);
         void SetNightlyDownloaderUpdates(bool value);
 
@@ -186,7 +193,8 @@ namespace BigScreen {
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
         bool automaticPerformanceEnabled_ = false;
-        int automaticPerformanceThreshold_ = 10;
+        int automaticPerformanceThreshold_ = 5;
+        float automaticPerformanceResponseSeconds_ = 5.0f;
         bool performanceDiagnosticsEnabled_ = false;
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;

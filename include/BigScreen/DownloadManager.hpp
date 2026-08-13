@@ -81,6 +81,10 @@ namespace BigScreen {
         void Cancel();
         DownloadSnapshot Snapshot();
         bool IsReady() const { return initialized_; }
+        /// Short, stable diagnostic shown when an operation is requested after
+        /// startup initialization failed. The detailed exception remains in
+        /// Big Screen's persistent log under the same error code.
+        std::string UnavailableMessage() const;
         std::optional<std::string> TakeUpdateNotice();
 
     private:
@@ -115,6 +119,7 @@ namespace BigScreen {
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
         std::atomic<bool> initialized_{false};
+        std::string initializationErrorCode_ = "BS-DL-INIT-000";
         std::string currentUpdateVersion_ = "2026.07.04";
         std::optional<std::string> updateNotice_;
         std::chrono::steady_clock::time_point lastStatusRefresh_{};
