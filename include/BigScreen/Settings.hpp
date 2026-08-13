@@ -55,6 +55,15 @@ namespace BigScreen {
         /// Forces pending settings to disk before focus loss or gameplay.
         void Flush();
 
+        /// Starts a non-persistent Screen-tab editing session. Screen layout
+        /// setters continue to update the live preview, but no JSON is written
+        /// until CommitScreenEditTransaction is called. Cancelling restores
+        /// every layout and the active-layout selection captured here.
+        void BeginScreenEditTransaction();
+        void CommitScreenEditTransaction();
+        void CancelScreenEditTransaction();
+        bool ScreenEditTransactionActive() const { return screenEditActive_; }
+
         bool ModEnabled() const { return modEnabled_; }
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
         bool VideoEnabled() const { return videoEnabled_; }
@@ -182,5 +191,10 @@ namespace BigScreen {
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;
         std::chrono::steady_clock::time_point saveDeadline_{};
+        bool screenEditActive_ = false;
+        bool screenEditDirty_ = false;
+        std::array<ScreenLayoutProfile, 5> screenEditLayouts_{};
+        int screenEditActiveLayout_ = 0;
+        bool screenEditAllowChromaOverride_ = true;
     };
 }

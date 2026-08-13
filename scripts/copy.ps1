@@ -130,6 +130,13 @@ foreach ($fileName in $modJson.libraryFiles) {
 # second hand-maintained manifest.
 $runtimeDestination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/"
 $runtimeStage = Join-Path (Join-Path $PSScriptRoot "..") "build/downloader"
+# createqmod.ps1 used to be the only path that staged redistributable notices.
+# Direct development deployment must do the same after a clean build because
+# mod.json correctly lists those notices as runtime file copies.
+& $PSScriptRoot/stage-runtime-notices.ps1
+if (-not $?) {
+    exit 1
+}
 foreach ($copy in $modJson.fileCopies) {
     $destination = [string]$copy.destination
     if (-not $destination.StartsWith(

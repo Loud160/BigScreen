@@ -64,6 +64,17 @@ namespace BigScreen::CoreLogic {
         return {width * zoom, height * zoom};
     }
 
+    /// The full-frame background supplies black letterboxing only for opaque
+    /// layouts. Transparent layouts remove that renderer altogether so shader
+    /// fallback behavior cannot leave black bars around a smaller picture.
+    /// A requested black lead-in is the sole deliberate exception.
+    inline constexpr bool ScreenBackgroundVisible(
+        bool transparent,
+        bool blackLeadInActive)
+    {
+        return !transparent || blackLeadInActive;
+    }
+
     /// Deterministic filesystem key. FNV-1a is not used for security; the full
     /// level ID remains the authoritative manifest key.
     inline std::string StableVideoKey(const std::string& levelId)

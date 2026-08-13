@@ -34,6 +34,12 @@ namespace BigScreen {
         constexpr int PreviewTextureWidth = 512;
         constexpr int PreviewTextureHeight = 288;
         constexpr float UiUnitsPerMeter = 50.0f;
+        // ScreenSurface intentionally places video pixels 1.5 cm in front of
+        // its frame. A preview on exactly the editor's plane therefore covers
+        // the world-space canvas and makes its handles appear unresponsive.
+        // Two editor UI units equal 4 cm in this FloatingScreen transform,
+        // leaving the moving preview visible just behind every edit control.
+        constexpr float EditorVideoDepthOffsetUi = 2.0f;
         // The grip is 12 UI units wide. A 5.5-unit inset shifts it half a unit
         // right and down across the frame borders, producing a deliberate
         // overlap that makes the control look anchored to the corner.
@@ -150,7 +156,7 @@ namespace BigScreen {
         CaptureBasePlacement();
         PlaybackSession::Instance().Stop();
 
-        const auto& settings = Settings::Instance();
+        auto& settings = Settings::Instance();
         if(settings.ModEnabled())
             Refresh();
     }
@@ -160,6 +166,7 @@ namespace BigScreen {
         enabled = enabled && Settings::Instance().ModEnabled();
         if(!enabled)
         {
+            Settings::Instance().CancelScreenEditTransaction();
             DestroyEditorUi();
             surface_.Destroy();
             return;
@@ -172,10 +179,14 @@ namespace BigScreen {
 
     void ScreenPreview::Refresh()
     {
-        // Any ordinary setting change ends an in-progress free-placement
-        // transaction. Unsaved controller movement must never be mixed with a
-        // layout switch, reset, Chroma toggle, or geometry slider callback.
-        DestroyEditorUi();
+        // While unlocked, Screen-tab changes are applied to the editor instead
+        // of rebuilding (and therefore destroying) it. Save/Cancel owns the
+        // lifetime and persistence boundary for the complete edit session.
+        if(IsUndockedEditing())
+        {
+            RefreshUndockedEditingFromSettings();
+            return;
+        }
         const auto& settings = Settings::Instance();
         if(!settings.ModEnabled())
         {
@@ -190,6 +201,7 @@ namespace BigScreen {
 
     void ScreenPreview::Suspend()
     {
+        Settings::Instance().CancelScreenEditTransaction();
         DestroyEditorUi();
         surface_.Destroy();
         baseConfig_.reset();
@@ -214,7 +226,7 @@ namespace BigScreen {
         if(!baseConfig_)
             return false;
 
-        const auto& settings = Settings::Instance();
+        auto& settings = Settings::Instance();
         auto config = *baseConfig_;
         const auto& layout = settings.ActiveLayout();
         if(settings.AdvancedOptionsEnabled() && layout.undocked)
@@ -281,12 +293,17 @@ namespace BigScreen {
 
     void ScreenPreview::BeginUndockedEditing()
     {
-        const auto& settings = Settings::Instance();
+        auto& settings = Settings::Instance();
         if(!settings.ModEnabled() || !settings.AdvancedOptionsEnabled() ||
            !settings.UndockedScreenEnabled())
             return;
 
-        DestroyEditorUi();
+        // Position Screen remains visible beside Cancel Positioning. Ignore a
+        // second activation instead of destroying and recreating an editor
+        // the user may already be holding with a controller.
+        if(IsUndockedEditing())
+            return;
+
         const bool libraryPreviewActive =
             PlaybackSession::Instance().IsLibraryPreviewActive();
         if(libraryPreviewActive)
@@ -330,6 +347,10 @@ namespace BigScreen {
         config.videoTilt = settings.VideoTilt();
         config.stretchVideoToFit = settings.StretchVideoToFit();
         editorConfig_ = config;
+        editorAppliedLayout_ = layout;
+        editorLayoutIndex_ = settings.ActiveScreenLayout();
+
+        settings.BeginScreenEditTransaction();
 
         // The editable screen intentionally shows only its frame and controls.
         // Hiding ScreenSurface also removes its texture from the ray path and
@@ -338,6 +359,7 @@ namespace BigScreen {
         if(!CreateEditorUi())
         {
             PaperLogger.error("Could not create the undocked screen editor");
+            settings.CancelScreenEditTransaction();
             DestroyEditorUi();
             if(libraryPreviewActive)
                 PlaybackSession::Instance().RestoreLibraryPreviewDisplay(false);
@@ -347,8 +369,11 @@ namespace BigScreen {
         }
         if(libraryPreviewActive)
         {
-            PlaybackSession::Instance().ApplyLibraryPreviewEditorDisplay(
-                *editorConfig_, true);
+            if(!ApplyLibraryPreviewEditorDisplay(true))
+            {
+                PaperLogger.warn(
+                    "Could not attach the active library preview to the screen editor");
+            }
         }
         SettingsMenu::Instance().RefreshControls();
         PaperLogger.info("Started undocked editor for Layout {}",
@@ -625,13 +650,35 @@ namespace BigScreen {
             editorScreen_->get_transform()->get_rotation());
     }
 
+    bool ScreenPreview::ApplyLibraryPreviewEditorDisplay(bool rebuildGeometry)
+    {
+        if(!editorScreen_ || !editorConfig_ ||
+           !PlaybackSession::Instance().IsLibraryPreviewActive())
+            return false;
+
+        // The editor transform is authoritative while it is being dragged.
+        // Do not mutate editorConfig_ with the temporary depth separation:
+        // SaveUndockedEditing must persist the visible frame's exact location,
+        // and RestoreLibraryPreviewDisplay removes this offset on save/cancel.
+        auto displayConfig = *editorConfig_;
+        auto transform = editorScreen_->get_transform();
+        const auto displayPosition = transform->TransformPoint(
+            {0.0f, 0.0f, EditorVideoDepthOffsetUi});
+        auto displayRotation = transform->get_rotation();
+        const auto displayEuler = displayRotation.get_eulerAngles();
+        displayConfig.screenPosition = {
+            displayPosition.x, displayPosition.y, displayPosition.z};
+        displayConfig.screenRotation = {
+            displayEuler.x, displayEuler.y, displayEuler.z};
+        return PlaybackSession::Instance().ApplyLibraryPreviewEditorDisplay(
+            displayConfig, rebuildGeometry);
+    }
+
     void ScreenPreview::TickUndockedEditor()
     {
         if(!editorScreen_ || !resizeHandleScreen_ || !editorConfig_)
             return;
-        if(!Settings::Instance().ModEnabled() ||
-           !Settings::Instance().AdvancedOptionsEnabled() ||
-           !Settings::Instance().UndockedScreenEnabled())
+        if(!Settings::Instance().ModEnabled())
         {
             CancelUndockedEditing();
             return;
@@ -669,9 +716,7 @@ namespace BigScreen {
                 UpdateEditorOverlayLayout();
                 if(PlaybackSession::Instance().IsLibraryPreviewActive())
                 {
-                    PlaybackSession::Instance()
-                        .ApplyLibraryPreviewEditorDisplay(
-                            *editorConfig_, true);
+                    ApplyLibraryPreviewEditorDisplay(true);
                 }
                 else
                 {
@@ -691,8 +736,7 @@ namespace BigScreen {
             editorEuler.x, editorEuler.y, editorEuler.z};
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
         {
-            PlaybackSession::Instance().ApplyLibraryPreviewEditorDisplay(
-                *editorConfig_, false);
+            ApplyLibraryPreviewEditorDisplay(false);
         }
         else
         {
@@ -715,6 +759,7 @@ namespace BigScreen {
             rotation.x, rotation.y, rotation.z,
             *editorConfig_->screenWidthOverride,
             editorConfig_->screenHeight);
+        Settings::Instance().CommitScreenEditTransaction();
         const bool libraryPreviewActive =
             PlaybackSession::Instance().IsLibraryPreviewActive();
         DestroyEditorUi();
@@ -730,6 +775,7 @@ namespace BigScreen {
     {
         if(!editorScreen_ && !resizeHandleScreen_)
             return;
+        Settings::Instance().CancelScreenEditTransaction();
         const bool libraryPreviewActive =
             PlaybackSession::Instance().IsLibraryPreviewActive();
         DestroyEditorUi();
@@ -739,6 +785,94 @@ namespace BigScreen {
             Refresh();
         SettingsMenu::Instance().RefreshControls();
         PaperLogger.info("Cancelled unsaved undocked screen placement");
+    }
+
+    void ScreenPreview::StageCurrentUndockedPlacement()
+    {
+        if(!editorScreen_ || !editorConfig_ ||
+           !editorConfig_->screenWidthOverride)
+            return;
+        const auto position = editorScreen_->get_transform()->get_position();
+        const auto rotation = editorScreen_->get_transform()
+            ->get_rotation().get_eulerAngles();
+        Settings::Instance().SaveUndockedScreen(
+            position.x, position.y, position.z,
+            rotation.x, rotation.y, rotation.z,
+            *editorConfig_->screenWidthOverride,
+            editorConfig_->screenHeight);
+    }
+
+    void ScreenPreview::RefreshUndockedEditingFromSettings()
+    {
+        if(!editorScreen_ || !editorConfig_ || !editorAppliedLayout_ ||
+           !editorConfig_->screenWidthOverride)
+            return;
+
+        const auto& settings = Settings::Instance();
+        const auto& layout = settings.ActiveLayout();
+        auto transform = editorScreen_->get_transform();
+
+        if(editorLayoutIndex_ != settings.ActiveScreenLayout())
+        {
+            // The previous layout's controller placement is staged by the
+            // selector callback. Load the newly selected layout as another
+            // draft within the same all-layout transaction.
+            transform->SetPositionAndRotation(
+                {layout.undockedPositionX,
+                 layout.undockedPositionY,
+                 layout.undockedPositionZ},
+                UnityEngine::Quaternion::Euler({
+                    layout.undockedRotationX,
+                    layout.undockedRotationY,
+                    layout.undockedRotationZ}));
+            editorConfig_->screenWidthOverride = layout.undockedWidth;
+            editorConfig_->screenHeight = layout.undockedHeight;
+            editorLayoutIndex_ = settings.ActiveScreenLayout();
+        }
+        else
+        {
+            // Basic canvas controls remain useful while unlocked. Apply only
+            // the delta since the preceding callback so controller placement
+            // remains the baseline rather than snapping back to the wall.
+            const auto& previous = *editorAppliedLayout_;
+            const auto position = transform->get_position();
+            transform->set_position({
+                position.x + layout.horizontalOffset - previous.horizontalOffset,
+                position.y + layout.verticalOffset - previous.verticalOffset,
+                position.z + layout.distanceOffset - previous.distanceOffset});
+            const auto rotation = transform->get_rotation().get_eulerAngles();
+            transform->set_rotation(UnityEngine::Quaternion::Euler({
+                rotation.x + layout.tiltOffset - previous.tiltOffset,
+                rotation.y,
+                rotation.z + layout.screenRoll - previous.screenRoll}));
+            if(previous.scale > 0.0001f &&
+               std::abs(layout.scale - previous.scale) > 0.0001f)
+            {
+                const float ratio = layout.scale / previous.scale;
+                *editorConfig_->screenWidthOverride *= ratio;
+                editorConfig_->screenHeight *= ratio;
+            }
+        }
+
+        editorConfig_->screenCurvature = layout.curved
+            ? layout.curvature : 0.0f;
+        editorConfig_->maintainAspectRatioWhenCurved =
+            layout.curved && layout.maintainAspectRatio;
+        editorConfig_->transparent = layout.transparency;
+        editorConfig_->videoRotation = layout.videoRotation;
+        editorConfig_->videoZoom = layout.videoZoom;
+        editorConfig_->videoOffsetX = layout.videoOffsetX;
+        editorConfig_->videoOffsetY = layout.videoOffsetY;
+        editorConfig_->videoTilt = layout.videoTilt;
+        editorConfig_->stretchVideoToFit = layout.stretchVideoToFit;
+        editorAppliedLayout_ = layout;
+
+        UpdateEditorOverlayLayout();
+        PlaceResizeHandle();
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            ApplyLibraryPreviewEditorDisplay(true);
+        else
+            surface_.UpdateGeometry(*editorConfig_);
     }
 
     void ScreenPreview::DestroyEditorUi()
@@ -755,6 +889,8 @@ namespace BigScreen {
         editorMoveText_ = nullptr;
         editorAspectText_ = nullptr;
         editorSaveButton_ = nullptr;
+        editorAppliedLayout_.reset();
+        editorLayoutIndex_ = -1;
         editorConfig_.reset();
     }
 }

@@ -21,6 +21,8 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryEditorViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, storageViewController);
 
+    DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
+
     DECLARE_OVERRIDE_METHOD_MATCH(
         void,
         DidActivate,

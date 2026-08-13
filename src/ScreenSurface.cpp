@@ -226,6 +226,12 @@ namespace BigScreen {
 
         filter->set_sharedMesh(mesh_);
         renderer->set_material(backgroundMaterial_);
+        // Do not rely on a zero-alpha black texture to represent an empty
+        // letterbox. Some Unity shader variants still draw it as black on
+        // Quest. Removing the background renderer makes the unused part of a
+        // non-16:9 frame genuinely transparent.
+        renderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
+            config.transparent, false));
 
         videoObject_ = UnityEngine::GameObject::New_ctor("Big Screen Video Content");
         if(!videoObject_)
@@ -558,6 +564,16 @@ namespace BigScreen {
             return false;
         }
 
+        if(config.transparent != transparent_ &&
+           !ApplyTransparency(config.transparent))
+        {
+            UnityEngine::Object::Destroy(mesh_);
+            UnityEngine::Object::Destroy(videoMesh_);
+            mesh_ = previousMesh;
+            videoMesh_ = previousVideoMesh;
+            return false;
+        }
+
         // Publish the complete replacement only after mesh creation succeeds.
         // The previous surface and decoded frame remain visible throughout the
         // operation, preventing the gray flash caused by recreating a screen.
@@ -600,6 +616,90 @@ namespace BigScreen {
                 diagnosticsText_->get_rectTransform()->set_sizeDelta({
                     screenWidth_ * 11.5f,
                     screenHeight_ * 3.0f});
+        }
+        return true;
+    }
+
+    bool ScreenSurface::ApplyTransparency(bool transparent)
+    {
+        if(!gameObject_ || !videoObject_ || !material_ ||
+           !backgroundMaterial_ || !texture_)
+            return false;
+
+        auto videoShader = UnityEngine::Shader::Find(
+            transparent ? "Unlit/Transparent" : "Unlit/Texture");
+        auto backgroundShader = UnityEngine::Shader::Find(
+            transparent ? "Unlit/Transparent" : "Unlit/Texture");
+        if(!videoShader && transparent)
+            videoShader = UnityEngine::Shader::Find("Unlit/Texture");
+        if(!backgroundShader && transparent)
+            backgroundShader = UnityEngine::Shader::Find("Unlit/Texture");
+        if(!videoShader || !backgroundShader)
+            return false;
+
+        material_->set_shader(videoShader);
+        backgroundMaterial_->set_shader(backgroundShader);
+        material_->set_mainTexture(texture_);
+        backgroundMaterial_->set_mainTexture(
+            UnityEngine::Texture2D::get_blackTexture());
+
+        if(transparent)
+        {
+            material_->set_color(
+                UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f});
+            material_->SetInt("_SrcBlend", 5);  // SrcAlpha
+            material_->SetInt("_DstBlend", 10); // OneMinusSrcAlpha
+            material_->SetInt("_ZWrite", 0);
+            material_->DisableKeyword("_ALPHATEST_ON");
+            material_->EnableKeyword("_ALPHABLEND_ON");
+            material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material_->set_renderQueue(3000);
+
+            backgroundMaterial_->set_color(
+                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
+            backgroundMaterial_->SetInt("_SrcBlend", 5);
+            backgroundMaterial_->SetInt("_DstBlend", 10);
+            backgroundMaterial_->SetInt("_ZWrite", 0);
+            backgroundMaterial_->EnableKeyword("_ALPHABLEND_ON");
+            backgroundMaterial_->set_renderQueue(2999);
+        }
+        else
+        {
+            material_->set_color(UnityEngine::Color::get_white());
+            material_->SetInt("_SrcBlend", 1); // One
+            material_->SetInt("_DstBlend", 0); // Zero
+            material_->SetInt("_ZWrite", 1);
+            material_->DisableKeyword("_ALPHATEST_ON");
+            material_->DisableKeyword("_ALPHABLEND_ON");
+            material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            material_->set_renderQueue(2000);
+
+            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+            backgroundMaterial_->SetInt("_SrcBlend", 1);
+            backgroundMaterial_->SetInt("_DstBlend", 0);
+            backgroundMaterial_->SetInt("_ZWrite", 1);
+            backgroundMaterial_->DisableKeyword("_ALPHABLEND_ON");
+            backgroundMaterial_->set_renderQueue(1999);
+        }
+
+        // Changing layouts during a negative offset must not expose the first
+        // decoded frame early. Preserve an explicitly requested black lead-in
+        // until Upload transitions back to the configured presentation.
+        if(leadInActive_ && leadInBlack_)
+        {
+            material_->set_mainTexture(
+                UnityEngine::Texture2D::get_blackTexture());
+            material_->set_color(UnityEngine::Color::get_white());
+            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+        }
+
+        transparent_ = transparent;
+        if(auto* backgroundRenderer =
+               gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
+        {
+            backgroundRenderer->set_enabled(
+                CoreLogic::ScreenBackgroundVisible(
+                    transparent_, leadInActive_ && leadInBlack_));
         }
         return true;
     }
@@ -729,6 +829,12 @@ namespace BigScreen {
                 backgroundMaterial_->set_color(transparent_
                     ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
                     : UnityEngine::Color::get_black());
+            if(auto* backgroundRenderer =
+                   gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
+            {
+                backgroundRenderer->set_enabled(
+                    CoreLogic::ScreenBackgroundVisible(transparent_, false));
+            }
             leadInActive_ = false;
             leadInBlack_ = false;
         }
@@ -769,6 +875,9 @@ namespace BigScreen {
         // layer opaque until Upload restores its configured transparency.
         if(backgroundMaterial_)
             backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+        if(auto* backgroundRenderer =
+               gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
+            backgroundRenderer->set_enabled(true);
         leadInActive_ = true;
         leadInBlack_ = true;
         SetVisible(true);

@@ -57,6 +57,9 @@ namespace BigScreen {
         bool CreateVideoMesh(const MapVideoConfig& config, float sourceAspectRatio);
         bool CreateMaterialAndTexture(int width, int height, bool transparent);
         bool CreateBackgroundMaterial(bool transparent);
+        /// Applies a per-layout transparency change without replacing the
+        /// decoded texture or restarting playback.
+        bool ApplyTransparency(bool transparent);
 
         UnityEngine::GameObject* gameObject_ = nullptr;
         UnityEngine::GameObject* videoObject_ = nullptr;

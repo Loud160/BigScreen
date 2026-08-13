@@ -34,9 +34,13 @@ namespace BigScreen {
         void CreateUi(
             HMUI::ViewController* viewController,
             std::function<void()> onBack,
-            std::function<void()> onManageStorage);
+            std::function<void()> onManageStorage,
+            std::function<void(bool)> onModEnabledChanged);
         void RefreshControls();
         void RefreshDownloaderStatus();
+        /// Runs the requested navigation immediately unless an unlocked screen
+        /// has unsaved edits, in which case the user chooses save/discard/cancel.
+        void RequestLeave(std::function<void()> continuation);
 
     private:
         SettingsMenu() = default;
@@ -45,13 +49,22 @@ namespace BigScreen {
         void RefreshEnabledState();
         void RefreshCurvatureControl();
         void RefreshAdvancedControls();
+        /// Aligns the affected video value labels with their slider handles
+        /// after Beat Saber has completed the Screen tab's layout pass.
+        void AlignVideoValueLabels();
+        /// Lets the native Zoom-style X/Y sliders position their own text,
+        /// then replaces only the displayed number with the signed offset.
+        void RefreshVideoOffsetValueTexts();
         void RefreshUpdaterHint();
+        void RefreshDisabledModeView();
         void ShowSettingsTab(int index);
         void ResetToDefaults();
 
         HMUI::ViewController* settingsViewController_ = nullptr;
         HMUI::TextSegmentedControl* settingsTabs_ = nullptr;
         std::array<UnityEngine::GameObject*, 5> tabViewRoots_{};
+        UnityEngine::GameObject* generalContentRoot_ = nullptr;
+        UnityEngine::GameObject* generalMasterRoot_ = nullptr;
         int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* distractionFreeMenuToggle_ = nullptr;
@@ -60,11 +73,16 @@ namespace BigScreen {
         BSML::ToggleSetting* previewToggle_ = nullptr;
         BSML::DropdownListSetting* screenLayoutDropdown_ = nullptr;
         BSML::ToggleSetting* allowChromaOverrideToggle_ = nullptr;
-        BSML::IncrementSetting* distanceSetting_ = nullptr;
-        BSML::IncrementSetting* horizontalSetting_ = nullptr;
-        BSML::IncrementSetting* verticalSetting_ = nullptr;
-        BSML::IncrementSetting* tiltSetting_ = nullptr;
-        BSML::IncrementSetting* sizeSetting_ = nullptr;
+        BSML::SliderSetting* distanceSetting_ = nullptr;
+        BSML::SliderSetting* horizontalSetting_ = nullptr;
+        BSML::SliderSetting* verticalSetting_ = nullptr;
+        BSML::SliderSetting* tiltSetting_ = nullptr;
+        BSML::SliderSetting* sizeSetting_ = nullptr;
+        HMUI::HoverHint* distanceHint_ = nullptr;
+        HMUI::HoverHint* horizontalHint_ = nullptr;
+        HMUI::HoverHint* verticalHint_ = nullptr;
+        HMUI::HoverHint* tiltHint_ = nullptr;
+        HMUI::HoverHint* sizeHint_ = nullptr;
         BSML::ToggleSetting* curvedScreenToggle_ = nullptr;
         BSML::ToggleSetting* maintainCurveAspectToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
@@ -106,6 +124,7 @@ namespace BigScreen {
         BSML::ModalView* advancedWarningModal_ = nullptr;
         TMPro::TextMeshProUGUI* advancedWarningText_ = nullptr;
         BSML::ModalView* undockWarningModal_ = nullptr;
+        BSML::ModalView* unsavedScreenModal_ = nullptr;
         BSML::ModalView* errorModal_ = nullptr;
         TMPro::TextMeshProUGUI* errorModalText_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
@@ -115,5 +134,9 @@ namespace BigScreen {
         bool suppressNightlyCallback_ = false;
         bool suppressAdvancedCallback_ = false;
         bool suppressUndockCallback_ = false;
+        std::function<void()> pendingScreenNavigation_;
+        std::function<void(bool)> modEnabledUiChanged_;
+        bool displayedEnabledState_ = true;
+        bool displayedEnabledStateKnown_ = false;
     };
 }

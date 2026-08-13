@@ -779,13 +779,13 @@ namespace {
         Application_InvokeFocusChanged(hasFocus);
         if(!hasFocus)
         {
-            BigScreen::Settings::Instance().Flush();
             BigScreen::ErrorManager::Instance().Guard(
                 "cancelling screen positioning after focus loss", []()
                 {
                     BigScreen::ScreenPreview::Instance()
                         .CancelUndockedEditing();
                 });
+            BigScreen::Settings::Instance().Flush();
         }
     }
 

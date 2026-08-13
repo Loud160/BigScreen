@@ -239,7 +239,8 @@ namespace BigScreen {
                         nullptr,
                         HMUI::ViewController::AnimationType::In,
                         HMUI::ViewController::AnimationDirection::Horizontal);
-                });
+                },
+                [this](bool enabled) { ApplyModEnabledUi(enabled); });
             VideoLibraryMenu::Instance().CreateUi(
                 libraryBrowserViewController,
                 libraryEditorViewController,
@@ -268,9 +269,16 @@ namespace BigScreen {
             ProvideInitialViewControllers(
                 centerViewController,
                 settingsViewController,
-                libraryBrowserViewController,
+                Settings::Instance().ModEnabled()
+                    ? libraryBrowserViewController
+                    : nullptr,
                 nullptr,
                 nullptr);
+            // ProvideInitialViewControllers is the only safe way to choose
+            // panels during first activation. Calling ReplaceTopViewController
+            // here previously queried a top controller before HMUI had
+            // established one and terminated the game with an uncaught IL2CPP
+            // exception. ApplyModEnabledUi is reserved for later live changes.
             ScreenPreview::Instance().ActivateCurrentState();
             return;
         }
@@ -290,10 +298,34 @@ namespace BigScreen {
                 HMUI::ViewController::AnimationType::None,
                 HMUI::ViewController::AnimationDirection::Horizontal);
         }
-        SetRightScreenViewController(
-            libraryBrowserViewController,
-            HMUI::ViewController::AnimationType::None);
+        ApplyModEnabledUi(Settings::Instance().ModEnabled());
         ScreenPreview::Instance().ActivateCurrentState();
+    }
+
+    void MenuFlowCoordinator::ApplyModEnabledUi(bool enabled)
+    {
+        if(!centerViewController)
+            return;
+
+        // Storage and the Video Library are functional Big Screen surfaces,
+        // not navigation needed to recover from a disabled mod. Restore the
+        // empty center and remove the entire right panel until the master
+        // switch is turned back on.
+        if(get_topViewController().ptr() != centerViewController)
+        {
+            ReplaceTopViewController(
+                centerViewController,
+                nullptr,
+                HMUI::ViewController::AnimationType::None,
+                HMUI::ViewController::AnimationDirection::Horizontal);
+        }
+        SetRightScreenViewController(
+            enabled ? libraryBrowserViewController : nullptr,
+            HMUI::ViewController::AnimationType::None);
+        if(!enabled)
+            VideoLibraryMenu::Instance().Deactivate();
+        else
+            VideoLibraryMenu::Instance().Refresh();
     }
 
     void MenuFlowCoordinator::DidDeactivate(
@@ -317,6 +349,18 @@ namespace BigScreen {
         HMUI::ViewController* topViewController)
     {
         (void)topViewController;
+        // The custom left-panel Back button routes through the same prompt,
+        // but Beat Saber's controller/back action can call this override
+        // directly. Cover both paths so no normal menu exit silently drops an
+        // unlocked screen edit.
+        if(ScreenPreview::Instance().IsUndockedEditing())
+        {
+            SettingsMenu::Instance().RequestLeave([this]()
+            {
+                BackButtonWasPressed(centerViewController);
+            });
+            return;
+        }
         auto parent = __cordl_internal_get__parentFlowCoordinator();
         if(parent)
         {

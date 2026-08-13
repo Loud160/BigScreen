@@ -593,6 +593,15 @@ namespace BigScreen {
 
     void Settings::Save()
     {
+        // An unlocked screen is a transactional preview. Keeping these writes
+        // in memory is what makes process death, focus loss, and menu teardown
+        // fall back to the last explicitly saved screen instead of persisting
+        // a half-finished slider or controller movement.
+        if(screenEditActive_)
+        {
+            screenEditDirty_ = true;
+            return;
+        }
         // Slider callbacks may arrive dozens of times per second. Apply values
         // to the live preview immediately but coalesce their complete JSON
         // rewrite into one durable save after the user stops adjusting them.
@@ -603,14 +612,53 @@ namespace BigScreen {
 
     void Settings::TickPersistence()
     {
-        if(savePending_ && std::chrono::steady_clock::now() >= saveDeadline_)
+        if(!screenEditActive_ && savePending_ &&
+           std::chrono::steady_clock::now() >= saveDeadline_)
             WriteNow();
     }
 
     void Settings::Flush()
     {
-        if(savePending_)
+        if(!screenEditActive_ && savePending_)
             WriteNow();
+    }
+
+    void Settings::BeginScreenEditTransaction()
+    {
+        if(screenEditActive_)
+            return;
+
+        // Commit any setting made before Position Screen was pressed. This
+        // establishes an exact durable rollback point (notably the user's
+        // decision to enable Undock Screen) before draft editing begins.
+        Flush();
+        screenEditLayouts_ = screenLayouts_;
+        screenEditActiveLayout_ = activeScreenLayout_;
+        screenEditAllowChromaOverride_ = allowChromaOverride_;
+        screenEditDirty_ = false;
+        screenEditActive_ = true;
+    }
+
+    void Settings::CommitScreenEditTransaction()
+    {
+        if(!screenEditActive_)
+            return;
+        const bool dirty = screenEditDirty_;
+        screenEditActive_ = false;
+        screenEditDirty_ = false;
+        if(dirty)
+            WriteNow();
+    }
+
+    void Settings::CancelScreenEditTransaction()
+    {
+        if(!screenEditActive_)
+            return;
+        screenLayouts_ = screenEditLayouts_;
+        activeScreenLayout_ = screenEditActiveLayout_;
+        allowChromaOverride_ = screenEditAllowChromaOverride_;
+        screenEditActive_ = false;
+        screenEditDirty_ = false;
     }
 
     void Settings::WriteNow()

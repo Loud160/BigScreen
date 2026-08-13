@@ -106,6 +106,13 @@ int main()
     Expect(clampedZoom.width == 12.0f && clampedZoom.height == 12.0f,
            "video zoom is capped at the documented 3x limit");
 
+    Expect(!ScreenBackgroundVisible(true, false),
+           "transparent layouts remove the black letterbox renderer");
+    Expect(ScreenBackgroundVisible(false, false),
+           "opaque layouts retain the black letterbox renderer");
+    Expect(ScreenBackgroundVisible(true, true),
+           "a requested black lead-in overrides transparent letterboxing");
+
     if(failures == 0)
         std::cout << "All Big Screen core tests passed.\n";
     return failures == 0 ? 0 : 1;

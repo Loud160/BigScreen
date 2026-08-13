@@ -6,6 +6,8 @@
 #include <string_view>
 #include <utility>
 
+#include "fmt/format.h"
+
 #include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -25,6 +27,7 @@
 #include "UnityEngine/Canvas.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/TextAnchor.hpp"
+#include "UnityEngine/Transform.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ContentSizeFitter.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
@@ -70,6 +73,16 @@ namespace BigScreen {
             "General", "Screen", "Environment", "Update", "Misc"
         };
 
+        constexpr float VideoOffsetToZoomSlider(float offset)
+        {
+            return 1.75f + (offset * 1.25f);
+        }
+
+        constexpr float ZoomSliderToVideoOffset(float sliderValue)
+        {
+            return (sliderValue - 1.75f) / 1.25f;
+        }
+
         std::string ResolutionLabel(int height)
         {
             return std::to_string(height) + "p";
@@ -111,6 +124,11 @@ namespace BigScreen {
 
         void ApplyDisplaySettingsAndRefreshPreview()
         {
+            if(ScreenPreview::Instance().IsUndockedEditing())
+            {
+                ScreenPreview::Instance().RefreshUndockedEditingFromSettings();
+                return;
+            }
             // The playback session keeps an effective configuration for the
             // selected song. Rebuild it as well as the visible settings screen
             // so leaving this menu cannot resurrect stale size or placement.
@@ -144,7 +162,8 @@ namespace BigScreen {
     void SettingsMenu::CreateUi(
         HMUI::ViewController* viewController,
         std::function<void()> onBack,
-        std::function<void()> onManageStorage)
+        std::function<void()> onManageStorage,
+        std::function<void(bool)> onModEnabledChanged)
     {
         if(!viewController)
             return;
@@ -157,8 +176,16 @@ namespace BigScreen {
         // MenuCore restarts replace the controller and all of its children.
         // Clear every cached component before constructing the new scene's UI.
         settingsViewController_ = viewController;
+        modEnabledUiChanged_ = std::move(onModEnabledChanged);
+        // The coordinator applies the initial right/center layout after all
+        // view controllers have been created and provided. From this point on,
+        // only an actual state transition needs the callback.
+        displayedEnabledState_ = Settings::Instance().ModEnabled();
+        displayedEnabledStateKnown_ = true;
         settingsTabs_ = nullptr;
         tabViewRoots_.fill(nullptr);
+        generalContentRoot_ = nullptr;
+        generalMasterRoot_ = nullptr;
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         distractionFreeMenuToggle_ = nullptr;
@@ -172,6 +199,11 @@ namespace BigScreen {
         verticalSetting_ = nullptr;
         tiltSetting_ = nullptr;
         sizeSetting_ = nullptr;
+        distanceHint_ = nullptr;
+        horizontalHint_ = nullptr;
+        verticalHint_ = nullptr;
+        tiltHint_ = nullptr;
+        sizeHint_ = nullptr;
         curvedScreenToggle_ = nullptr;
         maintainCurveAspectToggle_ = nullptr;
         curvatureSlider_ = nullptr;
@@ -213,6 +245,8 @@ namespace BigScreen {
         advancedWarningModal_ = nullptr;
         advancedWarningText_ = nullptr;
         undockWarningModal_ = nullptr;
+        unsavedScreenModal_ = nullptr;
+        pendingScreenNavigation_ = {};
         updaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
@@ -250,10 +284,9 @@ namespace BigScreen {
             "< Back",
             UnityEngine::Vector2{0.0f, 0.0f},
             UnityEngine::Vector2{18.0f, 8.0f},
-            [callback = std::move(onBack)]()
+            [this, callback = std::move(onBack)]()
             {
-                if(callback)
-                    callback();
+                RequestLeave(callback);
             });
         if(backButton)
         {
@@ -343,6 +376,7 @@ namespace BigScreen {
             PaperLogger.error("Could not create all Big Screen settings tabs");
             return;
         }
+        generalContentRoot_ = generalContainer;
 
         // Scroll containers align their first child directly with the upper
         // mask. A small real spacer keeps the first glyph row below that mask,
@@ -579,6 +613,21 @@ namespace BigScreen {
             modEnabledToggle_,
             "Turns Big Screen playback, previews, downloads, and environment changes on or off. This menu remains available so the mod can be turned back on.");
 
+        // ToggleSetting may insert an intermediate layout object. Remember the
+        // direct child of the General content container that owns the master
+        // switch so disabled mode can hide every sibling without relying on a
+        // fragile handwritten list of current and future General controls.
+        if(modEnabledToggle_ && generalContentRoot_)
+        {
+            auto containerTransform = generalContentRoot_->get_transform();
+            auto masterTransform = modEnabledToggle_->get_transform();
+            while(masterTransform && masterTransform->get_parent() &&
+                  masterTransform->get_parent() != containerTransform)
+                masterTransform = masterTransform->get_parent();
+            if(masterTransform && masterTransform->get_parent() == containerTransform)
+                generalMasterRoot_ = masterTransform->get_gameObject();
+        }
+
         distractionFreeMenuToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
             "Distraction Free Menu",
@@ -644,7 +693,8 @@ namespace BigScreen {
                 const std::string label(value);
                 const int index = !label.empty() && label.back() >= '1' && label.back() <= '5'
                     ? label.back() - '1' : 0;
-                ScreenPreview::Instance().CancelUndockedEditing();
+                if(ScreenPreview::Instance().IsUndockedEditing())
+                    ScreenPreview::Instance().StageCurrentUndockedPlacement();
                 Settings::Instance().SetActiveScreenLayout(index);
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
@@ -678,7 +728,6 @@ namespace BigScreen {
                         advancedWarningModal_->Show();
                     return;
                 }
-                ScreenPreview::Instance().CancelUndockedEditing();
                 Settings::Instance().SetAdvancedOptionsEnabled(false);
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
@@ -728,82 +777,96 @@ namespace BigScreen {
             allowChromaOverrideToggle_,
             "Lets a map's Cinema or Chroma data control screen placement and the environment. While active for a map, your Big Screen layout and environment overrides are not applied. Turn it off to use your own settings.");
 
-        distanceSetting_ = BSML::Lite::CreateIncrementSetting(
+        distanceSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Distance Offset",
-            0,
             2.0f,
             settings.ScreenDistanceOffset(),
             -40.0f,
             40.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [](float value)
             {
                 Settings::Instance().SetScreenDistanceOffset(value);
                 ApplyDisplaySettingsAndRefreshPreview();
             });
-        BSML::Lite::AddHoverHint(
+        // BSML only infers integer formatting for a 1.0 increment. Distance
+        // intentionally advances by 2 units, so declare its integer display.
+        distanceSetting_->isInt = true;
+        distanceSetting_->digits = 0;
+        distanceHint_ = BSML::Lite::AddHoverHint(
             distanceSetting_,
             "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
-        horizontalSetting_ = BSML::Lite::CreateIncrementSetting(
+        horizontalSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen X Offset",
-            0,
             1.0f,
             settings.ScreenHorizontalOffset(),
             -40.0f,
             40.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [](float value)
             {
                 Settings::Instance().SetScreenHorizontalOffset(value);
                 ApplyDisplaySettingsAndRefreshPreview();
             });
-        BSML::Lite::AddHoverHint(
+        horizontalHint_ = BSML::Lite::AddHoverHint(
             horizontalSetting_,
             "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
-        verticalSetting_ = BSML::Lite::CreateIncrementSetting(
+        verticalSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Y Offset",
-            0,
             1.0f,
             settings.ScreenVerticalOffset(),
             -40.0f,
             40.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [](float value)
             {
                 Settings::Instance().SetScreenVerticalOffset(value);
                 ApplyDisplaySettingsAndRefreshPreview();
             });
-        BSML::Lite::AddHoverHint(
+        verticalHint_ = BSML::Lite::AddHoverHint(
             verticalSetting_,
             "Moves the screen down with negative values and up with positive values. Free positioning replaces this control while Undock Screen is enabled.");
 
-        tiltSetting_ = BSML::Lite::CreateIncrementSetting(
+        tiltSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Tilt Offset",
-            0,
             1.0f,
             settings.ScreenTiltOffset(),
             -30.0f,
             30.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [](float value)
             {
                 Settings::Instance().SetScreenTiltOffset(value);
                 ApplyDisplaySettingsAndRefreshPreview();
             });
-        BSML::Lite::AddHoverHint(
+        tiltHint_ = BSML::Lite::AddHoverHint(
             tiltSetting_,
             "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled.");
 
-        sizeSetting_ = BSML::Lite::CreateIncrementSetting(
+        sizeSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Size Multiplier",
-            1,
             0.1f,
             settings.ScreenScale(),
             0.5f,
             settings.MaximumScreenScale(),
+            0.15f,
+            true,
+            {0.0f, 0.0f},
             [this](float value)
             {
                 Settings::Instance().SetScreenScale(value);
@@ -812,7 +875,9 @@ namespace BigScreen {
                 RefreshCurvatureControl();
                 ApplyDisplaySettingsAndRefreshPreview();
             });
-        BSML::Lite::AddHoverHint(
+        sizeSetting_->digits = 1;
+        sizeSetting_->slider->UpdateVisuals();
+        sizeHint_ = BSML::Lite::AddHoverHint(
             sizeSetting_,
             "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5. The resize handle replaces this control for an undocked screen.");
 
@@ -897,12 +962,25 @@ namespace BigScreen {
             }
             if(auto* layout = advancedGroup->get_gameObject()
                    ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                // Top-level BSML settings rows are 90 units wide. Explicitly
+                // give the nested advanced section that same width; relying on
+                // flexible width allowed the scroll layout to compress it to
+                // the slider's 52-unit control, which displaced numeric labels
+                // and clipped the fine-adjustment arrows.
+                layout->set_minWidth(90.0f);
+                layout->set_preferredWidth(90.0f);
                 layout->set_flexibleWidth(1.0f);
+            }
         }
         const BSML::Lite::TransformWrapper advancedParent = advancedGroup
             ? BSML::Lite::TransformWrapper(advancedGroup)
             : BSML::Lite::TransformWrapper(screenContainer);
 
+        // SCREEN ROTATION MAINTENANCE NOTE:
+        // This is a native BSML TextSlider. Its value text and thin vertical
+        // drag handle are separate objects managed by TextSlider::UpdateVisuals.
+        // Do not reparent either object and do not add a second handle graphic.
         screenRotationSlider_ = BSML::Lite::CreateSliderSetting(
             advancedParent, "Screen Rotation", 1.0f, settings.ScreenRoll(),
             -180.0f, 180.0f, 0.15f, true, {0.0f, 0.0f},
@@ -915,18 +993,28 @@ namespace BigScreen {
             screenRotationSlider_,
             "Rotates a docked screen frame clockwise or counterclockwise while keeping its saved width and height. Use Position Screen to rotate an undocked screen freely.");
 
+        // VIDEO ROTATION MAINTENANCE NOTE:
+        // Rotation and Tilt retain their signed native ranges, so their value
+        // text needs the separate handle-relative correction below. Video X/Y
+        // do not use this path: they deliberately clone Video Zoom's working
+        // positive native range and translate that value to a signed offset.
         videoRotationSlider_ = BSML::Lite::CreateSliderSetting(
             advancedParent, "Video Rotation", 1.0f, settings.VideoRotation(),
             -180.0f, 180.0f, 0.15f, true, {0.0f, 0.0f},
-            [](float value)
+            [this](float value)
             {
                 Settings::Instance().SetVideoRotation(value);
                 ApplyDisplaySettingsAndRefreshPreview();
+                AlignVideoValueLabels();
             });
         BSML::Lite::AddHoverHint(
             videoRotationSlider_,
             "Rotates the picture inside the screen without rotating or reshaping the screen itself. Empty areas use the Video Transparency setting.");
 
+        // VIDEO ZOOM MAINTENANCE NOTE -- VERIFIED-GOOD REFERENCE CONTROL:
+        // Its native numeric value follows the drag handle correctly. Preserve
+        // this control unchanged and use its final rendered text-to-handle
+        // offset as the reference for the signed-range video controls.
         videoZoomSlider_ = BSML::Lite::CreateSliderSetting(
             advancedParent, "Video Zoom", 0.05f, settings.VideoZoom(),
             0.5f, 3.0f, 0.15f, true, {0.0f, 0.0f},
@@ -939,37 +1027,52 @@ namespace BigScreen {
             videoZoomSlider_,
             "Changes the size of the picture inside the screen. Values above 1 crop the edges; values below 1 reveal more letterbox background.");
 
+        // X and Y are deliberately created with Video Zoom's exact native
+        // configuration. The native control owns its text/handle positioning;
+        // RefreshVideoOffsetValueTexts changes only the rendered number after
+        // UpdateVisuals has placed it at the handle.
         videoHorizontalSlider_ = BSML::Lite::CreateSliderSetting(
-            advancedParent, "Video X Position", 0.01f, settings.VideoOffsetX(),
-            -1.0f, 1.0f, 0.15f, true, {0.0f, 0.0f},
-            [](float value)
+            advancedParent, "Video X Position", 0.05f,
+            VideoOffsetToZoomSlider(settings.VideoOffsetX()),
+            0.5f, 3.0f, 0.15f, true, {0.0f, 0.0f},
+            [this](float value)
             {
-                Settings::Instance().SetVideoOffsetX(value);
+                Settings::Instance().SetVideoOffsetX(
+                    ZoomSliderToVideoOffset(value));
                 ApplyDisplaySettingsAndRefreshPreview();
+                RefreshVideoOffsetValueTexts();
             });
         BSML::Lite::AddHoverHint(
             videoHorizontalSlider_,
             "Moves the picture left or right inside the fixed screen frame. This is useful after zooming or rotating a video.");
 
         videoVerticalSlider_ = BSML::Lite::CreateSliderSetting(
-            advancedParent, "Video Y Position", 0.01f, settings.VideoOffsetY(),
-            -1.0f, 1.0f, 0.15f, true, {0.0f, 0.0f},
-            [](float value)
+            advancedParent, "Video Y Position", 0.05f,
+            VideoOffsetToZoomSlider(settings.VideoOffsetY()),
+            0.5f, 3.0f, 0.15f, true, {0.0f, 0.0f},
+            [this](float value)
             {
-                Settings::Instance().SetVideoOffsetY(value);
+                Settings::Instance().SetVideoOffsetY(
+                    ZoomSliderToVideoOffset(value));
                 ApplyDisplaySettingsAndRefreshPreview();
+                RefreshVideoOffsetValueTexts();
             });
         BSML::Lite::AddHoverHint(
             videoVerticalSlider_,
             "Moves the picture down or up inside the fixed screen frame. This is useful after zooming or rotating a video.");
+        RefreshVideoOffsetValueTexts();
 
+        // VIDEO TILT MAINTENANCE NOTE:
+        // Tilt uses the same signed-range, handle-relative correction as Video
+        // Rotation. It does not alter or reorder the native handle graphic.
         videoTiltSlider_ = BSML::Lite::CreateSliderSetting(
             advancedParent, "Video Tilt", 1.0f, settings.VideoTilt(),
             -75.0f, 75.0f, 0.15f, true, {0.0f, 0.0f},
-            [](float value)
+            [this](float value)
             {
                 Settings::Instance().SetVideoTilt(value);
                 ApplyDisplaySettingsAndRefreshPreview();
+                AlignVideoValueLabels();
             });
         BSML::Lite::AddHoverHint(
             videoTiltSlider_,
@@ -1019,7 +1122,6 @@ namespace BigScreen {
                         undockWarningModal_->Show();
                     return;
                 }
-                ScreenPreview::Instance().CancelUndockedEditing();
                 Settings::Instance().SetUndockedScreenEnabled(false);
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
@@ -1068,7 +1170,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             transparencyToggle_,
-            "Makes the video partly transparent so lights and scenery behind it can remain visible. Turn this off for an opaque picture that blocks the environment behind the screen.");
+            "Makes the picture partly transparent and removes black letterbox bars when the video does not fill the screen. Turn this off for an opaque picture with a solid black background around it.");
 
         // The controls above are created in callback-friendly groups, then
         // placed into their user-facing sections. Keep frame rotation and free
@@ -1242,7 +1344,7 @@ namespace BigScreen {
             viewController, {72.0f, 38.0f}, nullptr, false);
         auto* undockWarningText = BSML::Lite::CreateText(
             undockWarningModal_,
-            "Undock this screen?\n\nFree placement is an advanced feature. Keep the screen clear of Beat Saber's menus and use a comfortable size and distance. Leaving Big Screen or opening the Quest system menu cancels unsaved positioning.",
+            "Undock this screen?\n\nFree placement is an advanced feature. Keep the screen clear of Beat Saber's menus and use a comfortable size and distance. Big Screen asks before leaving with unsaved edits; opening the Quest system menu safely discards them.",
             TMPro::FontStyles::Normal,
             3.0f,
             {0.0f, 6.0f},
@@ -1277,6 +1379,55 @@ namespace BigScreen {
                     undockWarningModal_->Hide();
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
+            });
+
+        unsavedScreenModal_ = BSML::Lite::CreateModal(
+            viewController, {78.0f, 36.0f}, nullptr, false);
+        auto* unsavedText = BSML::Lite::CreateText(
+            unsavedScreenModal_,
+            "Save screen changes?\n\nThe unlocked screen has changes that have not been saved. Save them before leaving, discard them, or keep editing.",
+            TMPro::FontStyles::Normal,
+            3.2f,
+            {0.0f, 5.0f},
+            {70.0f, 20.0f});
+        unsavedText->set_enableWordWrapping(true);
+        unsavedText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            unsavedScreenModal_->get_transform(), "Discard",
+            {14.0f, -25.0f}, {20.0f, 8.0f},
+            [this]()
+            {
+                if(unsavedScreenModal_)
+                    unsavedScreenModal_->Hide();
+                ScreenPreview::Instance().CancelUndockedEditing();
+                auto continuation = std::move(pendingScreenNavigation_);
+                pendingScreenNavigation_ = {};
+                if(continuation)
+                    continuation();
+            });
+        BSML::Lite::CreateUIButton(
+            unsavedScreenModal_->get_transform(), "Keep Editing",
+            {39.0f, -25.0f}, {25.0f, 8.0f},
+            [this]()
+            {
+                if(unsavedScreenModal_)
+                    unsavedScreenModal_->Hide();
+                pendingScreenNavigation_ = {};
+                if(settingsTabs_)
+                    settingsTabs_->SelectCellWithNumber(1);
+            });
+        BSML::Lite::CreateUIButton(
+            unsavedScreenModal_->get_transform(), "Save",
+            {65.0f, -25.0f}, {18.0f, 8.0f},
+            [this]()
+            {
+                if(unsavedScreenModal_)
+                    unsavedScreenModal_->Hide();
+                ScreenPreview::Instance().SaveUndockedEditing();
+                auto continuation = std::move(pendingScreenNavigation_);
+                pendingScreenNavigation_ = {};
+                if(continuation)
+                    continuation();
             });
 
         nightlyWarningModal_ = BSML::Lite::CreateModal(
@@ -1522,6 +1673,46 @@ namespace BigScreen {
         RefreshCurvatureControl();
         RefreshAdvancedControls();
         RefreshUpdaterHint();
+        RefreshDisabledModeView();
+    }
+
+    void SettingsMenu::RefreshDisabledModeView()
+    {
+        const bool enabled = Settings::Instance().ModEnabled();
+
+        // Disabled mode is deliberately not a merely greyed-out full menu.
+        // Collapse General to its master switch and remove navigation to every
+        // feature that cannot operate, making the recovery action unambiguous.
+        if(generalContentRoot_ && generalMasterRoot_)
+        {
+            auto content = generalContentRoot_->get_transform();
+            const int childCount = content->get_childCount();
+            for(int index = 0; index < childCount; ++index)
+            {
+                auto child = content->GetChild(index);
+                if(child)
+                    child->get_gameObject()->SetActive(
+                        enabled || child->get_gameObject().ptr() == generalMasterRoot_);
+            }
+        }
+
+        if(!enabled)
+        {
+            selectedTab_ = 0;
+            for(int page = 0; page < static_cast<int>(tabViewRoots_.size()); ++page)
+                if(tabViewRoots_[page])
+                    tabViewRoots_[page]->SetActive(page == 0);
+        }
+        if(settingsTabs_)
+            settingsTabs_->get_gameObject()->SetActive(enabled);
+
+        if(!displayedEnabledStateKnown_ || displayedEnabledState_ != enabled)
+        {
+            displayedEnabledState_ = enabled;
+            displayedEnabledStateKnown_ = true;
+            if(modEnabledUiChanged_)
+                modEnabledUiChanged_(enabled);
+        }
     }
 
     void SettingsMenu::RefreshValues()
@@ -1605,11 +1796,14 @@ namespace BigScreen {
         if(videoZoomSlider_)
             videoZoomSlider_->set_Value(settings.VideoZoom());
         if(videoHorizontalSlider_)
-            videoHorizontalSlider_->set_Value(settings.VideoOffsetX());
+            videoHorizontalSlider_->set_Value(
+                VideoOffsetToZoomSlider(settings.VideoOffsetX()));
         if(videoVerticalSlider_)
-            videoVerticalSlider_->set_Value(settings.VideoOffsetY());
+            videoVerticalSlider_->set_Value(
+                VideoOffsetToZoomSlider(settings.VideoOffsetY()));
         if(videoTiltSlider_)
             videoTiltSlider_->set_Value(settings.VideoTilt());
+        RefreshVideoOffsetValueTexts();
         if(playbackFpsDropdown_)
         {
             const int index = settings.PlaybackFpsLimit() == 15
@@ -1645,11 +1839,14 @@ namespace BigScreen {
     {
         const auto& settings = Settings::Instance();
         const bool enabled = settings.ModEnabled();
+        const bool editingScreen =
+            ScreenPreview::Instance().IsUndockedEditing();
         const bool dockedGeometryEnabled = enabled &&
+            (editingScreen ||
             !(settings.AdvancedOptionsEnabled() &&
-              settings.UndockedScreenEnabled());
+              settings.UndockedScreenEnabled()));
         const bool advancedEnabled =
-            enabled && settings.AdvancedOptionsEnabled();
+            enabled && (settings.AdvancedOptionsEnabled() || editingScreen);
         const bool lightingChildrenEnabled =
             enabled && settings.MapLightShowEnabled();
 
@@ -1667,15 +1864,86 @@ namespace BigScreen {
             previewToggle_->set_interactable(enabled && settings.VideoEnabled());
         }
         if(distanceSetting_)
+        {
             distanceSetting_->set_interactable(dockedGeometryEnabled);
+            if(distanceSetting_->text)
+                distanceSetting_->text->get_gameObject()->SetActive(
+                    dockedGeometryEnabled);
+            if(distanceSetting_->slider &&
+               distanceSetting_->slider->get_handleRect())
+                distanceSetting_->slider->get_handleRect()
+                    ->get_gameObject()->SetActive(dockedGeometryEnabled);
+        }
         if(horizontalSetting_)
+        {
             horizontalSetting_->set_interactable(dockedGeometryEnabled);
+            if(horizontalSetting_->text)
+                horizontalSetting_->text->get_gameObject()->SetActive(
+                    dockedGeometryEnabled);
+            if(horizontalSetting_->slider &&
+               horizontalSetting_->slider->get_handleRect())
+                horizontalSetting_->slider->get_handleRect()
+                    ->get_gameObject()->SetActive(dockedGeometryEnabled);
+        }
         if(verticalSetting_)
+        {
             verticalSetting_->set_interactable(dockedGeometryEnabled);
+            if(verticalSetting_->text)
+                verticalSetting_->text->get_gameObject()->SetActive(
+                    dockedGeometryEnabled);
+            if(verticalSetting_->slider &&
+               verticalSetting_->slider->get_handleRect())
+                verticalSetting_->slider->get_handleRect()
+                    ->get_gameObject()->SetActive(dockedGeometryEnabled);
+        }
         if(tiltSetting_)
+        {
             tiltSetting_->set_interactable(dockedGeometryEnabled);
+            if(tiltSetting_->text)
+                tiltSetting_->text->get_gameObject()->SetActive(
+                    dockedGeometryEnabled);
+            if(tiltSetting_->slider &&
+               tiltSetting_->slider->get_handleRect())
+                tiltSetting_->slider->get_handleRect()
+                    ->get_gameObject()->SetActive(dockedGeometryEnabled);
+        }
         if(sizeSetting_)
+        {
             sizeSetting_->set_interactable(dockedGeometryEnabled);
+            if(sizeSetting_->text)
+                sizeSetting_->text->get_gameObject()->SetActive(
+                    dockedGeometryEnabled);
+            if(sizeSetting_->slider && sizeSetting_->slider->get_handleRect())
+                sizeSetting_->slider->get_handleRect()
+                    ->get_gameObject()->SetActive(dockedGeometryEnabled);
+        }
+
+        // Hover hints remain useful on disabled canvas rows, but their normal
+        // descriptions would imply that the controls should still respond.
+        // Explain that the unlocked screen's direct manipulation replaces
+        // these controls until the user saves or cancels positioning.
+        const char* freePositionHint =
+            "This control is unavailable while the screen is unlocked. Move or resize the screen directly, then save or cancel positioning to use this slider again.";
+        if(distanceHint_)
+            distanceHint_->set_text(dockedGeometryEnabled
+                ? "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled."
+                : freePositionHint);
+        if(horizontalHint_)
+            horizontalHint_->set_text(dockedGeometryEnabled
+                ? "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled."
+                : freePositionHint);
+        if(verticalHint_)
+            verticalHint_->set_text(dockedGeometryEnabled
+                ? "Moves the screen down with negative values and up with positive values. Free positioning replaces this control while Undock Screen is enabled."
+                : freePositionHint);
+        if(tiltHint_)
+            tiltHint_->set_text(dockedGeometryEnabled
+                ? "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled."
+                : freePositionHint);
+        if(sizeHint_)
+            sizeHint_->set_text(dockedGeometryEnabled
+                ? "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5. The resize handle replaces this control for an undocked screen."
+                : freePositionHint);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
         if(screenLayoutDropdown_)
@@ -1707,7 +1975,8 @@ namespace BigScreen {
             undockScreenToggle_->set_interactable(advancedEnabled);
         if(positionScreenButton_)
             positionScreenButton_->set_interactable(
-                advancedEnabled && settings.UndockedScreenEnabled());
+                advancedEnabled &&
+                (settings.UndockedScreenEnabled() || editingScreen));
         if(cancelPositioningButton_)
             cancelPositioningButton_->set_interactable(advancedEnabled);
         if(lightShowToggle_)
@@ -1770,7 +2039,9 @@ namespace BigScreen {
 
         if(sizeSetting_)
         {
-            sizeSetting_->maxValue = settings.MaximumScreenScale();
+            if(sizeSetting_->slider)
+                sizeSetting_->slider->set_maxValue(
+                    settings.MaximumScreenScale());
             sizeSetting_->set_Value(settings.ScreenScale());
 
             // BSML normally leaves an unusable maximum arrow visible but
@@ -1796,7 +2067,8 @@ namespace BigScreen {
     void SettingsMenu::RefreshAdvancedControls()
     {
         const bool advancedEnabled =
-            Settings::Instance().AdvancedOptionsEnabled();
+            Settings::Instance().AdvancedOptionsEnabled() ||
+            ScreenPreview::Instance().IsUndockedEditing();
         if(screenCanvasHeader_)
             screenCanvasHeader_->SetActive(advancedEnabled);
         if(advancedScreenControlsRoot_)
@@ -1817,19 +2089,154 @@ namespace BigScreen {
                 UnityEngine::UI::LayoutRebuilder::ForceRebuildLayoutImmediate(
                     parentRect);
             UnityEngine::Canvas::ForceUpdateCanvases();
+
+            // Entering Position Screen changes which rows are visible and
+            // forces this scroll content through a new layout pass. TextSlider
+            // calculates its value-label position relative to the handle, but
+            // RefreshValues runs before this rebuild. The rebuild therefore
+            // moves the slider/handle and leaves most value labels at their
+            // previous coordinates. Redraw all Screen sliders only after the
+            // final canvas layout, matching the Video Zoom row that happened
+            // to receive a later redraw already.
+            // Establish the reference row first, then redraw each target.
+            if(videoZoomSlider_ && videoZoomSlider_->slider)
+                videoZoomSlider_->slider->UpdateVisuals();
+            for(auto* setting : {
+                    distanceSetting_, horizontalSetting_, verticalSetting_,
+                    tiltSetting_, sizeSetting_, curvatureSlider_,
+                    screenRotationSlider_, videoRotationSlider_,
+                    videoHorizontalSlider_, videoVerticalSlider_,
+                    videoTiltSlider_})
+            {
+                if(setting && setting->slider)
+                    setting->slider->UpdateVisuals();
+            }
+
+            // Apply the remaining signed-control alignment only after the final
+            // layout. X/Y use the separate native Zoom-style redraw below.
+            AlignVideoValueLabels();
+            RefreshVideoOffsetValueTexts();
         }
         if(cancelPositioningButton_)
             cancelPositioningButton_->get_gameObject()->SetActive(
                 ScreenPreview::Instance().IsUndockedEditing());
     }
 
+    void SettingsMenu::AlignVideoValueLabels()
+    {
+        // SLIDER VALUE-LABEL REGRESSION GUARD:
+        // Video Zoom is the verified-good reference row. The signed-range
+        // video controls use its handle-relative value-text placement.
+        //
+        // Known failed approaches -- DO NOT REINTRODUCE:
+        // 1. Reparenting value text to the handle. Unity renders the child text
+        //    over the stock handle graphic, making the grab handle disappear.
+        // 2. Adding a custom image under handleRect. This produced oversized
+        //    white blocks rather than the stock thin draggable handle.
+        // 3. Applying world position only once during UI construction. The
+        //    later Screen-tab layout and TextSlider redraw moved values left.
+        // 4. Calling UpdateVisuals alone. It reproduces the signed-slider bug.
+        //
+        // Correct contract: keep the native text and handle in their original
+        // BSML hierarchy. Reapply Zoom's handle-relative text offset after the
+        // final layout and on every value change. This makes the text follow
+        // without changing the handle's shape, visibility, or drag behavior.
+        if(!videoZoomSlider_ || !videoZoomSlider_->slider ||
+           !videoZoomSlider_->text)
+            return;
+
+        auto* referenceHandle =
+            videoZoomSlider_->slider->get_handleRect().ptr();
+        if(!referenceHandle)
+            return;
+
+        // Measure the good row in handle-local coordinates after layout.
+        const auto referenceOffset = referenceHandle->InverseTransformPoint(
+            videoZoomSlider_->text->get_transform()->get_position());
+
+        for(auto* setting : {
+                videoRotationSlider_, videoTiltSlider_})
+        {
+            if(!setting || !setting->slider || !setting->text)
+                continue;
+
+            auto* handle = setting->slider->get_handleRect().ptr();
+            if(!handle)
+                continue;
+
+            // Preserve both native hierarchies. Transform the reference offset
+            // into this handle's world position, then move only the value text.
+            // Each slider callback reapplies this after TextSlider updates.
+            handle->get_gameObject()->SetActive(true);
+            setting->text->get_gameObject()->SetActive(true);
+            auto textTransform = setting->text->get_transform();
+            textTransform->set_position(
+                handle->TransformPoint(referenceOffset));
+        }
+    }
+
+    void SettingsMenu::RefreshVideoOffsetValueTexts()
+    {
+        const auto& settings = Settings::Instance();
+        const auto refresh = [](BSML::SliderSetting* setting, float offset)
+        {
+            if(!setting || !setting->slider || !setting->text)
+                return;
+
+            // This is the complete working Video Zoom visual path. Let HMUI
+            // position both native objects first, then replace only the string.
+            // Do not alter either transform or the handle graphic.
+            setting->slider->UpdateVisuals();
+            setting->text->set_text(fmt::format("{:.2f}", offset));
+        };
+
+        refresh(videoHorizontalSlider_, settings.VideoOffsetX());
+        refresh(videoVerticalSlider_, settings.VideoOffsetY());
+    }
+
     void SettingsMenu::ShowSettingsTab(int index)
     {
         index = std::clamp(index, 0, 4);
+        if(!Settings::Instance().ModEnabled() && index != 0)
+            return;
+        if(selectedTab_ == 1 && index != 1)
+        {
+            if(ScreenPreview::Instance().IsUndockedEditing())
+            {
+                if(settingsTabs_)
+                    settingsTabs_->SelectCellWithNumber(1);
+                RequestLeave([this, index]() { ShowSettingsTab(index); });
+                return;
+            }
+        }
         selectedTab_ = index;
         for(int page = 0; page < static_cast<int>(tabViewRoots_.size()); ++page)
             if(tabViewRoots_[page])
                 tabViewRoots_[page]->SetActive(page == selectedTab_);
+
+        // Slider values are initially loaded while the Screen tab is hidden.
+        // HMUI therefore cannot calculate the final handle/text coordinates at
+        // that time. Rebuild and redraw only after the tab is visible, matching
+        // the native update that previously occurred on the first user drag.
+        if(selectedTab_ == 1)
+        {
+            RefreshAdvancedControls();
+            RefreshVideoOffsetValueTexts();
+        }
+    }
+
+    void SettingsMenu::RequestLeave(std::function<void()> continuation)
+    {
+        if(!ScreenPreview::Instance().IsUndockedEditing())
+        {
+            if(continuation)
+                continuation();
+            return;
+        }
+
+        pendingScreenNavigation_ = std::move(continuation);
+        if(unsavedScreenModal_)
+            unsavedScreenModal_->Show();
     }
 
     void SettingsMenu::RefreshUpdaterHint()

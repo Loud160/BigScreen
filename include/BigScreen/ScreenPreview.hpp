@@ -5,6 +5,7 @@
 
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
+#include "BigScreen/Settings.hpp"
 
 namespace BSML { class FloatingScreen; }
 namespace HMUI { class ImageView; }
@@ -28,6 +29,10 @@ namespace BigScreen {
         void BeginUndockedEditing();
         void SaveUndockedEditing();
         void CancelUndockedEditing();
+        /// Applies current Screen-tab draft values without closing the editor.
+        void RefreshUndockedEditingFromSettings();
+        /// Captures controller movement before the layout selector changes.
+        void StageCurrentUndockedPlacement();
         void TickUndockedEditor();
         bool IsUndockedEditing() const { return editorScreen_ != nullptr; }
 
@@ -40,6 +45,9 @@ namespace BigScreen {
         bool CreateEditorUi();
         void UpdateEditorOverlayLayout();
         void PlaceResizeHandle();
+        /// Keeps a live Video Library preview attached to the editor while
+        /// placing its rendered pixels behind the editor's grab controls.
+        bool ApplyLibraryPreviewEditorDisplay(bool rebuildGeometry);
 
         std::optional<MapVideoConfig> baseConfig_;
         std::optional<MapVideoConfig> editorConfig_;
@@ -52,5 +60,7 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* editorMoveText_ = nullptr;
         TMPro::TextMeshProUGUI* editorAspectText_ = nullptr;
         UnityEngine::UI::Button* editorSaveButton_ = nullptr;
+        std::optional<ScreenLayoutProfile> editorAppliedLayout_;
+        int editorLayoutIndex_ = -1;
     };
 }
