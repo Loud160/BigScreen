@@ -1,5 +1,13 @@
 # Future work
 
+## TODO: Rebuild the deferred menu gameplay-environment preview safely
+
+The attempted partial gameplay host was removed after repeatable Quest menu
+crashes. Do not restore or repeat that scene-stack implementation. The full
+failure history, Beat Saber scene contract, rejected approaches, recommended
+render-only proxy design, and required headset validation are recorded in
+[`MENU_ENVIRONMENT_PREVIEW_DEFERRED.md`](MENU_ENVIRONMENT_PREVIEW_DEFERRED.md).
+
 ## TODO: Split oversized source files after major behavior stabilizes
 
 This refactor is deliberately deferred until the current playback, downloader,
