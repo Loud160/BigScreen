@@ -2,9 +2,6 @@ Param(
     [Parameter(Mandatory=$false)]
     [String] $qmodName="",
 
-    [ValidateSet("4.4.8", "9.0.1")]
-    [String] $FfmpegVersion = $(if ($env:BIGSCREEN_FFMPEG_VERSION) { $env:BIGSCREEN_FFMPEG_VERSION } else { "4.4.8" }),
-
     [Parameter(Mandatory=$false)]
     [Switch] $help
 )
@@ -32,6 +29,13 @@ if (-not $?) {
 
 $mod = "./mod.json"
 
+# Refuse to package a stale or incorrectly linked comparison build even when
+# createqmod.ps1 is called independently from build.ps1.
+& $PSScriptRoot/validate-ffmpeg-elf.ps1
+if (-not $?) {
+    exit 1
+}
+
 & $PSScriptRoot/validate-modjson.ps1
 if (-not $?) {
     exit 1
@@ -46,10 +50,16 @@ $modJson.version = $templateJson.version
 # removing Hollywood from qpm.json so offline packaging is deterministic.
 $modJson.dependencies = @($modJson.dependencies | Where-Object { $_.id -ne "hollywood" })
 $requiredLibraries = @(
-    "libavformat-bigscreen.so",
-    "libavcodec-bigscreen.so",
-    "libavutil-bigscreen.so",
-    "libswscale-bigscreen.so",
+    "libbigscreen-ffmpeg44-backend.so",
+    "libbigscreen-ffmpeg9-backend.so",
+    "libavformat-bigscreen44.so",
+    "libavcodec-bigscreen44.so",
+    "libavutil-bigscreen44.so",
+    "libswscale-bigscreen44.so",
+    "libavformat-bigscreen9.so",
+    "libavcodec-bigscreen9.so",
+    "libavutil-bigscreen9.so",
+    "libswscale-bigscreen9.so",
     "libbeatsaber-hook_5_1_9.so",
     "libpython3.14.so",
     "libssl_python.so",
@@ -68,7 +78,7 @@ $runtimeStage = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "bu
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 # Install redistributable notices beside the embedded runtime. Users and mod
 # managers should not need the Git repository to discover dependency terms.
-& $PSScriptRoot/stage-runtime-notices.ps1 -FfmpegVersion $FfmpegVersion
+& $PSScriptRoot/stage-runtime-notices.ps1
 if (-not $?) {
     exit 1
 }
@@ -82,8 +92,10 @@ $runtimeFiles = @(
     "BIGSCREEN-LICENSE.txt"
     "THIRD-PARTY-NOTICES.md"
     "FFMPEG-LGPL-2.1-OR-LATER.txt"
-    "FFMPEG-BUILD-INFO.txt"
-    "FFMPEG-CHANGES.diff"
+    "FFMPEG-4.4.8-BUILD-INFO.txt"
+    "FFMPEG-4.4.8-CHANGES.diff"
+    "FFMPEG-9.0.1-BUILD-INFO.txt"
+    "FFMPEG-9.0.1-CHANGES.diff"
     "CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt"

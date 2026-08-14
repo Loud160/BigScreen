@@ -28,6 +28,7 @@ namespace BigScreen {
         double missedVideoFramePercent = 0.0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
+        std::string decoderRuntime;
     };
 
     /// Owns the movable performance-information panel shown in Big Screen's
@@ -93,5 +94,10 @@ namespace BigScreen {
         // LayoutElement so the columns are laid out to the fixed body box.
         std::array<TMPro::TextMeshProUGUI*, 2> leftRows_{};
         std::array<TMPro::TextMeshProUGUI*, 7> rightRows_{};
+        // TMPro/handle failures can occur every frame while Unity tears down a
+        // scene. Record each category once per panel lifetime instead of
+        // flooding persistent storage with identical diagnostics.
+        bool rowFailureLogged_ = false;
+        bool interactionFailureLogged_ = false;
     };
 }

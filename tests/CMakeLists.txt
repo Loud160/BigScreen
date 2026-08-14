@@ -98,6 +98,8 @@ if(HOST_FFMPEG_FOUND AND Python3_Interpreter_FOUND)
         FrameDecoderTests.cpp
         ../src/FrameDecoder.cpp)
     target_compile_features(bigscreen-frame-decoder-tests PRIVATE cxx_std_20)
+    target_compile_definitions(bigscreen-frame-decoder-tests PRIVATE
+        BIGSCREEN_SINGLE_FFMPEG=1)
     target_compile_options(bigscreen-frame-decoder-tests PRIVATE
         -Wall -Wextra -Wpedantic -Werror)
     target_include_directories(bigscreen-frame-decoder-tests PRIVATE

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-# Build the private FFmpeg runtime used by Big Screen.
+# Build one of the two private FFmpeg runtimes used by Big Screen.
 #
 # Big Screen deliberately builds FFmpeg itself instead of linking against the
 # GPL-configured FFmpeg libraries supplied by Hollywood.  The resulting four
 # shared libraries contain only the media features Big Screen calls and use a
-# private SONAME plus a private ELF symbol-version namespace.  Both forms of
+# version-specific SONAME plus a private ELF symbol-version namespace. Both
 # isolation matter: a unique filename prevents Android from treating the two
 # FFmpeg builds as the same library, while unique symbol versions prevent the
 # dynamic linker from satisfying Big Screen's FFmpeg calls with Hollywood's
@@ -21,6 +21,7 @@ case "${ffmpeg_version}" in
     4.4.8)
         ffmpeg_sha256="c73848c4ae283d9eaee7be3b276affbc3543380483555500d0dd2c9b7e1c39c3"
         postproc_option="--disable-postproc"
+        runtime_tag="44"
         ;;
     9.0.1)
         ffmpeg_sha256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
@@ -28,12 +29,15 @@ case "${ffmpeg_version}" in
         # The 9.x runtime is still decoder-only because --disable-everything
         # starts from no components and the allowlist below is explicit.
         postproc_option=""
+        runtime_tag="9"
         ;;
     *)
         printf 'Unsupported FFmpeg comparison version: %s\n' "${ffmpeg_version}" >&2
         exit 1
         ;;
 esac
+build_suffix="-bigscreen${runtime_tag}"
+symbol_namespace="BIGSCREEN${runtime_tag}"
 ffmpeg_archive="ffmpeg-${ffmpeg_version}.tar.xz"
 ffmpeg_url="https://ffmpeg.org/releases/${ffmpeg_archive}"
 android_api="24"
@@ -62,10 +66,10 @@ android_ndk_root="${ANDROID_NDK_ROOT:-${default_ndk_root}}"
 toolchain_bin="${android_ndk_root}/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
 required_outputs=(
-    "libavutil-bigscreen.so"
-    "libavcodec-bigscreen.so"
-    "libavformat-bigscreen.so"
-    "libswscale-bigscreen.so"
+    "libavutil${build_suffix}.so"
+    "libavcodec${build_suffix}.so"
+    "libavformat${build_suffix}.so"
+    "libswscale${build_suffix}.so"
 )
 
 is_complete_install() {
@@ -111,10 +115,10 @@ cp -a "${source_root}" "${pristine_root}"
 # BIGSCREEN_LIBAVCODEC_58 instead of accepting any unversioned avcodec symbol.
 sed -i '/^[[:space:]]*android)$/,/^[[:space:]]*;;/ s/^[[:space:]]*disable symver$/        enable symver/' \
     "${source_root}/configure"
-sed -i 's/^LIBAVCODEC_/BIGSCREEN_LIBAVCODEC_/' "${source_root}/libavcodec/libavcodec.v"
-sed -i 's/^LIBAVFORMAT_/BIGSCREEN_LIBAVFORMAT_/' "${source_root}/libavformat/libavformat.v"
-sed -i 's/^LIBAVUTIL_/BIGSCREEN_LIBAVUTIL_/' "${source_root}/libavutil/libavutil.v"
-sed -i 's/^LIBSWSCALE_/BIGSCREEN_LIBSWSCALE_/' "${source_root}/libswscale/libswscale.v"
+sed -i "s/^LIBAVCODEC_/${symbol_namespace}_LIBAVCODEC_/" "${source_root}/libavcodec/libavcodec.v"
+sed -i "s/^LIBAVFORMAT_/${symbol_namespace}_LIBAVFORMAT_/" "${source_root}/libavformat/libavformat.v"
+sed -i "s/^LIBAVUTIL_/${symbol_namespace}_LIBAVUTIL_/" "${source_root}/libavutil/libavutil.v"
+sed -i "s/^LIBSWSCALE_/${symbol_namespace}_LIBSWSCALE_/" "${source_root}/libswscale/libswscale.v"
 
 mkdir -p "${build_root}"
 cd "${build_root}"
@@ -129,7 +133,7 @@ cd "${build_root}"
     --target-os=android \
     --arch=aarch64 \
     --cpu=armv8-a \
-    --build-suffix=-bigscreen \
+    --build-suffix="${build_suffix}" \
     --enable-cross-compile \
     --sysroot="${toolchain_bin}/../sysroot" \
     --cc="${toolchain_bin}/aarch64-linux-android${android_api}-clang" \
@@ -204,7 +208,7 @@ for library in "${required_outputs[@]}"; do
         printf 'Unisolated FFmpeg dependency found in %s\n' "${library_path}" >&2
         exit 1
     fi
-    if ! grep -q 'BIGSCREEN_LIB' <<<"${version_metadata}"; then
+    if ! grep -q "${symbol_namespace}_LIB" <<<"${version_metadata}"; then
         printf 'Private FFmpeg symbol versions are missing from %s\n' "${library_path}" >&2
         exit 1
     fi
@@ -221,6 +225,6 @@ License configuration: LGPL-2.1-or-later; GPL and nonfree components disabled
 Build script: scripts/build-ffmpeg-lgpl.sh
 EOF
 
-sha256sum "${install_root}"/lib/*-bigscreen.so > "${install_root}/SHA256SUMS"
+sha256sum "${install_root}"/lib/*"${build_suffix}".so > "${install_root}/SHA256SUMS"
 printf 'FFmpeg %s LGPL runtime built successfully.\n' "${ffmpeg_version}" > "${stamp_path}"
 printf 'Staged Big Screen LGPL FFmpeg at %s\n' "${install_root}"

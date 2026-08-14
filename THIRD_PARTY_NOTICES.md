@@ -16,14 +16,14 @@ also use independent third-party components under their own terms:
   scripts. It is not installed or launched as a separate executable.
 - **certifi** — Mozilla Public License 2.0. Its CA bundle is installed as a
   physical package for Python/OpenSSL certificate validation.
-- **FFmpeg 4.4.8 or 9.0.1 libraries** (`avformat`, `avcodec`, `avutil`, `swscale`) — Big
-  Screen builds and dynamically links a private Android ARM64 runtime under the
+- **FFmpeg 4.4.8 and 9.0.1 libraries** (`avformat`, `avcodec`, `avutil`, `swscale`) — Big
+  Screen builds and dynamically links two private Android ARM64 runtimes under the
   GNU Lesser General Public License 2.1 or later. It is configured without
   `--enable-gpl`, `--enable-version3`, or `--enable-nonfree`; it contains only
   H.264 decoding, MP4/MOV demuxing, local-file access, and frame scaling. The
-  QMOD includes the LGPL text, exact selected-version build information, and
-  source changes. Normal releases currently select 4.4.8; 9.0.1 is retained as
-  a separately buildable comparison candidate, and the QMOD never mixes them.
+  QMOD includes the LGPL text, both versions' exact build information, and
+  source changes. Distinct SONAMEs, symbol namespaces, and decoder backends let
+  both runtimes coexist for an in-game A/B selector; 4.4.8 remains the default.
 - **beatsaber-hook, BSML, custom-types, SongCore, Paper, Scotland2, and generated
   Beat Saber CORDL headers** — separate Quest modding dependencies. Versions and
   resolved sources are recorded in `qpm.json` and `qpm.shared.json`.

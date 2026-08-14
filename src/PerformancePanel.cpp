@@ -1,4 +1,5 @@
 #include "BigScreen/PerformancePanel.hpp"
+#include "main.hpp"
 
 #include <exception>
 #include <format>
@@ -262,6 +263,12 @@ namespace BigScreen {
             const bool live = data != nullptr;
             const PerformancePanelData zero{};
             const PerformancePanelData& d = live ? *data : zero;
+            if(rightHeader_)
+                rightHeader_->set_text(std::format(
+                    "<color=#75DFFF><b>Video{}</b></color>",
+                    live && !d.decoderRuntime.empty()
+                        ? " · FFmpeg " + d.decoderRuntime
+                        : std::string{}));
             if(fpsValue_)
                 fpsValue_->set_text(std::format(
                     "<b>{}</b>",
@@ -315,9 +322,15 @@ namespace BigScreen {
         catch(...)
         {
             // A transient TMPro failure must not interrupt preview playback.
-            ErrorManager::Instance().RecordError(
-                "Updating the performance panel",
-                "Unity rejected the performance text update");
+            if(!rowFailureLogged_)
+            {
+                rowFailureLogged_ = true;
+                PaperLogger.warn(
+                    "Unity rejected a performance-panel text update");
+                ErrorManager::Instance().RecordError(
+                    "Updating the performance panel",
+                    "Unity rejected the performance text update");
+            }
         }
     }
 
@@ -357,6 +370,15 @@ namespace BigScreen {
             // A panel may be destroyed during the same Unity frame as a menu
             // or gameplay transition. Interaction is optional diagnostics UI,
             // so a stale transient reference must never interrupt playback.
+            if(!interactionFailureLogged_)
+            {
+                interactionFailureLogged_ = true;
+                PaperLogger.warn(
+                    "Unity rejected performance-panel interaction during a transition");
+                ErrorManager::Instance().RecordError(
+                    "Moving the performance panel",
+                    "Unity rejected the panel interaction during a scene transition");
+            }
         }
     }
 
@@ -752,6 +774,8 @@ namespace BigScreen {
             // every pointer prevents a stale Unity object from being reused.
         }
         screen_ = nullptr;
+        rowFailureLogged_ = false;
+        interactionFailureLogged_ = false;
         background_ = nullptr;
         headsetCard_ = nullptr;
         videoCard_ = nullptr;

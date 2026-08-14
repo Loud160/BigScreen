@@ -110,6 +110,11 @@ namespace BigScreen {
         return menu;
     }
 
+    void StorageMaintenanceMenu::ForgetUi()
+    {
+        *this = StorageMaintenanceMenu{};
+    }
+
     void StorageMaintenanceMenu::CreateUi(
         HMUI::ViewController* controller,
         std::function<void()> onBack)
@@ -307,9 +312,12 @@ namespace BigScreen {
         ErrorManager::Instance().Guard("starting a storage scan", []()
         {
             std::string error;
-            if(!StorageManager::Instance().StartScan(error) && !error.empty())
+            if(!StorageManager::Instance().StartScan(error))
                 ErrorManager::Instance().ReportUserVisible(
-                    "Storage scan could not start", error);
+                    "Storage scan could not start",
+                    error.empty()
+                        ? "Big Screen could not start the storage scan. See the error log for details."
+                        : error);
         });
         Refresh();
     }
@@ -326,11 +334,13 @@ namespace BigScreen {
             [selected = std::move(selected)]()
             {
                 std::string error;
-                if(!StorageManager::Instance().StartCleanup(selected, error) &&
-                   !error.empty())
+                if(!StorageManager::Instance().StartCleanup(selected, error))
                 {
                     ErrorManager::Instance().ReportUserVisible(
-                        "Storage cleanup could not start", error);
+                        "Storage cleanup could not start",
+                        error.empty()
+                            ? "Big Screen could not start storage cleanup. See the error log for details."
+                            : error);
                 }
             });
         Refresh();

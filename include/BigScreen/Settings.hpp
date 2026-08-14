@@ -114,6 +114,7 @@ namespace BigScreen {
         bool HideSpectrogramBars() const { return hideSpectrogramBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
+        bool UseFfmpeg9() const { return useFfmpeg9_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
         float AutomaticPerformanceResponseSeconds() const {
@@ -164,6 +165,7 @@ namespace BigScreen {
         void SetHideSpectrogramBars(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
+        void SetUseFfmpeg9(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
         void SetAutomaticPerformanceResponseSeconds(float value);
@@ -202,6 +204,9 @@ namespace BigScreen {
         bool hideSpectrogramBars_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
+        // FFmpeg 4.4.8 remains the conservative default until repeated Quest
+        // comparisons justify promoting the newer runtime.
+        bool useFfmpeg9_ = false;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceResponseSeconds_ = 5.0f;

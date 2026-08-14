@@ -22,6 +22,20 @@
 #include "main.hpp"
 
 namespace BigScreen {
+    namespace {
+        std::optional<std::tm> LocalTime(std::time_t value) noexcept
+        {
+            std::tm result{};
+#if defined(_WIN32)
+            return localtime_s(&result, &value) == 0
+                ? std::optional<std::tm>(result) : std::nullopt;
+#else
+            return localtime_r(&value, &result)
+                ? std::optional<std::tm>(result) : std::nullopt;
+#endif
+        }
+    }
+
     ErrorManager& ErrorManager::Instance()
     {
         static ErrorManager manager;
@@ -88,9 +102,9 @@ namespace BigScreen {
 
             const auto now = std::chrono::system_clock::now();
             const std::time_t time = std::chrono::system_clock::to_time_t(now);
-            const std::tm* local = std::localtime(&time);
+            const auto local = LocalTime(time);
             if(local)
-                output << '[' << std::put_time(local, "%Y-%m-%d %H:%M:%S") << "] ";
+                output << '[' << std::put_time(&*local, "%Y-%m-%d %H:%M:%S") << "] ";
             output << context << ": " << detail << '\n';
             output.flush();
         }
@@ -117,10 +131,10 @@ namespace BigScreen {
 
             const auto now = std::chrono::system_clock::now();
             const std::time_t time = std::chrono::system_clock::to_time_t(now);
-            const std::tm* local = std::localtime(&time);
+            const auto local = LocalTime(time);
             output << "\n[";
             if(local)
-                output << std::put_time(local, "%Y-%m-%d %H:%M:%S");
+                output << std::put_time(&*local, "%Y-%m-%d %H:%M:%S");
             else
                 output << "unknown time";
             output << "] " << mapIdentity << '\n'

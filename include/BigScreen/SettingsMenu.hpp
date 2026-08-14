@@ -36,6 +36,10 @@ namespace BigScreen {
             std::function<void()> onBack,
             std::function<void()> onManageStorage,
             std::function<void(bool)> onModEnabledChanged);
+        /// Clears scene-owned IL2CPP references before a replacement menu
+        /// hierarchy is constructed. Native singletons outlive MenuCore's
+        /// view objects, so stale non-null pointers must never be reused.
+        void ForgetUi();
         void RefreshControls();
         void RefreshDownloaderStatus();
         /// Runs the requested navigation immediately unless an unlocked screen
@@ -116,6 +120,7 @@ namespace BigScreen {
         HMUI::HoverHint* hideSpectrogramBarsHint_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
+        BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
         BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;

@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -31,6 +32,54 @@ namespace BigScreen {
         double durationSeconds = 0.0;
     };
 
+    /// ABI-neutral contract shared by the separately compiled FFmpeg 4.4 and
+    /// FFmpeg 9 decoder implementations. No FFmpeg type crosses this boundary:
+    /// each implementation is compiled with the exact headers matching its
+    /// own uniquely named runtime libraries.
+    class FrameDecoderBackend {
+    public:
+        virtual ~FrameDecoderBackend() = default;
+        virtual bool Open(
+            const std::filesystem::path& videoPath,
+            int maximumOutputHeight,
+            std::string& error) = 0;
+        virtual void Close() = 0;
+        virtual void Request(double mediaSeconds) = 0;
+        virtual bool TryTake(VideoFrame& destination) = 0;
+        virtual void Recycle(VideoFrame&& frame) = 0;
+        virtual std::optional<std::string> TakeError() = 0;
+        virtual bool IsOpen() const = 0;
+        virtual int Width() const = 0;
+        virtual int Height() const = 0;
+        virtual int SourceWidth() const = 0;
+        virtual int SourceHeight() const = 0;
+        virtual double SourceFramesPerSecond() const = 0;
+        virtual double AverageDecodeMilliseconds() const = 0;
+        virtual double PeakDecodeMilliseconds() const = 0;
+        virtual void ResetPeakDecodeMilliseconds() = 0;
+        virtual double WorkerCpuMilliseconds() const = 0;
+        virtual double DurationSeconds() const = 0;
+        virtual std::uint64_t BufferAllocations() const = 0;
+        virtual const char* RuntimeVersion() const = 0;
+    };
+
+#if defined(__GNUC__) || defined(__clang__)
+#define BIGSCREEN_FFMPEG_BACKEND_EXPORT __attribute__((visibility("default")))
+#else
+#define BIGSCREEN_FFMPEG_BACKEND_EXPORT
+#endif
+
+    // These are the only symbols exported by the two decoder backend shared
+    // libraries. The object is destroyed through its virtual destructor, so
+    // no FFmpeg-owned allocation or public structure crosses the boundary.
+    BIGSCREEN_FFMPEG_BACKEND_EXPORT
+    std::unique_ptr<FrameDecoderBackend> CreateFrameDecoder44Backend();
+    BIGSCREEN_FFMPEG_BACKEND_EXPORT
+    std::unique_ptr<FrameDecoderBackend> CreateFrameDecoder9Backend();
+
+#if defined(BIGSCREEN_NATIVE_FFMPEG_IMPLEMENTATION) || \
+    defined(BIGSCREEN_SINGLE_FFMPEG)
+
     /// Externally-clocked FFmpeg decoder.
     ///
     /// Big Screen intentionally does not run its own playback clock. Beat Saber
@@ -38,10 +87,10 @@ namespace BigScreen {
     /// same timestamps while rendering at a fixed simulation step. The worker
     /// thread decodes toward the newest request and publishes a one-frame
     /// mailbox for the Unity thread to consume without blocking gameplay.
-    class FrameDecoder final {
+    class FrameDecoder final : public FrameDecoderBackend {
     public:
         FrameDecoder() = default;
-        ~FrameDecoder();
+        ~FrameDecoder() override;
 
         FrameDecoder(const FrameDecoder&) = delete;
         FrameDecoder& operator=(const FrameDecoder&) = delete;
@@ -51,40 +100,41 @@ namespace BigScreen {
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
-            std::string& error);
-        void Close();
+            std::string& error) override;
+        void Close() override;
 
         /// Publishes the newest externally-clocked target. The worker may
         /// intentionally coalesce obsolete targets so playback stays current.
-        void Request(double mediaSeconds);
-        bool TryTake(VideoFrame& destination);
+        void Request(double mediaSeconds) override;
+        bool TryTake(VideoFrame& destination) override;
         /// Returns a consumed RGBA allocation to the decoder. Keeping a small
         /// pool avoids allocating and freeing a multi-megabyte 1080p vector for
         /// every presented frame.
-        void Recycle(VideoFrame&& frame);
+        void Recycle(VideoFrame&& frame) override;
         /// Moves the first decoder-worker failure to the main thread. The
         /// caller can stop only the video and defer UI until gameplay ends.
-        std::optional<std::string> TakeError();
+        std::optional<std::string> TakeError() override;
 
-        bool IsOpen() const { return open_.load(); }
-        int Width() const { return width_; }
-        int Height() const { return height_; }
-        int SourceWidth() const { return sourceWidth_; }
-        int SourceHeight() const { return sourceHeight_; }
-        double SourceFramesPerSecond() const {
+        bool IsOpen() const override { return open_.load(); }
+        int Width() const override { return width_; }
+        int Height() const override { return height_; }
+        int SourceWidth() const override { return sourceWidth_; }
+        int SourceHeight() const override { return sourceHeight_; }
+        double SourceFramesPerSecond() const override {
             return nominalFrameSeconds_ > 0.0 ? 1.0 / nominalFrameSeconds_ : 0.0;
         }
-        double AverageDecodeMilliseconds() const { return averageDecodeMilliseconds_.load(); }
-        double PeakDecodeMilliseconds() const { return peakDecodeMilliseconds_.load(); }
-        void ResetPeakDecodeMilliseconds() { peakDecodeMilliseconds_ = 0.0; }
+        double AverageDecodeMilliseconds() const override { return averageDecodeMilliseconds_.load(); }
+        double PeakDecodeMilliseconds() const override { return peakDecodeMilliseconds_.load(); }
+        void ResetPeakDecodeMilliseconds() override { peakDecodeMilliseconds_ = 0.0; }
         /// CPU time consumed by Big Screen's owned decoder worker since this
         /// decoder was opened. Unlike wall-clock decode latency, sleeping while
         /// waiting for a timestamp does not increase this value.
-        double WorkerCpuMilliseconds() const {
+        double WorkerCpuMilliseconds() const override {
             return workerCpuNanoseconds_.load() / 1'000'000.0;
         }
-        double DurationSeconds() const { return durationSeconds_; }
-        std::uint64_t BufferAllocations() const { return bufferAllocations_.load(); }
+        double DurationSeconds() const override { return durationSeconds_; }
+        std::uint64_t BufferAllocations() const override { return bufferAllocations_.load(); }
+        const char* RuntimeVersion() const override;
 
     private:
         void WorkerMain() noexcept;
@@ -140,4 +190,45 @@ namespace BigScreen {
         std::mutex errorMutex_;
         std::optional<std::string> workerError_;
     };
+#else
+    /// Runtime-selecting facade used by gameplay and menu previews. Selecting
+    /// another FFmpeg version affects the next Open call; no decoder is ever
+    /// replaced while its worker owns codec state.
+    class FrameDecoder final {
+    public:
+        FrameDecoder() = default;
+        ~FrameDecoder();
+        FrameDecoder(const FrameDecoder&) = delete;
+        FrameDecoder& operator=(const FrameDecoder&) = delete;
+
+        bool Open(
+            const std::filesystem::path& videoPath,
+            int maximumOutputHeight,
+            std::string& error);
+        void Close();
+        void Request(double mediaSeconds);
+        bool TryTake(VideoFrame& destination);
+        void Recycle(VideoFrame&& frame);
+        std::optional<std::string> TakeError();
+
+        bool IsOpen() const;
+        int Width() const;
+        int Height() const;
+        int SourceWidth() const;
+        int SourceHeight() const;
+        double SourceFramesPerSecond() const;
+        double AverageDecodeMilliseconds() const;
+        double PeakDecodeMilliseconds() const;
+        void ResetPeakDecodeMilliseconds();
+        double WorkerCpuMilliseconds() const;
+        double DurationSeconds() const;
+        std::uint64_t BufferAllocations() const;
+        const char* RuntimeVersion() const;
+
+    private:
+        std::unique_ptr<FrameDecoderBackend> backend_;
+    };
+#endif
 }
+
+#undef BIGSCREEN_FFMPEG_BACKEND_EXPORT

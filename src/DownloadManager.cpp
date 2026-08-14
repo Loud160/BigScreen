@@ -84,9 +84,11 @@ namespace BigScreen {
                 }
                 // Formatting is best-effort. Do not let a secondary traceback
                 // formatting error hide the original exception string.
-                PyErr_Clear();
             }
 
+            // Every failed formatting attempt leaves its own Python exception.
+            // Clear it before asking PyObject_Str to describe the original.
+            PyErr_Clear();
             PythonObject fallback{PyObject_Str(exception.get())};
             if(fallback)
             {
@@ -104,8 +106,9 @@ namespace BigScreen {
             PythonObject globals{PyDict_New()};
             if(!globals)
                 return {};
-            if(PyDict_SetItemString(
-                   globals.get(), "__builtins__", PyEval_GetBuiltins()) < 0)
+            PythonObject builtins{PyImport_ImportModule("builtins")};
+            if(!builtins || PyDict_SetItemString(
+                   globals.get(), "__builtins__", builtins.get()) < 0)
                 return {};
             PythonObject job{PyUnicode_FromStringAndSize(
                 json, static_cast<Py_ssize_t>(jsonLength))};
@@ -845,14 +848,15 @@ try:
     size = os.path.getsize(job['finalPath'])
 
     # Keep the video's own YouTube artwork beside Big Screen's durable video
-    # library. Thumbnail failure must not discard a successfully downloaded
-    # video, but an older thumbnail must never be left behind after replacing
-    # a video with a different URL.
+    # library. Derive the pinned image host from YouTube's validated video id
+    # instead of trusting a metadata-provided arbitrary URL. A transient image
+    # failure preserves the last known-good thumbnail and never fails video.
     thumbnail_path = job['thumbnailPath']
     published_thumbnail = ''
     try:
-        thumbnail_url = str(result.get('thumbnail') or info.get('thumbnail') or '')
-        if thumbnail_url:
+        video_id = str(result.get('id') or info.get('id') or '')
+        if re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id):
+            thumbnail_url = 'https://i.ytimg.com/vi/' + video_id + '/hqdefault.jpg'
             request = urllib.request.Request(
                 thumbnail_url,
                 headers={'User-Agent': 'Big-Screen-Beat-Saber'})
@@ -867,11 +871,17 @@ try:
                 os.fsync(stream.fileno())
             os.replace(temporary_thumbnail, thumbnail_path)
             published_thumbnail = thumbnail_path
-        elif os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
-    except BaseException:
-        if os.path.exists(thumbnail_path):
-            os.remove(thumbnail_path)
+    except BaseException as thumbnail_error:
+        try:
+            if os.path.exists(thumbnail_path + '.tmp'):
+                os.remove(thumbnail_path + '.tmp')
+        except OSError:
+            pass
+        # Keep the established thumbnail. Its failure detail is appended to
+        # the terminal status for the persistent log without confusing the
+        # user by changing a successful video download into a failed one.
+        published_thumbnail = thumbnail_path if os.path.exists(thumbnail_path) else ''
+        retry_detail += 'Thumbnail warning: ' + clean_error(thumbnail_error) + '. '
 
     publish(
         'completed',
@@ -882,6 +892,7 @@ try:
         height=chosen.get('height') or 0,
         codec=chosen.get('vcodec') or 'h264',
         thumbnailPath=published_thumbnail,
+        diagnostic=retry_detail.strip(),
         bytes=size,
         downloadedBytes=size,
         totalBytes=size)
@@ -909,6 +920,10 @@ import json, os, re, urllib.request
 
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
+
+def cancelled():
+    if os.path.exists(job['cancelPath']):
+        raise KeyboardInterrupt('Video URL check cancelled')
 
 def publish(state, message='', **values):
     data = {'state': state, 'message': message}
@@ -966,6 +981,7 @@ def classify(value):
 
 try:
     publish('probing', 'Checking YouTube URL')
+    cancelled()
     import bigscreen_jsc_provider
     import yt_dlp
     with yt_dlp.YoutubeDL({
@@ -974,6 +990,7 @@ try:
             'noplaylist': True,
             'skip_download': True}) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
+    cancelled()
     video_id = str(info.get('id') or '')
     title = str(info.get('title') or 'YouTube video')
     if not video_id:
@@ -987,6 +1004,7 @@ try:
         headers={'User-Agent': 'Big-Screen-Beat-Saber'})
     with urllib.request.urlopen(request, timeout=20) as response:
         image = response.read(4 * 1024 * 1024 + 1)
+    cancelled()
     if len(image) > 4 * 1024 * 1024:
         raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
     temporary = job['thumbnailPath'] + '.tmp'
@@ -1000,6 +1018,8 @@ try:
         'Recognized: ' + title,
         title=title,
         thumbnailPath=job['thumbnailPath'])
+except KeyboardInterrupt:
+    publish('cancelled', 'Video URL check cancelled')
 except BaseException as error:
     publish('failed', classify(error))
 )PY";
@@ -1007,6 +1027,9 @@ except BaseException as error:
         constexpr const char* UpdaterScript = R"PY(
 import hashlib, json, os, urllib.request, zipfile
 job = json.loads(BIGSCREEN_JOB)
+def cancelled():
+    if os.path.exists(job['cancelPath']):
+        raise KeyboardInterrupt('yt-dlp update cancelled')
 def publish(state, message='', **extra):
     value = {'state': state, 'message': message}; value.update(extra)
     temporary = job['statusPath'] + '.tmp'
@@ -1015,12 +1038,14 @@ def publish(state, message='', **extra):
     os.replace(temporary, job['statusPath'])
 try:
     publish('preparing', 'Checking yt-dlp releases')
+    cancelled()
     repository = 'yt-dlp/yt-dlp-nightly-builds' if job['nightly'] else 'yt-dlp/yt-dlp'
     request = urllib.request.Request(
         'https://api.github.com/repos/' + repository + '/releases/latest',
         headers={'User-Agent': 'Big-Screen-Beat-Saber'})
     with urllib.request.urlopen(request, timeout=30) as response:
         release = json.load(response)
+    cancelled()
     version = str(release.get('tag_name') or '')
     current = job['currentVersion']
     rejected = job.get('rejectedVersion', '')
@@ -1038,6 +1063,7 @@ try:
             raise RuntimeError('The selected release does not contain an official SHA-256 checksum list.')
         with urllib.request.urlopen(urllib.request.Request(sums_url, headers={'User-Agent':'Big-Screen-Beat-Saber'}), timeout=30) as response:
             sums = response.read().decode('utf-8')
+        cancelled()
         expected = next((line.split()[0] for line in sums.splitlines() if line.rstrip().endswith('yt-dlp')), '')
         if not expected:
             raise RuntimeError('yt-dlp checksum list did not include the Android-compatible Python package.')
@@ -1050,6 +1076,7 @@ try:
                 raise RuntimeError('The yt-dlp update is larger than Big Screen\'s 32 MB safety limit.')
             downloaded_size = 0
             while True:
+                cancelled()
                 block = response.read(262144)
                 if not block: break
                 downloaded_size += len(block)
@@ -1073,6 +1100,8 @@ try:
         with open(job['nextPath'] + '.version', 'w', encoding='utf-8') as version_file:
             version_file.write(version)
         publish('completed', 'yt-dlp ' + version + ' verified. Restart Beat Saber to activate it.', version=version)
+except KeyboardInterrupt:
+    publish('cancelled', 'yt-dlp update cancelled')
 except BaseException as error:
     temporary_path = locals().get('temporary', '')
     if temporary_path and os.path.exists(temporary_path):
@@ -1284,9 +1313,10 @@ os.replace(temporary, job['destination'])
                 "from yt_dlp import YoutubeDL\n"
                 "if not callable(YoutubeDL): raise RuntimeError('yt-dlp did not expose YoutubeDL')\n";
             PythonObject globals{PyDict_New()};
-            if(!globals ||
+            PythonObject builtins{PyImport_ImportModule("builtins")};
+            if(!globals || !builtins ||
                PyDict_SetItemString(
-                   globals.get(), "__builtins__", PyEval_GetBuiltins()) < 0)
+                   globals.get(), "__builtins__", builtins.get()) < 0)
                 return TakePythonExceptionText();
             PythonObject result{PyRun_StringFlags(
                 script,
@@ -1422,6 +1452,7 @@ os.replace(temporary, job['destination'])
 
     bool DownloadManager::Start(DownloadRequest request, std::string& error)
     {
+        std::scoped_lock startLock(startMutex_);
         if(!initialized_)
         {
             error = UnavailableMessage();
@@ -1476,6 +1507,7 @@ os.replace(temporary, job['destination'])
         std::string sourceUrl,
         std::string& error)
     {
+        std::scoped_lock startLock(startMutex_);
         if(!initialized_)
         {
             error = UnavailableMessage();
@@ -1525,6 +1557,7 @@ os.replace(temporary, job['destination'])
 
     bool DownloadManager::StartUpdaterCheck(bool nightly, bool install, std::string& error)
     {
+        std::scoped_lock startLock(startMutex_);
         if(!initialized_) { error = UnavailableMessage(); return false; }
         {
             std::scoped_lock lock(mutex_);
@@ -1536,6 +1569,7 @@ os.replace(temporary, job['destination'])
         statusPath_ = VideoLibrary::Instance().RuntimePath() / "update-status.json";
         cancelPath_ = VideoLibrary::Instance().RuntimePath() / "update.cancel";
         std::filesystem::remove(statusPath_);
+        std::filesystem::remove(cancelPath_);
         snapshot_ = {};
         snapshot_.state = DownloadState::Preparing;
         snapshot_.levelId = "__updater__";
@@ -1638,6 +1672,7 @@ os.replace(temporary, job['destination'])
 
             bool runtimeRolledBack = false;
             bool runtimeFailed = false;
+            std::string pythonFailure;
             {
                 ScopedPythonGil gil;
                 auto globals = CreatePythonGlobals(
@@ -1651,8 +1686,7 @@ os.replace(temporary, job['destination'])
                         globals.get()));
                 if(!globals || !result)
                 {
-                    PyErr_Print();
-                    PyErr_Clear();
+                    pythonFailure = TakePythonExceptionText();
                     // A Python execution/import failure is an internal
                     // downloader failure, unlike a private-video or network
                     // error (the script publishes those normally). Restore the
@@ -1707,8 +1741,10 @@ os.replace(temporary, job['destination'])
                             }
                             if(!result)
                             {
-                                PyErr_Print();
-                                PyErr_Clear();
+                                const auto retryFailure =
+                                    TakePythonExceptionText();
+                                pythonFailure +=
+                                    "\nRetry after rollback:\n" + retryFailure;
                             }
                         }
                         else
@@ -1733,6 +1769,12 @@ os.replace(temporary, job['destination'])
             }
             if(runtimeFailed)
             {
+                PaperLogger.error(
+                    "Embedded downloader Python failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Embedded downloader Python execution",
+                    pythonFailure);
                 SetFailure(
                     "The embedded downloader could not start. Big Screen recorded the internal error; the map and game can continue normally.");
                 return;
@@ -1782,6 +1824,11 @@ os.replace(temporary, job['destination'])
                     request.songAuthor,
                     request.origin,
                     std::move(stored));
+                const auto diagnostic = ReadString(status, "diagnostic");
+                if(!diagnostic.empty())
+                    PaperLogger.warn(
+                        "Video download completed with a non-fatal warning: {}",
+                        diagnostic);
             }
             PaperLogger.info(
                 "Downloader finished for {} with state '{}': {}",
@@ -1810,11 +1857,13 @@ os.replace(temporary, job['destination'])
             AddString(document, "sourceUrl", sourceUrl, allocator);
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "thumbnailPath", thumbnailPath.string(), allocator);
+            AddString(document, "cancelPath", cancelPath_.string(), allocator);
             rapidjson::StringBuffer buffer;
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
 
             bool runtimeFailed = false;
+            std::string pythonFailure;
             {
                 ScopedPythonGil gil;
                 auto globals = CreatePythonGlobals(
@@ -1825,13 +1874,18 @@ os.replace(temporary, job['destination'])
                         ProbeScript, Py_file_input, globals.get(), globals.get()));
                 if(!globals || !result)
                 {
-                    PyErr_Print();
-                    PyErr_Clear();
+                    pythonFailure = TakePythonExceptionText();
                     runtimeFailed = true;
                 }
             }
             if(runtimeFailed)
             {
+                PaperLogger.error(
+                    "Embedded URL probe Python failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Embedded URL probe Python execution",
+                    pythonFailure);
                 SetFailure(
                     "The embedded downloader could not check this YouTube URL. Big Screen recorded the internal error; try again after restarting Beat Saber.");
                 return;
@@ -1863,6 +1917,7 @@ os.replace(temporary, job['destination'])
             rapidjson::Document document(rapidjson::kObjectType);
             auto& allocator = document.GetAllocator();
             AddString(document, "statusPath", statusPath_.string(), allocator);
+            AddString(document, "cancelPath", cancelPath_.string(), allocator);
             AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
             AddString(document, "currentVersion", currentUpdateVersion_, allocator);
             std::string rejectedVersion;
@@ -1876,6 +1931,7 @@ os.replace(temporary, job['destination'])
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
             bool runtimeFailed = false;
+            std::string pythonFailure;
             {
                 ScopedPythonGil gil;
                 auto globals = CreatePythonGlobals(
@@ -1889,13 +1945,18 @@ os.replace(temporary, job['destination'])
                         globals.get()));
                 if(!globals || !result)
                 {
-                    PyErr_Print();
-                    PyErr_Clear();
+                    pythonFailure = TakePythonExceptionText();
                     runtimeFailed = true;
                 }
             }
             if(runtimeFailed)
             {
+                PaperLogger.error(
+                    "Embedded updater Python failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Embedded updater Python execution",
+                    pythonFailure);
                 SetFailure(
                     "The embedded downloader could not run the yt-dlp update check. Big Screen recorded the internal error; try again after restarting Beat Saber.");
                 return;
@@ -1952,10 +2013,11 @@ os.replace(temporary, job['destination'])
                             globals.get()));
                     if(!globals || !result)
                     {
-                        PyErr_Clear();
+                        const auto detail = TakePythonExceptionText();
                         PaperLogger.warn(
-                            "Could not fetch video thumbnail for {}",
-                            request.levelId);
+                            "Could not fetch video thumbnail for {}: {}",
+                            request.levelId,
+                            detail);
                     }
                     else
                     {
@@ -2004,6 +2066,16 @@ os.replace(temporary, job['destination'])
     void DownloadManager::SetFailure(std::string message)
     {
         std::scoped_lock lock(mutex_);
+        // The Python status file may still describe the last non-terminal
+        // progress update. Remove it before publishing the C++ terminal state
+        // so Snapshot() cannot resurrect a wedged Preparing/Downloading job.
+        std::error_code removeError;
+        std::filesystem::remove(statusPath_, removeError);
+        if(removeError)
+            PaperLogger.warn(
+                "Could not remove stale downloader status '{}': {}",
+                statusPath_.string(),
+                removeError.message());
         snapshot_.state = DownloadState::Failed;
         snapshot_.message = std::move(message);
         PaperLogger.error("{}", snapshot_.message);

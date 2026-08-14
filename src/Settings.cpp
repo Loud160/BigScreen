@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -100,6 +104,38 @@ namespace BigScreen {
     void Settings::Load()
     {
         auto& configuration = GetConfiguration();
+        const auto configPath = std::filesystem::path(
+            Configuration::getConfigFilePath(configuration.info));
+        std::error_code fileError;
+        if(std::filesystem::is_regular_file(configPath, fileError) && !fileError)
+        {
+            std::ifstream stream(configPath, std::ios::binary);
+            const std::string bytes{
+                std::istreambuf_iterator<char>(stream), {}};
+            rapidjson::Document validation;
+            validation.Parse(bytes.data(), bytes.size());
+            if(validation.HasParseError() || !validation.IsObject())
+            {
+                const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                const auto quarantine = configPath.string() +
+                    ".corrupt-" + std::to_string(stamp);
+                std::filesystem::rename(configPath, quarantine, fileError);
+                if(fileError)
+                    PaperLogger.error(
+                        "Big Screen settings were invalid and could not be quarantined: {}",
+                        fileError.message());
+                else
+                    PaperLogger.warn(
+                        "Quarantined invalid Big Screen settings as '{}' before restoring defaults",
+                        quarantine);
+                ErrorManager::Instance().RecordError(
+                    "Loading Big Screen settings",
+                    fileError
+                        ? "The settings JSON was invalid and quarantine failed: " + fileError.message()
+                        : "The settings JSON was invalid and was preserved at " + quarantine);
+            }
+        }
         configuration.Load();
         auto& document = configuration.config;
         if(!document.IsObject())
@@ -265,6 +301,7 @@ namespace BigScreen {
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
+        useFfmpeg9_ = ReadBool(document, "useFfmpeg9", false);
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
@@ -595,6 +632,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetUseFfmpeg9(bool value)
+    {
+        useFfmpeg9_ = value;
+        Save();
+    }
+
     void Settings::SetAutomaticPerformanceEnabled(bool value)
     {
         automaticPerformanceEnabled_ = value;
@@ -785,6 +828,7 @@ namespace BigScreen {
         Replace(document, "hideSpectrogramBars", hideSpectrogramBars_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
+        Replace(document, "useFfmpeg9", useFfmpeg9_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
         Replace(

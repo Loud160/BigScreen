@@ -107,6 +107,11 @@ namespace BigScreen {
         };
 
         mutable std::mutex mutex_;
+        // Serializes the check/join/recheck/start sequence. Unity currently
+        // invokes starts on its main thread, but keeping that assumption out
+        // of the manager prevents a future background caller from assigning
+        // over a joinable std::thread and terminating the process.
+        std::mutex startMutex_;
         std::thread worker_;
         std::thread thumbnailWorker_;
         std::mutex thumbnailMutex_;

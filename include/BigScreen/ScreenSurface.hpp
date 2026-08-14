@@ -63,7 +63,10 @@ namespace BigScreen {
         /// Showcase panels use this to counter-roll a tumbling screen without
         /// rebuilding meshes or touching the shared video texture.
         void SetVideoLocalRoll(float degrees);
-        void SetOpacity(float opacity);
+        /// Returns false if Unity rejected the material-state update. Showcase
+        /// callers propagate that failure once instead of retrying a broken
+        /// partially destroyed surface on every frame.
+        bool SetOpacity(float opacity);
         /// Disables back-face culling for showcase surfaces that deliberately
         /// rotate through 180 degrees. The same synchronized video texture is
         /// then visible from either side of the curved canvas.

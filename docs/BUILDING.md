@@ -63,23 +63,37 @@ reviewed version change to replace the versioned extraction.
 
 The dependency scripts download pinned Android CPython, certifi, yt-dlp, FFmpeg source, and supporting artifacts. Each expected artifact has a fixed SHA-256 in the script; a mismatch stops the build. Do not “fix” a mismatch by changing only the hash—review the upstream release, ABI, contents, and license first.
 
-`scripts/build-ffmpeg-lgpl.sh` builds FFmpeg 4.4.8 by default and also supports a separately staged FFmpeg 9.0.1 comparison runtime. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. The script enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components. Its outputs use `-bigscreen` SONAMEs and `BIGSCREEN_LIB*` symbol versions so Android cannot resolve them to another mod's FFmpeg libraries.
+The CPython fetch step verifies a complete extraction, not merely the presence
+of its main shared library, so an interrupted extraction is repaired on the
+next build. CMake links only `libpython3.14.so` directly. The packaged SSL,
+crypto, and SQLite libraries are runtime dependencies of CPython extension
+modules and must not appear as direct `DT_NEEDED` entries in
+`libbigscreen.so`. The build script stages them for packaging without placing
+them in QPM's recursively linked input directory.
 
-For LGPL corresponding-source redistribution, publish the unmodified archive identified in the packaged `FFMPEG-BUILD-INFO.txt` alongside the QMOD. The QMOD itself includes the selected version's exact build record and generated source diff. Both upstream archive SHA-256 values and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+`scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components.
 
-To build both variants from independent clean CMake trees and retain clearly
-named QMOD/native artifacts, run:
+The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA buffers without an extra frame copy.
+
+For LGPL corresponding-source redistribution, publish both unmodified archives identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and `FFMPEG-9.0.1-BUILD-INFO.txt` records alongside the QMOD. The QMOD includes both exact build records and generated source diffs. Both upstream archive SHA-256 values and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+
+To make a clean dual-runtime build and retain a clearly named comparison QMOD,
+native library, and both reproducibility records, run:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-comparison.ps1
 ```
 
-Install only one variant at a time. Compare the same map, screen resolution,
-FPS cap, headset charge/thermal state, and playback interval. The performance
-overlay and results summary report the loaded FFmpeg version, expected versus
-presented frames, missed percentage, full decode-request delay, automatic
-reductions, and RGBA allocation count. Keep 4.4.8 as the release default until
-the newer runtime is at least equivalent in repeated Quest 2 and Quest 3 tests.
+Install that single QMOD, then use **Misc > Performance > Use FFmpeg 9** to
+switch between the bundled runtimes. Off selects 4.4.8; on selects 9.0.1. An
+active Video Library preview is recreated at its retained song position, while
+gameplay uses the selection when the next map opens. Compare the same map,
+screen resolution, FPS cap, headset charge/thermal state, and playback
+interval. The performance overlay and results summary identify the runtime
+that actually opened the decoder and report presented-frame loss, decode
+delay, automatic reductions, and RGBA allocation count. Keep 4.4.8 as the
+default until 9.0.1 is at least equivalent in repeated Quest 2 and Quest 3
+tests.
 
 ## Host tests
 
@@ -108,13 +122,21 @@ an older QMOD. It packages:
   challenge-provider module, and certifi CA bundle;
 - runtime integrity manifest;
 - Big Screen, QuickJS-NG, and other third-party notices/license texts;
-- all four private LGPL FFmpeg shared libraries and their build/source-change records.
+- both private LGPL FFmpeg sets (eight FFmpeg libraries), two decoder backend
+  libraries, and both versions' build/source-change records.
 
 Inspect the archive before release:
 
 ```powershell
 tar -tf './Big Screen.qmod'
 ```
+
+For an ELF dependency audit, use the NDK copy of `llvm-readelf` and verify that
+the direct Python dependency list contains `libpython3.14.so` but not
+`libssl_python.so`, `libcrypto_python.so`, or `libsqlite3_python.so`.
+`scripts/validate-ffmpeg-elf.ps1` is run after every normal build and again
+before packaging. It verifies both backend dependencies, rejects cross-version
+FFmpeg libraries/symbols, and requires each backend's exported factory.
 
 The generated `mod.json` must report the same version as `qpm.json`, `qpm.shared.json`, and `mod.template.json`, the exact package version, all required libraries, and every runtime file copy.
 
@@ -128,7 +150,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1
 
 Deployment scripts are development conveniences, not part of ordinary end-user installation. Confirm the active Beat Saber package/version before replacing a mod binary.
 
-When the controller launch gate prevents unattended Beat Saber startup, compile `tests/android_ffmpeg_smoke.c` with the same Android NDK and link it against the four staged `*-bigscreen.so` files. Running it through ADB against a real H.264 MP4 verifies Android dynamic loading, private symbol versions, demuxing, native H.264 decoding, and RGBA scaling without bypassing the Quest safety screen.
+When the controller launch gate prevents unattended Beat Saber startup, compile `tests/android_ffmpeg_smoke.c` twice with the same Android NDK: once against the four `*-bigscreen44.so` files and once against the four `*-bigscreen9.so` files. Running each binary through ADB against the same real H.264 MP4 verifies Android dynamic loading, private symbol versions, demuxing, native H.264 decoding, and RGBA scaling without bypassing the Quest safety screen. The complete mod build and ELF audit are still required to verify the two backend libraries' exact `DT_NEEDED` and symbol-version bindings.
 
 ## CI
 
@@ -138,7 +160,7 @@ compare the full payload with the shipped release. `build-ndk.yml` restores QPM
 dependencies, installs the pinned official Android NDK r27d, creates a
 validated QMOD, and uploads artifacts. Third-party actions are pinned to commit
 SHAs. Changing the NDK requires synchronized QPM metadata, CI, FFmpeg, clean
-builds of both FFmpeg variants, and headset regression testing.
+one clean dual-runtime build, and headset regression testing.
 
 ## Threading rules
 

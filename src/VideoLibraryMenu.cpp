@@ -82,6 +82,7 @@
 #include "bsml/shared/Helpers/delegates.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
+#include "beatsaber-hook/shared/utils/il2cpp-utils-exceptions.hpp"
 #include "main.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -563,6 +564,29 @@ namespace BigScreen {
         return menu;
     }
 
+    void VideoLibraryMenu::ForgetUi()
+    {
+        // The old hierarchy may already be gone, so do not dereference or
+        // Destroy its cached objects here. Clear native ownership wholesale;
+        // the replacement flow will rebuild every control and media reference.
+        for(auto& [identity, cached] : VideoThumbnailSprites)
+        {
+            (void)identity;
+            try
+            {
+                if(UnityW<UnityEngine::Sprite>::isAlive(cached.sprite))
+                    UnityEngine::Object::Destroy(cached.sprite);
+            }
+            catch(...)
+            {
+                // The old scene may already have destroyed this sprite.
+            }
+        }
+        VideoThumbnailSprites.clear();
+        VideoThumbnailUseCounter = 0;
+        *this = VideoLibraryMenu{};
+    }
+
     void VideoLibraryMenu::CreateUi(
         HMUI::ViewController* browserController,
         HMUI::ViewController* editorController,
@@ -697,7 +721,7 @@ namespace BigScreen {
                 // so controller activation should preserve the current row.
                 list_->tableView->__cordl_internal_set__scrollToTopOnEnable(false);
             }
-            if(listObject)
+            if(listObject && list_->tableView)
             {
                 list_->tableView->add_didSelectCellWithIdxEvent(
                     BSML::MakeSystemAction(
@@ -1770,7 +1794,7 @@ namespace BigScreen {
     void VideoLibraryMenu::BeginUrlProbe()
     {
         ClearThumbnail();
-        if(!selected_)
+        if(!selected_ || !selected_->levelID)
         {
             transientStatus_ = "Select a song before checking a video URL.";
             RefreshDetails();
@@ -1855,7 +1879,7 @@ namespace BigScreen {
         }
         DownloadRequest request{
             std::string(selected_->levelID),
-            std::string(selected_->songName),
+            selected_->songName ? std::string(selected_->songName) : std::string("Unknown Song"),
             selected_->songAuthorName ? std::string(selected_->songAuthorName) : std::string{},
             url_, VideoOrigin::User, ExplicitAllowed(), offset_, rate_,
             fitToSong_, blackDuringLeadIn_};
@@ -3413,20 +3437,14 @@ namespace BigScreen {
             }
           }
         }
-        catch(const std::exception& error)
+        catch(const il2cpp_utils::RunMethodException& error)
         {
-            const std::string detail(error.what());
-            const bool invalidUnityAudio =
-                detail.find("AudioClip") != std::string::npos ||
-                detail.find("AudioSource") != std::string::npos ||
-                detail.find("SongPreviewPlayer") != std::string::npos;
-            if(!invalidUnityAudio)
-                throw;
-
             // Unity can invalidate an object between an alive check and the
             // subsequent generated property call. Contain that narrow race in
             // the preview transport: keep the video decoder/menu alive and
             // let the next Tick request a fresh Beat Saber audio clip.
+            PaperLogger.warn(
+                "Recovered IL2CPP audio-preview race: {}", error.what());
             RecoverInvalidPreviewAudio("an audio property call");
             return;
         }

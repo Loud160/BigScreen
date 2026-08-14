@@ -177,6 +177,36 @@ namespace BigScreen {
             return video.mapLocal || video.importFile || video.externalFile;
         }
 
+        bool RemoveManagedFile(
+            const std::filesystem::path& videoDirectory,
+            const std::string& fileName)
+        {
+            // library.json is user-accessible shared storage. Accept only one
+            // filename component before a record is allowed to remove a file;
+            // reads enforce the identical boundary in ResolveStoredFile.
+            const std::filesystem::path relative(fileName);
+            if(relative.empty() || relative.is_absolute() ||
+               relative.filename() != relative)
+            {
+                PaperLogger.error(
+                    "Refused to remove unsafe managed video path '{}'",
+                    fileName);
+                ErrorManager::Instance().RecordError(
+                    "Removing a managed video",
+                    "The library contained an unsafe filename: " + fileName);
+                return false;
+            }
+            std::error_code error;
+            const bool removed = std::filesystem::remove(
+                videoDirectory / relative, error);
+            if(error)
+                PaperLogger.warn(
+                    "Could not remove managed video '{}': {}",
+                    fileName,
+                    error.message());
+            return removed && !error;
+        }
+
         std::optional<std::filesystem::path> ResolveStoredFile(
             const std::filesystem::path& videoDirectory,
             const std::filesystem::path& importDirectory,
@@ -589,7 +619,7 @@ namespace BigScreen {
         SaveLocked();
         if(previous && !IsUserOwnedFile(*previous) &&
            previous->fileName != target->fileName)
-            std::filesystem::remove(videoPath_ / previous->fileName);
+            RemoveManagedFile(videoPath_, previous->fileName);
     }
 
     std::vector<LocalVideoFile> VideoLibrary::DiscoverLocalVideos(
@@ -721,7 +751,7 @@ namespace BigScreen {
         // Only Big Screen-managed downloads are deleted on replacement. Every
         // browser-picked file remains exactly where the user placed it.
         if(previous && !IsUserOwnedFile(*previous))
-            std::filesystem::remove(videoPath_ / previous->fileName);
+            RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         PaperLogger.info(
@@ -806,7 +836,7 @@ namespace BigScreen {
         // YouTube override being explicitly replaced is removed to avoid an
         // inaccessible orphan consuming the headset's storage.
         if(previous && !IsUserOwnedFile(*previous))
-            std::filesystem::remove(videoPath_ / previous->fileName);
+            RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         PaperLogger.info(
@@ -884,7 +914,7 @@ namespace BigScreen {
         // Import files remain user-owned. Only a replaced Big Screen download
         // is deleted; another import or map-folder file is merely unregistered.
         if(previous && !IsUserOwnedFile(*previous))
-            std::filesystem::remove(videoPath_ / previous->fileName);
+            RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         PaperLogger.info("Assigned imported video '{}' to '{}'", probe.fileName, levelId);
@@ -898,7 +928,7 @@ namespace BigScreen {
         if(found == records_.end() || !found->second.user)
             return false;
         if(deleteFile && !IsUserOwnedFile(*found->second.user))
-            std::filesystem::remove(videoPath_ / found->second.user->fileName);
+            RemoveManagedFile(videoPath_, found->second.user->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         found->second.user.reset();
@@ -912,7 +942,7 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.mapper)
             return false;
-        std::filesystem::remove(videoPath_ / found->second.mapper->fileName);
+        RemoveManagedFile(videoPath_, found->second.mapper->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
         found->second.mapper.reset();
@@ -1021,12 +1051,22 @@ namespace BigScreen {
            now - libraryBytesCacheTime_ < std::chrono::seconds(1))
             return cachedLibraryBytes_;
         std::uint64_t total = 0;
-        if(!std::filesystem::exists(videoPath_))
+        std::error_code error;
+        if(!std::filesystem::exists(videoPath_, error) || error)
             return total;
-        for(const auto& entry : std::filesystem::directory_iterator(videoPath_))
+        std::filesystem::directory_iterator iterator(videoPath_, error);
+        const std::filesystem::directory_iterator end;
+        while(!error && iterator != end)
         {
-            if(entry.is_regular_file())
-                total += entry.file_size();
+            const auto& entry = *iterator;
+            std::error_code entryError;
+            if(entry.is_regular_file(entryError) && !entryError)
+            {
+                const auto bytes = entry.file_size(entryError);
+                if(!entryError)
+                    total += bytes;
+            }
+            iterator.increment(error);
         }
         cachedLibraryBytes_ = total;
         libraryBytesCacheTime_ = now;
@@ -1092,32 +1132,48 @@ namespace BigScreen {
         libraryBytesCacheTime_ = {};
         freeBytesCacheTime_ = {};
         recoveryScanNeeded_ = false;
-        if(!std::filesystem::exists(manifestPath_))
-            return;
-
-        if(TryLoadManifestLocked(manifestPath_, records_))
+        std::error_code existsError;
+        const bool primaryExists =
+            std::filesystem::exists(manifestPath_, existsError) && !existsError;
+        if(primaryExists && TryLoadManifestLocked(manifestPath_, records_))
             return;
 
         // Preserve the corrupt bytes for troubleshooting before attempting a
         // backup. A timestamped quarantine is never used as an automatic
         // source, so repeated starts cannot cycle damaged data back into use.
-        const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        const auto quarantine = manifestPath_.string() +
-            ".corrupt-" + std::to_string(stamp);
         std::error_code error;
-        std::filesystem::rename(manifestPath_, quarantine, error);
-        if(error)
+        if(primaryExists)
         {
-            PaperLogger.error("Could not quarantine invalid library manifest: {}", error.message());
-            ErrorManager::Instance().RecordError(
-                "Quarantining an invalid video library",
-                error.message());
+            const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const auto quarantine = manifestPath_.string() +
+                ".corrupt-" + std::to_string(stamp);
+            std::filesystem::rename(manifestPath_, quarantine, error);
+            if(error)
+            {
+                PaperLogger.error("Could not quarantine invalid library manifest: {}", error.message());
+                ErrorManager::Instance().RecordError(
+                    "Quarantining an invalid video library",
+                    error.message());
+            }
         }
 
         const std::array backups{
             std::filesystem::path(manifestPath_.string() + ".backup1"),
             std::filesystem::path(manifestPath_.string() + ".backup2")};
+        if(!primaryExists)
+        {
+            std::error_code backupError;
+            const bool anyBackup = std::any_of(
+                backups.begin(), backups.end(), [&](const auto& backup)
+                {
+                    backupError.clear();
+                    return std::filesystem::is_regular_file(
+                        backup, backupError) && !backupError;
+                });
+            if(!anyBackup)
+                return; // genuine first run, not a recovery event
+        }
         for(std::size_t index = 0; index < backups.size(); ++index)
         {
             std::vector<std::pair<std::string, LevelVideoRecords>> restored;
@@ -1135,8 +1191,9 @@ namespace BigScreen {
                 error.clear();
                 std::filesystem::rename(temporary, manifestPath_, error);
             }
-            recoveryNotice_ =
-                "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved.";
+            recoveryNotice_ = primaryExists
+                ? "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved."
+                : "Big Screen found that the main video library was missing and restored the most recent known-good backup. Your video assignments were preserved.";
             PaperLogger.warn("Recovered video library from backup {}", index + 1);
             return;
         }
@@ -1236,18 +1293,32 @@ namespace BigScreen {
         std::error_code error;
         std::vector<std::pair<std::string, LevelVideoRecords>> knownGood;
         if(TryLoadManifestLocked(backup1, knownGood))
+        {
             std::filesystem::copy_file(
                 backup1, backup2,
                 std::filesystem::copy_options::overwrite_existing, error);
+            if(error)
+                PaperLogger.warn(
+                    "Could not rotate video library backup 1 to backup 2: {}",
+                    error.message());
+        }
         error.clear();
         if(TryLoadManifestLocked(manifestPath_, knownGood))
+        {
             std::filesystem::copy_file(
                 manifestPath_, backup1,
                 std::filesystem::copy_options::overwrite_existing, error);
+            if(error)
+                PaperLogger.warn(
+                    "Could not refresh video library backup 1: {}",
+                    error.message());
+        }
 
-        // Android/libc rename does not consistently replace an existing file,
-        // so remove only the exact manifest path after the fully flushed temp
-        // and backups exist. A crash at this boundary still leaves two copies.
+        // Keep the proven shared-storage replacement sequence: remove only the
+        // exact manifest path after the fully flushed temporary file and
+        // rotating backups exist. LoadLocked treats a missing primary plus an
+        // intact backup as recovery, so a crash at this boundary preserves the
+        // assignments instead of presenting an empty first-run library.
         error.clear();
         std::filesystem::remove(manifestPath_, error);
         error.clear();

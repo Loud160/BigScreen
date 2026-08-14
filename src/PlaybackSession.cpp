@@ -22,10 +22,6 @@
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 #include "main.hpp"
 
-extern "C" {
-#include "libavutil/avutil.h"
-}
-
 namespace BigScreen {
     PlaybackSession& PlaybackSession::Instance()
     {
@@ -82,7 +78,8 @@ namespace BigScreen {
             decoder_.AverageDecodeMilliseconds(),
             decoder_.PeakDecodeMilliseconds(),
             accumulatedDecoderCpuMilliseconds_ + activeDecoderCpu,
-            automaticReductions_};
+            automaticReductions_,
+            decoder_.RuntimeVersion()};
     }
 
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
@@ -524,7 +521,7 @@ namespace BigScreen {
                 context == PlaybackContext::LibraryPreview ? "library-preview" : "gameplay",
             effectiveFpsLimit_,
             decoder_.DurationSeconds(),
-            av_version_info());
+            decoder_.RuntimeVersion());
         if(context == PlaybackContext::LibraryPreview &&
            Settings::Instance().PerformanceDiagnosticsEnabled())
             PerformancePanel::Instance().ShowWaitingMessage();
@@ -657,6 +654,11 @@ namespace BigScreen {
             playbackFailed_ = true;
             surface_.SetVisible(false);
             showcase_.SetVisible(false);
+            // The worker has already published its terminal error. Join it and
+            // release FFmpeg contexts/RGBA buffers now instead of retaining
+            // several megabytes for the remainder of a map whose video can no
+            // longer recover. The Unity/gameplay clock remains untouched.
+            decoder_.Close();
             PaperLogger.error("Video decoder stopped safely: {}", *decoderError);
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback stopped",
@@ -825,7 +827,8 @@ namespace BigScreen {
                 currentWindowVideoFps,
                 currentWindowMissed,
                 d.averageDecodeMilliseconds,
-                d.peakDecodeMilliseconds});
+                d.peakDecodeMilliseconds,
+                d.decoderRuntime});
             if(completedDiagnosticsWindow)
                 decoder_.ResetPeakDecodeMilliseconds();
             diagnosticsVisible_ = true;
@@ -1089,6 +1092,11 @@ namespace BigScreen {
             // A texture cannot change dimensions in place. Reopen only Big
             // Screen's decoder/surface at the current audio-derived timestamp;
             // Beat Saber's map clock and gameplay scene continue uninterrupted.
+            // Showcase materials reference the primary surface's Texture2D.
+            // Release them before destroying that owner, then recreate the
+            // optional group against the replacement texture below.
+            const bool recreateShowcase = showcase_.IsCreated();
+            showcase_.Destroy();
             surface_.Destroy();
             decoder_.Close();
             accumulatedDecoderCpuMilliseconds_ += std::max(
@@ -1099,10 +1107,31 @@ namespace BigScreen {
             if(!decoder_.Open(config_->videoPath, nextResolution, error) ||
                !surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
             {
+                // A partial reopen must become one terminal video failure. If
+                // left as a live session, the adaptive controller would retry
+                // this same tier every response window and repeatedly report
+                // the error while the map is still running.
+                surface_.Destroy();
+                decoder_.Close();
+                playbackFailed_ = true;
+                firstFrameUploaded_ = false;
                 ErrorManager::Instance().ReportInternal(
                     failureOperation,
                     error.empty() ? "Could not recreate the video screen at the requested quality" : error);
                 return false;
+            }
+            if(recreateShowcase &&
+               !showcase_.Create(
+                   *config_,
+                   decoder_.Width(),
+                   decoder_.Height(),
+                   surface_.Texture()))
+            {
+                // Showcase choreography is optional. Failure falls back to the
+                // primary screen instead of sacrificing otherwise healthy
+                // playback during an automatic quality transition.
+                PaperLogger.error(
+                    "Could not reconnect showcase panels after an automatic quality change; continuing with the primary screen");
             }
             decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
             decoder_.Request(mediaTimeSeconds);
@@ -1165,7 +1194,7 @@ namespace BigScreen {
              << " ms average / " << diagnostics.peakDecodeMilliseconds
              << " ms peak  |  RGBA allocations "
              << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
-             << av_version_info();
+             << diagnostics.decoderRuntime;
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
         const auto frameRate = CoreLogic::SummarizeFrameRate(
@@ -1241,7 +1270,8 @@ namespace BigScreen {
                 diagnostics.expectedFrames,
                 diagnostics.presentedFrames),
             diagnostics.averageDecodeMilliseconds,
-            diagnostics.peakDecodeMilliseconds});
+            diagnostics.peakDecodeMilliseconds,
+            diagnostics.decoderRuntime});
         diagnosticsVisible_ = true;
     }
 }

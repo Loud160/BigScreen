@@ -23,12 +23,30 @@ every presented frame. Gameplay transitions pre-open and prime FFmpeg before
 the song clock begins; Unity geometry is still created only in the gameplay
 scene.
 
+Playback has one FFmpeg-type-free facade and two separately linked decoder
+backends. One backend is compiled against the private 4.4.8 headers and
+`BIGSCREEN44_LIB*` symbols; the other is compiled against the private 9.0.1
+headers and `BIGSCREEN9_LIB*` symbols. The separation is required because the
+two releases expose incompatible public structures and ordinary unversioned
+references placed together in `libbigscreen.so` could all bind to the first
+loaded library. The facade chooses a backend only during `Open`, never while a
+worker owns codec state. `VideoFrame` contains standard C++ values only, so its
+reusable RGBA allocation moves to Unity without an additional A/B abstraction
+copy. The Video Library's compatibility probe remains fixed to the conservative
+4.4 runtime and never hands FFmpeg structures to a playback backend.
+
 Menu state is event-driven or deliberately rate-limited. Resolved map video
 descriptors and video thumbnails are cached, the thumbnail cache has a bounded
 LRU, storage totals are sampled at most once per second, and download status is
 published and consumed at bounded rates. Terminal downloader state remains a
 durable atomic write; transient progress does not fsync Android flash for every
 network block.
+
+Menu-controller singletons do not own an IL2CPP hierarchy. A MenuCore flow
+recreation calls each menu's `ForgetUi` boundary before new controllers are
+created, and the active coordinator is retained through `UnityW`. Per-frame UI
+refreshes are gated by the active Big Screen flow. This is required because a
+non-null raw pointer from a destroyed menu scene is not a valid liveness check.
 
 The local-video browser follows the same boundary. Unity renders immutable
 directory snapshots on the center screen, while a worker thread enumerates the
@@ -80,3 +98,7 @@ Some tempting approaches are deliberately not used:
   their own preview/foveation cleanup in DidDeactivate.
 - Updating only a UI slider value does not resize an existing decoder texture;
   the preview/session must be safely recreated for a resolution change.
+- Recursive traversal of an arbitrary beatmap JSON tree is avoided. Chroma
+  detection uses an explicit work stack and caches its result from map-file
+  metadata for the current session, preventing repeated large synchronous
+  parses and native stack exhaustion.

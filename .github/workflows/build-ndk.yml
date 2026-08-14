@@ -65,7 +65,8 @@ jobs:
 
     - name: Build isolated LGPL FFmpeg runtime
       run: |
-        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" ./scripts/build-ffmpeg-lgpl.sh
+        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" BIGSCREEN_FFMPEG_VERSION=4.4.8 ./scripts/build-ffmpeg-lgpl.sh
+        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" BIGSCREEN_FFMPEG_VERSION=9.0.1 ./scripts/build-ffmpeg-lgpl.sh
 
     - name: Build & Create Qmod
       shell: pwsh

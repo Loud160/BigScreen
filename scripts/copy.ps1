@@ -110,7 +110,7 @@ foreach ($fileName in $lateModFiles) {
 # Project-owned runtime libraries must be deployed with the mod during local
 # development. Dependency libraries already installed by QMOD are left alone;
 # only files produced in this build directory are pushed. This is especially
-# important for the four private FFmpeg libraries because Big Screen no longer
+# important for both private FFmpeg sets and their decoder backends because Big Screen no longer
 # falls back to Hollywood's media runtime.
 foreach ($fileName in $modJson.libraryFiles) {
     $builtLibrary = Join-Path "build" $fileName

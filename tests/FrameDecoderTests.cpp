@@ -50,6 +50,8 @@ namespace {
         Expect(decoder.Width() == expectedWidth, "small videos should never be upscaled");
         Expect(decoder.Height() == expectedHeight, "small videos should never be upscaled");
         Expect(decoder.DurationSeconds() > 1.0, "container duration should be available");
+        Expect(std::string(decoder.RuntimeVersion()).size() > 0,
+               "the active decoder should report its FFmpeg runtime");
 
         for(int index = 0; index < 6; ++index)
         {

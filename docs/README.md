@@ -20,5 +20,6 @@ This index separates ordinary player instructions from mapper and developer mate
 - [Downloader security](DOWNLOADER_SECURITY.md) — pinned runtime, checksum verification, update activation, rejection, and rollback.
 - [Building and packaging](BUILDING.md) — toolchain, host tests, Quest build, QMOD contents, and CI.
 - [Release checklist](RELEASE_CHECKLIST.md) — the minimum checks before publishing a build.
+- [External code-review resolution](CODE_REVIEW_RESOLUTION.md) — accepted fixes, rejected findings, and explicitly deferred follow-up from the August 2026 audit.
 - [Future work](FUTURE_WORK.md) — intentionally deferred ideas and known areas for wider testing.
 - [Third-party notices](../THIRD_PARTY_NOTICES.md) and [provenance](../PROVENANCE.md).

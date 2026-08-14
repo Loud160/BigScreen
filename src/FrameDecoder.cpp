@@ -12,6 +12,7 @@
 extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
+#include "libavutil/avutil.h"
 #include "libavutil/error.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/version.h"
@@ -176,7 +177,15 @@ namespace BigScreen {
     void FrameDecoder::Close()
     {
         open_ = false;
-        stopWorker_ = true;
+        // The worker evaluates the wait predicate while holding requestMutex_.
+        // Publish the stop flag under that same mutex before notifying. An
+        // atomic flag alone does not close the gap between a false predicate
+        // evaluation and the worker actually blocking, which could otherwise
+        // lose this wakeup and leave the Unity thread stuck in join().
+        {
+            std::scoped_lock lock(requestMutex_);
+            stopWorker_ = true;
+        }
         requestChanged_.notify_all();
         if(worker_.joinable())
             worker_.join();
@@ -259,6 +268,11 @@ namespace BigScreen {
         return result;
     }
 
+    const char* FrameDecoder::RuntimeVersion() const
+    {
+        return av_version_info();
+    }
+
     void FrameDecoder::SetWorkerError(std::string message)
     {
         {
@@ -267,7 +281,13 @@ namespace BigScreen {
                 workerError_ = std::move(message);
         }
         open_ = false;
-        stopWorker_ = true;
+        // Keep the condition-variable state transition under its predicate
+        // mutex for the same reason as Close(). SetWorkerError normally runs
+        // on the worker itself, but this invariant keeps every producer safe.
+        {
+            std::scoped_lock lock(requestMutex_);
+            stopWorker_ = true;
+        }
         requestChanged_.notify_all();
     }
 
@@ -414,15 +434,47 @@ namespace BigScreen {
             if(result == AVERROR_EOF)
                 return false;
             if(result != AVERROR(EAGAIN))
+            {
+                SetWorkerError(
+                    "FFmpeg could not receive a decoded video frame: " +
+                    FfmpegError(result));
                 return false;
+            }
 
             // Feed packets until this codec has enough compressed data to emit
             // another frame. Non-video packets are discarded immediately.
             result = av_read_frame(format_, packet_);
             if(result < 0)
             {
-                avcodec_send_packet(codec_, nullptr);
-                return avcodec_receive_frame(codec_, decoded_) == 0;
+                // EOF is normal. Flush the decoder once so a delayed final
+                // picture can still be emitted. Every other demux failure is a
+                // real media/I/O error and must not masquerade as end-of-video.
+                if(result != AVERROR_EOF)
+                {
+                    SetWorkerError(
+                        "FFmpeg could not read the next video packet: " +
+                        FfmpegError(result));
+                    return false;
+                }
+
+                const int flushResult = avcodec_send_packet(codec_, nullptr);
+                if(flushResult < 0 && flushResult != AVERROR_EOF)
+                {
+                    SetWorkerError(
+                        "FFmpeg could not flush the final video packet: " +
+                        FfmpegError(flushResult));
+                    return false;
+                }
+                const int finalResult = avcodec_receive_frame(codec_, decoded_);
+                if(finalResult == 0)
+                    return true;
+                if(finalResult != AVERROR_EOF && finalResult != AVERROR(EAGAIN))
+                {
+                    SetWorkerError(
+                        "FFmpeg could not receive the final video frame: " +
+                        FfmpegError(finalResult));
+                }
+                return false;
             }
 
             if(packet_->stream_index == videoStream_)
@@ -432,7 +484,12 @@ namespace BigScreen {
             av_packet_unref(packet_);
 
             if(result < 0 && result != AVERROR(EAGAIN))
+            {
+                SetWorkerError(
+                    "FFmpeg could not submit a compressed video packet: " +
+                    FfmpegError(result));
                 return false;
+            }
         }
         return false;
     }
@@ -546,4 +603,11 @@ namespace BigScreen {
         if(recycledBuffers_.size() < MaximumReusableBuffers)
             recycledBuffers_.push_back(std::move(buffer));
     }
+
+#ifdef BIGSCREEN_FFMPEG_BACKEND_FACTORY
+    std::unique_ptr<FrameDecoderBackend> BIGSCREEN_FFMPEG_BACKEND_FACTORY()
+    {
+        return std::make_unique<FrameDecoder>();
+    }
+#endif
 }

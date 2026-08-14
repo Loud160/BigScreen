@@ -36,7 +36,7 @@ namespace BigScreen {
         bool savedDynamicFoveation = false;
         bool distractionFreeMenuActive = false;
         std::vector<UnityW<UnityEngine::GameObject>> hiddenMenuObjects;
-        MenuFlowCoordinator* activeMenuFlow = nullptr;
+        UnityW<MenuFlowCoordinator> activeMenuFlow = nullptr;
         BSML::MenuButton* bigScreenMenuButton = nullptr;
         bool menuReentryBlocked = false;
         float menuReentryNotBefore = 0.0f;
@@ -179,7 +179,7 @@ namespace BigScreen {
 
     bool IsBigScreenMenuActive()
     {
-        return activeMenuFlow != nullptr;
+        return activeMenuFlow;
     }
 
     void TickMenuReentryGuard() noexcept
@@ -233,7 +233,7 @@ namespace BigScreen {
 
     bool ExitBigScreenMenuAfterError() noexcept
     {
-        auto* coordinator = activeMenuFlow;
+        auto* coordinator = activeMenuFlow.ptr();
         if(!coordinator)
             return false;
         try
@@ -355,6 +355,8 @@ namespace BigScreen {
         bool addedToHierarchy,
         bool screenSystemEnabling)
     {
+        try
+        {
         activeMenuFlow = this;
         // Do not call HMUI::FlowCoordinator::DidActivate from a custom-types
         // override. The generated CORDL wrapper performs virtual dispatch, so
@@ -379,6 +381,13 @@ namespace BigScreen {
 
         if(firstActivation)
         {
+            // Native menu singletons survive MenuCore soft restarts even when
+            // every IL2CPP view they cached was destroyed. Clear that old
+            // scene before attaching the replacement controllers.
+            SettingsMenu::Instance().ForgetUi();
+            VideoLibraryMenu::Instance().ForgetUi();
+            StorageMaintenanceMenu::Instance().ForgetUi();
+            LocalVideoBrowserMenu::Instance().ForgetUi();
             centerViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             settingsViewController =
@@ -504,6 +513,17 @@ namespace BigScreen {
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
         ScreenPreview::Instance().ActivateCurrentState();
         PerformancePanel::Instance().ActivateMenu();
+        }
+        catch(const std::exception& exception)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "opening the Big Screen menu", exception.what());
+        }
+        catch(...)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "opening the Big Screen menu", "Unknown native exception");
+        }
     }
 
     void MenuFlowCoordinator::ApplyModEnabledUi(bool enabled)
@@ -529,8 +549,10 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        try
+        {
         BeginMenuReentryGuard();
-        if(activeMenuFlow == this)
+        if(activeMenuFlow.ptr() == this)
             activeMenuFlow = nullptr;
         PerformancePanel::Instance().SuspendMenu();
         // The world screen only belongs to this page. Releasing it here keeps
@@ -544,11 +566,36 @@ namespace BigScreen {
         // DidActivate, so this override must not call it directly either.
         (void)removedFromHierarchy;
         (void)screenSystemDisabling;
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Big Screen menu deactivation failed: {}",
+                exception.what());
+            ErrorManager::Instance().RecordError(
+                "Closing the Big Screen menu", exception.what());
+            // These restorations are individually fail-safe and must still be
+            // attempted if another teardown action threw first.
+            RestoreDistractionFreeMenu();
+            RestoreMenuFoveation();
+            activeMenuFlow = nullptr;
+        }
+        catch(...)
+        {
+            PaperLogger.error("Big Screen menu deactivation failed");
+            ErrorManager::Instance().RecordError(
+                "Closing the Big Screen menu", "Unknown native exception");
+            RestoreDistractionFreeMenu();
+            RestoreMenuFoveation();
+            activeMenuFlow = nullptr;
+        }
     }
 
     void MenuFlowCoordinator::BackButtonWasPressed(
         HMUI::ViewController* topViewController)
     {
+        try
+        {
         (void)topViewController;
         // The custom left-panel Back button routes through the same prompt,
         // but Beat Saber's controller/back action can call this override
@@ -571,6 +618,17 @@ namespace BigScreen {
                 HMUI::ViewController::AnimationDirection::Horizontal,
                 nullptr,
                 true);
+        }
+        }
+        catch(const std::exception& exception)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "closing the Big Screen menu", exception.what());
+        }
+        catch(...)
+        {
+            ErrorManager::Instance().ReportInternal(
+                "closing the Big Screen menu", "Unknown native exception");
         }
     }
 }

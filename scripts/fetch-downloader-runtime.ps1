@@ -58,7 +58,30 @@ if ($Force -and (Test-Path -LiteralPath $pythonExtractRoot)) {
     }
     Remove-Item -LiteralPath $pythonExtractRoot -Recurse -Force
 }
-if (-not (Test-Path -LiteralPath (Join-Path $pythonPrefix "lib/libpython3.14.so"))) {
+$requiredPythonFiles = @(
+    "lib/libpython3.14.so",
+    "lib/libssl_python.so",
+    "lib/libcrypto_python.so",
+    "lib/libsqlite3_python.so",
+    "lib/python3.14/os.py",
+    "include/python3.14/Python.h"
+)
+$pythonExtractionComplete = $true
+foreach ($relative in $requiredPythonFiles) {
+    $candidate = Join-Path $pythonPrefix $relative
+    if (-not (Test-Path -LiteralPath $candidate) -or
+        (Get-Item -LiteralPath $candidate).Length -eq 0) {
+        $pythonExtractionComplete = $false
+        break
+    }
+}
+if (-not $pythonExtractionComplete) {
+    if (Test-Path -LiteralPath $pythonExtractRoot) {
+        if ((Split-Path -Parent $pythonExtractRoot) -ne $downloadRoot) {
+            throw "Refusing to repair unexpected Python path $pythonExtractRoot"
+        }
+        Remove-Item -LiteralPath $pythonExtractRoot -Recurse -Force
+    }
     New-Item -ItemType Directory -Force -Path $pythonExtractRoot | Out-Null
     & tar -xzf $pythonArchive -C $pythonExtractRoot
     if ($LASTEXITCODE -ne 0) {
@@ -172,19 +195,29 @@ finally {
 # kept in one zip and yt-dlp in its upstream zipimport form, which means a
 # downloader update replaces roughly 3 MB rather than another Python runtime.
 $pythonLib = Join-Path $pythonPrefix "lib"
-@(
+$pythonNativeLibraries = @(
     "libpython3.14.so",
     "libssl_python.so",
     "libcrypto_python.so",
     "libsqlite3_python.so"
-) | ForEach-Object {
+)
+$pythonNativeLibraries | ForEach-Object {
     $sourceLibrary = Join-Path $pythonLib $_
-    # QMOD packaging reads extern/libs, while direct Quest deployment reads
-    # build/. Stage the same verified bytes into both on every preparation so
-    # incremental builds cannot retain an older interpreter beside new native
-    # extensions merely because libbigscreen.so did not need relinking.
-    Copy-Item -LiteralPath $sourceLibrary -Destination $nativeLibraryStage -Force
+    # QMOD packaging and direct deployment read build/. Only libpython is a
+    # direct dependency of libbigscreen; OpenSSL and SQLite are loaded by the
+    # CPython extension modules at runtime and must not be swept into qpm's
+    # generated link glob as unnecessary DT_NEEDED entries.
+    if ($_ -eq "libpython3.14.so") {
+        Copy-Item -LiteralPath $sourceLibrary -Destination $nativeLibraryStage -Force
+    }
     Copy-Item -LiteralPath $sourceLibrary -Destination $buildLibraryStage -Force
+}
+foreach ($runtimeOnlyLibrary in @(
+    "libssl_python.so", "libcrypto_python.so", "libsqlite3_python.so")) {
+    $staleLinkCopy = Join-Path $nativeLibraryStage $runtimeOnlyLibrary
+    if (Test-Path -LiteralPath $staleLinkCopy) {
+        Remove-Item -LiteralPath $staleLinkCopy -Force
+    }
 }
 
 $stdlibRoot = Join-Path $pythonLib "python3.14"

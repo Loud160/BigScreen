@@ -4,15 +4,33 @@ from __future__ import annotations
 
 import json
 import pathlib
+
+if not __debug__:
+    raise RuntimeError(
+        "RepositoryInvariantTests must run without Python -O; optimized mode disables assertions")
 import re
 import sys
 
 
 root = pathlib.Path(sys.argv[1]).resolve()
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
+ffmpeg_elf_audit = (root / "scripts/validate-ffmpeg-elf.ps1").read_text(
+    encoding="utf-8")
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
+download_manager_header = (
+    root / "include/BigScreen/DownloadManager.hpp"
+).read_text(encoding="utf-8")
+download_manager_source = (root / "src/DownloadManager.cpp").read_text(
+    encoding="utf-8")
+frame_decoder_source = (root / "src/FrameDecoder.cpp").read_text(
+    encoding="utf-8")
+frame_decoder_facade = (root / "src/FrameDecoderFacade.cpp").read_text(
+    encoding="utf-8")
+error_manager_source = (root / "src/ErrorManager.cpp").read_text(
+    encoding="utf-8")
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
 settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
@@ -46,6 +64,8 @@ local_browser_header = (
 local_browser_source = (
     root / "src/LocalVideoBrowserMenu.cpp"
 ).read_text(encoding="utf-8")
+chroma_detector_source = (root / "src/ChromaMapDetector.cpp").read_text(
+    encoding="utf-8")
 video_library_header = (
     root / "include/BigScreen/VideoLibrary.hpp"
 ).read_text(encoding="utf-8")
@@ -54,6 +74,10 @@ video_library_source = (root / "src/VideoLibrary.cpp").read_text(
 )
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
 qpm_shared = json.loads((root / "qpm.shared.json").read_text(encoding="utf-8"))
+
+# This file is primarily assert-based by design, so optimized Python must not
+# be able to turn the release audit into a silent pass.
+assert __debug__
 
 # One pinned Android toolchain must drive QPM metadata, CI, and FFmpeg.
 ndk_revision = "27.3.13750724"
@@ -71,6 +95,34 @@ for version in ("4.4.8", "9.0.1"):
     assert version in ffmpeg_build
     assert version in cmake
 assert "CONFIG_VERSION3" in ffmpeg_build
+assert 'runtime_tag="44"' in ffmpeg_build
+assert 'runtime_tag="9"' in ffmpeg_build
+assert 'build_suffix="-bigscreen${runtime_tag}"' in ffmpeg_build
+assert 'symbol_namespace="BIGSCREEN${runtime_tag}"' in ffmpeg_build
+for runtime_tag in ("44", "9"):
+    assert f"libavformat-bigscreen{runtime_tag}.so" in cmake
+    assert f"libavcodec-bigscreen{runtime_tag}.so" in cmake
+    assert f"libavutil-bigscreen{runtime_tag}.so" in cmake
+    assert f"libswscale-bigscreen{runtime_tag}.so" in cmake
+    assert f"bigscreen_ffmpeg{runtime_tag}_backend SHARED" in cmake
+    assert f"libbigscreen-ffmpeg{runtime_tag}-backend.so" in (
+        root / "scripts/createqmod.ps1").read_text(encoding="utf-8")
+assert "TARGET_OBJECTS:bigscreen_ffmpeg" not in cmake
+assert '"validate-ffmpeg-elf.ps1"' in build_script
+assert "BIGSCREEN44_LIB" in ffmpeg_elf_audit
+assert "BIGSCREEN9_LIB" in ffmpeg_elf_audit
+assert "OtherNamespace" in ffmpeg_elf_audit
+assert "CreateFrameDecoder44Backend" in ffmpeg_elf_audit
+assert "CreateFrameDecoder9Backend" in ffmpeg_elf_audit
+assert "CreateFrameDecoder44Backend" in frame_decoder_facade
+assert "CreateFrameDecoder9Backend" in frame_decoder_facade
+assert "Settings::Instance().UseFfmpeg9()" in frame_decoder_facade
+assert "BIGSCREEN_FFMPEG_BACKEND_EXPORT" in frame_decoder_header
+assert 'ReadBool(document, "useFfmpeg9", false)' in settings_source
+assert 'Replace(document, "useFfmpeg9", useFfmpeg9_)' in settings_source
+assert '"Use FFmpeg 9"' in settings_menu_source
+assert "ApplyDisplaySettingsAndRefreshPreview();" in settings_menu_source
+assert workflow.count("BIGSCREEN_FFMPEG_VERSION=") == 2
 for warning in ("-Wall", "-Wextra", "-Wpedantic"):
     assert warning in cmake
 
@@ -91,6 +143,51 @@ assert "No authoritative source was found for required runtime library" in copy_
 assert '$packagedDependency = Join-Path "extern/libs" $fileName' in copy_script
 assert '$buildLibraryStage = Join-Path $repositoryRoot "build"' in runtime_fetch
 assert "-Destination $buildLibraryStage" in runtime_fetch
+for required_file in (
+    "lib/libpython3.14.so",
+    "lib/libssl_python.so",
+    "lib/libcrypto_python.so",
+    "lib/libsqlite3_python.so",
+    "lib/python3.14/os.py",
+    "include/python3.14/Python.h",
+):
+    assert f'"{required_file}"' in runtime_fetch
+for runtime_only_library in (
+    "libssl_python.so", "libcrypto_python.so", "libsqlite3_python.so"):
+    assert f'Join-Path $nativeLibraryStage $runtimeOnlyLibrary' in runtime_fetch
+assert "wslpath -a" in build_script
+assert "SHA256SUMS" in build_script
+
+# Decoder shutdown changes the wait predicate under the waiter's mutex, and
+# ordinary FFmpeg EOF/EAGAIN remains distinct from a hard worker failure.
+for function_name in ("FrameDecoder::Close()", "FrameDecoder::SetWorkerError"):
+    function = frame_decoder_source.split(function_name, 1)[1]
+    function = function.split("\n    }", 1)[0]
+    assert "std::scoped_lock lock(requestMutex_)" in function
+    assert function.index("lock(requestMutex_)") < function.index("stopWorker_ = true")
+assert "AVERROR(EAGAIN)" in frame_decoder_source
+assert "av_strerror" in frame_decoder_source
+
+# Downloader state transitions must be serialized and a C++ terminal failure
+# must not be overwritten by a stale on-disk active state.
+assert "std::mutex startMutex_" in download_manager_header
+assert download_manager_source.count(
+    "std::scoped_lock startLock(startMutex_)") >= 3
+set_failure = download_manager_source.split(
+    "void DownloadManager::SetFailure(std::string message)", 1
+)[1].split("\n    }", 1)[0]
+assert "std::filesystem::remove(statusPath_, removeError)" in set_failure
+assert set_failure.index("remove(statusPath_, removeError)") < set_failure.index(
+    "snapshot_.state = DownloadState::Failed")
+assert "PyErr_Print" not in download_manager_source
+assert "PyEval_GetBuiltins" not in download_manager_source
+assert "PyImport_ImportModule(\"builtins\")" in download_manager_source
+
+# Error timestamps are generated from thread-safe platform APIs because worker
+# failures can reach the logger concurrently with game-thread failures.
+assert "localtime_s" in error_manager_source
+assert "localtime_r" in error_manager_source
+assert "std::localtime" not in error_manager_source
 
 # A stale copy in the opposite Scotland2 phase loads Big Screen twice and
 # initializes CPython twice, which aborts Beat Saber during startup.
@@ -190,6 +287,22 @@ assert "bool externalFile = false;" in video_library_header
 assert 'sourceType == "externalFile"' in video_library_source
 assert "!IsUserOwnedFile(*previous)" in video_library_source
 
+# A missing primary manifest after an interrupted replace is a recovery case
+# when a rotating backup exists, not a first-run empty library. Managed deletes
+# must apply the same leaf-name boundary as managed reads.
+assert "const bool primaryExists" in video_library_source
+assert "const bool anyBackup = std::any_of" in video_library_source
+assert "genuine first run, not a recovery event" in video_library_source
+assert "bool RemoveManagedFile(" in video_library_source
+for direct_delete in (
+    "videoPath_ / previous->fileName",
+    "videoPath_ / found->second.user->fileName",
+    "videoPath_ / found->second.mapper->fileName",
+):
+    assert direct_delete not in video_library_source
+assert '".corrupt-" + std::to_string(stamp)' in settings_source
+assert "Configuration::getConfigFilePath" in settings_source
+
 # An animated dismissal from an already inactive HMUI controller leaves Beat
 # Saber's parent flow with no responsive center screen. Both normal and error
 # exits deliberately use the immediate dismissal overload.
@@ -200,6 +313,47 @@ assert "BeginMenuReentryGuard" in menu_flow_source
 assert "stableMainMenuFrames < 12" in menu_flow_source
 assert "mainMenu->get_isActivated()" in menu_flow_source
 assert "TickMenuReentryGuard();" in main_source
+
+# Native menu singletons outlive MenuCore's Unity hierarchy. Every retained
+# menu must forget its old objects before replacement controllers are built,
+# and no menu singleton may be refreshed when that UnityW-backed flow is gone.
+for menu_name in (
+    "SettingsMenu", "VideoLibraryMenu", "StorageMaintenanceMenu",
+    "LocalVideoBrowserMenu",
+):
+    assert f"{menu_name}::Instance().ForgetUi();" in menu_flow_source
+assert "UnityW<MenuFlowCoordinator> activeMenuFlow" in menu_flow_source
+assert "auto* coordinator = activeMenuFlow.ptr();" in menu_flow_source
+assert main_source.count("if(BigScreen::IsBigScreenMenuActive())") >= 2
+assert "void SettingsMenu::ForgetUi()" in settings_menu_source
+assert "errorModal_ = nullptr" in settings_menu_source
+assert "errorModalText_ = nullptr" in settings_menu_source
+assert "void VideoLibraryMenu::ForgetUi()" in library_menu_source
+assert "void StorageMaintenanceMenu::ForgetUi()" in (
+    root / "src/StorageMaintenanceMenu.cpp"
+).read_text(encoding="utf-8")
+assert "void LocalVideoBrowserMenu::ForgetUi()" in local_browser_source
+
+# A stock song-screen close owns only the task it started. Video Library jobs
+# continue when the stock detail view is hidden.
+assert "ownedDownloadLevelId_" in selection_toggle_source
+song_hidden = selection_toggle_source.split(
+    "void SelectionVideoToggle::SongSelectionHidden()", 1
+)[1].split("void SelectionVideoToggle::", 1)[0]
+assert "download.levelId == ownedDownloadLevelId_" in song_hidden
+forget_selection = selection_toggle_source.split(
+    "void SelectionVideoToggle::ForgetUi()", 1
+)[1].split("void SelectionVideoToggle::", 1)[0]
+assert "selectedLevel_ = nullptr" in forget_selection
+
+# Misc-tab visibility changes redraw its sliders immediately, and a queued
+# error cannot be consumed before the settings modal has been constructed.
+assert "else if(selectedTab_ == 4)" in settings_menu_source
+refresh_status = settings_menu_source.split(
+    "void SettingsMenu::RefreshDownloaderStatus()", 1
+)[1]
+assert refresh_status.index("if(errorModal_ && errorModalText_)") < \
+    refresh_status.index("TakePendingDialog()")
 
 # Menu previews keep references across asynchronous audio loading, video
 # decoder restarts, Quest focus/recording transitions, and song crossfades.
@@ -327,11 +481,25 @@ assert "get_topViewController()" not in menu_flow_source
 assert "SetTopScreenViewController(" not in menu_flow_source
 assert "HMUI retains the main-view stack" in menu_flow_source
 
+# Chroma detection parses untrusted beatmap JSON on the Unity thread. It uses
+# an explicit value stack to avoid recursive native-stack exhaustion and
+# caches unchanged map metadata so one selection is not repeatedly reparsed.
+assert "std::vector<const rapidjson::Value*> pending" in chroma_detector_source
+assert "pending.push_back" in chroma_detector_source
+assert "std::unordered_map<std::string, CacheEntry> cache" in chroma_detector_source
+assert "last_write_time" in chroma_detector_source
+assert "is_regular_file(entryError)" in chroma_detector_source
+
 # The intentionally deferred large-file split must remain visible in both the
 # backlog and release review until it is completed and these checks are updated.
 future = (root / "docs/FUTURE_WORK.md").read_text(encoding="utf-8")
 checklist = (root / "docs/RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+review_resolution = (
+    root / "docs/CODE_REVIEW_RESOLUTION.md"
+).read_text(encoding="utf-8")
 assert "TODO: Split oversized source files" in future
 assert "large-file refactor" in checklist.lower()
+assert "Reviewed and intentionally not changed" in review_resolution
+assert "Deferred with explicit release tracking" in review_resolution
 
 print("Repository toolchain, licensing, persistence, and deferred-work invariants passed.")

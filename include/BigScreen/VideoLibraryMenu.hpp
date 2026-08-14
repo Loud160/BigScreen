@@ -47,6 +47,9 @@ namespace BigScreen {
             HMUI::ViewController* editorController,
             std::function<void(bool showEditor)> navigate,
             std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo);
+        /// Releases every scene-owned UI/media reference before MenuCore
+        /// replaces the menu hierarchy.
+        void ForgetUi();
         void Refresh();
         void Tick(GlobalNamespace::SongPreviewPlayer* songPreviewPlayer);
         void Deactivate();

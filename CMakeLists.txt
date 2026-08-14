@@ -20,7 +20,10 @@ add_compile_options(-frtti -fexceptions -fvisibility=hidden -fPIE -fPIC)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/utils.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/qpm.cmake)
 
-if(${CMAKE_BUILD_TYPE} STREQUAL "RELEASE" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWithDebInfo" OR ${CMAKE_BUILD_TYPE} STREQUAL "MinSizeRel")
+string(TOLOWER "${CMAKE_BUILD_TYPE}" BIGSCREEN_BUILD_TYPE_LOWER)
+if(BIGSCREEN_BUILD_TYPE_LOWER STREQUAL "release" OR
+   BIGSCREEN_BUILD_TYPE_LOWER STREQUAL "relwithdebinfo" OR
+   BIGSCREEN_BUILD_TYPE_LOWER STREQUAL "minsizerel")
         # Better optimizations
         add_compile_options(-O3)
 
@@ -29,7 +32,8 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "RELEASE" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWi
         add_compile_options(-flto)
 endif()
 
-if(${CMAKE_BUILD_TYPE} STREQUAL "DEBUG" OR ${CMAKE_BUILD_TYPE} STREQUAL "RelWithDebInfo")
+if(BIGSCREEN_BUILD_TYPE_LOWER STREQUAL "debug" OR
+   BIGSCREEN_BUILD_TYPE_LOWER STREQUAL "relwithdebinfo")
         add_compile_options(-g)
 endif()
 
@@ -57,6 +61,77 @@ set(COMPILE_ID ${CMAKE_PROJECT_NAME})
 RECURSE_FILES(cpp_file_list ${SOURCE_DIR}/*.cpp)
 RECURSE_FILES(c_file_list ${SOURCE_DIR}/*.c)
 
+# FrameDecoder.cpp is compiled twice below against ABI-matching headers. The
+# ordinary source glob must not also compile it as a third, ambiguous backend.
+list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]FrameDecoder\\.cpp$")
+
+set(BIGSCREEN_FFMPEG44_DIR
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
+set(BIGSCREEN_FFMPEG9_DIR
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl-9.0.1)
+
+# FFmpeg 4.4 and 9 expose incompatible public structure layouts. Compile the
+# same proven worker twice with matching headers and isolate each copy in a
+# small shared backend. This separation is essential: an ordinary unversioned
+# object reference inside libbigscreen.so could bind both decoder copies to the
+# first FFmpeg found. Linking each backend separately records requirements for
+# that runtime's private ELF symbol namespace instead. Only the ABI-neutral
+# FrameDecoderBackend interface crosses into libbigscreen.so, and VideoFrame's
+# reusable vector moves across that boundary without an additional RGBA copy.
+add_library(bigscreen_ffmpeg44_backend SHARED ${SOURCE_DIR}/FrameDecoder.cpp)
+target_compile_definitions(bigscreen_ffmpeg44_backend PRIVATE
+        BIGSCREEN_NATIVE_FFMPEG_IMPLEMENTATION=1
+        FrameDecoder=FrameDecoder44Backend
+        BIGSCREEN_FFMPEG_BACKEND_FACTORY=CreateFrameDecoder44Backend)
+target_include_directories(bigscreen_ffmpeg44_backend PRIVATE ${INCLUDE_DIR})
+target_include_directories(bigscreen_ffmpeg44_backend SYSTEM PRIVATE
+        ${BIGSCREEN_FFMPEG44_DIR}/include)
+target_link_libraries(bigscreen_ffmpeg44_backend PRIVATE
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavformat-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavcodec-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavutil-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libswscale-bigscreen44.so)
+set_target_properties(bigscreen_ffmpeg44_backend PROPERTIES
+        OUTPUT_NAME "bigscreen-ffmpeg44-backend"
+        POSITION_INDEPENDENT_CODE ON)
+
+add_library(bigscreen_ffmpeg9_backend SHARED ${SOURCE_DIR}/FrameDecoder.cpp)
+target_compile_definitions(bigscreen_ffmpeg9_backend PRIVATE
+        BIGSCREEN_NATIVE_FFMPEG_IMPLEMENTATION=1
+        FrameDecoder=FrameDecoder9Backend
+        BIGSCREEN_FFMPEG_BACKEND_FACTORY=CreateFrameDecoder9Backend)
+target_include_directories(bigscreen_ffmpeg9_backend PRIVATE ${INCLUDE_DIR})
+target_include_directories(bigscreen_ffmpeg9_backend SYSTEM PRIVATE
+        ${BIGSCREEN_FFMPEG9_DIR}/include)
+target_link_libraries(bigscreen_ffmpeg9_backend PRIVATE
+        ${BIGSCREEN_FFMPEG9_DIR}/lib/libavformat-bigscreen9.so
+        ${BIGSCREEN_FFMPEG9_DIR}/lib/libavcodec-bigscreen9.so
+        ${BIGSCREEN_FFMPEG9_DIR}/lib/libavutil-bigscreen9.so
+        ${BIGSCREEN_FFMPEG9_DIR}/lib/libswscale-bigscreen9.so)
+set_target_properties(bigscreen_ffmpeg9_backend PROPERTIES
+        OUTPUT_NAME "bigscreen-ffmpeg9-backend"
+        POSITION_INDEPENDENT_CODE ON)
+
+# Preserve backend symbols for crash diagnosis while keeping the installed
+# comparison payload small. The template's deferred strip helper covers only
+# libbigscreen.so, so these two additional shared targets need the equivalent
+# treatment explicitly.
+if(CMAKE_STRIP)
+        foreach(BIGSCREEN_BACKEND_TARGET IN ITEMS
+                bigscreen_ffmpeg44_backend
+                bigscreen_ffmpeg9_backend)
+                add_custom_command(TARGET ${BIGSCREEN_BACKEND_TARGET} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E make_directory
+                                ${CMAKE_CURRENT_BINARY_DIR}/debug
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                                $<TARGET_FILE:${BIGSCREEN_BACKEND_TARGET}>
+                                ${CMAKE_CURRENT_BINARY_DIR}/debug/$<TARGET_FILE_NAME:${BIGSCREEN_BACKEND_TARGET}>
+                        COMMAND ${CMAKE_STRIP} --strip-all
+                                $<TARGET_FILE:${BIGSCREEN_BACKEND_TARGET}>
+                        COMMENT "Preserve symbols and strip ${BIGSCREEN_BACKEND_TARGET}")
+        endforeach()
+endif()
+
 add_library(
         ${CMAKE_PROJECT_NAME}
         SHARED
@@ -83,6 +158,10 @@ set(BIGSCREEN_WARNING_OPTIONS
         -Wno-nested-anon-types)
 set_source_files_properties(${cpp_file_list} PROPERTIES
         COMPILE_OPTIONS "${BIGSCREEN_WARNING_OPTIONS}")
+target_compile_options(bigscreen_ffmpeg44_backend PRIVATE
+        ${BIGSCREEN_WARNING_OPTIONS})
+target_compile_options(bigscreen_ffmpeg9_backend PRIVATE
+        ${BIGSCREEN_WARNING_OPTIONS})
 
 # for inline hook
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
@@ -133,41 +212,46 @@ foreach(BIGSCREEN_PYTHON_LIBRARY
             COMMENT "Stage ${BIGSCREEN_PYTHON_LIBRARY}")
 endforeach()
 
-# Big Screen ships a private, minimal FFmpeg runtime built exclusively
-# from LGPL components.  Its custom SONAMEs and symbol-version namespaces keep
-# Android from resolving these calls to Hollywood's unrelated GPL FFmpeg build.
-# scripts/build-ffmpeg-lgpl.sh is the single reproducible source of these files.
-set(BIGSCREEN_FFMPEG_VERSION "4.4.8" CACHE STRING
-    "Private FFmpeg runtime used by Big Screen (4.4.8 or 9.0.1)")
-set_property(CACHE BIGSCREEN_FFMPEG_VERSION PROPERTY STRINGS 4.4.8 9.0.1)
-if(BIGSCREEN_FFMPEG_VERSION STREQUAL "4.4.8")
-    set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
-elseif(BIGSCREEN_FFMPEG_VERSION STREQUAL "9.0.1")
-    set(BIGSCREEN_FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl-9.0.1)
-else()
-    message(FATAL_ERROR "Unsupported BIGSCREEN_FFMPEG_VERSION=${BIGSCREEN_FFMPEG_VERSION}")
-endif()
-message(STATUS "Using private FFmpeg ${BIGSCREEN_FFMPEG_VERSION}")
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-        BIGSCREEN_FFMPEG_VERSION="${BIGSCREEN_FFMPEG_VERSION}")
-target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${BIGSCREEN_FFMPEG_DIR}/include)
+# Big Screen ships both private, minimal LGPL FFmpeg runtimes so the user can
+# select a decoder in Misc and compare the same map without reinstalling a
+# different QMOD. VideoLibrary's compatibility probe intentionally uses the
+# conservative 4.4 headers/runtime; actual playback uses the selected backend.
+message(STATUS "Using switchable private FFmpeg 4.4.8 and 9.0.1 runtimes")
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
+        ${BIGSCREEN_FFMPEG44_DIR}/include)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavformat-bigscreen.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavcodec-bigscreen.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libavutil-bigscreen.so
-        ${BIGSCREEN_FFMPEG_DIR}/lib/libswscale-bigscreen.so
+        bigscreen_ffmpeg44_backend
+        bigscreen_ffmpeg9_backend
+        # VideoLibrary's file-compatibility probe remains deliberately bound
+        # to the conservative 4.4 runtime and never shares FFmpeg structs with
+        # either playback backend.
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavformat-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavcodec-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libavutil-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libswscale-bigscreen44.so
 )
 
-# Package the entire matching set. Mixing one library from a different FFmpeg
-# build would defeat both ABI safety and the LGPL/GPL separation.
-foreach(BIGSCREEN_FFMPEG_LIBRARY
-        libavformat-bigscreen.so
-        libavcodec-bigscreen.so
-        libavutil-bigscreen.so
-        libswscale-bigscreen.so)
+# Package both complete sets. Distinct suffixes and symbol namespaces are what
+# let Android load them simultaneously without satisfying one ABI from another.
+foreach(BIGSCREEN_FFMPEG_LIBRARY IN ITEMS
+        libavformat-bigscreen44.so
+        libavcodec-bigscreen44.so
+        libavutil-bigscreen44.so
+        libswscale-bigscreen44.so)
         add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        ${BIGSCREEN_FFMPEG_DIR}/lib/${BIGSCREEN_FFMPEG_LIBRARY}
+                        ${BIGSCREEN_FFMPEG44_DIR}/lib/${BIGSCREEN_FFMPEG_LIBRARY}
+                        $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${BIGSCREEN_FFMPEG_LIBRARY}
+                COMMENT "Stage ${BIGSCREEN_FFMPEG_LIBRARY}")
+endforeach()
+foreach(BIGSCREEN_FFMPEG_LIBRARY IN ITEMS
+        libavformat-bigscreen9.so
+        libavcodec-bigscreen9.so
+        libavutil-bigscreen9.so
+        libswscale-bigscreen9.so)
+        add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        ${BIGSCREEN_FFMPEG9_DIR}/lib/${BIGSCREEN_FFMPEG_LIBRARY}
                         $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${BIGSCREEN_FFMPEG_LIBRARY}
                 COMMENT "Stage ${BIGSCREEN_FFMPEG_LIBRARY}")
 endforeach()

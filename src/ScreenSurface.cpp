@@ -966,19 +966,19 @@ namespace BigScreen {
             videoObject_->get_transform()->set_localEulerAngles({0.0f, 0.0f, degrees});
     }
 
-    void ScreenSurface::SetOpacity(float opacity)
+    bool ScreenSurface::SetOpacity(float opacity)
     {
         if(!material_)
-            return;
+            return false;
         const float nextOpacity = std::clamp(opacity, 0.0f, 1.0f);
         // Most cues hold opacity steady for many seconds. Avoid repeating the
         // same IL2CPP material write on every Unity update for every panel.
         if(std::abs(nextOpacity - opacity_) < 0.0001f)
-            return;
+            return true;
         // Showcase cues can animate through the opaque boundary. Reconfigure
         // the shader and blend/depth state, not only its color alpha, so the
         // transition remains correct with both Unity unlit shader variants.
-        ApplyPresentation(letterboxTransparent_, nextOpacity);
+        return ApplyPresentation(letterboxTransparent_, nextOpacity);
     }
 
     void ScreenSurface::SetDoubleSided(bool enabled)

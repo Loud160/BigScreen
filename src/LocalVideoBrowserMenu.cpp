@@ -105,6 +105,38 @@ namespace BigScreen {
         if(worker_.joinable()) worker_.join();
     }
 
+    void LocalVideoBrowserMenu::ForgetUi()
+    {
+        // A scan owns no Unity objects, but it must finish before the vectors
+        // and callbacks it will publish into are reset for a new menu scene.
+        if(worker_.joinable())
+            worker_.join();
+        controller_ = nullptr;
+        selectedLevel_ = nullptr;
+        onCancel_ = {};
+        onAssigned_ = {};
+        title_ = nullptr;
+        statusText_ = nullptr;
+        helpText_ = nullptr;
+        breadcrumbContent_ = nullptr;
+        listContent_ = nullptr;
+        upButton_ = nullptr;
+        setButton_ = nullptr;
+        helpModal_ = nullptr;
+        breadcrumbObjects_.clear();
+        rowObjects_.clear();
+        selectedPath_.clear();
+        rootPath_.clear();
+        pendingDirectory_.reset();
+        {
+            std::lock_guard lock(mutex_);
+            snapshot_ = {};
+        }
+        nextRequest_ = 0;
+        renderedVersion_ = 0;
+        tickCounter_ = 0;
+    }
+
     void LocalVideoBrowserMenu::CreateUi(
         HMUI::ViewController* controller,
         std::function<void()> onCancel,

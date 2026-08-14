@@ -14,11 +14,18 @@
 ## Automated validation
 
 - [ ] Host tests pass from a clean test build directory.
+- [ ] `CODE_REVIEW_RESOLUTION.md` still reflects the current implementation;
+      deferred items have either been completed or deliberately carried forward.
 - [ ] Linux decoder tests generate landscape/portrait H.264 fixtures and pass; RGBA allocation growth remains bounded.
 - [ ] QuickJS output, exception, timeout, recursion, source-limit, and output-limit tests pass in a Release build; the pinned source hash was reviewed.
 - [ ] `build-downloader-from-source.ps1` rebuilds yt-dlp/yt-dlp-ejs and its full payload matches the pinned official release.
 - [ ] Clean ARM64 Quest build passes with no unresolved symbols.
-- [ ] Clean ARM64 builds pass against both FFmpeg 4.4.8 and 9.0.1; the packaged build record matches the selected runtime.
+- [ ] `libbigscreen.so` directly needs `libpython3.14.so` but does not directly
+      need CPython's SSL, crypto, or SQLite runtime libraries.
+- [ ] A clean ARM64 build includes both isolated decoder backends, all eight
+      version-suffixed FFmpeg libraries, and both packaged build records.
+- [ ] ELF inspection proves the 4.4 backend needs only `BIGSCREEN44_LIB*`
+      symbols and the 9 backend needs only `BIGSCREEN9_LIB*` symbols.
 - [ ] QMOD creation passes from clean staged dependencies and replaces no prior artifact until fresh-archive validation succeeds.
 - [ ] QMOD archive exactly contains the unique manifest inputs: native libraries, full downloader runtime, manifest, and license/notices.
 - [ ] CI passes on the release commit/tag.
@@ -30,6 +37,10 @@
 - [ ] OST, DLC, custom, and WIP entries appear once per song and remain correctly ordered after search/letter jump/editor return.
 - [ ] Menu preview starts/stops with audio and cannot leak into the home/mod menus or resume after Quest focus changes.
 - [ ] Mapper download, pasted URL download, cancellation, thumbnail, progress, and understandable errors work.
+- [ ] Closing song details cancels only its own song-screen download and does
+      not cancel an active Video Library download.
+- [ ] A forced C++ worker failure cannot be overwritten by stale active status
+      JSON; a new download can start without restarting Beat Saber.
 - [ ] Center file browser starts in the map/Video Import folder, navigates shared storage, colors compatible/invalid MP4s green/red, gates Set Video, shows HELP, replaces assignments, and unregisters without deleting user files.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
 - [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
@@ -38,8 +49,14 @@
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
 - [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.
 - [ ] 480p/720p/1080p and 15/30/60 FPS produce expected diagnostics; Automatic Performance steps down without changing saved settings.
+- [ ] The Misc FFmpeg selector restarts an active library preview at its
+      retained position, affects the next gameplay decoder, and the overlay /
+      results identify the runtime actually used.
 - [ ] Repeated identical-map runs compare FFmpeg 4.4.8 and 9.0.1 on Quest 2 and Quest 3 before changing the release default.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.
+- [ ] A deliberately missing `library.json` with a valid backup recovers; a
+      first run with neither manifest nor backups starts empty without error.
+- [ ] Corrupt settings JSON is quarantined and reported before defaults are saved.
 - [ ] Stable updater check/install/restart passes; a deliberately incompatible candidate rolls back and is not reoffered.
 - [ ] A YouTube URL requiring an EJS challenge reports `Big Screen QuickJS-NG` in the log and downloads without a missing-runtime warning.
 - [ ] Two simulated internal errors trigger one disable dialog without popup spam; gameplay failures never interrupt the map.

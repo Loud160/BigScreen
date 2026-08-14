@@ -20,6 +20,7 @@ namespace BigScreen {
     public:
         static StorageMaintenanceMenu& Instance();
         void CreateUi(HMUI::ViewController* controller, std::function<void()> onBack);
+        void ForgetUi();
         void Show();
         void Tick();
 

@@ -2,9 +2,6 @@ Param(
     [Parameter(Mandatory=$false)]
     [Switch] $clean,
 
-    [ValidateSet("4.4.8", "9.0.1")]
-    [String] $FfmpegVersion = $(if ($env:BIGSCREEN_FFMPEG_VERSION) { $env:BIGSCREEN_FFMPEG_VERSION } else { "4.4.8" }),
-
     [Parameter(Mandatory=$false)]
     [Switch] $help
 )
@@ -57,22 +54,60 @@ if (-not $cmakeExe) {
     throw "CMake was not found in PATH or the latest Visual Studio installation."
 }
 
-# Build the complete isolated LGPL FFmpeg runtime under WSL.  Developers may
-# pre-stage extern/ffmpeg-lgpl in CI or another Linux environment; otherwise a
-# local WSL distribution with a Linux Android NDK is required.
-$ffmpegDirectory = if ($FfmpegVersion -eq "4.4.8") { "extern/ffmpeg-lgpl" } else { "extern/ffmpeg-lgpl-$FfmpegVersion" }
-$ffmpegStamp = Join-Path (Join-Path $PSScriptRoot "..") "$ffmpegDirectory/bigscreen-ffmpeg-$FfmpegVersion.ready"
-if (-not (Test-Path -LiteralPath $ffmpegStamp)) {
-    $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if (-not $wslCommand) {
-        throw "The LGPL FFmpeg runtime is not staged and WSL was not found. Run scripts/build-ffmpeg-lgpl.sh in Linux first."
+# Build and verify both isolated LGPL FFmpeg runtimes. The in-game selector is
+# meaningful only when one QMOD contains both complete ABI-isolated sets.
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
+foreach ($runtime in @(
+    @{ Version = "4.4.8"; Directory = "extern/ffmpeg-lgpl"; Tag = "44" },
+    @{ Version = "9.0.1"; Directory = "extern/ffmpeg-lgpl-9.0.1"; Tag = "9" })) {
+    $ffmpegRoot = Join-Path $repositoryRoot $runtime.Directory
+    $ffmpegStamp = Join-Path $ffmpegRoot "bigscreen-ffmpeg-$($runtime.Version).ready"
+    $ffmpegSums = Join-Path $ffmpegRoot "SHA256SUMS"
+    $ffmpegValid = (Test-Path -LiteralPath $ffmpegStamp) -and
+        (Test-Path -LiteralPath $ffmpegSums)
+    if ($ffmpegValid) {
+        $expectedHashes = @{}
+        foreach ($line in Get-Content -LiteralPath $ffmpegSums) {
+            if ($line -match '^([0-9a-fA-F]{64})\s+(.+)$') {
+                $expectedHashes[[IO.Path]::GetFileName($matches[2])] =
+                    $matches[1].ToLowerInvariant()
+            }
+        }
+        foreach ($component in @("avformat", "avcodec", "avutil", "swscale")) {
+            $name = "lib$component-bigscreen$($runtime.Tag).so"
+            $library = Join-Path $ffmpegRoot "lib/$name"
+            if (-not (Test-Path -LiteralPath $library) -or
+                -not $expectedHashes.ContainsKey($name) -or
+                (Get-FileHash -Algorithm SHA256 -LiteralPath $library).Hash.ToLowerInvariant() -ne
+                    $expectedHashes[$name]) {
+                $ffmpegValid = $false
+                break
+            }
+        }
     }
-    $linuxScript = (Resolve-Path (Join-Path $PSScriptRoot "build-ffmpeg-lgpl.sh")).Path.Replace('\', '/')
-    $drive = $linuxScript.Substring(0, 1).ToLowerInvariant()
-    $linuxScript = "/mnt/$drive/" + $linuxScript.Substring(3)
-    & $wslCommand.Source -- env "BIGSCREEN_FFMPEG_VERSION=$FfmpegVersion" bash $linuxScript
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    if (-not $ffmpegValid) {
+        if (-not $wslCommand) {
+            throw "FFmpeg $($runtime.Version) is not staged and WSL was not found. Run scripts/build-ffmpeg-lgpl.sh in Linux for both supported versions."
+        }
+        $windowsScript = (Resolve-Path (
+            Join-Path $PSScriptRoot "build-ffmpeg-lgpl.sh")).Path
+        # wsl.exe treats unquoted Windows backslashes as shell escapes when it
+        # dispatches a Linux command. A forward-slash drive path is accepted by
+        # wslpath and survives that boundary unchanged.
+        $portableWindowsScript = $windowsScript.Replace('\', '/')
+        $linuxScriptOutput = & $wslCommand.Source -- wslpath -a $portableWindowsScript
+        $linuxScript = if ($null -eq $linuxScriptOutput) {
+            ""
+        } else {
+            ([string]$linuxScriptOutput).Trim()
+        }
+        if (-not $linuxScript) {
+            throw "WSL could not translate the FFmpeg build-script path $windowsScript"
+        }
+        & $wslCommand.Source -- env `
+            "BIGSCREEN_FFMPEG_VERSION=$($runtime.Version)" bash $linuxScript
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }
 
@@ -88,12 +123,18 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
-    "-DBIGSCREEN_FFMPEG_VERSION=$FfmpegVersion" `
-    -B build
+& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
 & $cmakeExe --build build
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+# Prove that each separately compiled decoder retained requirements for its
+# matching private FFmpeg namespace. Without this audit a valid-looking build
+# could still route both toggle states through whichever FFmpeg loaded first.
+& (Join-Path $PSScriptRoot "validate-ffmpeg-elf.ps1")
 exit $LASTEXITCODE

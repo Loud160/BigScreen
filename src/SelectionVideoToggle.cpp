@@ -552,6 +552,11 @@ namespace BigScreen {
         downloadRow_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
+        selectedLevel_ = nullptr;
+        selectedLevelId_.clear();
+        selectedDescriptor_ = {};
+        selectedLevelHasVideo_ = false;
+        ownedDownloadLevelId_.clear();
     }
 
     void SelectionVideoToggle::PositionControlsRow()
@@ -669,7 +674,10 @@ namespace BigScreen {
         resumeWaitReported_ = false;
         // yt-dlp retains its .part file. Returning to this song offers Resume
         // instead of wasting storage or network data.
-        DownloadManager::Instance().Cancel();
+        const auto download = DownloadManager::Instance().Snapshot();
+        if(!ownedDownloadLevelId_.empty() && download.Active() &&
+           download.levelId == ownedDownloadLevelId_)
+            DownloadManager::Instance().Cancel();
         auto& playback = PlaybackSession::Instance();
         if(!playback.IsMenuPreviewActive())
             return;
@@ -835,7 +843,9 @@ namespace BigScreen {
         const auto snapshot = downloader.Snapshot();
         if(snapshot.Active())
         {
-            downloader.Cancel();
+            if(!ownedDownloadLevelId_.empty() &&
+               snapshot.levelId == ownedDownloadLevelId_)
+                downloader.Cancel();
             return;
         }
         if(!selectedLevel_) return;
@@ -871,6 +881,7 @@ namespace BigScreen {
             // A retry deserves a fresh result dialog even if YouTube returns
             // the same reason as the previous attempt.
             reportedDownloadFailure_.clear();
+            ownedDownloadLevelId_ = descriptor.levelId;
         }
         TickDownloadUi();
     }
@@ -896,6 +907,8 @@ namespace BigScreen {
             return;
         nextDownloadUiRefreshTime_ = now + 0.1f;
         const auto snapshot = DownloadManager::Instance().Snapshot();
+        if(!snapshot.Active() && snapshot.levelId == ownedDownloadLevelId_)
+            ownedDownloadLevelId_.clear();
         const bool forSelection = !snapshot.levelId.empty() &&
                                   snapshot.levelId == selectedLevelId_;
         // A completed task is the one event that changes the selected map's

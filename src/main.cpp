@@ -281,13 +281,14 @@ namespace {
         CreateResultsText(
             parent,
             std::format(
-                "<color=#75DFFF><b>VIDEO</b></color>\n"
+                "<color=#75DFFF><b>VIDEO · FFMPEG {}</b></color>\n"
                 "<color=#AEBAC8>Source</color> <b>{}x{} @ {:.1f}</b>   "
                 "<color=#AEBAC8>Output</color> <b>{}x{} @ {} cap</b>\n"
                 "<color=#AEBAC8>Frames Skipped</color> <b>{}</b>   "
                 "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
                 "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
                 "<color=#AEBAC8>Decode</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
+                data.video.decoderRuntime,
                 data.video.sourceWidth,
                 data.video.sourceHeight,
                 data.video.sourceFps,
@@ -1115,19 +1116,27 @@ namespace {
 
         BigScreen::ErrorManager::Instance().Guard("updating menu video UI", [&]() {
             BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
-            BigScreen::VideoLibraryMenu::Instance().Tick(self);
-            BigScreen::StorageMaintenanceMenu::Instance().Tick();
-            BigScreen::LocalVideoBrowserMenu::Instance().Tick();
-            BigScreen::ScreenPreview::Instance().TickUndockedEditor();
-            BigScreen::PerformancePanel::Instance().TickInteraction();
+            // The remaining objects belong exclusively to Big Screen's own
+            // retained flow. A MenuCore soft restart can destroy that scene
+            // without first nulling native singleton fields; never touch them
+            // unless the UnityW-backed coordinator is still alive and active.
+            if(BigScreen::IsBigScreenMenuActive())
+            {
+                BigScreen::VideoLibraryMenu::Instance().Tick(self);
+                BigScreen::StorageMaintenanceMenu::Instance().Tick();
+                BigScreen::LocalVideoBrowserMenu::Instance().Tick();
+                BigScreen::ScreenPreview::Instance().TickUndockedEditor();
+                BigScreen::PerformancePanel::Instance().TickInteraction();
+            }
         });
         static int downloaderUiFrame = 0;
         if(++downloaderUiFrame >= 30)
         {
             downloaderUiFrame = 0;
-            BigScreen::ErrorManager::Instance().Guard("refreshing downloader status", []() {
-                BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
-            });
+            if(BigScreen::IsBigScreenMenuActive())
+                BigScreen::ErrorManager::Instance().Guard("refreshing downloader status", []() {
+                    BigScreen::SettingsMenu::Instance().RefreshDownloaderStatus();
+                });
         }
 
         // SongPreviewPlayer crossfades between a small bank of AudioSources.

@@ -20,7 +20,11 @@ namespace BigScreen {
             {
                 std::error_code fileError;
                 if(it->is_regular_file(fileError) && !fileError)
-                    total += it->file_size(fileError);
+                {
+                    const auto bytes = it->file_size(fileError);
+                    if(!fileError)
+                        total += bytes;
+                }
             }
             return total;
         }

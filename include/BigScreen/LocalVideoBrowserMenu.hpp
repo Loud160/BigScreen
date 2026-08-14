@@ -31,6 +31,7 @@ namespace BigScreen {
             HMUI::ViewController* controller,
             std::function<void()> onCancel,
             std::function<void(const std::string&)> onAssigned);
+        void ForgetUi();
         void Show(GlobalNamespace::BeatmapLevel* level);
         void Tick();
 

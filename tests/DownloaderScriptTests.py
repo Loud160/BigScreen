@@ -70,6 +70,17 @@ for name, script in (
 ):
     compile(script, f"<{name}>", "exec")
 
+# All three foreground worker types share the cancellation marker. Probe and
+# updater checks are deliberately placed between bounded network operations;
+# the updater additionally checks every streamed package chunk.
+for script in (download_script, probe_script, updater_script):
+    assert "job['cancelPath']" in script
+    assert "def cancelled():" in script
+assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in download_script
+assert "raise KeyboardInterrupt('Video URL check cancelled')" in probe_script
+assert "raise KeyboardInterrupt('yt-dlp update cancelled')" in updater_script
+assert updater_script.count("cancelled()") >= 4
+
 # The Quest provider must remain an in-process bridge. Reintroducing the
 # upstream subprocess provider would appear to work on desktop while failing
 # against Android's writable-directory execution restrictions.
@@ -79,6 +90,16 @@ assert "subprocess" not in provider_source
 assert "import bigscreen_jsc_provider" in download_script
 assert "import bigscreen_jsc_provider" in probe_script
 assert "import yt_dlp_ejs" in source
+
+# Do not trust the arbitrary thumbnail URL returned in metadata. The validated
+# YouTube ID is the only variable segment, and a failed refresh preserves the
+# previously displayed image by deleting only its temporary file.
+assert "video_id = str(result.get('id') or info.get('id') or '')" in download_script
+assert "https://i.ytimg.com/vi/" in download_script
+assert "info.get('thumbnail')" not in download_script
+assert "os.remove(thumbnail_path + '.tmp')" in download_script
+assert "os.remove(job['thumbnailPath'])" not in download_script
+assert "Thumbnail warning:" in download_script
 
 # Progress callbacks can be extremely frequent. Verify that transient updates
 # neither fsync flash nor exceed the UI's 10 Hz polling cadence, while terminal

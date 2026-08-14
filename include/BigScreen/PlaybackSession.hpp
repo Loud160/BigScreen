@@ -31,6 +31,7 @@ namespace BigScreen {
         double peakDecodeMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
         int automaticReductions = 0;
+        std::string decoderRuntime;
     };
 
     /// Immutable snapshot used by the results-screen presentation. Keeping the

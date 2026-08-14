@@ -234,6 +234,7 @@ namespace BigScreen {
         hideSpectrogramBarsHint_ = nullptr;
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
+        ffmpeg9Toggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
         automaticPerformanceResponseSlider_ = nullptr;
@@ -252,6 +253,8 @@ namespace BigScreen {
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
         resetButton_ = nullptr;
+        errorModal_ = nullptr;
+        errorModalText_ = nullptr;
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
         // navigation inside this left panel. Anchor a dedicated header to the
@@ -555,6 +558,23 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             resolutionDropdown_,
             "Sets the highest resolution used during playback. It does not download another copy or change the saved MP4. Lower-resolution videos are not enlarged. 720p is recommended; 1080p may reduce performance and battery life.");
+
+        ffmpeg9Toggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Use FFmpeg 9",
+            settings.UseFfmpeg9(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetUseFfmpeg9(enabled);
+                // A decoder cannot change ABI while its worker owns FFmpeg
+                // structures. Reopen an active library preview at its retained
+                // time; normal song-menu and gameplay sessions use the choice
+                // the next time they start.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            ffmpeg9Toggle_,
+            "Experimental: selects the FFmpeg 9.0.1 playback decoder for side-by-side performance and compatibility testing. Off uses the proven FFmpeg 4.4.8 default. An active Video Library preview restarts at the same position; gameplay uses the selection on the next map. This does not change or redownload the video.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -1815,6 +1835,14 @@ namespace BigScreen {
         RefreshControls();
     }
 
+    void SettingsMenu::ForgetUi()
+    {
+        // SettingsMenu owns no worker or persistent resource. Replacing its
+        // value state is the safest exhaustive reset: newly added cached UI
+        // fields cannot accidentally be omitted from a hand-maintained list.
+        *this = SettingsMenu{};
+    }
+
     void SettingsMenu::RefreshControls()
     {
         // Every reactivation and state-changing callback uses the same complete
@@ -1882,6 +1910,7 @@ namespace BigScreen {
             allowChromaOverrideToggle_, settings.AllowChromaOverride());
         SetToggleWithoutNotification(
             automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
+        SetToggleWithoutNotification(ffmpeg9Toggle_, settings.UseFfmpeg9());
         SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
@@ -2178,6 +2207,8 @@ namespace BigScreen {
             playbackFpsDropdown_->set_interactable(enabled);
         if(resolutionDropdown_)
             resolutionDropdown_->set_interactable(enabled);
+        if(ffmpeg9Toggle_)
+            ffmpeg9Toggle_->set_interactable(enabled);
         if(automaticPerformanceToggle_)
             automaticPerformanceToggle_->set_interactable(enabled);
         if(automaticPerformanceThresholdSlider_)
@@ -2389,7 +2420,7 @@ namespace BigScreen {
             if(videoOpacitySlider_ && videoOpacitySlider_->slider)
                 videoOpacitySlider_->slider->UpdateVisuals();
         }
-        else if(selectedTab_ == 3)
+        else if(selectedTab_ == 4)
         {
             // Misc is also constructed while hidden. Force the two Automatic
             // Performance sliders through the same native post-visibility
@@ -2494,13 +2525,18 @@ namespace BigScreen {
             ErrorManager::Instance().ReportUserVisible("Video library recovered", *recovery);
         if(auto update = DownloadManager::Instance().TakeUpdateNotice())
             ErrorManager::Instance().ReportUserVisible("Downloader rollback", *update);
-        if(auto message = ErrorManager::Instance().TakePendingDialog();
-           message && errorModal_ && errorModalText_)
+        // Do not consume a queued error before this retained singleton has a
+        // live modal to display it. The global status tick begins before the
+        // user has ever opened Big Screen.
+        if(errorModal_ && errorModalText_)
         {
-            errorModalText_->set_text(
-                "<b>" + message->first + "</b>\n\n" + message->second);
-            errorModal_->Show();
-            RefreshControls();
+            if(auto message = ErrorManager::Instance().TakePendingDialog())
+            {
+                errorModalText_->set_text(
+                    "<b>" + message->first + "</b>\n\n" + message->second);
+                errorModal_->Show();
+                RefreshControls();
+            }
         }
         if(!updaterButton_ || !updaterStatus_) return;
         const auto snapshot = DownloadManager::Instance().Snapshot();

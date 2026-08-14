@@ -125,6 +125,10 @@ namespace BigScreen {
         bool resumeWhenSongAudioStarts_ = false;
         bool resumeWaitReported_ = false;
         float nextDownloadUiRefreshTime_ = 0.0f;
+        // Only cancel a downloader task when this song-selection surface was
+        // the owner that started it. Downloads begun in Big Screen's library
+        // must survive the stock song panel being hidden.
+        std::string ownedDownloadLevelId_;
         // Map metadata is immutable while one song remains selected. Keeping
         // its descriptor here avoids reparsing Cinema JSON and probing files
         // ten times per second merely to redraw an unchanged download button.

@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <exception>
 
 #include "UnityEngine/Quaternion.hpp"
 #include "UnityEngine/Vector3.hpp"
+#include "main.hpp"
 
 namespace BigScreen {
     namespace {
@@ -117,7 +119,11 @@ namespace BigScreen {
                     Destroy();
                     return false;
                 }
-                panels_[index].SetOpacity(1.0f);
+                if(!panels_[index].SetOpacity(1.0f))
+                {
+                    Destroy();
+                    return false;
+                }
                 // Several showcase cues rotate curved screens past edge-on.
                 // Keep the shared video visible from the rear rather than
                 // exposing a blank culled back face during the carousel.
@@ -129,8 +135,18 @@ namespace BigScreen {
             externallyVisible_ = true;
             return true;
         }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not create the showcase surfaces: {}",
+                exception.what());
+            try { Destroy(); } catch(...) {}
+            return false;
+        }
         catch(...)
         {
+            PaperLogger.error(
+                "Could not create the showcase surfaces because of an unknown native exception");
             try { Destroy(); } catch(...) {}
             return false;
         }
@@ -167,15 +183,30 @@ namespace BigScreen {
                     panels_[index].SetWorldScale(
                         {state.scale.x, state.scale.y, state.scale.z});
                     panels_[index].SetVideoLocalRoll(state.videoRoll);
-                    panels_[index].SetOpacity(state.opacity);
+                    if(!panels_[index].SetOpacity(state.opacity))
+                    {
+                        PaperLogger.error(
+                            "Unity rejected showcase opacity for panel {}",
+                            index + 1);
+                        return false;
+                    }
                 }
                 panels_[index].SetVisible(
                     state.visible && mediaReady_ && externallyVisible_);
             }
             return true;
         }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not update the showcase surfaces: {}",
+                exception.what());
+            return false;
+        }
         catch(...)
         {
+            PaperLogger.error(
+                "Could not update the showcase surfaces because of an unknown native exception");
             return false;
         }
     }

@@ -192,6 +192,10 @@ Opens a centered review page and stops any active library preview. **Scan Storag
 
 ### Performance
 
+#### Use FFmpeg 9 — default: Off
+
+This is an experimental comparison option. It selects which bundled decoder runtime opens the next video. Off uses FFmpeg 4.4.8; on uses FFmpeg 9.0.1. It does not change, convert, or redownload the video. If a Video Library preview is active, changing the switch safely recreates playback at the retained song position. A map already in gameplay is never switched underneath its running decoder; the new choice applies when the next playback session starts. The performance overlay and results summary identify the runtime that actually opened.
+
 #### Automatic Performance — default: Off
 
 Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the MP4, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
