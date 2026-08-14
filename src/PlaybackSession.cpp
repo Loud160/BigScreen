@@ -13,6 +13,7 @@
 #include "BigScreen/CinemaEnvironment.hpp"
 #include "BigScreen/ChromaMapDetector.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/UpDownShowcaseTimeline.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "UnityEngine/Quaternion.hpp"
 #include "UnityEngine/Time.hpp"
@@ -45,9 +46,14 @@ namespace BigScreen {
 
     bool PlaybackSession::MapperPresentationActive() const
     {
-        return Settings::Instance().AllowChromaOverride() &&
-               baseConfig_ &&
-               (baseConfig_->hasMapperPresentation || chromaMapDetected_);
+        // The developer showcase is authored specifically around the complete
+        // Chroma/Noodle environment. Treat it as mapper-owned presentation
+        // even if the user's global Chroma override preference is off, so Big
+        // Screen cannot force Big Mirror or remove lighting/side geometry.
+        return showcaseEligible_ ||
+               (Settings::Instance().AllowChromaOverride() &&
+                baseConfig_ &&
+                (baseConfig_->hasMapperPresentation || chromaMapDetected_));
     }
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
@@ -74,6 +80,9 @@ namespace BigScreen {
         preparedLevelId_.clear();
         preparedSongName_.clear();
         preparedSongArtist_.clear();
+        preparedCharacteristic_.clear();
+        preparedDifficulty_ = -1;
+        showcaseEligible_ = false;
         chromaMapDetected_ = false;
         menuPreviewStartSongTime_ = 0.0;
 
@@ -129,6 +138,28 @@ namespace BigScreen {
         else
         {
             PaperLogger.debug("No playable video for selected level '{}'", levelId);
+        }
+    }
+
+    void PlaybackSession::ConfigureGameplayBeatmap(
+        const std::string& characteristic,
+        int difficulty)
+    {
+        preparedCharacteristic_ = characteristic;
+        preparedDifficulty_ = difficulty;
+        showcaseEligible_ = baseConfig_ && UpDownShowcase::MatchesTarget(
+            preparedSongName_,
+            preparedSongArtist_,
+            levelDirectory_.filename().string(),
+            preparedCharacteristic_,
+            preparedDifficulty_);
+        if(showcaseEligible_)
+        {
+            PaperLogger.info(
+                "Activated private Up & Down showcase for level '{}', characteristic '{}', difficulty {}",
+                preparedLevelId_,
+                preparedCharacteristic_,
+                preparedDifficulty_);
         }
     }
 
@@ -310,11 +341,14 @@ namespace BigScreen {
             // frame for Beat Saber's current song time.
             firstFrameUploaded_ = false;
             surface_.SetVisible(false);
+            showcase_.SetVisible(false);
+            showcase_.SetMediaReady(false);
             lastPresentationSlot_.reset();
         }
         else
         {
             surface_.SetVisible(false);
+            showcase_.SetVisible(false);
         }
         PaperLogger.info(
             "Paused gameplay Video Screen changed to {} for the current map",
@@ -368,6 +402,25 @@ namespace BigScreen {
                 "creating video screen", "Unity could not create the screen surface");
             decoder_.Close();
             return;
+        }
+
+        if(context == PlaybackContext::Gameplay && showcaseEligible_)
+        {
+            if(!showcase_.Create(
+                   *config_,
+                   decoder_.Width(),
+                   decoder_.Height(),
+                   surface_.Texture()))
+            {
+                // This optional spectacle must never cost the player a map.
+                // Ordinary playback remains live on the primary surface.
+                PaperLogger.error(
+                    "Up & Down showcase panel creation failed; continuing with the ordinary single screen");
+            }
+            else
+            {
+                surface_.SetVisible(false);
+            }
         }
 
         started_ = true;
@@ -537,6 +590,7 @@ namespace BigScreen {
         {
             playbackFailed_ = true;
             surface_.SetVisible(false);
+            showcase_.SetVisible(false);
             PaperLogger.error("Video decoder stopped safely: {}", *decoderError);
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback stopped",
@@ -560,8 +614,29 @@ namespace BigScreen {
         if(context_ == PlaybackContext::Gameplay && !gameplayScreenEnabled_)
         {
             surface_.SetVisible(false);
+            showcase_.SetVisible(false);
             lastTickSongTime_ = songTimeSeconds;
             return;
+        }
+
+        if(showcase_.IsCreated())
+        {
+            showcase_.SetVisible(true);
+            if(!showcase_.Apply(songTimeSeconds))
+            {
+                showcase_.Destroy();
+                surface_.SetVisible(firstFrameUploaded_);
+                PaperLogger.error(
+                    "Up & Down showcase update failed; restored ordinary video playback");
+            }
+            else if(showcase_.TimelineActive())
+            {
+                surface_.SetVisible(false);
+            }
+            else
+            {
+                surface_.SetVisible(firstFrameUploaded_);
+            }
         }
 
         const double mediaTime = config_->MediaTimeForSong(
@@ -750,7 +825,27 @@ namespace BigScreen {
             lastUploadedPresentationSeconds_ = frame.presentationSeconds;
             lastUploadedDurationSeconds_ = frame.durationSeconds;
             firstFrameUploaded_ = true;
-            surface_.SetVisible(true);
+            if(showcase_.IsCreated() && showcase_.TimelineActive())
+            {
+                showcase_.SetMediaReady(true);
+                // Apply once more after the first upload so the panels become
+                // visible in this same Unity frame instead of one update late.
+                if(!showcase_.Apply(songTimeSeconds))
+                {
+                    showcase_.Destroy();
+                    surface_.SetVisible(true);
+                    PaperLogger.error(
+                        "Up & Down showcase activation failed after first frame; restored ordinary playback");
+                }
+                else
+                {
+                    surface_.SetVisible(false);
+                }
+            }
+            else
+            {
+                surface_.SetVisible(true);
+            }
         }
         decoder_.Recycle(std::move(frame));
     }
@@ -813,6 +908,9 @@ namespace BigScreen {
         // this function is called by a main-thread scene-transition hook. The
         // decoder close then joins its worker so no FFmpeg state survives into
         // the menu or the next level.
+        // Shared panels release their materials before the primary owner
+        // destroys the one decoded texture they all reference.
+        showcase_.Destroy();
         surface_.Destroy();
         if(context_ == PlaybackContext::Gameplay)
             PerformancePanel::Instance().SuspendGameplay();

@@ -17,6 +17,8 @@
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
+#include "GlobalNamespace/BeatmapCharacteristicSO.hpp"
+#include "GlobalNamespace/BeatmapKey.hpp"
 #include "GlobalNamespace/BeatmapDataItem.hpp"
 #include "GlobalNamespace/BeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapObjectSpawnController.hpp"
@@ -732,6 +734,18 @@ namespace {
         if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
         {
             playback.Prepare(self->get_beatmapLevel());
+            auto beatmapKey = self->get_beatmapKey();
+            std::string characteristic;
+            if(beatmapKey.beatmapCharacteristic)
+            {
+                const auto serializedName =
+                    beatmapKey.beatmapCharacteristic->get_serializedName();
+                if(serializedName)
+                    characteristic = std::string(serializedName);
+            }
+            playback.ConfigureGameplayBeatmap(
+                characteristic,
+                beatmapKey.difficulty.value__);
             playback.PrewarmGameplay();
         }
         else

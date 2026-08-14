@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
 option(QUEST "Build for quest" ON)
+option(BIGSCREEN_UP_DOWN_SHOWCASE
+       "Compile the private Up & Down proof-of-concept choreography" OFF)
 
 # Globals
 set(CMAKE_CXX_STANDARD 20)
@@ -86,6 +88,10 @@ set_source_files_properties(${cpp_file_list} PROPERTIES
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
+if(BIGSCREEN_UP_DOWN_SHOWCASE)
+        target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+                BIGSCREEN_UP_DOWN_SHOWCASE=1)
+endif()
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${SHARED_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)

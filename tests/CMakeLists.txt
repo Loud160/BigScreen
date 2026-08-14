@@ -8,6 +8,23 @@ target_compile_features(bigscreen-core-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
 add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)
 
+add_executable(
+    bigscreen-up-down-showcase-tests
+    UpDownShowcaseTimelineTests.cpp
+    ../src/UpDownShowcaseTimeline.cpp)
+target_compile_features(bigscreen-up-down-showcase-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-up-down-showcase-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+target_compile_definitions(bigscreen-up-down-showcase-tests PRIVATE
+    BIGSCREEN_UP_DOWN_SHOWCASE=1)
+add_test(
+    NAME bigscreen-up-down-showcase-tests
+    COMMAND bigscreen-up-down-showcase-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-up-down-showcase-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 if(NOT MSVC)
     target_compile_options(bigscreen-core-tests PRIVATE
         -Wall -Wextra -Wpedantic -Werror)

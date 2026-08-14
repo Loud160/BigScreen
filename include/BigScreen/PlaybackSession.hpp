@@ -9,6 +9,7 @@
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
+#include "BigScreen/ShowcaseSurfaceGroup.hpp"
 
 namespace GlobalNamespace {
     class BeatmapLevel;
@@ -63,6 +64,12 @@ namespace BigScreen {
         static PlaybackSession& Instance();
 
         void Prepare(GlobalNamespace::BeatmapLevel* level);
+        /// Supplies the characteristic/difficulty selected for the upcoming
+        /// gameplay transition. BeatmapLevel alone cannot distinguish the
+        /// Lawless showcase chart from the map's normal Expert+ chart.
+        void ConfigureGameplayBeatmap(
+            const std::string& characteristic,
+            int difficulty);
         /// Rebuilds the selected map's effective display configuration from
         /// mapper-authored metadata and the latest global settings.
         void RefreshDisplaySettings();
@@ -144,6 +151,8 @@ namespace BigScreen {
         std::string preparedLevelId_;
         std::string preparedSongName_;
         std::string preparedSongArtist_;
+        std::string preparedCharacteristic_;
+        int preparedDifficulty_ = -1;
         // This flag is independent of cinema-video.json. A user-assigned video
         // can make any Chroma map a Big Screen map, and Chroma still needs
         // ownership of that map's environment even when Cinema metadata is
@@ -156,6 +165,8 @@ namespace BigScreen {
         std::optional<MapVideoConfig> config_;
         FrameDecoder decoder_;
         ScreenSurface surface_;
+        ShowcaseSurfaceGroup showcase_;
+        bool showcaseEligible_ = false;
         double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
         bool gameplayDecoderPrewarmed_ = false;

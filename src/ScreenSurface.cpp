@@ -158,15 +158,39 @@ namespace BigScreen {
         int videoWidth,
         int videoHeight)
     {
+        return CreateInternal(
+            config, videoWidth, videoHeight, nullptr, "CinemaScreen");
+    }
+
+    bool ScreenSurface::CreateShared(
+        const MapVideoConfig& config,
+        int videoWidth,
+        int videoHeight,
+        UnityEngine::Texture2D* sharedTexture,
+        const char* rootName)
+    {
+        if(!sharedTexture)
+            return false;
+        return CreateInternal(
+            config, videoWidth, videoHeight, sharedTexture, rootName);
+    }
+
+    bool ScreenSurface::CreateInternal(
+        const MapVideoConfig& config,
+        int videoWidth,
+        int videoHeight,
+        UnityEngine::Texture2D* sharedTexture,
+        const char* rootName)
+    {
         Destroy();
-        if(videoWidth <= 0 || videoHeight <= 0)
+        if(videoWidth <= 0 || videoHeight <= 0 || !rootName)
             return false;
 
         // PC Cinema and Chroma maps conventionally target this exact root name
         // (often with the regex CinemaScreen$). Keeping the compatible name is
         // harmless for ordinary maps and lets later scene integrations find
         // Big Screen's surface without a Quest-specific map variant.
-        gameObject_ = UnityEngine::GameObject::New_ctor("CinemaScreen");
+        gameObject_ = UnityEngine::GameObject::New_ctor(rootName);
         if(!gameObject_)
             return false;
 
@@ -209,7 +233,8 @@ namespace BigScreen {
         screenHeight_ = config.screenHeight;
         if(!CreateMesh(config, aspectRatio) ||
            !CreateVideoMesh(config, aspectRatio) ||
-           !CreateMaterialAndTexture(videoWidth, videoHeight, config.transparent) ||
+           !CreateMaterialAndTexture(
+               videoWidth, videoHeight, config.transparent, sharedTexture) ||
            !CreateBackgroundMaterial(config.transparent))
         {
             Destroy();
@@ -749,7 +774,8 @@ namespace BigScreen {
     bool ScreenSurface::CreateMaterialAndTexture(
         int width,
         int height,
-        bool transparent)
+        bool transparent,
+        UnityEngine::Texture2D* sharedTexture)
     {
         // Unity's transparent unlit shader performs normal alpha blending, so
         // Beat Saber lights and background geometry remain visible through the
@@ -768,18 +794,24 @@ namespace BigScreen {
             return false;
 
         material_ = UnityEngine::Material::New_ctor(shader);
-        texture_ = UnityEngine::Texture2D::New_ctor(
-            width,
-            height,
-            UnityEngine::TextureFormat::RGBA32,
-            false,
-            false);
+        texture_ = sharedTexture;
+        ownsTexture_ = sharedTexture == nullptr;
+        if(ownsTexture_)
+        {
+            texture_ = UnityEngine::Texture2D::New_ctor(
+                width,
+                height,
+                UnityEngine::TextureFormat::RGBA32,
+                false,
+                false);
+        }
         if(!material_ || !texture_)
             return false;
 
         textureWidth_ = width;
         textureHeight_ = height;
         transparent_ = transparent;
+        opacity_ = transparent ? 0.75f : 1.0f;
         material_->set_mainTexture(texture_);
         if(transparent)
         {
@@ -901,6 +933,31 @@ namespace BigScreen {
             gameObject_->get_transform()->SetPositionAndRotation(position, rotation);
     }
 
+    void ScreenSurface::SetWorldScale(UnityEngine::Vector3 scale)
+    {
+        if(gameObject_)
+            gameObject_->get_transform()->set_localScale(scale);
+    }
+
+    void ScreenSurface::SetVideoLocalRoll(float degrees)
+    {
+        if(videoObject_)
+            videoObject_->get_transform()->set_localEulerAngles({0.0f, 0.0f, degrees});
+    }
+
+    void ScreenSurface::SetOpacity(float opacity)
+    {
+        if(!material_)
+            return;
+        const float nextOpacity = std::clamp(opacity, 0.0f, 1.0f);
+        // Most cues hold opacity steady for many seconds. Avoid repeating the
+        // same IL2CPP material write on every Unity update for every panel.
+        if(std::abs(nextOpacity - opacity_) < 0.0001f)
+            return;
+        opacity_ = nextOpacity;
+        material_->set_color(UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
+    }
+
     void ScreenSurface::Destroy()
     {
         if(diagnosticsObject_)
@@ -914,7 +971,7 @@ namespace BigScreen {
             UnityEngine::Object::Destroy(videoObject_);
         if(gameObject_)
             UnityEngine::Object::Destroy(gameObject_);
-        if(texture_)
+        if(texture_ && ownsTexture_)
             UnityEngine::Object::Destroy(texture_);
         if(material_)
             UnityEngine::Object::Destroy(material_);
@@ -934,9 +991,11 @@ namespace BigScreen {
         texture_ = nullptr;
         textureWidth_ = 0;
         textureHeight_ = 0;
+        ownsTexture_ = false;
         screenWidth_ = 0.0f;
         screenHeight_ = 0.0f;
         transparent_ = false;
+        opacity_ = 1.0f;
         visible_ = false;
         leadInActive_ = false;
         leadInBlack_ = false;
