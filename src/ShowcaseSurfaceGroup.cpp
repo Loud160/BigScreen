@@ -36,7 +36,8 @@ namespace BigScreen {
         config.cinemaCurveYAxis = false;
         config.maintainAspectRatioWhenCurved = false;
         config.screenSegments = 24;
-        config.transparent = true;
+        config.letterboxTransparent = true;
+        config.videoOpacity = 0.75f;
         config.videoRotation = 0.0f;
         config.videoZoom = 1.0f;
         config.videoOffsetX = 0.0f;
@@ -117,6 +118,10 @@ namespace BigScreen {
                     return false;
                 }
                 panels_[index].SetOpacity(1.0f);
+                // Several showcase cues rotate curved screens past edge-on.
+                // Keep the shared video visible from the rear rather than
+                // exposing a blank culled back face during the carousel.
+                panels_[index].SetDoubleSided(true);
                 panels_[index].SetVisible(false);
                 geometry_[index] = UpDownShowcase::Geometry::Wide;
             }

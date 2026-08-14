@@ -53,4 +53,10 @@ namespace BigScreen::UpDownShowcase {
     /// The function is deterministic and stateless, so Replay/practice seeks,
     /// pauses, and restarts cannot leave a half-applied transition behind.
     FrameState Sample(double songTimeSeconds);
+
+    /// Returns the authored visibility of the map's central track-ring
+    /// structure. This remains a pure song-time decision so pausing, seeking,
+    /// practice speed, and Replay cannot desynchronize the environment strobe.
+    /// Outside the 2:01-2:29 showcase cue the structure is always visible.
+    bool CenterRingVisible(double songTimeSeconds);
 }

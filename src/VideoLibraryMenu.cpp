@@ -566,12 +566,14 @@ namespace BigScreen {
     void VideoLibraryMenu::CreateUi(
         HMUI::ViewController* browserController,
         HMUI::ViewController* editorController,
-        std::function<void(bool showEditor)> navigate)
+        std::function<void(bool showEditor)> navigate,
+        std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo)
     {
         if(!browserController || !editorController) return;
         browserController_ = browserController;
         editorController_ = editorController;
         navigate_ = std::move(navigate);
+        browseLocalVideo_ = std::move(browseLocalVideo);
         videoOnlyRows_.clear();
 
         // Qounters-style pages use one layout-owned content tree per view
@@ -793,16 +795,38 @@ namespace BigScreen {
         auto* titleBottomSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
         ConfigureLayout(titleBottomSpacer, -1.0f, 0.7f, 1.0f);
 
-        // Local files are not a separate picker. They appear as plain
-        // filename/action rows directly in the editor, and this complete
-        // layout node is removed when the selected map has no MP4 files.
-        auto* localRows = BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(localRows);
-        localRows->set_childForceExpandWidth(true);
-        localRows->set_spacing(0.45f);
-        ConfigureLayout(localRows, 54.0f, 0.0f, 1.0f);
-        localVideoListContent_ = localRows->get_gameObject();
-        localVideoListContent_->SetActive(false);
+        // Keep local-video management to one compact row in the child editor.
+        // Browsing is intentionally moved to the wide center screen so long
+        // filenames and folder navigation do not resize or crowd this panel.
+        auto* localRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
+        ConfigureGroup(localRow);
+        localRow->set_spacing(0.7f);
+        ConfigureLayout(localRow, 54.0f, 8.0f, 1.0f);
+        localVideoListContent_ = localRow->get_gameObject();
+        showFileBrowserButton_ = BSML::Lite::CreateUIButton(
+            localRow,
+            "Show File Browser",
+            {0.0f, 0.0f},
+            {20.0f, 7.5f},
+            [this]()
+            {
+                if(selected_ && browseLocalVideo_)
+                    browseLocalVideo_(selected_);
+            });
+        ConfigureLayout(showFileBrowserButton_, 20.0f, 7.5f, 0.0f);
+        BSML::Lite::SetButtonTextSize(showFileBrowserButton_, 2.25f);
+        BSML::Lite::AddHoverHint(
+            showFileBrowserButton_,
+            "Opens the Quest file browser at this map's folder. Built-in songs start in Big Screen's Video Import folder. You can navigate anywhere in shared storage and assign a compatible H.264 MP4.");
+        localVideoStatusText_ = BSML::Lite::CreateText(
+            localRow, "", 2.45f);
+        ConfigureLayout(localVideoStatusText_, 0.0f, 7.5f, 1.0f);
+        localVideoStatusText_->set_alignment(
+            TMPro::TextAlignmentOptions::MidlineLeft);
+        localVideoStatusText_->set_enableWordWrapping(false);
+        localVideoStatusText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        localVideoStatusText_->get_gameObject()->SetActive(false);
 
         localVideoHelpModal_ = BSML::Lite::CreateModal(
             editorController,
@@ -854,6 +878,17 @@ namespace BigScreen {
                     BeginUrlProbe();
             });
         ConfigureLayout(urlInput_, 0.0f, 8.0f, 1.0f);
+        checkUrlButton_ = BSML::Lite::CreateUIButton(
+            urlEntryRow,
+            "Check",
+            {0.0f, 0.0f},
+            {10.0f, 7.5f},
+            [this]() { BeginUrlProbe(); });
+        ConfigureLayout(checkUrlButton_, 10.0f, 7.5f, 0.0f);
+        BSML::Lite::SetButtonTextSize(checkUrlButton_, 2.35f);
+        BSML::Lite::AddHoverHint(
+            checkUrlButton_,
+            "Checks the displayed YouTube address and enables Download Video when the video is available. Use this for a mapper-provided address that has not been checked yet.");
         // The stock input field is almost indistinguishable from the menu
         // behind it on the side screen. Add a low-opacity, very light gray
         // plate behind only the editable URL control; keeping it non-raycast
@@ -1081,17 +1116,17 @@ namespace BigScreen {
         // and clock all belong to this single bordered playback group.
         auto* playbackPanelObject = ConstructLayout(
             "<vertical tags='big-screen-playback-panel' bg='round-rect-panel' "
-            "pad-left='0.8' pad-right='0.8' pad-top='0.5' pad-bottom='0.5' "
-            "spacing='0.3' horizontal-fit='Unconstrained'/>",
+            "pad-left='0.6' pad-right='0.6' pad-top='0.35' pad-bottom='0.35' "
+            "spacing='0.15' horizontal-fit='Unconstrained'/>",
             editorRoot->get_transform(),
             "big-screen-playback-panel");
         auto* playbackPanel = playbackPanelObject
             ? playbackPanelObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
             : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
         ConfigureGroup(playbackPanel);
-        playbackPanel->set_spacing(0.3f);
+        playbackPanel->set_spacing(0.15f);
         playbackPanel->set_childForceExpandWidth(true);
-        ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);
+        ConfigureLayout(playbackPanel, -1.0f, 11.2f, 1.0f);
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         auto* playbackPanelBackground = playbackPanel->get_gameObject()
             ->GetComponent<HMUI::ImageView*>();
@@ -1107,14 +1142,14 @@ namespace BigScreen {
             playbackBody,
             "Playback Position",
             3.0f);
-        ConfigureLayout(playbackGroupTitle, -1.0f, 3.8f, 1.0f);
+        ConfigureLayout(playbackGroupTitle, -1.0f, 2.8f, 1.0f);
         playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
         ConfigureGroup(playbackRow);
-        // A deliberate gap separates the transport button from the draggable
-        // bar. Because the scrubber is the flexible child, it gives up only
-        // the small amount of width needed for this additional padding.
+        // Preserve the established left/right edge padding and transport gap.
+        // Only the visual track below is made thinner; changing this row was
+        // what shifted the Play button and the scrubber's right edge.
         playbackRow->set_spacing(1.25f);
         playbackRow->set_padding(UnityEngine::RectOffset::New_ctor(1, 1, 0, 0));
         ConfigureLayout(playbackRow, -1.0f, 7.8f, 1.0f);
@@ -1208,24 +1243,51 @@ namespace BigScreen {
             sliderRect->set_anchorMin({0.0f, 0.0f});
             sliderRect->set_anchorMax({1.0f, 1.0f});
             sliderRect->set_pivot({0.5f, 0.5f});
-            // Leave a little vertical clearance below the group title. The
-            // bar retains its full horizontal travel while its native slider
-            // rectangle is slightly shorter and biased toward the row center.
-            sliderRect->set_anchoredPosition({0.0f, -0.2f});
-            sliderRect->set_sizeDelta({0.0f, -0.9f});
+            // The slider root keeps a generous invisible hit area. Only the
+            // light-gray track and visible handle are shortened below.
+            sliderRect->set_anchoredPosition({0.0f, 0.0f});
+            sliderRect->set_sizeDelta({0.0f, 0.0f});
 
             // The stock slider tints its complete track as the Selectable's
             // hover target. Preserve that graphic as a fixed light-gray bar,
             // then retarget ColorTint to the movable handle alone so pointing
             // at the control turns only the handle black.
             auto sliderTrack = playbackScrubber_->slider->get_targetGraphic();
+            constexpr float scrubberTrackHeight = 2.5f;
+            constexpr float scrubberHandleHeight =
+                scrubberTrackHeight * 0.80f;
             if(sliderTrack)
+            {
                 sliderTrack->set_color({0.82f, 0.84f, 0.87f, 0.92f});
+                if(auto trackRect = sliderTrack->get_transform()
+                       .cast<UnityEngine::RectTransform>())
+                {
+                    trackRect->set_anchorMin({0.0f, 0.5f});
+                    trackRect->set_anchorMax({1.0f, 0.5f});
+                    trackRect->set_pivot({0.5f, 0.5f});
+                    trackRect->set_anchoredPosition({0.0f, 0.0f});
+                    trackRect->set_sizeDelta({0.0f, scrubberTrackHeight});
+                }
+            }
 
             UnityEngine::UI::Graphic* sliderHandle = nullptr;
             if(auto handleRect = playbackScrubber_->slider->get_handleRect())
+            {
+                // Keep the thumb visually substantial without making it
+                // taller than the track: exactly 80 percent of track height.
+                handleRect->set_anchorMin(
+                    {handleRect->get_anchorMin().x, 0.5f});
+                handleRect->set_anchorMax(
+                    {handleRect->get_anchorMax().x, 0.5f});
+                handleRect->set_pivot({0.5f, 0.5f});
+                handleRect->set_anchoredPosition(
+                    {handleRect->get_anchoredPosition().x, 0.0f});
+                handleRect->set_sizeDelta(
+                    {std::max(2.0f, handleRect->get_sizeDelta().x),
+                     scrubberHandleHeight});
                 sliderHandle = handleRect->get_gameObject()
                     ->GetComponentInChildren<UnityEngine::UI::Graphic*>();
+            }
             if(sliderHandle)
             {
                 sliderHandle->set_color(UnityEngine::Color::get_white());
@@ -1255,7 +1317,7 @@ namespace BigScreen {
                 fillRect->set_anchorMax({0.0f, 1.0f});
                 fillRect->set_pivot({0.0f, 0.5f});
                 fillRect->set_anchoredPosition({0.0f, 0.0f});
-                fillRect->set_sizeDelta({0.0f, -0.5f});
+                fillRect->set_sizeDelta({0.0f, -0.25f});
                 fillRect->SetAsFirstSibling();
             }
         }
@@ -1966,19 +2028,11 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RefreshLocalVideoFiles()
     {
-        localVideoFiles_ = selected_
-            ? VideoLibrary::Instance().DiscoverLocalVideos(selected_)
-            : std::vector<LocalVideoFile>{};
-        localVideoImported_.assign(localVideoFiles_.size(), false);
-        if(selected_)
-        {
-            auto imports = VideoLibrary::Instance().DiscoverImportedVideos();
-            for(auto& file : imports)
-            {
-                localVideoFiles_.push_back(std::move(file));
-                localVideoImported_.push_back(true);
-            }
-        }
+        // The center-screen browser owns directory enumeration and probing.
+        // The side editor reads only the active assignment, avoiding repeated
+        // FFmpeg file probes every time its details refresh.
+        localVideoFiles_.clear();
+        localVideoImported_.clear();
         RebuildLocalVideoRows();
     }
 
@@ -1987,107 +2041,28 @@ namespace BigScreen {
         if(!localVideoListContent_)
             return;
 
-        for(auto* row : localVideoRowObjects_)
-        {
-            if(!row) continue;
-            row->SetActive(false);
-            UnityEngine::Object::Destroy(row);
-        }
-        localVideoRowObjects_.clear();
-
-        const bool hasLocalFiles = !localVideoFiles_.empty();
-        localVideoListContent_->SetActive(hasLocalFiles);
-        if(auto* listLayout = localVideoListContent_
-               ->GetComponent<UnityEngine::UI::LayoutElement*>())
-        {
-            const float rowHeight = 8.0f;
-            const float rowSpacing = 0.45f;
-            listLayout->set_preferredHeight(hasLocalFiles
-                ? rowHeight * static_cast<float>(localVideoFiles_.size()) +
-                    rowSpacing * static_cast<float>(localVideoFiles_.size() - 1)
-                : 0.0f);
-        }
-
-        if(!hasLocalFiles)
-            return;
-
-        const BSML::Lite::TransformWrapper rows(localVideoListContent_);
         const auto descriptor = selected_
             ? VideoLibrary::Instance().Describe(selected_)
             : VideoDescriptor{};
-        const float localFileFontSize = std::clamp(
-            urlInput_ && urlInput_->_textView
-                ? urlInput_->_textView->get_fontSize()
-                : 3.6f,
-            3.6f,
-            4.2f);
-
-        for(std::size_t index = 0; index < localVideoFiles_.size(); ++index)
+        const bool userLocal = descriptor.hasUserOverride &&
+            (descriptor.userOverrideIsMapLocal ||
+             descriptor.userOverrideIsImported ||
+             descriptor.userOverrideIsExternal);
+        const bool activeLocal = userLocal ||
+            (!descriptor.hasUserOverride && descriptor.hasMapperLocalFile);
+        if(showFileBrowserButton_)
+            showFileBrowserButton_->set_interactable(selected_ != nullptr);
+        if(localVideoStatusText_)
         {
-            const auto& file = localVideoFiles_[index];
-            const bool imported = index < localVideoImported_.size() &&
-                localVideoImported_[index];
-            const bool active = file.compatible &&
-                descriptor.activeMapFileName &&
-                *descriptor.activeMapFileName == file.fileName &&
-                (imported
-                    ? descriptor.userOverrideIsImported
-                    : descriptor.userOverrideIsMapLocal);
-
-            auto* row = BSML::Lite::CreateHorizontalLayoutGroup(rows);
-            ConfigureGroup(row);
-            row->set_spacing(0.6f);
-            ConfigureLayout(row, 54.0f, 8.0f, 1.0f);
-            localVideoRowObjects_.push_back(row->get_gameObject());
-
-            // Keep the short action at the left edge so every filename begins
-            // at the same predictable position and can consume the remainder
-            // of the complete menu row.
-            auto* action = BSML::Lite::CreateUIButton(
-                row,
-                !file.compatible ? "HELP" : active ? "ACTIVE" : "SET",
-                {0.0f, 0.0f},
-                {13.0f, 7.5f},
-                [this, index]()
-                {
-                    if(index >= localVideoFiles_.size())
-                        return;
-                    if(localVideoFiles_[index].compatible)
-                        SetLocalVideo(index);
-                    else
-                        ShowLocalVideoHelp(index);
-                });
-            ConfigureLayout(action, 13.0f, 7.5f, 0.0f);
-            BSML::Lite::SetButtonTextSize(
-                action,
-                std::min(localFileFontSize, 3.6f));
-            action->set_interactable(!active);
-            BSML::Lite::AddHoverHint(
-                action,
-                !file.compatible
-                    ? "Explains why this MP4 cannot be used and which video format Big Screen requires."
-                    : active
-                        ? "This is the video currently assigned to the selected song."
-                        : imported
-                            ? "Assigns this Video Import MP4 to the selected song without moving or deleting the file."
-                            : "Assigns this map-folder MP4 to the selected song without moving or deleting the file.");
-
-            auto* name = BSML::Lite::CreateText(
-                row,
-                imported ? "Video Import: " + file.fileName : file.fileName,
-                localFileFontSize);
-            name->set_richText(false);
-            name->set_enableWordWrapping(false);
-            name->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
-            name->set_alignment(TMPro::TextAlignmentOptions::MidlineLeft);
-            name->set_color(!file.compatible
-                ? UnityEngine::Color{1.0f, 0.22f, 0.22f, 1.0f}
-                : active
-                    ? UnityEngine::Color{0.20f, 1.0f, 0.36f, 1.0f}
-                    : UnityEngine::Color::get_white());
-            // Reserve the full remaining width. Names longer than the menu
-            // end in an ellipsis rather than wrapping or pushing the button.
-            ConfigureLayout(name, 39.9f, 8.0f, 1.0f);
+            localVideoStatusText_->get_gameObject()->SetActive(activeLocal);
+            if(activeLocal)
+            {
+                localVideoStatusText_->set_text(
+                    "Local video: " +
+                    descriptor.activeMapFileName.value_or("selected MP4"));
+                localVideoStatusText_->set_color(
+                    {0.20f, 1.0f, 0.36f, 1.0f});
+            }
         }
     }
 
@@ -2182,6 +2157,54 @@ namespace BigScreen {
         localVideoHelpModal_->Show();
     }
 
+    void VideoLibraryMenu::LocalVideoAssignmentChanged(
+        const std::string& fileName)
+    {
+        if(!selected_)
+            return;
+
+        // The file browser commits a fresh user override with neutral timing.
+        // Mirror that durable state into the already-visible editor, then
+        // restart both preview clocks from the beginning so the same timing,
+        // scrubber, and Fit to Song controls work without reopening the song.
+        StopPreviewAudio(true);
+        auto& playback = PlaybackSession::Instance();
+        if(playback.IsLibraryPreviewActive())
+            playback.Stop();
+
+        EvictVideoThumbnail(
+            VideoLibrary::Instance().AllocateThumbnailPath(
+                std::string(selected_->levelID), VideoOrigin::User).string());
+        offset_ = 0.0;
+        rate_ = 1.0;
+        fitToSong_ = false;
+        blackDuringLeadIn_ = false;
+        suppressTimingCallbacks_ = true;
+        if(offsetSetting_) offsetSetting_->set_Value(0.0f);
+        if(rateSetting_) rateSetting_->set_Value(1.0f);
+        SetToggleWithoutNotification(fitToggle_, false);
+        SetToggleWithoutNotification(blackLeadInToggle_, false);
+        suppressTimingCallbacks_ = false;
+
+        url_.clear();
+        if(urlInput_)
+        {
+            suppressUrlCallback_ = true;
+            urlInput_->SetText("");
+            suppressUrlCallback_ = false;
+        }
+        ClearThumbnail();
+        transientStatus_ = "Local video assigned: " + fileName;
+        previewSongTime_ = 0.0;
+        playWhenAudioReady_ = true;
+        RefreshLocalVideoFiles();
+        RequestSelectedAudio();
+        StartSelectedPreview();
+        if(IsAlive(previewAudioClip_))
+            StartPreviewAudio();
+        RefreshDetails();
+    }
+
     void VideoLibraryMenu::RemoveOverride()
     {
         if(!selected_) return;
@@ -2191,6 +2214,8 @@ namespace BigScreen {
             removedDescriptor.userOverrideIsMapLocal;
         const bool removingImportedFile =
             removedDescriptor.userOverrideIsImported;
+        const bool removingExternalFile =
+            removedDescriptor.userOverrideIsExternal;
 
         // Stop both clocks before changing the active assignment. Managed
         // downloads may be deleted after their decoder closes; map-folder MP4s
@@ -2224,6 +2249,7 @@ namespace BigScreen {
         // from a stale completed-probe snapshot.
         const auto download = DownloadManager::Instance().Snapshot();
         if(!removingLocalMapFile && !removingImportedFile &&
+           !removingExternalFile &&
            download.levelId == std::string(selected_->levelID) &&
            !download.thumbnailPath.empty())
         {
@@ -2242,6 +2268,8 @@ namespace BigScreen {
             ? "Local video assignment removed. The MP4 remains in the map folder."
             : removingImportedFile
                 ? "Imported video assignment removed. The MP4 remains in Video Import."
+            : removingExternalFile
+                ? "Local video assignment removed. The MP4 remains in its original folder."
                 : "Downloaded user video removed.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         url_ = descriptor.downloadUrl.value_or("");
@@ -2504,13 +2532,20 @@ namespace BigScreen {
             ? VideoLibrary::Instance().ManagedBytesForLevel(
                 std::string(selected_->levelID))
             : 0;
+        const bool userLocal = descriptor.hasUserOverride &&
+            (descriptor.userOverrideIsMapLocal ||
+             descriptor.userOverrideIsImported ||
+             descriptor.userOverrideIsExternal);
+        const bool hasLocalVideos = userLocal ||
+            (!descriptor.hasUserOverride && descriptor.hasMapperLocalFile);
         std::uint64_t localVideoBytes = 0;
-        for(std::size_t index = 0; index < localVideoFiles_.size(); ++index)
-            if(index >= localVideoImported_.size() || !localVideoImported_[index])
-                localVideoBytes += localVideoFiles_[index].bytes;
-        const bool hasLocalVideos = std::find(
-            localVideoImported_.begin(), localVideoImported_.end(), false) !=
-            localVideoImported_.end();
+        if(hasLocalVideos && descriptor.playableConfig)
+        {
+            std::error_code sizeError;
+            localVideoBytes = std::filesystem::file_size(
+                descriptor.playableConfig->videoPath, sizeError);
+            if(sizeError) localVideoBytes = 0;
+        }
         const bool showStorage = descriptor.CanPlay() ||
             downloadedVideoBytes > 0 || hasLocalVideos;
         if(detailMapStorage_)
@@ -2540,6 +2575,8 @@ namespace BigScreen {
                     ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the map folder."
                     : descriptor.userOverrideIsImported
                         ? "Unassign this imported video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the Video Import folder."
+                    : descriptor.userOverrideIsExternal
+                        ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in its current Quest folder."
                     : "Remove this downloaded video?\n\nThe downloaded MP4 and its timing settings will be deleted from Big Screen storage.");
         }
         const auto download = DownloadManager::Instance().Snapshot();
@@ -2613,6 +2650,9 @@ namespace BigScreen {
                     descriptor.activeMapFileName.value_or("selected MP4")
             : descriptor.userOverrideIsImported
                 ? "Imported video active: " +
+                    descriptor.activeMapFileName.value_or("selected MP4")
+            : descriptor.userOverrideIsExternal
+                ? "Local video active: " +
                     descriptor.activeMapFileName.value_or("selected MP4")
             : descriptor.hasUserOverride ? "Downloaded user video active" :
               descriptor.CanPlay() ? "Mapper video ready" :
@@ -2701,6 +2741,14 @@ namespace BigScreen {
                         ? UnityEngine::Color::get_white()
                         : UnityEngine::Color{0.62f, 0.62f, 0.62f, 1.0f});
         }
+        if(checkUrlButton_)
+        {
+            // The explicit action is primarily for mapper-populated URLs, but
+            // it also gives pasted/typed addresses a deterministic retry path.
+            // Do not let a second metadata task replace an active transfer.
+            checkUrlButton_->set_interactable(
+                IsYouTubeUrl(url_) && !(thisDownload && download.Active()));
+        }
         for(auto* row : videoOnlyRows_)
             if(row) row->SetActive(descriptor.CanPlay());
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
@@ -2736,6 +2784,21 @@ namespace BigScreen {
 
     void VideoLibraryMenu::StartSelectedPreview()
     {
+        // A timing/display change can rebuild the preview while its audition is
+        // running. Pause the owned audio channel before discarding the warmed
+        // decoder, then resume only after the replacement session has uploaded
+        // its first synchronized picture.
+        const bool resumeAfterPrewarm = previewPlaying_;
+        if(resumeAfterPrewarm && IsAlive(previewAudioSource_) &&
+           IsAlive(previewAudioClip_) && IsAlive(songPreviewPlayer_) &&
+           previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
+           ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
+        {
+            songPreviewPlayer_->PauseCurrentChannel();
+            previewPlaying_ = false;
+            previewPaused_ = true;
+        }
+
         auto& playback = PlaybackSession::Instance();
         playback.Stop();
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
@@ -2746,8 +2809,14 @@ namespace BigScreen {
         ScreenPreview::Instance().Suspend();
         playback.Prepare(selected_);
         playback.Start(PlaybackContext::LibraryPreview);
+        previewMeasurementStarted_ = false;
+        ResetPreviewClock(previewSongTime_);
         if(playback.IsLibraryPreviewActive())
+        {
             playback.Tick(previewSongTime_);
+            if(resumeAfterPrewarm)
+                playWhenVideoReady_ = true;
+        }
     }
 
     void VideoLibraryMenu::RequestSelectedAudio()
@@ -2781,6 +2850,18 @@ namespace BigScreen {
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
             return;
 
+        if(playWhenVideoReady_)
+        {
+            // A second press while the decoder is preparing is a stop request,
+            // just like pressing Pause after ordinary playback has begun.
+            playWhenVideoReady_ = false;
+            previewPaused_ = true;
+            previewClockValid_ = false;
+            transientStatus_.clear();
+            RefreshPlaybackControls();
+            return;
+        }
+
         if(previewPlaying_)
         {
             const bool channelIsStillPlaying = IsAlive(previewAudioSource_) &&
@@ -2794,6 +2875,7 @@ namespace BigScreen {
                 previewPlaying_ = false;
                 previewPaused_ = true;
                 playWhenAudioReady_ = false;
+                previewClockValid_ = false;
                 RefreshPlaybackControls();
                 return;
             }
@@ -2824,19 +2906,40 @@ namespace BigScreen {
            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
            ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
         {
+            auto& playback = PlaybackSession::Instance();
+            if(!playback.IsLibraryPreviewActive())
+                StartSelectedPreview();
+            if(playback.IsLibraryPreviewActive())
+                playback.Tick(previewSongTime_);
+            if(!playback.FirstFrameUploaded())
+            {
+                playWhenVideoReady_ = true;
+                playWhenAudioReady_ = false;
+                transientStatus_ = "Preparing synchronized video preview...";
+                RefreshDetails();
+                RefreshPlaybackControls();
+                return;
+            }
+            if(!previewMeasurementStarted_)
+            {
+                playback.BeginLibraryPreviewMeasurement(previewSongTime_);
+                previewMeasurementStarted_ = true;
+            }
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
             songPreviewPlayer_->UnPauseCurrentChannel();
+            ResetPreviewClock(previewSongTime_);
             previewPlaying_ = true;
             previewPaused_ = false;
             playWhenAudioReady_ = false;
-            StartSelectedPreview();
+            playWhenVideoReady_ = false;
+            transientStatus_.clear();
             RefreshPlaybackControls();
             return;
         }
         StartPreviewAudio();
     }
 
-    void VideoLibraryMenu::StartPreviewAudio(bool restartVideoSession)
+    void VideoLibraryMenu::StartPreviewAudio()
     {
         if(!selected_ || !IsAlive(previewAudioClip_) ||
            !IsAlive(songPreviewPlayer_))
@@ -2854,6 +2957,39 @@ namespace BigScreen {
             previewSongTime_,
             0.0,
             std::max(0.0, availableDuration - 0.01));
+
+        // Match gameplay's decoder-before-audio ordering. Selecting the song
+        // normally leaves a warmed LibraryPreview session waiting at this
+        // timestamp. If that session was lost, rebuild it now, request/upload
+        // the target frame, and keep the transport stopped until it is ready.
+        auto& playback = PlaybackSession::Instance();
+        if(!playback.IsLibraryPreviewActive())
+            StartSelectedPreview();
+        if(!playback.IsLibraryPreviewActive())
+        {
+            playWhenAudioReady_ = false;
+            playWhenVideoReady_ = false;
+            transientStatus_ = "Video preview could not be prepared.";
+            RefreshDetails();
+            RefreshPlaybackControls();
+            return;
+        }
+        playback.Tick(previewSongTime_);
+        if(!playback.FirstFrameUploaded())
+        {
+            previewPlaying_ = false;
+            playWhenAudioReady_ = false;
+            playWhenVideoReady_ = true;
+            transientStatus_ = "Preparing synchronized video preview...";
+            RefreshDetails();
+            RefreshPlaybackControls();
+            return;
+        }
+        if(!previewMeasurementStarted_)
+        {
+            playback.BeginLibraryPreviewMeasurement(previewSongTime_);
+            previewMeasurementStarted_ = true;
+        }
 
         // Use Beat Saber's perceived-loudness model and SongPreviewPlayer so
         // this audition follows the user's music-volume/mixer settings rather
@@ -2886,15 +3022,12 @@ namespace BigScreen {
         previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
         if(IsAlive(previewAudioSource_))
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
+        ResetPreviewClock(previewSongTime_);
         previewPlaying_ = true;
         previewPaused_ = false;
         playWhenAudioReady_ = false;
+        playWhenVideoReady_ = false;
         transientStatus_.clear();
-        if(restartVideoSession ||
-           !PlaybackSession::Instance().IsLibraryPreviewActive())
-            StartSelectedPreview();
-        else
-            PlaybackSession::Instance().Tick(previewSongTime_);
         RefreshPlaybackControls();
     }
 
@@ -2909,6 +3042,7 @@ namespace BigScreen {
         // leaving the scrubber at 100 percent if the new channel starts later
         // in this Unity update.
         previewSongTime_ = 0.0;
+        ResetPreviewClock(previewSongTime_);
         previewPlaying_ = false;
         previewPaused_ = false;
         playWhenAudioReady_ = false;
@@ -2919,7 +3053,7 @@ namespace BigScreen {
         // Saber's audio position as its external clock, so ticking zero makes
         // the decoder worker perform its normal backwards seek without a
         // close/reopen allocation cycle at every loop.
-        StartPreviewAudio(false);
+        StartPreviewAudio();
         PaperLogger.info("Looped Video Library preview to the beginning");
     }
 
@@ -2932,6 +3066,9 @@ namespace BigScreen {
         auto player = songPreviewPlayer_;
         auto clip = previewAudioClip_;
         playWhenAudioReady_ = false;
+        playWhenVideoReady_ = false;
+        previewMeasurementStarted_ = false;
+        previewClockValid_ = false;
         previewPlaying_ = false;
         previewPaused_ = false;
         previewAudioSource_ = nullptr;
@@ -2966,7 +3103,8 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RecoverInvalidPreviewAudio(const char* context)
     {
-        const bool shouldResume = previewPlaying_ || playWhenAudioReady_;
+        const bool shouldResume =
+            previewPlaying_ || playWhenAudioReady_ || playWhenVideoReady_;
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
@@ -2975,6 +3113,8 @@ namespace BigScreen {
         previewPlaying_ = false;
         previewPaused_ = false;
         playWhenAudioReady_ = shouldResume;
+        playWhenVideoReady_ = false;
+        previewClockValid_ = false;
         transientStatus_ = shouldResume
             ? "Beat Saber replaced the preview audio. Reloading it..."
             : "Beat Saber replaced the preview audio. Press Play to reload it.";
@@ -3027,6 +3167,32 @@ namespace BigScreen {
             "Restored Big Screen's paused audio-preview state after the audio channel resumed");
     }
 
+    void VideoLibraryMenu::ResetPreviewClock(double songTimeSeconds)
+    {
+        smoothedPreviewSongTime_ = std::max(0.0, songTimeSeconds);
+        previewClockRealtime_ =
+            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup());
+        previewClockValid_ = true;
+    }
+
+    double VideoLibraryMenu::AdvancePreviewClock(double rawAudioSongTimeSeconds)
+    {
+        const double now =
+            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup());
+        if(!previewClockValid_)
+        {
+            ResetPreviewClock(rawAudioSongTimeSeconds);
+            return smoothedPreviewSongTime_;
+        }
+
+        smoothedPreviewSongTime_ = CoreLogic::AdvanceSmoothedPreviewClock(
+            smoothedPreviewSongTime_,
+            rawAudioSongTimeSeconds,
+            now - previewClockRealtime_);
+        previewClockRealtime_ = now;
+        return smoothedPreviewSongTime_;
+    }
+
     void VideoLibraryMenu::SeekPreview(float songTimeSeconds)
     {
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
@@ -3036,6 +3202,7 @@ namespace BigScreen {
             static_cast<double>(songTimeSeconds),
             0.0,
             duration);
+        ResetPreviewClock(previewSongTime_);
 
         if(IsAlive(previewAudioSource_) && IsAlive(previewAudioClip_) &&
            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr())
@@ -3079,7 +3246,7 @@ namespace BigScreen {
         if(playPauseButton_)
             BSML::Lite::SetButtonText(
                 playPauseButton_,
-                playWhenAudioReady_ ? "…" :
+                (playWhenAudioReady_ || playWhenVideoReady_) ? "…" :
                     previewPlaying_ ? "Ⅱ" : "▶");
         if(playbackScrubber_)
         {
@@ -3165,6 +3332,24 @@ namespace BigScreen {
         // has applied its own per-frame audio state.
           EnforcePausedPreviewAudio();
 
+          // Poll the stationary external clock while FFmpeg prepares the first
+          // frame. Audio begins only after that picture has reached Unity, so
+          // the library session starts from the same ready state as gameplay.
+          if(editorVisible_ && playWhenVideoReady_ &&
+             IsAlive(previewAudioClip_))
+          {
+            auto& playback = PlaybackSession::Instance();
+            if(playback.IsLibraryPreviewActive())
+            {
+                playback.Tick(previewSongTime_);
+                if(playback.FirstFrameUploaded())
+                {
+                    playWhenVideoReady_ = false;
+                    StartPreviewAudio();
+                }
+            }
+          }
+
           if(editorVisible_ && previewPlaying_ && IsAlive(previewAudioClip_))
           {
             if(!IsAlive(previewAudioSource_) ||
@@ -3175,9 +3360,10 @@ namespace BigScreen {
                previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
                previewAudioSource_->get_isPlaying())
             {
-                previewSongTime_ = previewAudioSource_->get_time();
+                const double rawAudioSongTime = previewAudioSource_->get_time();
+                previewSongTime_ = AdvancePreviewClock(rawAudioSongTime);
                 if(CoreLogic::PreviewReachedLoopBoundary(
-                       previewSongTime_,
+                       rawAudioSongTime,
                        selected_ ? selected_->songDuration : 0.0,
                        previewAudioClip_->get_length()))
                 {
@@ -3214,8 +3400,17 @@ namespace BigScreen {
                 previewPlaying_ = false;
                 previewPaused_ = false;
                 playWhenAudioReady_ = false;
+                previewClockValid_ = false;
             }
-            RefreshPlaybackControls();
+            // TMP text, slider layout, and native setting notifications are UI
+            // work, not part of the playback clock. Fifteen updates per second
+            // remain visually fluid in VR while leaving the main thread free
+            // to upload every decoded video picture.
+            if(++playbackControlsTickCounter_ >= 6)
+            {
+                playbackControlsTickCounter_ = 0;
+                RefreshPlaybackControls();
+            }
           }
         }
         catch(const std::exception& error)
@@ -3238,7 +3433,16 @@ namespace BigScreen {
         if(++tickCounter_ >= 30)
         {
             tickCounter_ = 0;
-            if(editorVisible_) RefreshDetails();
+            // RefreshDetails performs storage/filesystem queries and rewrites
+            // most of the editor hierarchy. Keep it event-driven during normal
+            // playback; poll only while a download is changing, plus once more
+            // to render its terminal state.
+            const bool downloadActive =
+                DownloadManager::Instance().Snapshot().Active();
+            if(editorVisible_ &&
+               (downloadActive || periodicDownloadWasActive_))
+                RefreshDetails();
+            periodicDownloadWasActive_ = downloadActive;
         }
     }
 

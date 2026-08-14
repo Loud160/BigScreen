@@ -74,7 +74,11 @@ namespace BigScreen {
         bool cinemaCurveYAxis = false;
         bool maintainAspectRatioWhenCurved = false;
         int screenSegments = 32;
-        bool transparent = false;
+        // The screen canvas and decoded picture have independent alpha
+        // controls. letterboxTransparent affects only unused canvas exposed
+        // by aspect-ratio preservation, rotation, pan, or zoom.
+        bool letterboxTransparent = false;
+        float videoOpacity = 1.0f;
         // Layout-scoped presentation transforms affect only the image inside
         // the physical screen frame. Screen rotation/placement remains wholly
         // independent so a user can rotate content without moving the frame.
@@ -87,6 +91,13 @@ namespace BigScreen {
         std::optional<bool> mapperTransparency;
         std::optional<std::string> requestedEnvironment;
         std::vector<EnvironmentModification> environmentModifications;
+
+        /// Replaces only mapper-authored presentation geometry with Big
+        /// Screen's neutral back-wall canvas. Media identity, download URL,
+        /// timing, and mapper ownership markers remain intact. This is used
+        /// when Allow Chroma Override is disabled so user offsets are never
+        /// added on top of a mapper's custom screen position.
+        void ResetPresentationToDefaults();
 
         /// Looks for Big Screen's native file first, followed by compatible map
         /// metadata names already present in existing custom levels.

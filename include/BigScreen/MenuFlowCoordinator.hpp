@@ -12,6 +12,9 @@ namespace BigScreen {
     void RestoreDistractionFreeMenu();
     /// True only while Big Screen's own flow is the active menu hierarchy.
     bool IsBigScreenMenuActive();
+    /// Keeps Big Screen's main-menu entry disabled until Beat Saber's parent
+    /// menu is active and stable after this flow has been dismissed.
+    void TickMenuReentryGuard() noexcept;
     /// Cancels mod-owned interaction and dismisses Big Screen without routing
     /// through controls that may be part of the failed UI operation.
     bool ExitBigScreenMenuAfterError() noexcept;
@@ -25,6 +28,7 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryEditorViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, storageViewController);
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
 
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
 

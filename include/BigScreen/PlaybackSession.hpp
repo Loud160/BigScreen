@@ -29,6 +29,7 @@ namespace BigScreen {
         std::uint64_t rgbaBufferAllocations = 0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
+        double decoderCpuMilliseconds = 0.0;
         int automaticReductions = 0;
     };
 
@@ -110,9 +111,20 @@ namespace BigScreen {
         bool MapperPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
+        /// True after a decoded image from the active session has reached the
+        /// Unity texture. Menu audio uses this as the same pre-start readiness
+        /// boundary that gameplay receives from its scene-transition prewarm.
+        bool FirstFrameUploaded() const { return started_ && firstFrameUploaded_; }
+        /// Starts the measured Library-preview interval after its untimed
+        /// decoder prewarm. Gameplay gets this same boundary from Start(),
+        /// which runs after PrewarmGameplay during the scene transition.
+        void BeginLibraryPreviewMeasurement(double songTimeSeconds);
         bool IsGameplayActive() const {
             return started_ && context_ == PlaybackContext::Gameplay;
         }
+        /// Identifies the exact developer-demo chart after its gameplay
+        /// characteristic and difficulty have been resolved.
+        bool ShowcaseActive() const { return showcaseEligible_; }
         const std::optional<MapVideoConfig>& PreparedConfig() const { return config_; }
         const std::optional<MapVideoConfig>& PreparedBaseConfig() const { return baseConfig_; }
         const std::optional<std::string>& RequestedEnvironment() const;
@@ -210,6 +222,11 @@ namespace BigScreen {
         double lastFpsSongTime_ = 0.0;
         std::uint64_t sampledFrames_ = 0;
         int automaticReductions_ = 0;
+        // Automatic Performance may reopen the decoder when the output
+        // resolution changes. Preserve completed worker CPU time across those
+        // decoder instances so one map still has one meaningful total.
+        double accumulatedDecoderCpuMilliseconds_ = 0.0;
+        double decoderCpuBaselineMilliseconds_ = 0.0;
         // Each successful reduction stores the exact tier it replaced. A
         // healthy user-selected response window pops one entry, which
         // guarantees that resolution/FPS are restored in the reverse order

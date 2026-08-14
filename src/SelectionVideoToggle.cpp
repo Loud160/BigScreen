@@ -10,33 +10,84 @@
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
+#include "HMUI/CurvedCanvasSettings.hpp"
 #include "HMUI/ImageView.hpp"
+#include "HMUI/Screen.hpp"
+#include "HMUI/ScreenSystem.hpp"
+#include "TMPro/FontStyles.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Object.hpp"
+#include "UnityEngine/Quaternion.hpp"
+#include "UnityEngine/Rect.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/TextAnchor.hpp"
 #include "UnityEngine/Time.hpp"
+#include "UnityEngine/UI/ContentSizeFitter.hpp"
+#include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
+#include "UnityEngine/Vector3.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/Toggle.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Image.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
+#include "bsml/shared/BSML/FloatingScreen/FloatingScreen.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
     namespace {
+        // The three global controls live on their own slim floating canvas.
+        // Children of Beat Saber's main canvas outside its rect still render
+        // but never receive VR pointer raycasts (the original top-strip
+        // placement proved this), while a FloatingScreen carries its own
+        // canvas and raycaster and is interactive at any world position.
+        constexpr float ControlsScreenWidth = 150.0f;
+        constexpr float ControlsScreenHeight = 12.0f;
+        // The row hangs just above Beat Saber's title bar / back button,
+        // which live on the ScreenSystem's dedicated top screen: the row's
+        // bottom edge clears that screen's top edge by this gap. A detail-
+        // view-relative height is only the fallback if the top screen cannot
+        // be resolved. The small forward offset keeps this canvas clear of
+        // any coplanar stock graphics so its raycaster always wins.
+        constexpr float ControlsRowGapAboveTopScreen = 2.0f;
+        constexpr float ControlsRowDetailLocalY = 42.0f;
+        constexpr float ControlsRowDetailLocalZ = -1.0f;
+        // The row is vertically centered on its own floating strip.
+        constexpr float SongHeaderControlY = 0.0f;
+        constexpr float SongHeaderLabelControlGap = 2.5f;
+        constexpr float SongHeaderGroupGap = 3.0f;
+        // These are one visual group centered over the middle song panel.
+        // Root widths: selector 50, each toggle 44, with one group gap
+        // between neighbors: total span = 50 + 3 + 44 + 3 + 44 = 144,
+        // so the group runs -72..72 around the detail view's center line.
+        constexpr float LayoutSelectorWidth = 50.0f;
+        constexpr float ToggleRootWidth = 44.0f;
+        constexpr float SongHeaderGroupSpan =
+            LayoutSelectorWidth + ToggleRootWidth * 2.0f +
+            SongHeaderGroupGap * 2.0f;
+        constexpr float LayoutSelectorX =
+            -SongHeaderGroupSpan * 0.5f + LayoutSelectorWidth * 0.5f;
+        constexpr float PreviewToggleX = LayoutSelectorX +
+            LayoutSelectorWidth * 0.5f + SongHeaderGroupGap +
+            ToggleRootWidth * 0.5f;
+        constexpr float InMapToggleX = PreviewToggleX +
+            ToggleRootWidth + SongHeaderGroupGap;
+
         void PlaceTopBarToggle(
             BSML::ToggleSetting* setting,
             std::string_view objectName,
@@ -47,36 +98,44 @@ namespace BigScreen {
 
             setting->get_gameObject()->set_name(objectName);
             if(auto* layout = setting->GetComponent<UnityEngine::UI::LayoutElement*>())
-                layout->set_preferredWidth(42.0f);
+                layout->set_preferredWidth(ToggleRootWidth);
 
             auto rect = setting->get_transform().cast<UnityEngine::RectTransform>();
             if(rect)
             {
-                // Put both global controls back on Beat Saber's top strip, at
-                // the same height as Solo Play and the navigation bar. Unlike
-                // the original top-row implementation, each toggle receives a
-                // separate compact root, so their invisible hit areas cannot
-                // overlap and steal clicks from one another.
+                // Each toggle receives a separate compact root on the shared
+                // header row, so their invisible hit areas cannot overlap and
+                // steal clicks from one another.
                 rect->set_anchorMin({0.5f, 0.5f});
                 rect->set_anchorMax({0.5f, 0.5f});
                 rect->set_pivot({0.5f, 0.5f});
-                rect->set_anchoredPosition({horizontalPosition, 28.0f});
-                rect->set_sizeDelta({42.0f, 8.0f});
+                rect->set_anchoredPosition(
+                    {horizontalPosition, SongHeaderControlY});
+                rect->set_sizeDelta({ToggleRootWidth, 8.0f});
             }
 
             if(setting->text)
             {
-                setting->text->set_fontSize(3.25f);
+                setting->text->set_fontSize(3.1f);
+                setting->text->set_enableWordWrapping(false);
+                setting->text->set_overflowMode(
+                    TMPro::TextOverflowModes::Overflow);
+                setting->text->set_alignment(
+                    TMPro::TextAlignmentOptions::MidlineRight);
                 auto labelRect =
                     setting->text->get_transform().cast<UnityEngine::RectTransform>();
                 if(labelRect)
                 {
-                    // Keep the label and switch together inside that compact
-                    // root. The two roots sit side by side across the top row.
+                    // Anchor the label's visible right edge immediately before
+                    // the switch. Right-aligning the text is important: the
+                    // stock prefab left-aligns it inside a wide settings-row
+                    // rectangle, which made the visual gap much larger than
+                    // the actual distance between these RectTransforms.
                     labelRect->set_anchorMin({0.5f, 0.5f});
                     labelRect->set_anchorMax({0.5f, 0.5f});
-                    labelRect->set_pivot({0.5f, 0.5f});
-                    labelRect->set_anchoredPosition({-8.0f, 0.0f});
+                    labelRect->set_pivot({1.0f, 0.5f});
+                    labelRect->set_anchoredPosition(
+                        {-SongHeaderLabelControlGap * 0.5f, 0.0f});
                     labelRect->set_sizeDelta({22.0f, 8.0f});
                 }
             }
@@ -88,9 +147,99 @@ namespace BigScreen {
                 {
                     switchRect->set_anchorMin({0.5f, 0.5f});
                     switchRect->set_anchorMax({0.5f, 0.5f});
-                    switchRect->set_pivot({0.5f, 0.5f});
-                    switchRect->set_anchoredPosition({11.0f, 0.0f});
+                    switchRect->set_pivot({0.0f, 0.5f});
+                    switchRect->set_anchoredPosition(
+                        {SongHeaderLabelControlGap * 0.5f, 0.0f});
                 }
+            }
+        }
+
+        void PlaceTopBarLayoutSelector(BSML::IncrementSetting* setting)
+        {
+            if(!setting)
+                return;
+
+            setting->get_gameObject()->set_name(
+                "Big Screen Song Screen Layout Selector");
+            if(auto* layout =
+                   setting->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredWidth(LayoutSelectorWidth);
+            }
+
+            auto root =
+                setting->get_transform().cast<UnityEngine::RectTransform>();
+            if(!root)
+                return;
+
+            root->set_anchorMin({0.5f, 0.5f});
+            root->set_anchorMax({0.5f, 0.5f});
+            root->set_pivot({0.5f, 0.5f});
+            root->set_anchoredPosition({LayoutSelectorX, SongHeaderControlY});
+            root->set_sizeDelta({LayoutSelectorWidth, 8.0f});
+
+            // BSML's increment-setting template is designed around a
+            // 90-unit settings row. Merely shrinking its root to fit the song
+            // header squeezes NameText until TMPro wraps one character per
+            // line and leaves the native arrow picker outside its useful hit
+            // area. Re-layout the two existing template sections instead of
+            // replacing the proven native arrow buttons.
+            if(auto labelTransform = root->Find("NameText"))
+            {
+                auto labelRect =
+                    labelTransform.cast<UnityEngine::RectTransform>();
+                if(labelRect)
+                {
+                    labelRect->set_anchorMin({0.5f, 0.5f});
+                    labelRect->set_anchorMax({0.5f, 0.5f});
+                    labelRect->set_pivot({0.0f, 0.5f});
+                    labelRect->set_anchoredPosition(
+                        {-LayoutSelectorWidth * 0.5f, 0.0f});
+                    labelRect->set_sizeDelta({21.5f, 8.0f});
+                }
+                if(auto* label =
+                       labelTransform->GetComponent<TMPro::TextMeshProUGUI*>())
+                {
+                    label->set_fontSize(2.8f);
+                    label->set_enableWordWrapping(false);
+                    label->set_overflowMode(TMPro::TextOverflowModes::Overflow);
+                    label->set_alignment(
+                        TMPro::TextAlignmentOptions::MidlineRight);
+                }
+            }
+
+            // IncDecSettingTag creates its native value and arrow group as the
+            // second child. Anchor that complete group to the right side; this
+            // preserves BSML's button listeners, hover visuals, and raycast
+            // targets while giving the horizontal label its own fixed space.
+            if(root->get_childCount() > 1)
+            {
+                auto pickerRect = root->GetChild(1)
+                    .cast<UnityEngine::RectTransform>();
+                if(pickerRect)
+                {
+                    // 21.5 label + 2.5 gap + 26 picker = the 50-unit selector
+                    // width. The picker only ever shows a single digit between
+                    // its two arrows, so 26 keeps full-size arrow hit areas
+                    // without the previous excess width. The 2.5 gap matches
+                    // SongHeaderLabelControlGap so all three label-to-control
+                    // spacings on this row are identical.
+                    pickerRect->set_anchorMin({0.5f, 0.5f});
+                    pickerRect->set_anchorMax({0.5f, 0.5f});
+                    pickerRect->set_pivot({0.0f, 0.5f});
+                    pickerRect->set_anchoredPosition(
+                        {-LayoutSelectorWidth * 0.5f + 21.5f +
+                         SongHeaderLabelControlGap, 0.0f});
+                    pickerRect->set_sizeDelta({26.0f, 8.0f});
+                }
+            }
+
+            if(setting->text)
+            {
+                setting->text->set_fontSize(3.0f);
+                setting->text->set_enableWordWrapping(false);
+                setting->text->set_overflowMode(
+                    TMPro::TextOverflowModes::Overflow);
             }
         }
 
@@ -138,109 +287,204 @@ namespace BigScreen {
         const auto& settings = Settings::Instance();
         inMapEnabled_ = settings.VideoEnabled();
 
+        // The canvas is created at a harmless placeholder position, then
+        // moved by PositionControlsRow() — immediately below, and again on
+        // every SongSelectionShown once Beat Saber has finished laying the
+        // menu out. Computing the position lazily avoids trusting rects that
+        // are not final during the detail view's construction.
+        // hasBackground gives BSML's standard semi-transparent dark backdrop
+        // so the switches and their labels stay readable over any scene.
+        controlsScreen_ = BSML::FloatingScreen::CreateFloatingScreen(
+            {ControlsScreenWidth, ControlsScreenHeight},
+            false,
+            {0.0f, 1.0f, 2.4f},
+            UnityEngine::Quaternion::get_identity(),
+            0.0f,
+            true);
+        if(!controlsScreen_)
+        {
+            PaperLogger.error("Could not create the song-selection controls canvas");
+            ErrorManager::Instance().RecordError(
+                "Creating song-selection video controls",
+                "BSML could not create the floating controls canvas");
+            return;
+        }
+        controlsScreen_->get_gameObject()->set_name(
+            "Big Screen Song Selection Controls");
+        // The shared hover-hint panel is reparented into this canvas when a
+        // tooltip opens, inheriting its curvature. Force an effectively flat
+        // radius so tooltip text renders straight instead of curling off the
+        // hint panel's background.
+        if(auto* curved = controlsScreen_->get_gameObject()
+               ->GetComponentInChildren<HMUI::CurvedCanvasSettings*>())
+            curved->SetRadius(10000.0f);
+        detailView_ = detailView;
+        PositionControlsRow();
+        auto controlsParent = controlsScreen_->get_transform();
+
         // The controls are global preferences rather than properties of the
         // selected song. Create both unconditionally and place their compact
-        // roots side by side on the permanent song-selection header.
+        // roots side by side on the floating row below the song panel.
         previewUi_ = BSML::Lite::CreateToggle(
-            detailView,
+            controlsParent,
             "Preview Video",
             settings.MenuPreviewEnabled(),
-            UnityEngine::Vector2{-18.0f, 28.0f},
+            UnityEngine::Vector2{PreviewToggleX, SongHeaderControlY},
             [this](bool value)
             {
                 PreviewToggleChanged(value);
             });
         inMapUi_ = BSML::Lite::CreateToggle(
-            detailView,
+            controlsParent,
             "Video In Map",
             inMapEnabled_,
-            UnityEngine::Vector2{28.0f, 28.0f},
+            UnityEngine::Vector2{InMapToggleX, SongHeaderControlY},
             [this](bool value)
             {
                 InMapToggleChanged(value);
             });
         layoutUi_ = BSML::Lite::CreateIncrementSetting(
-            detailView,
+            controlsParent,
             "Screen Layout",
             0,
             1.0f,
             static_cast<float>(settings.ActiveScreenLayout() + 1),
             1.0f,
             5.0f,
-            UnityEngine::Vector2{-57.0f, 28.0f},
-            [](float value)
+            UnityEngine::Vector2{LayoutSelectorX, SongHeaderControlY},
+            [this](float value)
             {
-                auto& settings = Settings::Instance();
-                settings.SetActiveScreenLayout(
-                    std::clamp(static_cast<int>(value) - 1, 0, 4));
-                auto& playback = PlaybackSession::Instance();
-                const bool restartPreview = playback.IsMenuPreviewActive();
-                playback.RefreshDisplaySettings();
-                if(restartPreview)
-                    playback.Start(PlaybackContext::MenuPreview);
+                LayoutSelectorChanged(value);
             });
-        if(layoutUi_)
+        PlaceTopBarLayoutSelector(layoutUi_);
+        // ---- Cinema-parity download row --------------------------------
+        // Cinema (PC) presents this workflow as one centered row in the empty
+        // strip between the difficulty selector and the Play/Practice
+        // buttons: italic status text on the left, the Download/Cancel/Retry
+        // button on the right, with the difficulty row's own background
+        // cloned behind them so it reads as native UI. Reproduce Cinema's
+        // exact hierarchy lookups and offset math so Quest users get the
+        // workflow they already know. Like Cinema, there is no separate
+        // progress bar: the percentage is written into the label text.
+        auto levelDetail = detailView->get_transform();
+        auto difficulty = levelDetail->Find("BeatmapDifficulty");
+        auto characteristic = levelDetail->Find("BeatmapCharacteristic");
+        auto actionButtons = levelDetail->Find("ActionButtons");
+        UnityW<UnityEngine::Transform> difficultyBackground = nullptr;
+        if(difficulty)
+            difficultyBackground = difficulty->Find("BG");
+
+        auto* rowObject =
+            UnityEngine::GameObject::New_ctor("Big Screen Video Download Row");
+        downloadRow_ = rowObject;
+        auto* rowRect = rowObject->AddComponent<UnityEngine::RectTransform*>();
+        rowRect->SetParent(levelDetail, false);
+        if(difficulty && characteristic && actionButtons && difficultyBackground)
         {
-            auto rect = layoutUi_->get_transform().cast<UnityEngine::RectTransform>();
-            rect->set_anchorMin({0.5f, 0.5f});
-            rect->set_anchorMax({0.5f, 0.5f});
-            rect->set_pivot({0.5f, 0.5f});
-            rect->set_anchoredPosition({-57.0f, 28.0f});
-            rect->set_sizeDelta({34.0f, 8.0f});
+            auto difficultyRect =
+                difficulty.cast<UnityEngine::RectTransform>();
+            auto characteristicRect =
+                characteristic.cast<UnityEngine::RectTransform>();
+            auto actionRect = actionButtons.cast<UnityEngine::RectTransform>();
+            rowRect->set_anchorMin(difficultyRect->get_anchorMin());
+            rowRect->set_anchorMax(difficultyRect->get_anchorMax());
+            rowRect->set_pivot(difficultyRect->get_pivot());
+            const auto difficultyMin = difficultyRect->get_offsetMin();
+            const auto difficultyMax = difficultyRect->get_offsetMax();
+            const auto characteristicMin = characteristicRect->get_offsetMin();
+            const auto characteristicMax = characteristicRect->get_offsetMax();
+            // Cinema's placement formula: one difficulty-row-height below the
+            // difficulty row, clamped so the row can never overlap the
+            // Play/Practice buttons, at the difficulty row's exact width.
+            const float belowDifficulty =
+                difficultyMin.y + (difficultyMin.y - characteristicMin.y);
+            const float aboveActionButtons =
+                actionRect->get_offsetMin().y + actionRect->get_sizeDelta().y;
+            rowRect->set_offsetMin(
+                {difficultyMin.x,
+                 std::max(belowDifficulty, aboveActionButtons)});
+            rowRect->set_offsetMax(
+                {difficultyMax.x,
+                 difficultyMax.y + (difficultyMax.y - characteristicMax.y)});
+            UnityEngine::Object::Instantiate(
+                difficultyBackground->get_gameObject(),
+                rowObject->get_transform());
         }
-        downloadButton_ = BSML::Lite::CreateUIButton(
-            detailView,
-            "Download Video",
-            UnityEngine::Vector2{20.0f, 0.5f},
-            UnityEngine::Vector2{31.0f, 7.0f},
-            [this]() { DownloadButtonPressed(); });
+        else
+        {
+            // A game update renamed the stock hierarchy. Keep the workflow
+            // usable with a fixed placement and record the mismatch so it
+            // appears in logs and reports.
+            PaperLogger.warn(
+                "Stock level-detail rows were not found; using fallback download row placement");
+            ErrorManager::Instance().RecordError(
+                "Placing the download row",
+                "Stock level-detail hierarchy changed; fallback placement used");
+            rowRect->set_anchorMin({0.5f, 0.5f});
+            rowRect->set_anchorMax({0.5f, 0.5f});
+            rowRect->set_pivot({0.5f, 0.5f});
+            rowRect->set_anchoredPosition({0.0f, -6.5f});
+            rowRect->set_sizeDelta({70.0f, 10.0f});
+        }
+
+        UnityEngine::Transform* rowParent = rowObject->get_transform();
+        auto* rowLayout = BSML::Lite::CreateHorizontalLayoutGroup(rowParent);
+        if(rowLayout)
+        {
+            // Cinema's row is a centered PreferredSize horizontal with
+            // spacing 6; the pair recenters itself as the label text and
+            // button visibility change.
+            rowLayout->set_spacing(6.0f);
+            rowLayout->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
+            rowLayout->set_childControlWidth(true);
+            rowLayout->set_childControlHeight(true);
+            rowLayout->set_childForceExpandWidth(false);
+            rowLayout->set_childForceExpandHeight(false);
+            auto layoutRect = rowLayout->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            layoutRect->set_anchorMin({0.0f, 0.0f});
+            layoutRect->set_anchorMax({1.0f, 1.0f});
+            layoutRect->set_offsetMin({0.0f, 0.0f});
+            layoutRect->set_offsetMax({0.0f, 0.0f});
+            if(auto* fitter = rowLayout->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::ContentSizeFitter*>())
+            {
+                fitter->set_horizontalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
+                fitter->set_verticalFit(
+                    UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
+            }
+            rowParent = rowLayout->get_transform();
+        }
+
         downloadStatus_ = BSML::Lite::CreateText(
-            detailView,
+            rowParent,
             "",
-            2.5f,
-            UnityEngine::Vector2{20.0f, -5.5f},
-            UnityEngine::Vector2{42.0f, 7.0f});
+            3.0f,
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{33.0f, 7.0f});
         if(downloadStatus_)
         {
-            downloadStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+            // Cinema styles this label italic, font size 3, left-aligned.
+            downloadStatus_->set_fontStyle(TMPro::FontStyles::Italic);
+            downloadStatus_->set_alignment(
+                TMPro::TextAlignmentOptions::MidlineLeft);
             downloadStatus_->set_enableWordWrapping(false);
             downloadStatus_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
         }
-
-        // Cinema exposes transfer state directly on the selected song. Use a
-        // real fill bar in addition to text so progress remains legible at a
-        // glance inside the headset. Unknown-length preparation uses a moving
-        // pulse; once yt-dlp supplies byte totals this becomes exact progress.
-        downloadProgressTrack_ = BSML::Lite::CreateImage(
-            detailView,
-            BSML::Utilities::ImageResources::GetBlankSprite(),
-            UnityEngine::Vector2{20.0f, -9.8f},
-            UnityEngine::Vector2{42.0f, 1.25f});
-        if(downloadProgressTrack_)
+        downloadButton_ = BSML::Lite::CreateUIButton(
+            rowParent,
+            "Download Video",
+            UnityEngine::Vector2{0.0f, 0.0f},
+            UnityEngine::Vector2{30.0f, 8.0f},
+            [this]() { DownloadButtonPressed(); });
+        if(downloadButton_)
         {
-            downloadProgressTrack_->set_color({0.08f, 0.10f, 0.13f, 0.90f});
-            downloadProgressTrack_->set_preserveAspect(false);
-            downloadProgressTrack_->set_raycastTarget(false);
-            downloadProgressFill_ = BSML::Lite::CreateImage(
-                downloadProgressTrack_->get_transform(),
-                BSML::Utilities::ImageResources::GetBlankSprite());
-            if(downloadProgressFill_)
-            {
-                downloadProgressFill_->set_color({0.10f, 0.75f, 1.0f, 1.0f});
-                downloadProgressFill_->set_preserveAspect(false);
-                downloadProgressFill_->set_raycastTarget(false);
-                if(auto fillRect = downloadProgressFill_->get_transform()
-                       .cast<UnityEngine::RectTransform>())
-                {
-                    fillRect->set_anchorMin({0.0f, 0.0f});
-                    fillRect->set_anchorMax({0.0f, 1.0f});
-                    fillRect->set_pivot({0.0f, 0.5f});
-                    fillRect->set_anchoredPosition({0.0f, 0.0f});
-                    fillRect->set_sizeDelta({0.0f, -0.20f});
-                }
-            }
-            downloadProgressTrack_->get_gameObject()->SetActive(false);
+            if(auto* buttonText = downloadButton_
+                   ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                buttonText->set_fontSize(3.0f);
         }
+        rowObject->SetActive(false);
 
         if(!previewUi_ || !inMapUi_)
         {
@@ -248,11 +492,27 @@ namespace BigScreen {
             ErrorManager::Instance().RecordError(
                 "Creating song-selection video controls",
                 "Beat Saber did not create both toggle controls");
+            // Do not leave a half-populated floating canvas or an empty
+            // download row in the scene.
+            if(controlsScreen_)
+                UnityEngine::Object::Destroy(controlsScreen_->get_gameObject());
+            controlsScreen_ = nullptr;
+            detailView_ = nullptr;
+            if(downloadRow_)
+                UnityEngine::Object::Destroy(downloadRow_);
+            downloadRow_ = nullptr;
+            previewUi_ = nullptr;
+            inMapUi_ = nullptr;
+            layoutUi_ = nullptr;
+            downloadButton_ = nullptr;
+            downloadStatus_ = nullptr;
             return;
         }
 
-        PlaceTopBarToggle(previewUi_, "Big Screen Preview Video Toggle", -18.0f);
-        PlaceTopBarToggle(inMapUi_, "Big Screen Video In Map Toggle", 28.0f);
+        PlaceTopBarToggle(
+            previewUi_, "Big Screen Preview Video Toggle", PreviewToggleX);
+        PlaceTopBarToggle(
+            inMapUi_, "Big Screen Video In Map Toggle", InMapToggleX);
         BSML::Lite::AddHoverHint(
             previewUi_,
             "Turns video previews on or off while browsing songs. This is a global setting and requires Video In Map to be enabled.");
@@ -263,25 +523,112 @@ namespace BigScreen {
             layoutUi_,
             "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
         RefreshUi();
+        BringHeaderControlsToFront();
         PaperLogger.info("Created top-row Preview Video and Video In Map controls");
     }
 
     void SelectionVideoToggle::ForgetUi()
     {
-        // The menu scene owns the actual object and destroys it normally. Drop
-        // our native pointer during StandardLevelDetailView.OnDestroy so a
-        // later menu scene can construct a fresh control safely.
+        // The menu scene owns the detail-view children and destroys them
+        // normally, but the floating controls canvas is scene-root and ours:
+        // destroy it here so a retained-then-recreated detail view cannot
+        // orphan one row and stack a duplicate beneath it. During a scene
+        // teardown Unity may have destroyed it already, so this is guarded.
+        try
+        {
+            if(controlsScreen_)
+                UnityEngine::Object::Destroy(controlsScreen_->get_gameObject());
+        }
+        catch(...)
+        {
+            // Destruction is best-effort during scene teardown; clearing the
+            // pointers below is what guarantees safe recreation.
+        }
+        controlsScreen_ = nullptr;
+        detailView_ = nullptr;
         previewUi_ = nullptr;
         inMapUi_ = nullptr;
         layoutUi_ = nullptr;
+        downloadRow_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
-        downloadProgressTrack_ = nullptr;
-        downloadProgressFill_ = nullptr;
+    }
+
+    void SelectionVideoToggle::PositionControlsRow()
+    {
+        if(!controlsScreen_ || !detailView_)
+            return;
+
+        // Preferred anchor: the ScreenSystem's top screen, which hosts the
+        // menu title bar and back button. The row's bottom edge sits a small
+        // gap above that screen's real top edge, so the placement follows
+        // the stock UI instead of a guessed coordinate. Falls back to a
+        // detail-view-relative position if the top screen cannot be found.
+        UnityEngine::Vector3 rowCenter;
+        UnityEngine::Quaternion rowRotation;
+        const char* source = "top screen";
+        bool positioned = false;
+        if(auto* screenSystem =
+               detailView_->GetComponentInParent<HMUI::ScreenSystem*>())
+        {
+            if(auto topScreen = screenSystem->get_topScreen())
+            {
+                auto topRect = topScreen->get_transform()
+                    .cast<UnityEngine::RectTransform>();
+                if(topRect)
+                {
+                    // Unity's generated Rect accessors are non-const member
+                    // functions, so this local must stay mutable.
+                    auto rect = topRect->get_rect();
+                    if(rect.get_height() >= 1.0f && rect.get_height() <= 200.0f)
+                    {
+                        rowCenter = topRect->TransformPoint(
+                            {rect.get_center().x,
+                             rect.get_yMax() + ControlsRowGapAboveTopScreen +
+                                 ControlsScreenHeight * 0.5f,
+                             ControlsRowDetailLocalZ});
+                        rowRotation = topRect->get_rotation();
+                        positioned = true;
+                    }
+                }
+            }
+        }
+        if(!positioned)
+        {
+            auto detailTransform = detailView_->get_transform();
+            if(!detailTransform)
+            {
+                PaperLogger.warn(
+                    "Song controls row could not be positioned: no usable anchor");
+                return;
+            }
+            rowCenter = detailTransform->TransformPoint(
+                {0.0f, ControlsRowDetailLocalY, ControlsRowDetailLocalZ});
+            rowRotation = detailTransform->get_rotation();
+            source = "detail view fallback";
+        }
+        auto screenTransform = controlsScreen_->get_transform();
+        screenTransform->set_position(rowCenter);
+        screenTransform->set_rotation(rowRotation);
+        PaperLogger.info(
+            "Positioned song controls row at ({:.2f}, {:.2f}, {:.2f}) from {}",
+            rowCenter.x,
+            rowCenter.y,
+            rowCenter.z,
+            source);
     }
 
     void SelectionVideoToggle::SongSelectionShown()
     {
+        // The floating row is not a child of the detail view, so Beat Saber's
+        // own panel visibility no longer hides it implicitly. Mirror the
+        // panel's visibility here and in SongSelectionHidden, and re-derive
+        // the row's position now that the menu layout is guaranteed final.
+        if(controlsScreen_)
+        {
+            controlsScreen_->get_gameObject()->SetActive(true);
+            PositionControlsRow();
+        }
         if(selectedLevel_)
         {
             selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
@@ -292,6 +639,13 @@ namespace BigScreen {
             }
         }
         RefreshUi();
+        // Beat Saber reconstructs and reorders portions of the song-detail UI
+        // during OnEnable. These controls deliberately sit on the upper header,
+        // outside the detail panel's usual content row, so a later stock
+        // sibling could otherwise render above their native raycast targets and
+        // consume every pointer click. Restore their priority only after the
+        // stock OnEnable has completed; no custom hit targets are introduced.
+        BringHeaderControlsToFront();
 
         // Returning from gameplay does not necessarily restart Beat Saber's
         // audio preview for the still-selected song. Defer the video restart
@@ -309,6 +663,8 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionHidden()
     {
+        if(controlsScreen_)
+            controlsScreen_->get_gameObject()->SetActive(false);
         resumeWhenSongAudioStarts_ = false;
         resumeWaitReported_ = false;
         // yt-dlp retains its .part file. Returning to this song offers Resume
@@ -415,11 +771,22 @@ namespace BigScreen {
             playback.Start(PlaybackContext::MenuPreview);
     }
 
+    void SelectionVideoToggle::ScreenLayoutPreferenceChanged()
+    {
+        RefreshUi();
+    }
+
     void SelectionVideoToggle::TickSongPreview(
         double songTimeSeconds,
         bool selectedSongAudioIsAudible)
     {
         auto& playback = PlaybackSession::Instance();
+
+        // The Video Library menu owns the playback session while its own
+        // preview is running. This ticker still fires every frame from the
+        // SongPreviewPlayer hook, so without this guard its resume logic
+        // could start a menu preview over the library's active session.
+        if(playback.IsLibraryPreviewActive()) return;
 
         if(resumeWhenSongAudioStarts_)
         {
@@ -539,46 +906,17 @@ namespace BigScreen {
             selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
         const auto& descriptor = selectedDescriptor_;
         const bool show = Settings::Instance().ModEnabled() &&
-                          (descriptor.CanDownload() || forSelection);
+                          (descriptor.CanPlay() ||
+                           descriptor.CanDownload() ||
+                           forSelection);
+        // Like Cinema, the whole row (cloned native background included)
+        // appears only when the selected song has video context, and download
+        // progress is presented inside the label text itself.
+        if(downloadRow_)
+            downloadRow_->SetActive(show);
         downloadButton_->get_gameObject()->SetActive(show && !descriptor.CanPlay());
         downloadStatus_->get_gameObject()->SetActive(show);
-        const bool showProgress = show && forSelection &&
-            !snapshot.metadataOnly && snapshot.state != DownloadState::Idle;
-        if(downloadProgressTrack_)
-            downloadProgressTrack_->get_gameObject()->SetActive(showProgress);
         if(!show) return;
-
-        float progress = 0.0f;
-        if(showProgress)
-        {
-            if(snapshot.state == DownloadState::Completed)
-                progress = 1.0f;
-            else if(snapshot.state == DownloadState::Failed ||
-                    snapshot.state == DownloadState::Cancelled)
-                progress = 0.04f;
-            else if(snapshot.totalBytes)
-                progress = CoreLogic::DownloadProgressFraction(
-                    snapshot.downloadedBytes,
-                    snapshot.totalBytes);
-            else if(snapshot.Active())
-                progress = 0.12f + 0.68f * std::abs(std::sin(
-                    UnityEngine::Time::get_realtimeSinceStartup() * 1.8f));
-
-            if(downloadProgressFill_)
-            {
-                downloadProgressFill_->set_color(
-                    snapshot.state == DownloadState::Completed
-                        ? UnityEngine::Color{0.20f, 0.90f, 0.42f, 1.0f}
-                        : snapshot.state == DownloadState::Failed
-                            ? UnityEngine::Color{0.95f, 0.22f, 0.20f, 1.0f}
-                            : snapshot.state == DownloadState::Cancelled
-                                ? UnityEngine::Color{0.95f, 0.65f, 0.12f, 1.0f}
-                                : UnityEngine::Color{0.10f, 0.75f, 1.0f, 1.0f});
-                if(auto fillRect = downloadProgressFill_->get_transform()
-                       .cast<UnityEngine::RectTransform>())
-                    fillRect->set_anchorMax({progress, 1.0f});
-            }
-        }
 
         if(forSelection && snapshot.Active())
         {
@@ -586,6 +924,9 @@ namespace BigScreen {
             downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
             if(snapshot.totalBytes)
             {
+                const float progress = CoreLogic::DownloadProgressFraction(
+                    snapshot.downloadedBytes,
+                    snapshot.totalBytes);
                 std::ostringstream status;
                 status << "Downloading "
                        << static_cast<int>(std::round(progress * 100.0f))
@@ -648,13 +989,17 @@ namespace BigScreen {
         // Use the same transition path as the main settings page so preview
         // playback stops immediately and the switch reflects dependencies.
         MenuPreviewPreferenceChanged();
+        SettingsMenu::Instance().RefreshControls();
     }
 
     void SelectionVideoToggle::InMapToggleChanged(bool enabled)
     {
         Settings::Instance().SetVideoEnabled(enabled);
-        inMapEnabled_ = enabled;
+        // Read back the authoritative saved state because disabling video also
+        // disables its dependent preview preference in Settings.
+        inMapEnabled_ = Settings::Instance().VideoEnabled();
         RefreshUi();
+        SettingsMenu::Instance().RefreshControls();
         PaperLogger.info(
             "Video-in-map switch changed to {}",
             inMapEnabled_ ? "on" : "off");
@@ -677,6 +1022,40 @@ namespace BigScreen {
             // re-enable without reading JSON or reopening the map selection.
             playback.Start(PlaybackContext::MenuPreview);
         }
+    }
+
+    void SelectionVideoToggle::LayoutSelectorChanged(float value)
+    {
+        auto& settings = Settings::Instance();
+        settings.SetActiveScreenLayout(
+            std::clamp(static_cast<int>(value) - 1, 0, 4));
+
+        // Keep the full settings page and this compact song-screen selector on
+        // the same persisted layout immediately. Refreshing with notification-
+        // free setters prevents this synchronization from recursively firing
+        // either control's callback.
+        RefreshUi();
+        SettingsMenu::Instance().RefreshControls();
+
+        auto& playback = PlaybackSession::Instance();
+        const bool restartPreview = playback.IsMenuPreviewActive();
+        playback.RefreshDisplaySettings();
+        if(restartPreview)
+            playback.Start(PlaybackContext::MenuPreview);
+    }
+
+    void SelectionVideoToggle::BringHeaderControlsToFront()
+    {
+        // On the dedicated floating canvas no stock graphics compete for the
+        // pointer anymore; keeping the three roots as the last siblings is
+        // retained only so any future additions to that canvas (status text,
+        // separators) cannot cover their raycast targets.
+        if(layoutUi_)
+            layoutUi_->get_transform()->SetAsLastSibling();
+        if(previewUi_)
+            previewUi_->get_transform()->SetAsLastSibling();
+        if(inMapUi_)
+            inMapUi_->get_transform()->SetAsLastSibling();
     }
 
     void SelectionVideoToggle::RefreshUi()
@@ -702,6 +1081,11 @@ namespace BigScreen {
             layoutUi_->set_Value(
                 static_cast<float>(settings.ActiveScreenLayout() + 1));
             layoutUi_->set_interactable(settings.ModEnabled());
+            // set_Value calls UpdateState, which applies the min/max state to
+            // BSML's native arrow buttons as well as refreshing the value text.
+            // Calling it explicitly after interactability changes covers the
+            // case where IncDecSetting's same-value guard skipped button state.
+            layoutUi_->UpdateState();
         }
 
         // Visibility deliberately does not inspect selectedLevelHasVideo_: both

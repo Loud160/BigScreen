@@ -33,6 +33,10 @@ namespace BigScreen {
         // Import-folder files are also user-owned, but unlike map-local files
         // they can be assigned to OST, DLC, custom, or WIP maps.
         bool importFile = false;
+        // A file-browser selection outside the map and Video Import folders is
+        // referenced in place. Big Screen never deletes external files.
+        bool externalFile = false;
+        std::string externalPath;
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
         bool fitToSong = false;
@@ -80,6 +84,7 @@ namespace BigScreen {
         bool hasUserOverride = false;
         bool userOverrideIsMapLocal = false;
         bool userOverrideIsImported = false;
+        bool userOverrideIsExternal = false;
         std::optional<std::string> activeMapFileName;
 
         bool CanDownload() const { return downloadUrl.has_value(); }
@@ -131,6 +136,16 @@ namespace BigScreen {
         std::vector<LocalVideoFile> DiscoverLocalVideos(
             GlobalNamespace::BeatmapLevel* level) const;
         std::vector<LocalVideoFile> DiscoverImportedVideos() const;
+        /// Validates one user-selected MP4 without changing the library.
+        LocalVideoFile InspectLocalVideo(
+            const std::filesystem::path& path) const;
+        /// Assigns any compatible MP4 under Quest shared storage. Files in a
+        /// map or Video Import folder retain their existing source identity;
+        /// other files are referenced in place and remain user-owned.
+        bool SetVideoFileOverride(
+            GlobalNamespace::BeatmapLevel* level,
+            const std::filesystem::path& path,
+            std::string& error);
         bool SetLocalVideoOverride(
             GlobalNamespace::BeatmapLevel* level,
             const std::string& fileName,
@@ -167,6 +182,9 @@ namespace BigScreen {
         const std::filesystem::path& VideoPath() const { return videoPath_; }
         const std::filesystem::path& RuntimePath() const { return runtimePath_; }
         const std::filesystem::path& ImportPath() const { return importPath_; }
+        const std::filesystem::path& SharedStoragePath() const {
+            return sharedStoragePath_;
+        }
         const std::filesystem::path& ThumbnailPath() const { return thumbnailPath_; }
 
     private:
@@ -185,6 +203,7 @@ namespace BigScreen {
         std::filesystem::path thumbnailPath_;
         std::filesystem::path runtimePath_;
         std::filesystem::path importPath_;
+        std::filesystem::path sharedStoragePath_;
         std::filesystem::path manifestPath_;
         std::vector<std::pair<std::string, LevelVideoRecords>> records_;
         // Describe() is used by several menu controls. Map metadata and saved

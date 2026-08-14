@@ -71,6 +71,10 @@ int main()
                "Cinema curvature must stay in arc degrees");
         Expect(config->mapperTransparency.value_or(false),
                "explicit mapper transparency should remain distinguishable");
+        Expect(config->letterboxTransparent,
+               "mapper transparency should remove the letterbox background");
+        Expect(Near(config->videoOpacity, 0.75f),
+               "legacy Cinema transparency should retain its 75 percent picture opacity");
         Expect(config->environmentModifications.size() == 1,
                "environment array should parse");
         if(!config->environmentModifications.empty())
@@ -82,6 +86,24 @@ int main()
             Expect(item.active && !*item.active,
                    "explicit false active state should not be lost");
         }
+
+
+        auto userLayoutBase = *config;
+        userLayoutBase.ResetPresentationToDefaults();
+        Expect(Near(userLayoutBase.screenPosition.x, 0.0f) &&
+               Near(userLayoutBase.screenPosition.y, 12.0f) &&
+               Near(userLayoutBase.screenPosition.z, 60.0f),
+               "disabling mapper presentation should restore the neutral back-wall position");
+        Expect(Near(userLayoutBase.screenRotation.x, -8.0f) &&
+               Near(userLayoutBase.screenHeight, 25.0f),
+               "disabling mapper presentation should restore neutral rotation and size");
+        Expect(!userLayoutBase.cinemaCurvatureDegrees &&
+               !userLayoutBase.mapperTransparency,
+               "mapper-only presentation fields should not leak into a user layout");
+        Expect(userLayoutBase.videoId == config->videoId &&
+               userLayoutBase.offsetSeconds == config->offsetSeconds &&
+               userLayoutBase.hasMapperPresentation,
+               "presentation reset must preserve media, timing, and mapper ownership metadata");
     }
 
     // A normal Cinema download/timing declaration is not permission to throw

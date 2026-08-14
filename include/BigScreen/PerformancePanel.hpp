@@ -30,9 +30,10 @@ namespace BigScreen {
         double peakDecodeMilliseconds = 0.0;
     };
 
-    /// Owns the movable performance-information panel shown only while Big
-    /// Screen's menu is open. Its transform is intentionally never persisted:
-    /// every enable or menu activation recreates it at a known safe position.
+    /// Owns the movable performance-information panel shown in Big Screen's
+    /// menu and during video gameplay. Its transform is intentionally never
+    /// persisted: every enable or context activation recreates it at a known
+    /// safe position.
     class PerformancePanel final {
     public:
         static PerformancePanel& Instance();
@@ -63,6 +64,9 @@ namespace BigScreen {
 
         bool CreateAtDefaultPlacement();
         void ActivateForContext(bool gameplay) noexcept;
+        /// Writes the header subtitle and every fixed-height statistics row.
+        /// A null pointer renders the waiting placeholders.
+        void ApplyRows(const PerformancePanelData* data) noexcept;
         void Destroy() noexcept;
 
         enum class Context { None, Menu, Gameplay };
@@ -71,9 +75,23 @@ namespace BigScreen {
         HMUI::ImageView* background_ = nullptr;
         HMUI::ImageView* headsetCard_ = nullptr;
         HMUI::ImageView* videoCard_ = nullptr;
+        HMUI::ImageView* titleCard_ = nullptr;
+        HMUI::ImageView* instructionCard_ = nullptr;
         std::array<HMUI::ImageView*, 4> borders_{};
+        std::array<HMUI::ImageView*, 4> titleBorders_{};
+        std::array<HMUI::ImageView*, 4> instructionBorders_{};
+        HMUI::ImageView* columnDivider_ = nullptr;
         TMPro::TextMeshProUGUI* title_ = nullptr;
-        TMPro::TextMeshProUGUI* headsetStatistics_ = nullptr;
-        TMPro::TextMeshProUGUI* videoStatistics_ = nullptr;
+        TMPro::TextMeshProUGUI* instruction_ = nullptr;
+        // Column captions ("Quest" / "Video") and the left column's large
+        // glance-value block: big FPS number with its label beneath it.
+        TMPro::TextMeshProUGUI* leftHeader_ = nullptr;
+        TMPro::TextMeshProUGUI* rightHeader_ = nullptr;
+        TMPro::TextMeshProUGUI* fpsValue_ = nullptr;
+        TMPro::TextMeshProUGUI* fpsLabel_ = nullptr;
+        // One TMP element per statistics row, each height-locked by a
+        // LayoutElement so the columns are laid out to the fixed body box.
+        std::array<TMPro::TextMeshProUGUI*, 2> leftRows_{};
+        std::array<TMPro::TextMeshProUGUI*, 7> rightRows_{};
     };
 }

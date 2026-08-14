@@ -7,6 +7,7 @@
 #include <limits>
 #include <pthread.h>
 #include <string>
+#include <time.h>
 
 extern "C" {
 #include "libavcodec/avcodec.h"
@@ -25,6 +26,20 @@ namespace BigScreen {
             av_strerror(code, buffer, sizeof(buffer));
             return buffer;
         }
+
+        std::uint64_t CurrentThreadCpuNanoseconds()
+        {
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+            timespec value{};
+            if(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0)
+            {
+                return static_cast<std::uint64_t>(value.tv_sec) *
+                           1'000'000'000ULL +
+                       static_cast<std::uint64_t>(value.tv_nsec);
+            }
+#endif
+            return 0;
+        }
     }
 
     FrameDecoder::~FrameDecoder()
@@ -38,6 +53,10 @@ namespace BigScreen {
         std::string& error)
     {
         Close();
+        // Close intentionally preserves the final worker total so its owner
+        // can read it after join. A new Open begins a distinct decoder
+        // lifetime and therefore resets the counter here.
+        workerCpuNanoseconds_ = 0;
         error.clear();
         {
             std::scoped_lock lock(errorMutex_);
@@ -258,9 +277,16 @@ namespace BigScreen {
         // A stable name makes any future native failure attributable without
         // guessing whether it belonged to Big Screen or another mod.
         pthread_setname_np(pthread_self(), "BigScreenDecode");
+        const std::uint64_t cpuStarted = CurrentThreadCpuNanoseconds();
+        const auto updateCpuTotal = [this, cpuStarted]
+        {
+            const std::uint64_t now = CurrentThreadCpuNanoseconds();
+            if(now >= cpuStarted)
+                workerCpuNanoseconds_ = now - cpuStarted;
+        };
         try
         {
-            WorkerLoop();
+            WorkerLoop(cpuStarted);
         }
         catch(const std::bad_alloc&)
         {
@@ -274,13 +300,20 @@ namespace BigScreen {
         {
             SetWorkerError("The video decoder stopped because of an unexpected internal error.");
         }
+        updateCpuTotal();
     }
 
-    void FrameDecoder::WorkerLoop()
+    void FrameDecoder::WorkerLoop(std::uint64_t cpuStartedNanoseconds)
     {
         std::uint64_t handledVersion = 0;
         double lastDecodedTime = -std::numeric_limits<double>::infinity();
         double lastDecodedDuration = nominalFrameSeconds_;
+        const auto updateCpuTotal = [this, cpuStartedNanoseconds]
+        {
+            const std::uint64_t now = CurrentThreadCpuNanoseconds();
+            if(now >= cpuStartedNanoseconds)
+                workerCpuNanoseconds_ = now - cpuStartedNanoseconds;
+        };
 
         while(!stopWorker_)
         {
@@ -306,6 +339,7 @@ namespace BigScreen {
                target < lastDecodedTime + lastDecodedDuration)
             {
                 handledVersion = targetVersion;
+                updateCpuTotal();
                 continue;
             }
 
@@ -366,6 +400,7 @@ namespace BigScreen {
                 handledVersion = targetVersion;
                 break;
             }
+            updateCpuTotal();
         }
     }
 

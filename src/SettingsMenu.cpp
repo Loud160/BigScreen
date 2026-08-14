@@ -206,6 +206,7 @@ namespace BigScreen {
         maintainCurveAspectToggle_ = nullptr;
         curvatureSlider_ = nullptr;
         transparencyToggle_ = nullptr;
+        videoOpacitySlider_ = nullptr;
         screenCanvasHeader_ = nullptr;
         advancedScreenControlsRoot_ = nullptr;
         screenRotationSlider_ = nullptr;
@@ -237,6 +238,7 @@ namespace BigScreen {
         automaticPerformanceThresholdSlider_ = nullptr;
         automaticPerformanceResponseSlider_ = nullptr;
         performanceDiagnosticsToggle_ = nullptr;
+        powerBenchmarkToggle_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         nightlyWarningModal_ = nullptr;
         localVideoInstructionsModal_ = nullptr;
@@ -621,6 +623,18 @@ namespace BigScreen {
             performanceDiagnosticsToggle_,
             "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move it; pausing provides the easiest gameplay access. Turning this off and back on resets its position. Completed, failed, and exited video maps are appended to the performance log.");
 
+        powerBenchmarkToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Record Power Benchmark",
+            settings.PowerBenchmarkEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetPowerBenchmarkEnabled(enabled);
+            });
+        BSML::Lite::AddHoverHint(
+            powerBenchmarkToggle_,
+            "Records one-second Quest battery/current readings, decoder CPU time, whole-game CPU time, and playback statistics for every played map. Results are saved as CSV files in Big Screen's Logs folder after the map ends. For a meaningful battery comparison, unplug external power and play the same map once with Video In Map on and once with it off.");
+
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
             "Big Screen Enabled",
@@ -699,10 +713,11 @@ namespace BigScreen {
             generalContainer,
             "Preview Video",
             settings.MenuPreviewEnabled(),
-            [](bool enabled)
+            [this](bool enabled)
             {
                 Settings::Instance().SetMenuPreviewEnabled(enabled);
                 SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
+                RefreshControls();
             });
         BSML::Lite::AddHoverHint(
             previewToggle_,
@@ -784,6 +799,7 @@ namespace BigScreen {
                     ScreenPreview::Instance().StageCurrentUndockedPlacement();
                 Settings::Instance().SetActiveScreenLayout(index);
                 ApplyDisplaySettingsAndRefreshPreview();
+                SelectionVideoToggle::Instance().ScreenLayoutPreferenceChanged();
                 RefreshControls();
             });
         if(auto* layout = screenLayoutDropdown_->get_gameObject()
@@ -792,6 +808,24 @@ namespace BigScreen {
             layout->set_minWidth(80.0f);
             layout->set_preferredWidth(80.0f);
             layout->set_flexibleWidth(1.0f);
+        }
+        // DropdownListSetting's transform is the selector box, while its row
+        // label is owned by the surrounding settings prefab. Parent the reset
+        // glyph to that selector, then anchor it just outside the selector's
+        // left edge. Center anchoring put the glyph directly over the current
+        // Layout value; making it an extra layout child put it before the row
+        // label. This overlay placement changes neither row width nor clipping.
+        if(screenLayoutResetButton_ && screenLayoutDropdown_)
+        {
+            auto resetRect = screenLayoutResetButton_->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            resetRect->SetParent(screenLayoutDropdown_->get_transform(), false);
+            resetRect->set_anchorMin({0.0f, 0.5f});
+            resetRect->set_anchorMax({0.0f, 0.5f});
+            resetRect->set_pivot({1.0f, 0.5f});
+            resetRect->set_anchoredPosition({-1.5f, 0.0f});
+            resetRect->set_sizeDelta({7.0f, 7.0f});
+            resetRect->SetAsLastSibling();
         }
         BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
@@ -1029,6 +1063,30 @@ namespace BigScreen {
             curvatureSlider_,
             "Positive values wrap the edges toward you; negative values bend them away. The available range is -7 through +7.");
 
+        // VIDEO OPACITY MAINTENANCE NOTE:
+        // This is a normal native BSML slider and is intentionally outside the
+        // advanced group. Keep its value text and handle under TextSlider's
+        // ownership; redraw it only after the Screen tab becomes visible.
+        videoOpacitySlider_ = BSML::Lite::CreateSliderSetting(
+            screenContainer,
+            "Video Opacity",
+            0.05f,
+            settings.VideoOpacity(),
+            0.0f,
+            1.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetVideoOpacity(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        videoOpacitySlider_->digits = 2;
+        BSML::Lite::AddHoverHint(
+            videoOpacitySlider_,
+            "Controls the opacity of the video picture for this screen layout. 1.00 is fully opaque; lower values let the environment show through. This applies to both docked and undocked screens.");
+
         auto* advancedGroup = BSML::Lite::CreateVerticalLayoutGroup(screenContainer);
         advancedScreenControlsRoot_ = advancedGroup
             ? advancedGroup->get_gameObject() : nullptr;
@@ -1103,7 +1161,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             videoRotationSlider_,
-            "Rotates the picture inside the screen without rotating or reshaping the screen itself. Empty areas use the Video Transparency setting.");
+            "Rotates the picture inside the screen without rotating or reshaping the screen itself. Empty areas use the Letterbox Transparency setting.");
 
         // VIDEO ZOOM MAINTENANCE NOTE -- VERIFIED-GOOD REFERENCE CONTROL:
         // Its native numeric value follows the drag handle correctly. Preserve
@@ -1255,16 +1313,16 @@ namespace BigScreen {
 
         transparencyToggle_ = BSML::Lite::CreateToggle(
             advancedParent,
-            "Video Transparency",
-            settings.TransparencyEnabled(),
+            "Letterbox Transparency",
+            settings.LetterboxTransparencyEnabled(),
             [](bool enabled)
             {
-                Settings::Instance().SetTransparencyEnabled(enabled);
+                Settings::Instance().SetLetterboxTransparencyEnabled(enabled);
                 ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             transparencyToggle_,
-            "Makes the picture partly transparent and removes black letterbox bars when the video does not fill the screen. Turn this off for an opaque picture with a solid black background around it.");
+            "Makes unused letterbox areas transparent when the video does not fill the screen. It does not fade the picture; use Video Opacity for that. This applies to both docked and undocked screens.");
 
         // The controls above are created in callback-friendly groups, then
         // placed into their user-facing sections. Keep frame rotation and free
@@ -1826,11 +1884,15 @@ namespace BigScreen {
             automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
         SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
+        SetToggleWithoutNotification(
+            powerBenchmarkToggle_, settings.PowerBenchmarkEnabled());
         SetToggleWithoutNotification(curvedScreenToggle_, settings.CurvedScreenEnabled());
         SetToggleWithoutNotification(
             maintainCurveAspectToggle_,
             settings.MaintainCurveAspectRatio());
-        SetToggleWithoutNotification(transparencyToggle_, settings.TransparencyEnabled());
+        SetToggleWithoutNotification(
+            transparencyToggle_,
+            settings.LetterboxTransparencyEnabled());
         SetToggleWithoutNotification(stretchVideoToggle_, settings.StretchVideoToFit());
         SetToggleWithoutNotification(undockScreenToggle_, settings.UndockedScreenEnabled());
         SetToggleWithoutNotification(lightShowToggle_, settings.MapLightShowEnabled());
@@ -1883,6 +1945,8 @@ namespace BigScreen {
             sizeSetting_->set_Value(settings.ScreenScale());
         if(curvatureSlider_)
             curvatureSlider_->set_Value(settings.ScreenCurvature());
+        if(videoOpacitySlider_)
+            videoOpacitySlider_->set_Value(settings.VideoOpacity());
         if(screenRotationSlider_)
             screenRotationSlider_->set_Value(settings.ScreenRoll());
         if(videoRotationSlider_)
@@ -2047,6 +2111,8 @@ namespace BigScreen {
             maintainCurveAspectToggle_->set_interactable(enabled);
         if(curvatureSlider_)
             curvatureSlider_->set_interactable(enabled);
+        if(videoOpacitySlider_)
+            videoOpacitySlider_->set_interactable(enabled);
         if(transparencyToggle_)
             transparencyToggle_->set_interactable(advancedEnabled);
         if(screenRotationSlider_)
@@ -2122,6 +2188,8 @@ namespace BigScreen {
                 enabled && settings.AutomaticPerformanceEnabled());
         if(performanceDiagnosticsToggle_)
             performanceDiagnosticsToggle_->set_interactable(enabled);
+        if(powerBenchmarkToggle_)
+            powerBenchmarkToggle_->set_interactable(enabled);
         if(nightlyUpdatesToggle_)
             nightlyUpdatesToggle_->set_interactable(enabled);
         if(updaterButton_)
@@ -2318,6 +2386,21 @@ namespace BigScreen {
         {
             RefreshAdvancedControls();
             RefreshVideoOffsetValueTexts();
+            if(videoOpacitySlider_ && videoOpacitySlider_->slider)
+                videoOpacitySlider_->slider->UpdateVisuals();
+        }
+        else if(selectedTab_ == 3)
+        {
+            // Misc is also constructed while hidden. Force the two Automatic
+            // Performance sliders through the same native post-visibility
+            // layout pass so their saved/default values start at the handle
+            // instead of remaining at the left edge until the first drag.
+            if(automaticPerformanceThresholdSlider_ &&
+               automaticPerformanceThresholdSlider_->slider)
+                automaticPerformanceThresholdSlider_->slider->UpdateVisuals();
+            if(automaticPerformanceResponseSlider_ &&
+               automaticPerformanceResponseSlider_->slider)
+                automaticPerformanceResponseSlider_->slider->UpdateVisuals();
         }
     }
 
@@ -2366,7 +2449,7 @@ namespace BigScreen {
                 control->set_Value(value);
         };
         applyEnvironmentToggle(
-            transparencyToggle_, settings.TransparencyEnabled());
+            transparencyToggle_, settings.LetterboxTransparencyEnabled());
         applyEnvironmentToggle(
             hideBackWallLightsToggle_, settings.HideBackWallLights());
         applyEnvironmentToggle(

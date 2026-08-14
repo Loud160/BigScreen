@@ -107,6 +107,29 @@ namespace BigScreen {
         return definition;
     }
 
+    void MapVideoConfig::ResetPresentationToDefaults()
+    {
+        const MapVideoConfig defaults;
+        screenPosition = defaults.screenPosition;
+        screenRotation = defaults.screenRotation;
+        screenHeight = defaults.screenHeight;
+        screenWidthOverride = defaults.screenWidthOverride;
+        screenCurvature = defaults.screenCurvature;
+        cinemaCurvatureDegrees.reset();
+        cinemaCurveYAxis = defaults.cinemaCurveYAxis;
+        maintainAspectRatioWhenCurved = defaults.maintainAspectRatioWhenCurved;
+        screenSegments = defaults.screenSegments;
+        letterboxTransparent = defaults.letterboxTransparent;
+        videoOpacity = defaults.videoOpacity;
+        videoRotation = defaults.videoRotation;
+        videoZoom = defaults.videoZoom;
+        videoOffsetX = defaults.videoOffsetX;
+        videoOffsetY = defaults.videoOffsetY;
+        videoTilt = defaults.videoTilt;
+        stretchVideoToFit = defaults.stretchVideoToFit;
+        mapperTransparency.reset();
+    }
+
     std::optional<MapVideoConfig> MapVideoConfig::LoadDefinitionFromLevel(
         const std::filesystem::path& levelDirectory,
         std::string& error)
@@ -239,7 +262,10 @@ namespace BigScreen {
             1,
             512);
         config.mapperTransparency = OptionalBool(document, "transparency");
-        config.transparent = config.mapperTransparency.value_or(false);
+        config.letterboxTransparent = config.mapperTransparency.value_or(false);
+        config.videoOpacity = config.mapperTransparency.value_or(false)
+            ? 0.75f
+            : 1.0f;
         config.requestedEnvironment = OptionalString(document, "environmentName");
 
         if(const auto* environment = Member(document, "environment");

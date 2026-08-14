@@ -8,7 +8,11 @@ namespace BigScreen {
     /// a profile switch from briefly mixing values from two layouts.
     struct ScreenLayoutProfile {
         bool advancedControls = false;
-        bool transparency = false;
+        // Controls only the unused canvas around a letterboxed picture. The
+        // video itself has an independent opacity so users can remove black
+        // bars without unintentionally fading the picture.
+        bool letterboxTransparency = false;
+        float videoOpacity = 1.0f;
         float distanceOffset = 0.0f;
         float horizontalOffset = 0.0f;
         float verticalOffset = 0.0f;
@@ -94,7 +98,10 @@ namespace BigScreen {
         bool StretchVideoToFit() const { return ActiveLayout().stretchVideoToFit; }
         bool UndockedScreenEnabled() const { return ActiveLayout().undocked; }
         bool AllowChromaOverride() const { return allowChromaOverride_; }
-        bool TransparencyEnabled() const { return ActiveLayout().transparency; }
+        bool LetterboxTransparencyEnabled() const {
+            return ActiveLayout().letterboxTransparency;
+        }
+        float VideoOpacity() const { return ActiveLayout().videoOpacity; }
         bool MapLightShowEnabled() const { return mapLightShowEnabled_; }
         bool HideBackWallLights() const { return hideBackWallLights_; }
         bool HideRingLights() const { return hideRingLights_; }
@@ -113,6 +120,7 @@ namespace BigScreen {
             return automaticPerformanceResponseSeconds_;
         }
         bool PerformanceDiagnosticsEnabled() const { return performanceDiagnosticsEnabled_; }
+        bool PowerBenchmarkEnabled() const { return powerBenchmarkEnabled_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
         void SetModEnabled(bool value);
@@ -142,7 +150,8 @@ namespace BigScreen {
             float rotationX, float rotationY, float rotationZ,
             float width, float height);
         void SetAllowChromaOverride(bool value);
-        void SetTransparencyEnabled(bool value);
+        void SetLetterboxTransparencyEnabled(bool value);
+        void SetVideoOpacity(float value);
         void SetMapLightShowEnabled(bool value);
         void SetHideBackWallLights(bool value);
         void SetHideRingLights(bool value);
@@ -159,6 +168,7 @@ namespace BigScreen {
         void SetAutomaticPerformanceThreshold(int value);
         void SetAutomaticPerformanceResponseSeconds(float value);
         void SetPerformanceDiagnosticsEnabled(bool value);
+        void SetPowerBenchmarkEnabled(bool value);
         void SetNightlyDownloaderUpdates(bool value);
 
     private:
@@ -196,6 +206,7 @@ namespace BigScreen {
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceResponseSeconds_ = 5.0f;
         bool performanceDiagnosticsEnabled_ = false;
+        bool powerBenchmarkEnabled_ = false;
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;
         std::chrono::steady_clock::time_point saveDeadline_{};

@@ -24,14 +24,14 @@ Big Screen plays H.264 MP4 video on a configurable world-space screen, synchroni
 |---|---|---|
 | 🎬 | Any song can have video | Assign video to OST, DLC, custom, and WIP songs without modifying Beat Saber audio or beatmaps. |
 | 🔎 | In-headset YouTube workflow | Search YouTube in the Quest browser, paste a normal or share URL, preview the thumbnail, and download with visible progress and readable errors. |
-| 📁 | Local video support | Register compatible MP4s from custom-map folders or the global Video Import folder; user-owned local files are never deleted by Remove Video. |
+| 📁 | Local video browser | Browse Quest shared storage from the center screen and assign compatible MP4s to any song. User-owned local files are never deleted by Remove Video. |
 | 🖥️ | Five screen layouts | Save five independent flat/curved layouts and switch them from the mod, song-selection header, or pause menu. |
-| 🎛️ | Detailed screen control | Adjust size, distance, X/Y position, tilt, rotation, curvature, curve aspect behavior, and transparency. Advanced controls can freely position and reshape an undocked screen. |
+| 🎛️ | Detailed screen control | Adjust size, distance, X/Y position, tilt, rotation, curvature, curve aspect behavior, picture opacity, and letterbox transparency. Advanced controls can freely position and reshape an undocked screen. |
 | 🔍 | Independent video framing | Rotate, zoom, pan, perspective-tilt, letterbox, or stretch the picture inside the screen without changing the decoded resolution. |
 | ⏱️ | Audio-clock synchronization | Configure offset, playback speed, automatic fit-to-song timing, and transparent or black lead-in. |
 | 💡 | Video-friendly environments | Keep or suppress map lights, force Big Mirror, stop background motion, and hide geometry or light groups that obstruct large screens. |
 | 🎞️ | Preview and Replay support | Preview videos while browsing songs and keep them present during Replay playback and recording. |
-| 📊 | Quest performance controls | Cap output at 480p/720p/1080p and 15/30/60 FPS, view diagnostics, or let Automatic Performance step quality down temporarily. |
+| 📊 | Quest performance controls | Cap output at 480p/720p/1080p and 15/30/60 FPS, view diagnostics, let Automatic Performance adjust quality, or record repeatable CPU/battery benchmark CSVs. |
 | 🛟 | Recovery and containment | Atomic library writes, two backups, managed-file reconstruction, updater rollback, and deferred gameplay errors reduce the chance of lost data or interrupted maps. |
 
 ## Documentation
@@ -54,7 +54,7 @@ Start with the [documentation index](docs/README.md), or jump directly to:
 1. Install the compatible QMOD using a Quest Beat Saber mod manager.
 2. Start Beat Saber, open **Mods**, then open **Big Screen**.
 3. Leave **Big Screen Enabled**, **Video In Map**, and **Preview Video** on.
-4. Open **Video Library**, select a song, and either choose a compatible local MP4 or paste a YouTube URL.
+4. Open **Video Library**, select a song, and either use **Show File Browser** to choose a compatible local MP4 or paste a YouTube URL.
 5. After assignment/download, use the synchronized preview to adjust **Video Playback Offset**, **Playback Speed**, and **Fit to Song**.
 6. Open **Screen** to position the blank preview surface and save up to five layouts. Enable **Advanced Screen Controls** on only the layouts that need independent video framing or free placement.
 7. Select the song normally. Big Screen's header controls can globally enable previews/gameplay video and change layouts without reopening the mod.
@@ -63,10 +63,9 @@ Start with the [documentation index](docs/README.md), or jump directly to:
 
 - **Mapper-provided:** Big Screen reads `bigscreen.json`, `cinema-video.json`, or `video.json`. If a mapper supplied only a URL, the song page offers a Cinema-style Download Video control.
 - **YouTube:** Search from the selected song, paste an HTTPS `youtube.com` or `youtu.be` URL, verify its thumbnail, then download.
-- **Custom/WIP map folder:** Put an H.264/AVC MP4 at 1080p or lower in the map folder. Select **SET** beside the filename.
-- **Video Import:** Put an MP4 in `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import`, then assign it to any song from Video Library.
+- **Quest file browser:** Select **Show File Browser**. Custom/WIP songs begin in their map folder; OST/DLC songs begin in `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import`. Use **Back One Folder** or the clickable path breadcrumbs to navigate elsewhere in Quest shared storage, select a green compatible MP4, then choose **Set Video**.
 
-Downloaded files are mod-managed. Map-folder and Video Import files remain user-owned. **Remove Video** unregisters a user-owned file and never deletes it.
+Downloaded files are mod-managed. Every file selected through the browser remains user-owned in its original folder. **Remove Video** unregisters a user-owned file and never deletes it.
 
 ## Downloader runtime
 

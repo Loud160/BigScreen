@@ -69,6 +69,8 @@ namespace BigScreen {
             const auto sourceType = StringOr(value, "sourceType");
             video.mapLocal = sourceType == "mapFile";
             video.importFile = sourceType == "importFile";
+            video.externalFile = sourceType == "externalFile";
+            video.externalPath = StringOr(value, "externalPath");
             video.offsetSeconds = NumberOr(value, "offsetSeconds", 0.0);
             video.playbackRate = std::clamp(
                 NumberOr(value, "playbackRate", 1.0),
@@ -119,7 +121,11 @@ namespace BigScreen {
             addString("codec", video.codec);
             addString("sourceType", video.mapLocal
                 ? "mapFile"
-                : (video.importFile ? "importFile" : "managedFile"));
+                : (video.importFile
+                    ? "importFile"
+                    : (video.externalFile ? "externalFile" : "managedFile")));
+            if(video.externalFile)
+                addString("externalPath", video.externalPath);
             object.AddMember("offsetSeconds", video.offsetSeconds, allocator);
             object.AddMember("playbackRate", video.playbackRate, allocator);
             object.AddMember("fitToSong", video.fitToSong, allocator);
@@ -166,6 +172,11 @@ namespace BigScreen {
             return true;
         }
 
+        bool IsUserOwnedFile(const StoredVideo& video)
+        {
+            return video.mapLocal || video.importFile || video.externalFile;
+        }
+
         std::optional<std::filesystem::path> ResolveStoredFile(
             const std::filesystem::path& videoDirectory,
             const std::filesystem::path& importDirectory,
@@ -174,6 +185,17 @@ namespace BigScreen {
         {
             if(!video || video->fileName.empty())
                 return std::nullopt;
+
+            if(video->externalFile)
+            {
+                const auto root = std::filesystem::path("/sdcard");
+                const auto path = std::filesystem::path(video->externalPath)
+                    .lexically_normal();
+                if(!path.is_absolute() || !IsPathInside(path, root) ||
+                   !std::filesystem::is_regular_file(path))
+                    return std::nullopt;
+                return path;
+            }
 
             const std::filesystem::path relative(video->fileName);
             if(relative.is_absolute() || relative.filename() != relative)
@@ -348,6 +370,7 @@ namespace BigScreen {
         thumbnailPath_ = rootPath_ / "Thumbnails";
         runtimePath_ = rootPath_ / "Runtime";
         importPath_ = rootPath_ / "Video Import";
+        sharedStoragePath_ = "/sdcard";
         manifestPath_ = rootPath_ / "library.json";
         std::filesystem::create_directories(videoPath_);
         std::filesystem::create_directories(thumbnailPath_);
@@ -444,6 +467,8 @@ namespace BigScreen {
             descriptor.hasUserOverride && saved->user->mapLocal;
         descriptor.userOverrideIsImported =
             descriptor.hasUserOverride && saved->user->importFile;
+        descriptor.userOverrideIsExternal =
+            descriptor.hasUserOverride && saved->user->externalFile;
 
         MapVideoConfig effective = descriptor.mapperDefinition.value_or(MapVideoConfig{});
         if(descriptor.hasUserOverride)
@@ -463,7 +488,7 @@ namespace BigScreen {
             else
                 descriptor.downloadUrl = record.sourceUrl;
             descriptor.downloadOrigin = VideoOrigin::User;
-            if(record.mapLocal || record.importFile)
+            if(IsUserOwnedFile(record))
                 descriptor.activeMapFileName = record.fileName;
             else
                 descriptor.thumbnailPath = AllocateThumbnailPath(
@@ -562,7 +587,7 @@ namespace BigScreen {
         const auto previous = target;
         target = std::move(video);
         SaveLocked();
-        if(previous && !previous->mapLocal && !previous->importFile &&
+        if(previous && !IsUserOwnedFile(*previous) &&
            previous->fileName != target->fileName)
             std::filesystem::remove(videoPath_ / previous->fileName);
     }
@@ -590,6 +615,121 @@ namespace BigScreen {
             directory = importPath_;
         }
         return DiscoverVideosInDirectory(directory);
+    }
+
+    LocalVideoFile VideoLibrary::InspectLocalVideo(
+        const std::filesystem::path& path) const
+    {
+        auto extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char value)
+            {
+                return static_cast<char>(std::tolower(value));
+            });
+        if(extension != ".mp4")
+        {
+            LocalVideoFile result;
+            result.fileName = path.filename().string();
+            result.path = path;
+            result.problem = "Big Screen can select MP4 files only.";
+            return result;
+        }
+        return ProbeLocalVideo(path);
+    }
+
+    bool VideoLibrary::SetVideoFileOverride(
+        GlobalNamespace::BeatmapLevel* level,
+        const std::filesystem::path& requestedPath,
+        std::string& error)
+    {
+        error.clear();
+        if(!level || !level->levelID)
+        {
+            error = "Select a song before assigning a local video.";
+            return false;
+        }
+
+        const auto path = std::filesystem::absolute(requestedPath)
+            .lexically_normal();
+        std::filesystem::path sharedRoot;
+        std::filesystem::path importDirectory;
+        {
+            std::scoped_lock lock(mutex_);
+            sharedRoot = sharedStoragePath_;
+            importDirectory = importPath_;
+        }
+        if(!path.is_absolute() || !IsPathInside(path, sharedRoot) ||
+           !std::filesystem::is_regular_file(path))
+        {
+            error = "The selected video is no longer available in Quest shared storage.";
+            return false;
+        }
+
+        const auto probe = InspectLocalVideo(path);
+        if(!probe.compatible)
+        {
+            error = probe.problem.empty()
+                ? "This local MP4 is not compatible with Big Screen."
+                : probe.problem;
+            return false;
+        }
+
+        std::filesystem::path mapDirectory;
+        if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(
+               std::string(level->levelID)))
+            mapDirectory = std::filesystem::path(custom->get_customLevelPath())
+                .lexically_normal();
+
+        StoredVideo video;
+        video.fileName = probe.fileName;
+        video.title = probe.fileName;
+        video.codec = probe.codec;
+        video.durationSeconds = probe.durationSeconds;
+        video.bytes = probe.bytes;
+        video.width = probe.width;
+        video.height = probe.height;
+        if(!mapDirectory.empty() && path.parent_path() == mapDirectory)
+        {
+            video.mapLocal = true;
+        }
+        else if(path.parent_path() == importDirectory.lexically_normal())
+        {
+            video.importFile = true;
+        }
+        else
+        {
+            video.externalFile = true;
+            video.externalPath = path.string();
+        }
+
+        const std::string levelId(level->levelID);
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
+        found->second.songName = level->songName
+            ? std::string(level->songName) : "Unknown Song";
+        found->second.songAuthor = level->songAuthorName
+            ? std::string(level->songAuthorName) : std::string{};
+        const auto previous = found->second.user;
+        found->second.user = std::move(video);
+        SaveLocked();
+
+        // Only Big Screen-managed downloads are deleted on replacement. Every
+        // browser-picked file remains exactly where the user placed it.
+        if(previous && !IsUserOwnedFile(*previous))
+            std::filesystem::remove(videoPath_ / previous->fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
+        PaperLogger.info(
+            "Assigned local video '{}' to '{}' from '{}'",
+            probe.fileName,
+            levelId,
+            path.string());
+        return true;
     }
 
     bool VideoLibrary::SetLocalVideoOverride(
@@ -665,7 +805,7 @@ namespace BigScreen {
         // A map-local file is never owned or deleted by Big Screen. A managed
         // YouTube override being explicitly replaced is removed to avoid an
         // inaccessible orphan consuming the headset's storage.
-        if(previous && !previous->mapLocal && !previous->importFile)
+        if(previous && !IsUserOwnedFile(*previous))
             std::filesystem::remove(videoPath_ / previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -743,7 +883,7 @@ namespace BigScreen {
 
         // Import files remain user-owned. Only a replaced Big Screen download
         // is deleted; another import or map-folder file is merely unregistered.
-        if(previous && !previous->mapLocal && !previous->importFile)
+        if(previous && !IsUserOwnedFile(*previous))
             std::filesystem::remove(videoPath_ / previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -757,8 +897,7 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.user)
             return false;
-        if(deleteFile && !found->second.user->mapLocal &&
-           !found->second.user->importFile)
+        if(deleteFile && !IsUserOwnedFile(*found->second.user))
             std::filesystem::remove(videoPath_ / found->second.user->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
@@ -857,7 +996,7 @@ namespace BigScreen {
         std::string countedFile;
         const auto addManagedFile = [&](const std::optional<StoredVideo>& video)
         {
-            if(!video || video->mapLocal || video->importFile || video->fileName.empty() ||
+            if(!video || IsUserOwnedFile(*video) || video->fileName.empty() ||
                video->fileName == countedFile)
                 return;
             const auto path = videoPath_ / video->fileName;
@@ -1023,7 +1162,10 @@ namespace BigScreen {
         freeBytesCacheTime_ = {};
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
-        document.AddMember("version", 2, allocator);
+        // Schema 3 adds externalFile/externalPath records for videos selected
+        // through the Quest file browser. Older version-2 libraries remain
+        // readable because all new fields are optional.
+        document.AddMember("version", 3, allocator);
         rapidjson::Value levels(rapidjson::kObjectType);
         for(const auto& [levelId, record] : records_)
         {

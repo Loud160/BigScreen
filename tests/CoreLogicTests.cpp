@@ -16,6 +16,18 @@ namespace {
 
 int main()
 {
+    const double previewStep = BigScreen::CoreLogic::AdvanceSmoothedPreviewClock(
+        10.0, 10.0, 1.0 / 90.0);
+    Expect(previewStep > 10.0 && previewStep < 10.012,
+           "a quantized audio sample still advances the smoothed preview clock");
+    const double correctedPreviewStep = BigScreen::CoreLogic::AdvanceSmoothedPreviewClock(
+        previewStep, 10.021, 1.0 / 90.0);
+    Expect(correctedPreviewStep > previewStep && correctedPreviewStep < 10.03,
+           "a new audio buffer corrects the preview clock without a frame-sized jump");
+    Expect(std::abs(BigScreen::CoreLogic::AdvanceSmoothedPreviewClock(
+               10.0, 20.0, 0.01) - 20.0) < 0.0001,
+           "a real preview seek immediately re-anchors the smoothed clock");
+
     using BigScreen::CoreLogic::IsSupportedYouTubeUrl;
     using BigScreen::CoreLogic::IsValidYouTubeVideoId;
 
@@ -39,6 +51,19 @@ int main()
     Expect(StableVideoKey("custom_level_123") != StableVideoKey("custom_level_124"),
            "different IDs should not share the test key");
     Expect(StableVideoKey("x").size() == 16, "stable keys are fixed-width hex");
+
+    Expect(std::abs(CpuPercentOfOneCore(500.0, 1.0) - 50.0) < 0.001,
+           "half a CPU-second over one wall-second is 50 percent of one core");
+    Expect(std::abs(EquivalentCpuCores(2500.0, 1.0) - 2.5) < 0.001,
+           "whole-process CPU time can correctly exceed one equivalent core");
+    Expect(CpuPercentOfOneCore(500.0, 0.0) == 0.0,
+           "zero wall duration cannot produce an invalid CPU percentage");
+    Expect(ChargeConsumedMicroampHours(3'166'000, 3'165'000) == 1'000.0,
+           "a falling charge counter reports consumed microamp-hours");
+    Expect(ChargeConsumedMicroampHours(3'165'000, 3'166'000) == 0.0,
+           "charging does not masquerade as negative consumption");
+    Expect(std::abs(ConsumptionRateMahPerHour(1'000.0, 1800.0) - 2.0) < 0.001,
+           "charge consumption is normalized to mAh per hour");
 
     Expect(SafeSingleFilename("video.mp4"), "plain filename is safe");
     Expect(!SafeSingleFilename("../video.mp4"), "parent traversal is rejected");
@@ -185,9 +210,9 @@ int main()
            "video zoom is capped at the documented 3x limit");
 
     Expect(!ScreenBackgroundVisible(true, false),
-           "transparent layouts remove the black letterbox renderer");
+           "letterbox transparency removes the black background renderer");
     Expect(ScreenBackgroundVisible(false, false),
-           "opaque layouts retain the black letterbox renderer");
+           "opaque letterboxes retain the black background renderer");
     Expect(ScreenBackgroundVisible(true, true),
            "a requested black lead-in overrides transparent letterboxing");
 

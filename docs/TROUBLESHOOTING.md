@@ -4,6 +4,18 @@ Big Screen logs to Beat Saber's standard mod log folder:
 
 `/sdcard/ModData/com.beatgames.beatsaber/logs`
 
+Power benchmark CSV files are separate from the normal mod log:
+
+- `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/power-benchmark-summary.csv`
+- `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/power-benchmark-samples.csv`
+
+If current, charge, energy, or capacity cells are blank, Android reported that
+specific fuel-gauge property as unsupported. Do not replace a blank with zero.
+Runs made while USB or a battery pack is connected are useful for CPU/decode
+analysis but not for headset-drain comparisons. Instantaneous current is noisy;
+compare repeated full-map charge consumption and the summary average rather
+than drawing a conclusion from one sample.
+
 Expected video/content errors are shown in the menu and do not count against the
 mod's safety circuit. If two internal Big Screen errors occur within
 three minutes, the mod turns its own Enabled switch off, queues one explanatory

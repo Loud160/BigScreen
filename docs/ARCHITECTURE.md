@@ -30,13 +30,30 @@ published and consumed at bounded rates. Terminal downloader state remains a
 durable atomic write; transient progress does not fsync Android flash for every
 network block.
 
+The local-video browser follows the same boundary. Unity renders immutable
+directory snapshots on the center screen, while a worker thread enumerates the
+folder and opens MP4 containers through FFmpeg. Custom/WIP songs start at their
+map folder; other songs start at the automatically created Video Import folder.
+Navigation is confined to `/sdcard`. A selected file is referenced in place as
+user-owned media, so assignment replacement and Remove Video never delete it.
+
+Power benchmarking follows the same real-time boundary. The gameplay hook
+samples Android `BatteryManager`, a monotonic process CPU clock, and the
+decoder worker's thread CPU clock at most once per second, then retains those
+plain values in pre-reserved memory. CSV creation and append operations happen
+only during gameplay teardown. Unsupported Quest fuel-gauge properties remain
+empty optionals all the way to disk, preventing unavailable readings from being
+mistaken for zero consumption.
+
 The screen is ordinary environment-layer geometry. A frame/background mesh and
 a separately clipped video-content mesh share one root transform. That split
 allows rotation, zoom, pan, perspective tilt, stretching, and black or fully
-transparent letterboxing without rewriting decoded pixels. Output is scaled
-before entering the mailbox, reducing CPU memory traffic and Unity texture-
-upload cost. Opaque mode explicitly enables depth writing; transparent mode
-uses alpha blending.
+transparent letterboxing without rewriting decoded pixels. Letterbox alpha and
+picture opacity are independent: the background renderer can be removed while
+the decoded picture stays opaque, or the picture can blend over either kind of
+background. Output is scaled before entering the mailbox, reducing CPU memory
+traffic and Unity texture-upload cost. Fully opaque picture/background modes
+write depth; alpha-blended picture or background modes use transparent queues.
 
 Undocked placement is an explicit edit transaction. BSML's controller-tested
 floating-screen handle supplies move/rotation tracking, a second handle drives
@@ -57,5 +74,9 @@ Some tempting approaches are deliberately not used:
 - Calling the generated FlowCoordinator base DidActivate wrapper recursively
   dispatches into the override and can crash; custom coordinator lifecycle code
   therefore owns activation directly.
+- Animating dismissal after HMUI has already deactivated a child controller can
+  leave Beat Saber's parent flow without a responsive center view. Big Screen's
+  Back/error exits therefore use the immediate dismissal overload and perform
+  their own preview/foveation cleanup in DidDeactivate.
 - Updating only a UI slider value does not resize an existing decoder texture;
   the preview/session must be safely recreated for a resolution change.

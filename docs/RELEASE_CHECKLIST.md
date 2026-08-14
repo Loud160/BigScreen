@@ -30,10 +30,10 @@
 - [ ] OST, DLC, custom, and WIP entries appear once per song and remain correctly ordered after search/letter jump/editor return.
 - [ ] Menu preview starts/stops with audio and cannot leak into the home/mod menus or resume after Quest focus changes.
 - [ ] Mapper download, pasted URL download, cancellation, thumbnail, progress, and understandable errors work.
-- [ ] Map-folder local file, Video Import file, invalid-file HELP, assignment replacement, and unregister behavior work.
+- [ ] Center file browser starts in the map/Video Import folder, navigates shared storage, colors compatible/invalid MP4s green/red, gates Set Video, shows HELP, replaces assignments, and unregisters without deleting user files.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
 - [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
-- [ ] Advanced video rotation/zoom/pan/tilt/stretch values are layout-scoped and black/transparent letterboxing follows Video Transparency.
+- [ ] Advanced video rotation/zoom/pan/tilt/stretch values are layout-scoped, Letterbox Transparency affects only unused canvas, and Video Opacity affects both docked and undocked pictures.
 - [ ] Undocked move/rotate/resize saves only after Save Screen; cancel, focus loss, layout change, and menu exit restore the last saved placement and leave no raycastable overlay.
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
 - [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.

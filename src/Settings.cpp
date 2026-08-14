@@ -137,10 +137,17 @@ namespace BigScreen {
                 document,
                 (prefix + "AdvancedControls").c_str(),
                 legacyAdvancedControls);
-            layout.transparency = ReadBool(
+            layout.letterboxTransparency = ReadBool(
                 document,
-                (prefix + "Transparency").c_str(),
-                legacyTransparency);
+                (prefix + "LetterboxTransparency").c_str(),
+                ReadBool(
+                    document,
+                    (prefix + "Transparency").c_str(),
+                    legacyTransparency));
+            layout.videoOpacity = std::clamp(ReadFloat(
+                document,
+                (prefix + "VideoOpacity").c_str(),
+                1.0f), 0.0f, 1.0f);
             layout.distanceOffset = std::clamp(ReadFloat(
                 document, (prefix + "Distance").c_str(),
                 legacy ? ReadFloat(document, "screenDistanceOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
@@ -268,6 +275,8 @@ namespace BigScreen {
             10.0f);
         performanceDiagnosticsEnabled_ = ReadBool(
             document, "performanceDiagnosticsEnabled", false);
+        powerBenchmarkEnabled_ = ReadBool(
+            document, "powerBenchmarkEnabled", false);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
 
         // Preview decoding is an avoidable performance cost when videos are
@@ -501,9 +510,16 @@ namespace BigScreen {
         Save();
     }
 
-    void Settings::SetTransparencyEnabled(bool value)
+    void Settings::SetLetterboxTransparencyEnabled(bool value)
     {
-        screenLayouts_[activeScreenLayout_].transparency = value;
+        screenLayouts_[activeScreenLayout_].letterboxTransparency = value;
+        Save();
+    }
+
+    void Settings::SetVideoOpacity(float value)
+    {
+        screenLayouts_[activeScreenLayout_].videoOpacity =
+            std::clamp(value, 0.0f, 1.0f);
         Save();
     }
 
@@ -606,6 +622,12 @@ namespace BigScreen {
     void Settings::SetPerformanceDiagnosticsEnabled(bool value)
     {
         performanceDiagnosticsEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetPowerBenchmarkEnabled(bool value)
+    {
+        powerBenchmarkEnabled_ = value;
         Save();
     }
 
@@ -714,7 +736,14 @@ namespace BigScreen {
             const auto prefix = "screenLayout" + std::to_string(index + 1);
             const auto& layout = screenLayouts_[index];
             Replace(document, (prefix + "AdvancedControls").c_str(), layout.advancedControls);
-            Replace(document, (prefix + "Transparency").c_str(), layout.transparency);
+            // Remove the development-era combined transparency key after
+            // migrating it to the explicitly letterbox-only setting.
+            document.RemoveMember((prefix + "Transparency").c_str());
+            Replace(
+                document,
+                (prefix + "LetterboxTransparency").c_str(),
+                layout.letterboxTransparency);
+            Replace(document, (prefix + "VideoOpacity").c_str(), layout.videoOpacity);
             Replace(document, (prefix + "Distance").c_str(), layout.distanceOffset);
             Replace(document, (prefix + "Horizontal").c_str(), layout.horizontalOffset);
             Replace(document, (prefix + "Vertical").c_str(), layout.verticalOffset);
@@ -763,6 +792,7 @@ namespace BigScreen {
             "automaticPerformanceResponseSeconds",
             automaticPerformanceResponseSeconds_);
         Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
+        Replace(document, "powerBenchmarkEnabled", powerBenchmarkEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         try
         {

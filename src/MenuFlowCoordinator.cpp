@@ -1,17 +1,25 @@
 #include "BigScreen/MenuFlowCoordinator.hpp"
 
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/LocalVideoBrowserMenu.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
+#include "GlobalNamespace/MainFlowCoordinator.hpp"
+#include "GlobalNamespace/MainMenuViewController.hpp"
 #include "GlobalNamespace/OVRManager.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Object.hpp"
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/Transform.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
+#include "bsml/shared/BSML/MenuButtons/MenuButton.hpp"
+#include "bsml/shared/BSML/MenuButtons/MenuButtons.hpp"
+#include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
 #include "main.hpp"
 
 #include <cctype>
@@ -29,6 +37,53 @@ namespace BigScreen {
         bool distractionFreeMenuActive = false;
         std::vector<UnityW<UnityEngine::GameObject>> hiddenMenuObjects;
         MenuFlowCoordinator* activeMenuFlow = nullptr;
+        BSML::MenuButton* bigScreenMenuButton = nullptr;
+        bool menuReentryBlocked = false;
+        float menuReentryNotBefore = 0.0f;
+        int stableMainMenuFrames = 0;
+
+        BSML::MenuButton* ResolveBigScreenMenuButton()
+        {
+            if(bigScreenMenuButton)
+                return bigScreenMenuButton;
+            auto* buttons = BSML::MenuButtons::get_instance();
+            if(!buttons)
+                return nullptr;
+            for(auto* item : buttons->get_buttons())
+            {
+                auto candidate = il2cpp_utils::try_cast<BSML::MenuButton>(item);
+                if(!candidate.has_value())
+                    continue;
+                auto* button = candidate.value();
+                if(button && std::string(button->text) == "Big Screen")
+                {
+                    bigScreenMenuButton = button;
+                    return button;
+                }
+            }
+            return nullptr;
+        }
+
+        void SetBigScreenMenuButtonInteractable(bool interactable)
+        {
+            if(auto* button = ResolveBigScreenMenuButton())
+                button->set_interactable(interactable);
+        }
+
+        void BeginMenuReentryGuard()
+        {
+            // Beat Saber completes a dismissal over several frames even when
+            // HMUI's immediate flag is used. Starting this retained flow again
+            // while MainMenuViewController is inactive asks Unity to start a
+            // coroutine on an inactive object and leaves the complete menu
+            // hierarchy unresponsive. Disable only Big Screen's entry until
+            // the parent and its main view have both remained stable.
+            menuReentryBlocked = true;
+            stableMainMenuFrames = 0;
+            menuReentryNotBefore =
+                UnityEngine::Time::get_realtimeSinceStartup() + 1.25f;
+            SetBigScreenMenuButtonInteractable(false);
+        }
 
         std::string NormalizeObjectName(StringW value)
         {
@@ -127,6 +182,55 @@ namespace BigScreen {
         return activeMenuFlow != nullptr;
     }
 
+    void TickMenuReentryGuard() noexcept
+    {
+        if(!menuReentryBlocked)
+            return;
+        try
+        {
+            // Reassert this in case BSML rebuilt its button view during the
+            // parent transition after the guard first disabled the model.
+            SetBigScreenMenuButtonInteractable(false);
+            if(activeMenuFlow ||
+               UnityEngine::Time::get_realtimeSinceStartup() <
+                   menuReentryNotBefore)
+                return;
+
+            auto* parent = BSML::Helpers::GetMainFlowCoordinator();
+            auto* mainMenu = parent
+                ? parent->__cordl_internal_get__mainMenuViewController().ptr()
+                : nullptr;
+            const bool stable = parent && mainMenu &&
+                parent->get_isActivated() && !parent->get_isInTransition() &&
+                mainMenu->get_isActivated() &&
+                !mainMenu->get_isInTransition() &&
+                mainMenu->get_gameObject() &&
+                mainMenu->get_gameObject()->get_activeInHierarchy();
+            stableMainMenuFrames = stable ? stableMainMenuFrames + 1 : 0;
+            if(stableMainMenuFrames < 12)
+                return;
+
+            menuReentryBlocked = false;
+            stableMainMenuFrames = 0;
+            SetBigScreenMenuButtonInteractable(true);
+            PaperLogger.info(
+                "Big Screen menu entry re-enabled after the main menu stabilized");
+        }
+        catch(const std::exception& exception)
+        {
+            // The guard is safety UI, not gameplay functionality. Keep the
+            // entry disabled and retry on a later stable menu frame.
+            stableMainMenuFrames = 0;
+            PaperLogger.warn(
+                "Could not verify Big Screen menu re-entry yet: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            stableMainMenuFrames = 0;
+        }
+    }
+
     bool ExitBigScreenMenuAfterError() noexcept
     {
         auto* coordinator = activeMenuFlow;
@@ -144,11 +248,12 @@ namespace BigScreen {
             if(!parent)
                 throw std::runtime_error(
                     "Big Screen's parent menu flow was unavailable");
+            BeginMenuReentryGuard();
             parent->DismissFlowCoordinator(
                 coordinator,
                 HMUI::ViewController::AnimationDirection::Horizontal,
                 nullptr,
-                false);
+                true);
             PaperLogger.warn(
                 "Dismissed Big Screen's menu after an internal UI failure");
             return true;
@@ -284,6 +389,8 @@ namespace BigScreen {
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             storageViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            localVideoBrowserViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(
                 settingsViewController,
@@ -316,6 +423,16 @@ namespace BigScreen {
                             ? libraryEditorViewController
                             : libraryBrowserViewController,
                         HMUI::ViewController::AnimationType::In);
+                },
+                [this](GlobalNamespace::BeatmapLevel* level)
+                {
+                    VideoLibraryMenu::Instance().StopActivePreview();
+                    LocalVideoBrowserMenu::Instance().Show(level);
+                    ReplaceTopViewController(
+                        localVideoBrowserViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::In,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
                 });
             StorageMaintenanceMenu::Instance().CreateUi(
                 storageViewController,
@@ -326,6 +443,26 @@ namespace BigScreen {
                         nullptr,
                         HMUI::ViewController::AnimationType::Out,
                         HMUI::ViewController::AnimationDirection::Horizontal);
+                });
+            LocalVideoBrowserMenu::Instance().CreateUi(
+                localVideoBrowserViewController,
+                [this]()
+                {
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                },
+                [this](const std::string& fileName)
+                {
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                    VideoLibraryMenu::Instance().LocalVideoAssignmentChanged(
+                        fileName);
                 });
 
             // Main, left, right, bottom, and top are supplied in that order.
@@ -353,18 +490,17 @@ namespace BigScreen {
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
         VideoLibraryMenu::Instance().Refresh();
-        // A player can leave the complete Big Screen flow through the left
-        // Back button while storage is open. Always restore the empty center
-        // controller on the next visit instead of resurrecting that old page.
-        // Do not query get_topViewController here. Beat Saber clears that
-        // property while transitioning through gameplay, and its generated
-        // getter throws an IL2CPP exception when Big Screen is opened after a
-        // song. The exception escaped this custom lifecycle override and
-        // aborted the entire process. SetTopScreenViewController is the direct
-        // lifecycle-safe assignment and is harmless when center is already set.
-        SetTopScreenViewController(
-            centerViewController,
-            HMUI::ViewController::AnimationType::None);
+        // HMUI retains the main-view stack that was established by
+        // ProvideInitialViewControllers, so there is nothing to restore here.
+        // In particular, never pass the center controller to
+        // SetTopScreenViewController: despite its similar name, that method
+        // owns the separate physical panel above the player and does not
+        // replace the active controller in the center stack. Doing so gave one
+        // controller two incompatible screen roles and eventually prevented
+        // Beat Saber's MainMenuViewController from returning after dismissal.
+        // Also do not query get_topViewController during activation. Beat Saber
+        // can temporarily clear that property after gameplay, and the generated
+        // getter throws instead of returning null in that state.
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
         ScreenPreview::Instance().ActivateCurrentState();
         PerformancePanel::Instance().ActivateMenu();
@@ -375,16 +511,11 @@ namespace BigScreen {
         if(!centerViewController)
             return;
 
-        // Storage and the Video Library are functional Big Screen surfaces,
-        // not navigation needed to recover from a disabled mod. Restore the
-        // empty center and remove the entire right panel until the master
-        // switch is turned back on.
-        // The master switch can be applied during a lifecycle transition as
-        // well. Use the same direct assignment as DidActivate so a missing old
-        // top controller is never queried merely to restore the empty center.
-        SetTopScreenViewController(
-            centerViewController,
-            HMUI::ViewController::AnimationType::None);
+        // The Video Library is functional Big Screen UI rather than navigation
+        // needed to recover from a disabled mod. Remove its right panel until
+        // the master switch is turned back on. Do not touch the center stack
+        // here: its current page is managed only by the explicit storage and
+        // local-file-browser navigation callbacks above.
         SetRightScreenViewController(
             enabled ? libraryBrowserViewController : nullptr,
             HMUI::ViewController::AnimationType::None);
@@ -398,6 +529,7 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        BeginMenuReentryGuard();
         if(activeMenuFlow == this)
             activeMenuFlow = nullptr;
         PerformancePanel::Instance().SuspendMenu();
@@ -433,11 +565,12 @@ namespace BigScreen {
         auto parent = __cordl_internal_get__parentFlowCoordinator();
         if(parent)
         {
+            BeginMenuReentryGuard();
             parent->DismissFlowCoordinator(
                 this,
                 HMUI::ViewController::AnimationDirection::Horizontal,
                 nullptr,
-                false);
+                true);
         }
     }
 }

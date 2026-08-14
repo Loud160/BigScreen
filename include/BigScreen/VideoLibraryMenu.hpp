@@ -45,12 +45,16 @@ namespace BigScreen {
         void CreateUi(
             HMUI::ViewController* browserController,
             HMUI::ViewController* editorController,
-            std::function<void(bool showEditor)> navigate);
+            std::function<void(bool showEditor)> navigate,
+            std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo);
         void Refresh();
         void Tick(GlobalNamespace::SongPreviewPlayer* songPreviewPlayer);
         void Deactivate();
         void StopActivePreview();
         void RefreshDisplaySettings();
+        /// Synchronizes the existing child editor after the center-screen file
+        /// browser has committed a new user-owned video assignment.
+        void LocalVideoAssignmentChanged(const std::string& fileName);
 
     private:
         VideoLibraryMenu() = default;
@@ -81,7 +85,7 @@ namespace BigScreen {
         /// Starts the song audition at previewSongTime_. Normal user actions
         /// rebuild the video session; an end-of-song loop reuses the already
         /// open decoder and seeks its external clock back to zero.
-        void StartPreviewAudio(bool restartVideoSession = true);
+        void StartPreviewAudio();
         void LoopPreviewPlayback();
         void StopPreviewAudio(bool returnToMenuMusic);
         /// Clears Unity audio wrappers whose managed objects survived after
@@ -90,6 +94,8 @@ namespace BigScreen {
         /// lifecycle race as a fatal failure of the entire mod menu.
         void RecoverInvalidPreviewAudio(const char* context);
         void EnforcePausedPreviewAudio();
+        void ResetPreviewClock(double songTimeSeconds);
+        double AdvancePreviewClock(double rawAudioSongTimeSeconds);
         void RefreshPlaybackControls();
         void JumpToLetter(char letter);
         VideoOrigin SelectedVideoOrigin() const;
@@ -97,6 +103,7 @@ namespace BigScreen {
         HMUI::ViewController* browserController_ = nullptr;
         HMUI::ViewController* editorController_ = nullptr;
         std::function<void(bool)> navigate_;
+        std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo_;
         BSML::CustomListTableData* list_ = nullptr;
         HMUI::InputFieldView* searchInput_ = nullptr;
         HMUI::InputFieldView* urlInput_ = nullptr;
@@ -118,6 +125,7 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* pasteUrlButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* downloadButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* localVideoHelpText_ = nullptr;
+        TMPro::TextMeshProUGUI* localVideoStatusText_ = nullptr;
         TMPro::TextMeshProUGUI* removeConfirmationText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;
@@ -139,6 +147,8 @@ namespace BigScreen {
         UnityEngine::UI::Button* backToListButton_ = nullptr;
         UnityEngine::UI::Button* searchYouTubeButton_ = nullptr;
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
+        UnityEngine::UI::Button* checkUrlButton_ = nullptr;
+        UnityEngine::UI::Button* showFileBrowserButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::GameObject* downloadButtonPlaceholder_ = nullptr;
         UnityEngine::UI::Button* playPauseButton_ = nullptr;
@@ -176,11 +186,22 @@ namespace BigScreen {
         bool previewPlaying_ = false;
         bool previewPaused_ = false;
         bool playWhenAudioReady_ = false;
+        // Opening FFmpeg and producing the first drawable picture must finish
+        // before the audition clock begins. Otherwise the decoder chases audio
+        // that is already advancing and the diagnostics correctly report the
+        // resulting media-timestamp gaps as skipped frames.
+        bool playWhenVideoReady_ = false;
+        bool previewMeasurementStarted_ = false;
+        bool previewClockValid_ = false;
+        double smoothedPreviewSongTime_ = 0.0;
+        double previewClockRealtime_ = 0.0;
         bool suppressScrubberCallback_ = false;
         float scrubberFollowResumeTime_ = 0.0f;
         bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
         int tickCounter_ = 0;
         int thumbnailTickCounter_ = 0;
+        int playbackControlsTickCounter_ = 0;
+        bool periodicDownloadWasActive_ = false;
     };
 }

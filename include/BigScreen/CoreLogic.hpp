@@ -15,6 +15,72 @@
 #include <utility>
 
 namespace BigScreen::CoreLogic {
+    /// Advances a menu-preview clock smoothly between the coarse updates that
+    /// Unity exposes through AudioSource.time. Large differences are real
+    /// seeks/restarts and re-anchor immediately; ordinary buffer quantization
+    /// is corrected gradually so a 60 FPS video does not skip presentation
+    /// slots merely because the audio property advances in larger steps.
+    inline double AdvanceSmoothedPreviewClock(
+        double smoothedSongSeconds,
+        double rawAudioSongSeconds,
+        double realSecondsElapsed)
+    {
+        if(!std::isfinite(rawAudioSongSeconds) || rawAudioSongSeconds < 0.0)
+            return std::max(0.0, smoothedSongSeconds);
+        if(!std::isfinite(smoothedSongSeconds) || smoothedSongSeconds < 0.0 ||
+           !std::isfinite(realSecondsElapsed) || realSecondsElapsed < 0.0)
+            return rawAudioSongSeconds;
+
+        const double predicted = smoothedSongSeconds +
+            std::clamp(realSecondsElapsed, 0.0, 0.10);
+        const double error = rawAudioSongSeconds - predicted;
+        if(std::abs(error) > 0.075)
+            return rawAudioSongSeconds;
+        return std::max(
+            0.0,
+            predicted + std::clamp(error * 0.08, -0.0015, 0.0015));
+    }
+
+    /// Converts CPU milliseconds accumulated by one process or thread into the
+    /// conventional percentage of one fully occupied core. Values above 100
+    /// are valid for a multi-threaded process.
+    inline double CpuPercentOfOneCore(
+        double cpuMilliseconds,
+        double wallSeconds)
+    {
+        if(cpuMilliseconds <= 0.0 || wallSeconds <= 0.0)
+            return 0.0;
+        return cpuMilliseconds / (wallSeconds * 10.0);
+    }
+
+    inline double EquivalentCpuCores(
+        double cpuMilliseconds,
+        double wallSeconds)
+    {
+        return CpuPercentOfOneCore(cpuMilliseconds, wallSeconds) / 100.0;
+    }
+
+    /// Converts a fuel-gauge charge-counter decrease to an hourly drain rate.
+    /// A rising counter means the headset was charging and is intentionally
+    /// reported as zero consumption rather than a negative battery drain.
+    inline double ChargeConsumedMicroampHours(
+        std::int64_t startMicroampHours,
+        std::int64_t endMicroampHours)
+    {
+        return static_cast<double>(std::max<std::int64_t>(
+            0,
+            startMicroampHours - endMicroampHours));
+    }
+
+    inline double ConsumptionRateMahPerHour(
+        double consumedMicroampHours,
+        double wallSeconds)
+    {
+        if(consumedMicroampHours <= 0.0 || wallSeconds <= 0.0)
+            return 0.0;
+        return (consumedMicroampHours / 1000.0) /
+               (wallSeconds / 3600.0);
+    }
     inline constexpr float MinimumScreenScale = 0.5f;
     inline constexpr float CurvedScreenMaximumScale = 2.5f;
     inline constexpr float FlatScreenMaximumScale = 4.0f;

@@ -88,6 +88,7 @@ namespace BigScreen {
         BSML::ToggleSetting* maintainCurveAspectToggle_ = nullptr;
         BSML::SliderSetting* curvatureSlider_ = nullptr;
         BSML::ToggleSetting* transparencyToggle_ = nullptr;
+        BSML::SliderSetting* videoOpacitySlider_ = nullptr;
         UnityEngine::GameObject* screenCanvasHeader_ = nullptr;
         UnityEngine::GameObject* advancedScreenControlsRoot_ = nullptr;
         BSML::SliderSetting* screenRotationSlider_ = nullptr;
@@ -119,6 +120,7 @@ namespace BigScreen {
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
         BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;
         BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
+        BSML::ToggleSetting* powerBenchmarkToggle_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
         BSML::ModalView* nightlyWarningModal_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;

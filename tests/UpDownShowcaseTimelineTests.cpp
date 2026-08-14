@@ -66,7 +66,44 @@ int main()
     assert(std::abs(Sample(SecondsAtBeat(0.0)).panels[0].rotation.z - 180.0f) < 0.01f);
     assert(VisibleCount(Sample(SecondsAtBeat(45.5))) == 4);
     assert(VisibleCount(Sample(SecondsAtBeat(89.0))) == 4);
-    assert(VisibleCount(Sample(SecondsAtBeat(250.0))) == 7);
+    // The formerly single-screen calm section now introduces a staggered,
+    // four-lane carousel without requiring earlier timeline samples.
+    assert(VisibleCount(Sample(SecondsAtBeat(180.0))) == 2);
+    assert(VisibleCount(Sample(SecondsAtBeat(195.0))) == 4);
+    const auto corkscrewTunnel = Sample(SecondsAtBeat(250.0));
+    assert(VisibleCount(corkscrewTunnel) == 7);
+    // The nearest tunnel panel must orbit overhead at a reduced size so the
+    // deeper six-screen corkscrew remains visible through the entrance.
+    assert(corkscrewTunnel.panels[0].position.y > 30.0f);
+    assert(corkscrewTunnel.panels[0].scale.x < 1.0f);
+    const auto openTunnel = Sample(SecondsAtBeat(317.0));
+    assert(VisibleCount(openTunnel) == 8);
+    // The nearest center screen is now overhead and substantially smaller
+    // than the wall panels, preserving an open sightline to panel seven at the
+    // far end of the formation.
+    assert(openTunnel.panels[0].position.y > 30.0f);
+    assert(openTunnel.panels[0].scale.x < 0.75f);
+    assert(openTunnel.panels[7].position.z > 80.0f);
+
+    // The four quadrant springs must not collapse back into mirrored pairs.
+    const auto fractured = Sample(SecondsAtBeat(94.0));
+    assert(std::abs(std::abs(fractured.panels[0].position.x) -
+                    std::abs(fractured.panels[1].position.x)) > 0.05f);
+    assert(std::abs(fractured.panels[0].position.y -
+                    fractured.panels[2].position.y) > 0.05f);
+
+    // Center-ring visibility is deterministic and always restored outside the
+    // exact authored windows, including invalid time inputs. The carousel uses
+    // a continuous hide; the later singularity section uses a rhythmic strobe.
+    assert(CenterRingVisible(SecondsAtBeat(167.999)));
+    assert(!CenterRingVisible(SecondsAtBeat(168.0)));
+    assert(!CenterRingVisible(SecondsAtBeat(200.0)));
+    assert(CenterRingVisible(SecondsAtBeat(219.0)));
+    assert(CenterRingVisible(SecondsAtBeat(278.49)));
+    assert(!CenterRingVisible(SecondsAtBeat(278.5)));
+    assert(CenterRingVisible(SecondsAtBeat(279.0)));
+    assert(CenterRingVisible(SecondsAtBeat(342.7)));
+    assert(CenterRingVisible(-1.0));
 
     // Direct seeking into the centerpiece must produce its complete state;
     // sampling earlier cues is never required to create all eight panels.

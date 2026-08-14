@@ -234,8 +234,8 @@ namespace BigScreen {
         if(!CreateMesh(config, aspectRatio) ||
            !CreateVideoMesh(config, aspectRatio) ||
            !CreateMaterialAndTexture(
-               videoWidth, videoHeight, config.transparent, sharedTexture) ||
-           !CreateBackgroundMaterial(config.transparent))
+               videoWidth, videoHeight, config.videoOpacity, sharedTexture) ||
+           !CreateBackgroundMaterial(config.letterboxTransparent))
         {
             Destroy();
             return false;
@@ -256,7 +256,7 @@ namespace BigScreen {
         // Quest. Removing the background renderer makes the unused part of a
         // non-16:9 frame genuinely transparent.
         renderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
-            config.transparent, false));
+            config.letterboxTransparent, false));
 
         videoObject_ = UnityEngine::GameObject::New_ctor("Big Screen Video Content");
         if(!videoObject_)
@@ -589,8 +589,11 @@ namespace BigScreen {
             return false;
         }
 
-        if(config.transparent != transparent_ &&
-           !ApplyTransparency(config.transparent))
+        if((config.letterboxTransparent != letterboxTransparent_ ||
+            std::abs(config.videoOpacity - opacity_) > 0.0001f) &&
+           !ApplyPresentation(
+               config.letterboxTransparent,
+               config.videoOpacity))
         {
             UnityEngine::Object::Destroy(mesh_);
             UnityEngine::Object::Destroy(videoMesh_);
@@ -647,19 +650,23 @@ namespace BigScreen {
         return true;
     }
 
-    bool ScreenSurface::ApplyTransparency(bool transparent)
+    bool ScreenSurface::ApplyPresentation(
+        bool letterboxTransparent,
+        float videoOpacity)
     {
         if(!gameObject_ || !videoObject_ || !material_ ||
            !backgroundMaterial_ || !texture_)
             return false;
 
+        const float nextOpacity = std::clamp(videoOpacity, 0.0f, 1.0f);
+        const bool pictureTransparent = nextOpacity < 0.999f;
         auto videoShader = UnityEngine::Shader::Find(
-            transparent ? "Unlit/Transparent" : "Unlit/Texture");
+            pictureTransparent ? "Unlit/Transparent" : "Unlit/Texture");
         auto backgroundShader = UnityEngine::Shader::Find(
-            transparent ? "Unlit/Transparent" : "Unlit/Texture");
-        if(!videoShader && transparent)
+            letterboxTransparent ? "Unlit/Transparent" : "Unlit/Texture");
+        if(!videoShader && pictureTransparent)
             videoShader = UnityEngine::Shader::Find("Unlit/Texture");
-        if(!backgroundShader && transparent)
+        if(!backgroundShader && letterboxTransparent)
             backgroundShader = UnityEngine::Shader::Find("Unlit/Texture");
         if(!videoShader || !backgroundShader)
             return false;
@@ -670,10 +677,10 @@ namespace BigScreen {
         backgroundMaterial_->set_mainTexture(
             UnityEngine::Texture2D::get_blackTexture());
 
-        if(transparent)
+        if(pictureTransparent)
         {
             material_->set_color(
-                UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f});
+                UnityEngine::Color{1.0f, 1.0f, 1.0f, nextOpacity});
             material_->SetInt("_SrcBlend", 5);  // SrcAlpha
             material_->SetInt("_DstBlend", 10); // OneMinusSrcAlpha
             material_->SetInt("_ZWrite", 0);
@@ -682,13 +689,6 @@ namespace BigScreen {
             material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
             material_->set_renderQueue(3000);
 
-            backgroundMaterial_->set_color(
-                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
-            backgroundMaterial_->SetInt("_SrcBlend", 5);
-            backgroundMaterial_->SetInt("_DstBlend", 10);
-            backgroundMaterial_->SetInt("_ZWrite", 0);
-            backgroundMaterial_->EnableKeyword("_ALPHABLEND_ON");
-            backgroundMaterial_->set_renderQueue(2999);
         }
         else
         {
@@ -701,11 +701,29 @@ namespace BigScreen {
             material_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
             material_->set_renderQueue(2000);
 
+        }
+
+        if(letterboxTransparent)
+        {
+            backgroundMaterial_->set_color(
+                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
+            backgroundMaterial_->SetInt("_SrcBlend", 5);
+            backgroundMaterial_->SetInt("_DstBlend", 10);
+            backgroundMaterial_->SetInt("_ZWrite", 0);
+            backgroundMaterial_->DisableKeyword("_ALPHATEST_ON");
+            backgroundMaterial_->EnableKeyword("_ALPHABLEND_ON");
+            backgroundMaterial_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            backgroundMaterial_->set_renderQueue(2999);
+        }
+        else
+        {
             backgroundMaterial_->set_color(UnityEngine::Color::get_black());
             backgroundMaterial_->SetInt("_SrcBlend", 1);
             backgroundMaterial_->SetInt("_DstBlend", 0);
             backgroundMaterial_->SetInt("_ZWrite", 1);
+            backgroundMaterial_->DisableKeyword("_ALPHATEST_ON");
             backgroundMaterial_->DisableKeyword("_ALPHABLEND_ON");
+            backgroundMaterial_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
             backgroundMaterial_->set_renderQueue(1999);
         }
 
@@ -720,26 +738,27 @@ namespace BigScreen {
             backgroundMaterial_->set_color(UnityEngine::Color::get_black());
         }
 
-        transparent_ = transparent;
+        letterboxTransparent_ = letterboxTransparent;
+        opacity_ = nextOpacity;
         if(auto* backgroundRenderer =
                gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
         {
             backgroundRenderer->set_enabled(
                 CoreLogic::ScreenBackgroundVisible(
-                    transparent_, leadInActive_ && leadInBlack_));
+                    letterboxTransparent_, leadInActive_ && leadInBlack_));
         }
         return true;
     }
 
-    bool ScreenSurface::CreateBackgroundMaterial(bool transparent)
+    bool ScreenSurface::CreateBackgroundMaterial(bool letterboxTransparent)
     {
         // The background is an independent surface rather than blank pixels in
         // the decoded image. This lets rotation, zoom, and pan expose either a
         // solid black letterbox or a genuinely transparent opening without
         // modifying a frame on the CPU for every presentation.
         auto shader = UnityEngine::Shader::Find(
-            transparent ? "Unlit/Transparent" : "Unlit/Texture");
-        if(!shader && transparent)
+            letterboxTransparent ? "Unlit/Transparent" : "Unlit/Texture");
+        if(!shader && letterboxTransparent)
             shader = UnityEngine::Shader::Find("Unlit/Texture");
         if(!shader)
             return false;
@@ -749,7 +768,8 @@ namespace BigScreen {
             return false;
         backgroundMaterial_->set_mainTexture(
             UnityEngine::Texture2D::get_blackTexture());
-        if(transparent)
+        letterboxTransparent_ = letterboxTransparent;
+        if(letterboxTransparent)
         {
             backgroundMaterial_->set_color(
                 UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
@@ -774,21 +794,22 @@ namespace BigScreen {
     bool ScreenSurface::CreateMaterialAndTexture(
         int width,
         int height,
-        bool transparent,
+        float videoOpacity,
         UnityEngine::Texture2D* sharedTexture)
     {
         // Unity's transparent unlit shader performs normal alpha blending, so
         // Beat Saber lights and background geometry remain visible through the
-        // video without changing the decoded pixels. A fixed 75% opacity keeps
-        // lyrics and motion readable while still revealing the light show.
+        // video without changing the decoded pixels.
         //
         // Configure both modes completely rather than relying on shader
         // defaults. In particular, the opaque mode must write to the depth
         // buffer so scenery and light geometry physically behind the screen
         // cannot be drawn through it.
+        const float nextOpacity = std::clamp(videoOpacity, 0.0f, 1.0f);
+        const bool pictureTransparent = nextOpacity < 0.999f;
         auto shader = UnityEngine::Shader::Find(
-            transparent ? "Unlit/Transparent" : "Unlit/Texture");
-        if(!shader && transparent)
+            pictureTransparent ? "Unlit/Transparent" : "Unlit/Texture");
+        if(!shader && pictureTransparent)
             shader = UnityEngine::Shader::Find("Unlit/Texture");
         if(!shader)
             return false;
@@ -810,12 +831,12 @@ namespace BigScreen {
 
         textureWidth_ = width;
         textureHeight_ = height;
-        transparent_ = transparent;
-        opacity_ = transparent ? 0.75f : 1.0f;
+        opacity_ = nextOpacity;
         material_->set_mainTexture(texture_);
-        if(transparent)
+        if(pictureTransparent)
         {
-            material_->set_color(UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f});
+            material_->set_color(
+                UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
             // These standard Unity blend properties also make the fallback
             // Unlit/Texture material transparent on builds where the named
             // Unlit/Transparent shader was stripped from the player.
@@ -856,18 +877,18 @@ namespace BigScreen {
         if(leadInActive_)
         {
             material_->set_mainTexture(texture_);
-            material_->set_color(transparent_
-                ? UnityEngine::Color{1.0f, 1.0f, 1.0f, 0.75f}
-                : UnityEngine::Color::get_white());
+            material_->set_color(
+                UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
             if(backgroundMaterial_)
-                backgroundMaterial_->set_color(transparent_
+                backgroundMaterial_->set_color(letterboxTransparent_
                     ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
                     : UnityEngine::Color::get_black());
             if(auto* backgroundRenderer =
                    gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
             {
                 backgroundRenderer->set_enabled(
-                    CoreLogic::ScreenBackgroundVisible(transparent_, false));
+                    CoreLogic::ScreenBackgroundVisible(
+                        letterboxTransparent_, false));
             }
             leadInActive_ = false;
             leadInBlack_ = false;
@@ -954,8 +975,22 @@ namespace BigScreen {
         // same IL2CPP material write on every Unity update for every panel.
         if(std::abs(nextOpacity - opacity_) < 0.0001f)
             return;
-        opacity_ = nextOpacity;
-        material_->set_color(UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
+        // Showcase cues can animate through the opaque boundary. Reconfigure
+        // the shader and blend/depth state, not only its color alpha, so the
+        // transition remains correct with both Unity unlit shader variants.
+        ApplyPresentation(letterboxTransparent_, nextOpacity);
+    }
+
+    void ScreenSurface::SetDoubleSided(bool enabled)
+    {
+        // Unity's built-in unlit shaders honor the conventional _Cull
+        // material property: 0=None and 2=Back. This changes rasterization
+        // only; it does not duplicate geometry, textures, or decoder work.
+        const int cullMode = enabled ? 0 : 2;
+        if(material_)
+            material_->SetInt("_Cull", cullMode);
+        if(backgroundMaterial_)
+            backgroundMaterial_->SetInt("_Cull", cullMode);
     }
 
     void ScreenSurface::Destroy()
@@ -994,7 +1029,7 @@ namespace BigScreen {
         ownsTexture_ = false;
         screenWidth_ = 0.0f;
         screenHeight_ = 0.0f;
-        transparent_ = false;
+        letterboxTransparent_ = false;
         opacity_ = 1.0f;
         visible_ = false;
         leadInActive_ = false;

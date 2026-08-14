@@ -84,6 +84,19 @@ namespace BigScreen::UpDownShowcase {
                 (beat - start) * 2.0 - step);
             return direction * amplitude * EaseOutBack(phase);
         }
+
+        float FractureSpring(double beat, std::size_t index)
+        {
+            // Each quadrant is tethered by a different imaginary spring. The
+            // amplitude grows with separation, while mismatched frequencies
+            // prevent the four corners from collapsing into one mechanical,
+            // mirrored motion. A negative value is an inward rubber-band snap.
+            constexpr std::array<float, 4> Frequencies{5.35f, 6.10f, 4.65f, 7.05f};
+            constexpr std::array<float, 4> PhaseOffsets{0.15f, 1.70f, 3.05f, 4.25f};
+            const float phase = static_cast<float>(beat - 89.0) * Frequencies[index] +
+                PhaseOffsets[index];
+            return std::sin(phase) + 0.42f * std::sin(phase * 1.73f + index);
+        }
     }
 
     bool MatchesTarget(
@@ -239,15 +252,21 @@ namespace BigScreen::UpDownShowcase {
                 const float row = i < 2 ? 1.0f : -1.0f;
                 const Geometry geometry = static_cast<Geometry>(
                     static_cast<int>(Geometry::QuadrantTopLeft) + static_cast<int>(i));
+                const float spring = FractureSpring(beat, i) * fracture;
+                const float springReach = (2.8f + static_cast<float>(i) * 0.55f) * spring;
+                const float verticalSpring = FractureSpring(beat + 0.37, (i + 1) % 4) *
+                    fracture * (1.4f + static_cast<float>(i) * 0.25f);
                 Put(frame, i,
-                    {side * Lerp(1.0f, 19.0f + 8.0f * fracture, entry),
-                     BaseY + row * Lerp(1.0f, 10.5f + 4.0f * fracture, entry),
-                     BaseZ + fracture * (i == 0 || i == 3 ? -12.0f : 10.0f)},
-                    {-7.0f + row * fracture * 8.0f,
-                     side * fracture * 28.0f,
-                     side * row * fracture * 16.0f},
+                    {side * Lerp(1.0f, 19.0f + 9.0f * fracture + springReach, entry),
+                     BaseY + row * Lerp(
+                         1.0f, 10.5f + 4.5f * fracture + verticalSpring, entry),
+                     BaseZ + fracture * (i == 0 || i == 3 ? -12.0f : 10.0f) +
+                         spring * (i < 2 ? 2.4f : -2.0f)},
+                    {-7.0f + row * fracture * (8.0f + spring * 4.0f),
+                     side * fracture * (28.0f + spring * 9.0f),
+                     side * row * fracture * (16.0f + spring * 11.0f)},
                     {0.92f, 0.92f, 1.0f}, geometry, 1.0f,
-                    -side * row * fracture * 16.0f);
+                    -side * row * fracture * (16.0f + spring * 11.0f));
             }
             return frame;
         }
@@ -349,17 +368,45 @@ namespace BigScreen::UpDownShowcase {
         }
         if(beat < 219.0)
         {
-            const float angle = static_cast<float>((beat - 168.0) / 51.0 * Pi * 1.25);
-            float nod = 0.0f;
-            if(beat >= 187.0 && beat < 187.125)
-                nod = -15.0f;
-            else if(beat >= 187.125 && beat < 187.5)
-                nod = 15.0f * (1.0f - Segment(beat, 187.125, 187.5));
-            PutSingle(frame,
-                {std::sin(angle) * 24.0f, 15.0f + std::sin(angle * 0.5f) * 5.0f,
-                 49.0f + std::cos(angle) * 11.0f},
-                {-7.0f + nod, std::sin(angle) * -24.0f, std::sin(angle * 0.7f) * 5.0f},
-                {0.66f, 0.66f, 1.0f}, Geometry::CurvedIn, 0.94f);
+            // Slow four-screen carousel. Each screen enters on its own lane,
+            // crosses at a distinct height/depth, and rotates in the opposite
+            // direction from the previous screen. The separated lanes keep
+            // the large curved surfaces from passing through one another.
+            constexpr std::array<double, 4> Starts{168.0, 175.0, 182.0, 189.0};
+            constexpr std::array<float, 4> Heights{8.5f, 21.0f, 31.0f, 14.5f};
+            constexpr std::array<float, 4> Depths{34.0f, 43.0f, 37.5f, 53.0f};
+            for(std::size_t i = 0; i < 4; ++i)
+            {
+                if(beat < Starts[i])
+                    continue;
+                const float direction = (i & 1U) == 0 ? 1.0f : -1.0f;
+                const float t = Smooth(Segment(beat, Starts[i], 219.0));
+                const float entry = Smooth(Segment(beat, Starts[i], Starts[i] + 2.0));
+                const float arc = std::sin(t * Pi);
+                const float slowWave = std::sin(
+                    static_cast<float>((beat - Starts[i]) * 0.32 + i * 1.4));
+                float nod = 0.0f;
+                if(i == 0 && beat >= 187.0 && beat < 187.125)
+                    nod = -15.0f;
+                else if(i == 0 && beat >= 187.125 && beat < 187.5)
+                    nod = 15.0f * (1.0f - Segment(beat, 187.125, 187.5));
+
+                const float tumble = direction *
+                    (35.0f + t * (i < 2 ? 430.0f : 350.0f));
+                Put(frame, i,
+                    {direction * Lerp(38.0f, -38.0f, t),
+                     Heights[i] + arc * (i == 2 ? 4.0f : -2.0f) + slowWave * 2.0f,
+                     Depths[i] + arc * 4.0f},
+                    {-7.0f + nod + slowWave * 4.0f,
+                     tumble,
+                     -direction * (10.0f + arc * 18.0f)},
+                    {Lerp(0.08f, 0.82f + static_cast<float>(i) * 0.035f, entry),
+                     Lerp(0.08f, 0.82f + static_cast<float>(i) * 0.035f, entry),
+                     1.0f},
+                    (i & 1U) == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
+                    0.94f,
+                    -tumble * 0.78f);
+            }
             return frame;
         }
         if(beat < 223.0)
@@ -380,12 +427,24 @@ namespace BigScreen::UpDownShowcase {
         if(beat < 247.0)
         {
             const float t = Smooth(Segment(beat, 223.0, 247.0));
+            // Reuse the opposing frame/picture distortion vocabulary from the
+            // successful 1:02 section without disturbing the deliberately
+            // calm carousel that precedes it.
+            const int morphStep = static_cast<int>((beat - 223.0) / 4.0);
+            const float distortion = std::sin(
+                static_cast<float>((beat - 223.0) * Pi * 0.5));
+            const float shear = std::abs(distortion);
             PutSingle(frame,
-                {0.0f, Lerp(BaseY, 19.0f, t), Lerp(61.0f, 39.0f, t)},
-                {-6.0f, 0.0f, std::sin(static_cast<float>(beat * 0.12)) * 2.0f},
-                {Lerp(1.5f, 2.35f, t), Lerp(1.5f, 2.1f, t), 1.0f},
-                Geometry::CurvedIn, 1.0f,
-                static_cast<float>((beat - 223.0) * 0.9));
+                {distortion * 3.0f, Lerp(BaseY, 19.0f, t) + distortion * 2.2f,
+                 Lerp(61.0f, 39.0f, t)},
+                {-6.0f + distortion * 7.0f,
+                 distortion * 12.0f,
+                 distortion * 7.0f},
+                {Lerp(1.5f, 2.35f, t) * (1.0f + shear * 0.22f),
+                 Lerp(1.5f, 2.1f, t) * (1.0f - shear * 0.16f), 1.0f},
+                (morphStep & 1) == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
+                1.0f,
+                -distortion * 15.0f);
             return frame;
         }
 
@@ -398,15 +457,25 @@ namespace BigScreen::UpDownShowcase {
             {
                 const float depth = static_cast<float>(i) / 6.0f;
                 const float angle = travel * 0.72f + i * 1.15f;
-                const float radius = 5.0f + depth * 18.0f;
+                // The nearest copy originally sat directly across the tunnel
+                // opening at full scale. Lift it into a wide overhead orbit,
+                // then rapidly taper that clearance into the following depth
+                // layers. Panel zero now frames the tunnel entrance instead
+                // of covering the screens behind it.
+                const float frontWeight = std::max(0.0f, 1.0f - depth * 2.5f);
+                const float frontLift = frontWeight * frontWeight * 20.0f;
+                const float radius = 5.0f + depth * 18.0f + frontLift * 0.30f;
+                const float verticalOrbit = radius * 0.62f + frontLift * 0.22f;
+                const float baseScale = Lerp(1.15f, 0.48f, depth);
+                const float clearedScale = baseScale * (1.0f - frontWeight * 0.20f);
                 Put(frame, i,
                     {std::cos(angle) * radius,
-                     16.0f + std::sin(angle) * radius * 0.62f,
+                     16.0f + frontLift + std::sin(angle) * verticalOrbit,
                      30.0f + depth * 82.0f - std::fmod(travel * 2.8f, 12.0f)},
                     {-7.0f + std::sin(angle) * 12.0f,
                      std::cos(angle) * 22.0f,
                      angle * 57.29578f + depth * 150.0f},
-                    {Lerp(1.15f, 0.48f, depth), Lerp(1.15f, 0.48f, depth), 1.0f},
+                    {clearedScale, clearedScale, 1.0f},
                     (i & 1U) == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
                     Lerp(1.0f, 0.48f, depth),
                     -angle * 57.29578f);
@@ -521,14 +590,88 @@ namespace BigScreen::UpDownShowcase {
         }
         if(beat < 322.5)
         {
-            for(std::size_t i = 0; i < 2; ++i)
+            // Open video corridor. The previous large front panel hid too
+            // much of the depth formation, so the nearest center copy becomes
+            // a small moving ceiling/keystone. Three independently twisting
+            // side pairs form the walls, leaving a direct sightline to the
+            // terminal screen at the vanishing point. All eight panels remain
+            // backed by the same texture and single frame upload.
+            const float section = Segment(beat, 311.0, 322.5);
+            const float keystoneEntry = EaseOutBack(Segment(beat, 311.0, 312.0));
+            const float keystoneWave = std::sin(static_cast<float>(
+                (beat - 311.0) * 0.72));
+            const float keystoneRoll = std::sin(static_cast<float>(
+                (beat - 311.0) * 0.43)) * 18.0f;
+            Put(frame, 0,
+                {keystoneWave * 6.0f,
+                 34.5f + std::cos(static_cast<float>((beat - 311.0) * 0.55)) * 2.5f,
+                 35.0f + std::sin(static_cast<float>((beat - 311.0) * 0.31)) * 2.0f},
+                {-17.0f + keystoneWave * 6.0f,
+                 -keystoneWave * 14.0f,
+                 keystoneRoll},
+                {Lerp(0.04f, 0.68f, keystoneEntry),
+                 Lerp(0.04f, 0.68f, keystoneEntry), 1.0f},
+                Geometry::CurvedOut,
+                0.96f,
+                -keystoneRoll * 0.82f);
+
+            constexpr std::array<float, 3> WallX{28.0f, 40.0f, 51.0f};
+            constexpr std::array<float, 3> WallY{17.0f, 22.0f, 15.0f};
+            constexpr std::array<float, 3> WallZ{43.0f, 59.0f, 76.0f};
+            constexpr std::array<float, 3> WallScale{0.92f, 0.83f, 0.72f};
+            for(std::size_t pair = 0; pair < 3; ++pair)
             {
-                const float side = i == 0 ? -1.0f : 1.0f;
-                Put(frame, i,
-                    {side * 23.0f, 18.0f + side * HalfBeatBounce(beat, 311.0, 6.0f), 52.0f},
-                    {-7.0f, side * 14.0f, side * 5.0f},
-                    {1.2f, 1.55f, 1.0f},
-                    i == 0 ? Geometry::CurvedIn : Geometry::CurvedOut);
+                const double pairStart = 311.15 + static_cast<double>(pair) * 0.42;
+                if(beat < pairStart)
+                    continue;
+                const float entry = EaseOutBack(Segment(
+                    beat, pairStart, pairStart + 1.15));
+                for(std::size_t sideIndex = 0; sideIndex < 2; ++sideIndex)
+                {
+                    const std::size_t index = 1 + pair * 2 + sideIndex;
+                    const float side = sideIndex == 0 ? -1.0f : 1.0f;
+                    const float phase = static_cast<float>(
+                        (beat - 311.0) * 0.86 + pair * 1.27 + sideIndex * Pi);
+                    const float corkscrew = std::sin(phase);
+                    const float spring = HalfBeatBounce(
+                        beat, 311.0 + pair * 0.17, 2.2f + pair * 0.8f);
+                    const float targetX = WallX[pair] + spring;
+                    const float targetY = WallY[pair] + corkscrew * (3.5f + pair);
+                    const float targetZ = WallZ[pair] - section * (2.0f + pair);
+                    const float roll = side * (8.0f + pair * 7.0f) +
+                        corkscrew * (7.0f + pair * 2.0f);
+                    Put(frame, index,
+                        {side * Lerp(2.0f, targetX, entry),
+                         Lerp(19.0f, targetY, entry),
+                         Lerp(88.0f, targetZ, entry)},
+                        {-7.0f + corkscrew * (5.0f + pair * 2.0f),
+                         -side * (29.0f + pair * 10.0f) + corkscrew * 6.0f,
+                         roll},
+                        {Lerp(0.035f, WallScale[pair], entry),
+                         Lerp(0.035f, WallScale[pair], entry), 1.0f},
+                        (index & 1U) == 0
+                            ? Geometry::CurvedIn : Geometry::CurvedOut,
+                        0.94f - static_cast<float>(pair) * 0.11f,
+                        -roll * 0.88f);
+                }
+            }
+
+            if(beat >= 311.8)
+            {
+                const float terminalEntry = EaseOutBack(Segment(beat, 311.8, 313.0));
+                const float terminalPulse = Pulse(beat, 0.5);
+                const float terminalRoll = std::sin(static_cast<float>(
+                    (beat - 311.0) * 0.66)) * 10.0f;
+                Put(frame, 7,
+                    {std::sin(static_cast<float>((beat - 311.0) * 0.37)) * 2.5f,
+                     19.0f + std::cos(static_cast<float>((beat - 311.0) * 0.48)) * 2.0f,
+                     92.0f - section * 5.0f},
+                    {-7.0f, -terminalRoll * 0.35f, terminalRoll},
+                    {Lerp(0.03f, 0.68f + terminalPulse * 0.10f, terminalEntry),
+                     Lerp(0.03f, 0.68f + terminalPulse * 0.10f, terminalEntry), 1.0f},
+                    Geometry::CurvedIn,
+                    0.72f,
+                    -terminalRoll);
             }
             return frame;
         }
@@ -561,5 +704,34 @@ namespace BigScreen::UpDownShowcase {
             Geometry::Wide,
             beat > 370.0 ? 1.0f - Segment(beat, 370.0, 371.0) : 1.0f);
         return frame;
+    }
+
+    bool CenterRingVisible(double songTimeSeconds)
+    {
+        if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
+            return true;
+
+        const double beat = songTimeSeconds * BeatsPerMinute / 60.0;
+        // Remove the center spinner throughout the slow four-screen carousel.
+        // The drifting panels need an unobstructed arena, and the ring snaps
+        // back on the exact boundary where the carousel merges into the next
+        // section. This is a steady hide, separate from the later strobe.
+        if(beat >= 168.0 && beat < 219.0)
+            return false;
+
+        // Begin with the singularity at 2:01 and finish before the settled
+        // outro at roughly 2:29. Half-beat cells create sharp removal/restores
+        // without using frame-rate-dependent timers or high-frequency flashes.
+        if(beat < 278.5 || beat >= 342.7)
+            return true;
+
+        constexpr std::array<bool, 16> Pattern{
+            false, true, false, false,
+            true, false, true, true,
+            false, false, true, false,
+            true, true, false, true};
+        const auto step = static_cast<std::size_t>(
+            std::floor((beat - 278.5) * 2.0));
+        return Pattern[step % Pattern.size()];
     }
 }

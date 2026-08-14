@@ -64,6 +64,10 @@ namespace BigScreen {
         /// rebuilding meshes or touching the shared video texture.
         void SetVideoLocalRoll(float degrees);
         void SetOpacity(float opacity);
+        /// Disables back-face culling for showcase surfaces that deliberately
+        /// rotate through 180 degrees. The same synchronized video texture is
+        /// then visible from either side of the curved canvas.
+        void SetDoubleSided(bool enabled);
 
         bool IsCreated() const { return gameObject_ != nullptr; }
         UnityEngine::Texture2D* Texture() const { return texture_; }
@@ -80,12 +84,14 @@ namespace BigScreen {
         bool CreateMaterialAndTexture(
             int width,
             int height,
-            bool transparent,
+            float videoOpacity,
             UnityEngine::Texture2D* sharedTexture = nullptr);
-        bool CreateBackgroundMaterial(bool transparent);
-        /// Applies a per-layout transparency change without replacing the
-        /// decoded texture or restarting playback.
-        bool ApplyTransparency(bool transparent);
+        bool CreateBackgroundMaterial(bool letterboxTransparent);
+        /// Applies picture opacity and letterbox transparency without
+        /// replacing the decoded texture or restarting playback.
+        bool ApplyPresentation(
+            bool letterboxTransparent,
+            float videoOpacity);
 
         UnityEngine::GameObject* gameObject_ = nullptr;
         UnityEngine::GameObject* videoObject_ = nullptr;
@@ -101,7 +107,7 @@ namespace BigScreen {
         int textureWidth_ = 0;
         int textureHeight_ = 0;
         bool ownsTexture_ = false;
-        bool transparent_ = false;
+        bool letterboxTransparent_ = false;
         float opacity_ = 1.0f;
         bool visible_ = false;
         bool leadInActive_ = false;

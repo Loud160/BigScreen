@@ -143,8 +143,8 @@ namespace BigScreen {
                 const auto collect = [&](const std::optional<StoredVideo>& video,
                                          const char* thumbnailSuffix)
                 {
-                    if(!video || video->fileName.empty() ||
-                       video->mapLocal || video->importFile)
+                    if(!video || video->fileName.empty() || video->mapLocal ||
+                       video->importFile || video->externalFile)
                         return;
                     usedVideos.emplace(video->fileName);
                     usedThumbnails.emplace(

@@ -234,6 +234,12 @@ namespace BigScreen {
 
         auto& settings = Settings::Instance();
         auto config = *baseConfig_;
+        // ScreenPreview owns a cached immutable mapper baseline so settings
+        // can be adjusted after playback stops. When mapper control is off,
+        // strip authored geometry before applying the selected layout; Reset
+        // Screen must therefore return to the actual back-wall defaults.
+        if(config.hasMapperPresentation && !settings.AllowChromaOverride())
+            config.ResetPresentationToDefaults();
         const auto& layout = settings.ActiveLayout();
         if(settings.AdvancedOptionsEnabled() && layout.undocked)
         {
@@ -265,8 +271,9 @@ namespace BigScreen {
         config.maintainAspectRatioWhenCurved =
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
-        config.transparent = settings.AdvancedOptionsEnabled() &&
-            settings.TransparencyEnabled();
+        config.letterboxTransparent = settings.AdvancedOptionsEnabled() &&
+            settings.LetterboxTransparencyEnabled();
+        config.videoOpacity = settings.VideoOpacity();
         if(settings.AdvancedOptionsEnabled())
         {
             config.videoRotation = settings.VideoRotation();
@@ -345,7 +352,8 @@ namespace BigScreen {
         config.maintainAspectRatioWhenCurved =
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
-        config.transparent = settings.TransparencyEnabled();
+        config.letterboxTransparent = settings.LetterboxTransparencyEnabled();
+        config.videoOpacity = settings.VideoOpacity();
         config.videoRotation = settings.VideoRotation();
         config.videoZoom = settings.VideoZoom();
         config.videoOffsetX = settings.VideoOffsetX();
@@ -867,7 +875,8 @@ namespace BigScreen {
             ? layout.curvature : 0.0f;
         editorConfig_->maintainAspectRatioWhenCurved =
             layout.curved && layout.maintainAspectRatio;
-        editorConfig_->transparent = layout.transparency;
+        editorConfig_->letterboxTransparent = layout.letterboxTransparency;
+        editorConfig_->videoOpacity = layout.videoOpacity;
         editorConfig_->videoRotation = layout.videoRotation;
         editorConfig_->videoZoom = layout.videoZoom;
         editorConfig_->videoOffsetX = layout.videoOffsetX;

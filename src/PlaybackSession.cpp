@@ -58,6 +58,19 @@ namespace BigScreen {
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
     {
+        // Diagnostics belong to the currently active decoder session. Prepare()
+        // calls Stop() before a new map, but FrameDecoder deliberately retains
+        // its final worker CPU clock long enough for the just-finished results
+        // and power benchmark to consume it. Returning that retained state for
+        // a map with no video made the video-off control row inherit the prior
+        // video's decoder CPU and frame totals. An inactive session therefore
+        // has an explicitly empty diagnostic record.
+        if(!started_)
+            return {};
+
+        const double activeDecoderCpu = std::max(
+            0.0,
+            decoder_.WorkerCpuMilliseconds() - decoderCpuBaselineMilliseconds_);
         return {
             decoder_.SourceWidth(), decoder_.SourceHeight(),
             decoder_.Width(), decoder_.Height(),
@@ -67,7 +80,9 @@ namespace BigScreen {
             deliveredPresentedFrames_,
             decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(),
-            decoder_.PeakDecodeMilliseconds(), automaticReductions_};
+            decoder_.PeakDecodeMilliseconds(),
+            accumulatedDecoderCpuMilliseconds_ + activeDecoderCpu,
+            automaticReductions_};
     }
 
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
@@ -224,25 +239,28 @@ namespace BigScreen {
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
         // scale adjustments from accumulating on the selected song.
         const auto& settings = Settings::Instance();
-        // The Video Library is also the screen-layout workbench. Its live
-        // preview must occupy the user's selected canvas, including a saved
-        // undocked canvas, even when the selected song contains Cinema or
-        // Chroma presentation metadata. Song selection and gameplay still
-        // honor Allow Chroma Override exactly as before.
-        const bool editingUserLayout =
-            intendedContext == PlaybackContext::LibraryPreview ||
-            (intendedContext == PlaybackContext::None &&
-             context_ == PlaybackContext::LibraryPreview);
-        if(MapperPresentationActive() && !editingUserLayout)
+        // Allow Chroma Override has one predictable meaning in gameplay, song
+        // preview, and the Video Library: mapper geometry wins while it is on.
+        // Turning it off follows the user-layout branch below. Keeping the
+        // Library as a hidden exception made its preview disagree with both
+        // the toggle and the eventual map placement.
+        (void)intendedContext;
+        if(MapperPresentationActive())
         {
             // Cinema/Chroma compatibility is deliberately all-or-nothing for
             // geometry. Mixing a mapper's close, angled screen with a user's
             // back-wall offsets is the exact failure this opt-in prevents.
-            // Transparency remains a user preference only when the mapper did
-            // not explicitly choose it, matching PC Cinema's nullable field.
-            config_->transparent = config_->mapperTransparency.value_or(
+            // Cinema's nullable transparency field remains authoritative only
+            // when the mapper explicitly supplied it. Otherwise the selected
+            // layout controls the letterbox canvas and picture opacity as two
+            // independent presentation settings.
+            const auto mapperTransparency = config_->mapperTransparency;
+            config_->letterboxTransparent = mapperTransparency.value_or(
                 settings.AdvancedOptionsEnabled() &&
-                settings.TransparencyEnabled());
+                settings.LetterboxTransparencyEnabled());
+            config_->videoOpacity = mapperTransparency.has_value()
+                ? (*mapperTransparency ? 0.75f : 1.0f)
+                : settings.VideoOpacity();
             if(!config_->cinemaCurvatureDegrees)
             {
                 config_->screenCurvature = settings.CurvedScreenEnabled()
@@ -255,6 +273,13 @@ namespace BigScreen {
                 "Allow Chroma Override is yielding screen and environment presentation to the mapper/Chroma");
             return;
         }
+
+        // Turning mapper control off means returning to Big Screen's neutral
+        // back-wall canvas, not merely applying user offsets to the mapper's
+        // authored X/Y/Z and scale. The latter left Chroma screens at their
+        // custom location even after the visible size changed.
+        if(config_->hasMapperPresentation)
+            config_->ResetPresentationToDefaults();
 
         const auto& layout = settings.ActiveLayout();
         if(settings.AdvancedOptionsEnabled() && layout.undocked)
@@ -287,11 +312,11 @@ namespace BigScreen {
         config_->maintainAspectRatioWhenCurved =
             settings.CurvedScreenEnabled() &&
             settings.MaintainCurveAspectRatio();
-        // Transparency is a picture-level advanced control. Keep its saved
-        // value for this layout, but use the basic opaque presentation while
-        // Advanced Screen Controls is off.
-        config_->transparent = settings.AdvancedOptionsEnabled() &&
-            settings.TransparencyEnabled();
+        // Letterbox transparency is advanced; picture opacity is deliberately
+        // a basic per-layout control and therefore applies in both modes.
+        config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
+            settings.LetterboxTransparencyEnabled();
+        config_->videoOpacity = settings.VideoOpacity();
         if(settings.AdvancedOptionsEnabled())
         {
             config_->videoRotation = settings.VideoRotation();
@@ -448,6 +473,11 @@ namespace BigScreen {
         sampledFrames_ = 0;
         gameplayFrameSamplingFinished_ = false;
         automaticReductions_ = 0;
+        accumulatedDecoderCpuMilliseconds_ = 0.0;
+        // Gameplay prewarming deliberately runs before Beat Saber's song
+        // clock. Exclude that setup work from the map benchmark so video-on
+        // and video-off runs cover the same measured interval.
+        decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
         automaticPerformanceHistory_.Reset();
         diagnosticsFrameCounter_ = 0;
         diagnosticsVisible_ = false;
@@ -500,6 +530,42 @@ namespace BigScreen {
             PerformancePanel::Instance().ShowWaitingMessage();
     }
 
+    void PlaybackSession::BeginLibraryPreviewMeasurement(double songTimeSeconds)
+    {
+        if(!started_ || context_ != PlaybackContext::LibraryPreview ||
+           !firstFrameUploaded_)
+            return;
+
+        // Library preview opens the decoder and uploads a stationary first
+        // picture before its audio clock starts. Discard that untimed setup
+        // from every panel counter, exactly as gameplay excludes work performed
+        // by PrewarmGameplay before Start() establishes its measured session.
+        requestedFrames_ = 0;
+        deliveredPresentedFrames_ = 0;
+        missedPresentedFrames_ = 0;
+        windowDeliveredPresentedFrames_ = 0;
+        windowMissedPresentedFrames_ = 0;
+        performanceWindowStartSongTime_ = songTimeSeconds;
+        diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowStartSongTime_ = songTimeSeconds;
+        lastUploadedPresentationSeconds_.reset();
+        lastUploadedDurationSeconds_ = 0.0;
+        minimumFrameSeconds_ = 0.0;
+        maximumFrameSeconds_ = 0.0;
+        totalFrameSeconds_ = 0.0;
+        lastFpsSongTime_ = songTimeSeconds;
+        sampledFrames_ = 0;
+        automaticReductions_ = 0;
+        accumulatedDecoderCpuMilliseconds_ = 0.0;
+        decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
+        automaticPerformanceHistory_.Reset();
+        diagnosticsFrameCounter_ = 0;
+        decoder_.ResetPeakDecodeMilliseconds();
+        PaperLogger.info(
+            "Started Video Library performance measurement after decoder prewarm");
+    }
+
     bool PlaybackSession::OpenDecoder(std::string& error)
     {
         effectiveFpsLimit_ = Settings::Instance().PlaybackFpsLimit();
@@ -544,22 +610,22 @@ namespace BigScreen {
         if(diagnosticsContext &&
            Settings::Instance().PerformanceDiagnosticsEnabled())
         {
-            // Gameplay FPS intentionally excludes the first ten seconds and
-            // everything after the final playable note. Lead-in, scene warmup,
-            // and the results transition otherwise create false minimums that
-            // do not describe the portion where the player actually performs.
-            // Library previews have no beatmap-note boundary and continue to
-            // sample whenever their audio clock advances.
+            // Both live contexts use the same ten-second warmup boundary so
+            // their headset-FPS figures describe comparable steady playback.
+            // Gameplay additionally stops after the final playable note;
+            // Library preview has no beatmap-note end boundary.
             if(context_ == PlaybackContext::Gameplay &&
                gameplayLastNoteTime_ &&
                songTimeSeconds > *gameplayLastNoteTime_)
                 gameplayFrameSamplingFinished_ = true;
-            const bool maySampleGameplayFrame =
-                context_ != PlaybackContext::Gameplay ||
+            const bool maySamplePlaybackFrame =
                 CoreLogic::ShouldSampleGameplayFrame(
                     songTimeSeconds,
-                    gameplayLastNoteTime_,
-                    gameplayFrameSamplingFinished_);
+                    context_ == PlaybackContext::Gameplay
+                        ? gameplayLastNoteTime_
+                        : std::nullopt,
+                    context_ == PlaybackContext::Gameplay &&
+                        gameplayFrameSamplingFinished_);
             const double frameSeconds = UnityEngine::Time::get_unscaledDeltaTime();
             const double songAdvance =
                 songTimeSeconds - lastFpsSongTime_;
@@ -568,7 +634,7 @@ namespace BigScreen {
             // longer gaps and frames where Beat Saber's song clock did not
             // advance prevents pauses, headset sleep, and the system menu from
             // being mislabeled as active gameplay or menu-preview FPS.
-            if(maySampleGameplayFrame &&
+            if(maySamplePlaybackFrame &&
                frameSeconds > 0.0001 && frameSeconds <= 0.10 &&
                songAdvance > 0.000001 && songAdvance <= 0.10)
             {
@@ -773,7 +839,8 @@ namespace BigScreen {
             diagnosticsVisible_ = false;
         }
 
-        if(context_ == PlaybackContext::Gameplay &&
+        if((context_ == PlaybackContext::Gameplay ||
+            context_ == PlaybackContext::LibraryPreview) &&
            Settings::Instance().AutomaticPerformanceEnabled())
         {
             if(performanceWindowStartSongTime_ <= 0.0)
@@ -884,8 +951,10 @@ namespace BigScreen {
 
     void PlaybackSession::Stop()
     {
+        const bool gameplaySession =
+            started_ && context_ == PlaybackContext::Gameplay;
         const bool recordGameplayPerformance =
-            started_ && context_ == PlaybackContext::Gameplay &&
+            gameplaySession &&
             Settings::Instance().PerformanceDiagnosticsEnabled();
         if(started_)
             CaptureDiagnosticsSummary();
@@ -915,6 +984,17 @@ namespace BigScreen {
         if(context_ == PlaybackContext::Gameplay)
             PerformancePanel::Instance().SuspendGameplay();
         decoder_.Close();
+        // Close joins the worker and preserves its final CPU clock. Replace the
+        // pre-join snapshot so a last in-flight decode is not lost from the
+        // post-map power benchmark.
+        if(gameplaySession && lastResultsData_)
+        {
+            lastResultsData_->video.decoderCpuMilliseconds =
+                accumulatedDecoderCpuMilliseconds_ + std::max(
+                    0.0,
+                    decoder_.WorkerCpuMilliseconds() -
+                        decoderCpuBaselineMilliseconds_);
+        }
         gameplayDecoderPrewarmed_ = false;
         gameplayPrewarmFailed_ = false;
         gameplayPrewarmError_.clear();
@@ -1011,6 +1091,10 @@ namespace BigScreen {
             // Beat Saber's map clock and gameplay scene continue uninterrupted.
             surface_.Destroy();
             decoder_.Close();
+            accumulatedDecoderCpuMilliseconds_ += std::max(
+                0.0,
+                decoder_.WorkerCpuMilliseconds() -
+                    decoderCpuBaselineMilliseconds_);
             std::string error;
             if(!decoder_.Open(config_->videoPath, nextResolution, error) ||
                !surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
@@ -1020,6 +1104,7 @@ namespace BigScreen {
                     error.empty() ? "Could not recreate the video screen at the requested quality" : error);
                 return false;
             }
+            decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
             decoder_.Request(mediaTimeSeconds);
             ++requestedFrames_;
             firstFrameUploaded_ = false;

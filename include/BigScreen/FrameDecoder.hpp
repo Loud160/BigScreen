@@ -77,12 +77,18 @@ namespace BigScreen {
         double AverageDecodeMilliseconds() const { return averageDecodeMilliseconds_.load(); }
         double PeakDecodeMilliseconds() const { return peakDecodeMilliseconds_.load(); }
         void ResetPeakDecodeMilliseconds() { peakDecodeMilliseconds_ = 0.0; }
+        /// CPU time consumed by Big Screen's owned decoder worker since this
+        /// decoder was opened. Unlike wall-clock decode latency, sleeping while
+        /// waiting for a timestamp does not increase this value.
+        double WorkerCpuMilliseconds() const {
+            return workerCpuNanoseconds_.load() / 1'000'000.0;
+        }
         double DurationSeconds() const { return durationSeconds_; }
         std::uint64_t BufferAllocations() const { return bufferAllocations_.load(); }
 
     private:
         void WorkerMain() noexcept;
-        void WorkerLoop();
+        void WorkerLoop(std::uint64_t cpuStartedNanoseconds);
         void SetWorkerError(std::string message);
         bool ReadDecodedFrame();
         bool SeekNear(double mediaSeconds);
@@ -116,6 +122,7 @@ namespace BigScreen {
         // decoder was opened. Keeping it beside the moving average explains
         // short spikes that may have already disappeared from the average.
         std::atomic<double> peakDecodeMilliseconds_{0.0};
+        std::atomic<std::uint64_t> workerCpuNanoseconds_{0};
         // Counts only vector capacity growth, not ordinary frame reuse. This is
         // exposed in diagnostics so on-device tests can prove the RGBA pool is
         // stable instead of silently allocating multi-megabyte buffers again.

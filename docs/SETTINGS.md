@@ -46,7 +46,7 @@ Chooses one of five independent layout profiles. It both selects the active layo
 
 ### Advanced Screen Controls — default: Off
 
-Enables independent video framing and free screen placement for the selected layout after an **I Understand** confirmation. Each of the five layouts saves this switch independently, allowing basic and advanced layouts to coexist. Turning it off ignores that layout's saved transparency, screen rotation, video transforms, and undocked placement without deleting their values. Extreme settings may reduce performance or interact poorly with authored map effects.
+Enables independent video framing and free screen placement for the selected layout after an **I Understand** confirmation. Each of the five layouts saves this switch independently, allowing basic and advanced layouts to coexist. Turning it off ignores that layout's saved letterbox transparency, screen rotation, video transforms, and undocked placement without deleting their values. Video Opacity remains available in basic mode. Extreme settings may reduce performance or interact poorly with authored map effects.
 
 ### Allow Chroma Override — default: On
 
@@ -86,9 +86,13 @@ Visible only for curved screens. Positive values wrap edges toward the player; n
 
 The following controls are visible only when **Advanced Screen Controls** is enabled. Every value belongs to the currently selected layout.
 
-### Video Transparency — default: Off
+### Video Opacity — default: 1.00
 
-On uses partial transparency so scenery/lights behind the plane can show through. Off uses an opaque material and blocks geometry behind the screen; lighting or bloom drawn on/in front of the same plane may still appear visually over it.
+Sets the opacity of the decoded picture from 0.00 (invisible) to 1.00 (fully opaque). This basic, per-layout control applies to docked and undocked screens. Values below 1.00 use alpha blending so scenery and lights behind the video can show through.
+
+### Letterbox Transparency — default: Off
+
+Available with Advanced Screen Controls. On removes the black background visible when rotation, zoom, pan, or aspect-ratio preservation leaves part of the screen canvas uncovered. It does not fade the picture. Off keeps those unused areas solid black. This applies to docked and undocked screens.
 
 ### Screen Rotation — default: 0°, range: -180° to +180°
 
@@ -96,7 +100,7 @@ Rolls the complete screen frame clockwise or counterclockwise around its viewing
 
 ### Video Rotation — default: 0°, range: -180° to +180°
 
-Rotates only the picture inside the frame. It does not rotate or resize the frame. Any uncovered region is solid black when Video Transparency is off and transparent when Video Transparency is on.
+Rotates only the picture inside the frame. It does not rotate or resize the frame. Any uncovered region is solid black when Letterbox Transparency is off and transparent when it is on.
 
 ### Video Zoom — default: 1.0x, range: 0.5x to 3.0x
 
@@ -112,17 +116,17 @@ Applies perspective tilt to the picture so its top or bottom appears closer. Thi
 
 ### Stretch Video to Fit — default: Off
 
-On distorts the picture as needed to fill the full frame. Off preserves the source aspect ratio and letterboxes it unless zoom fills or crops the frame. Letterbox background follows Video Transparency.
+On distorts the picture as needed to fill the full frame. Off preserves the source aspect ratio and letterboxes it unless zoom fills or crops the frame. The unused background follows Letterbox Transparency.
 
 ### Undock Screen — default: Off
 
 Replaces map-relative offsets with an absolute position, angle, width, and height saved for the current layout. Enabling requires confirmation. **Position Screen** opens a frame-only editor: hold the trigger on the frame to move/rotate it, drag the lower-right handle to resize it, then select **Save Screen**. The editor displays the current aspect ratio. Once saved, all editor controls are destroyed so controller rays pass through the normal playback screen.
 
-While undocked, the map-relative Distance, X/Y, Screen Tilt, Screen Size Multiplier, and Screen Rotation controls are disabled because the controller editor owns those absolute values. Curved Screen, curve amount/aspect behavior, transparency, and all video-framing controls remain available.
+While undocked, the map-relative Distance, X/Y, Screen Tilt, Screen Size Multiplier, and Screen Rotation controls are disabled because the controller editor owns those absolute values. Curved Screen, curve amount/aspect behavior, Video Opacity, Letterbox Transparency, and all video-framing controls remain available.
 
 Leaving Big Screen, changing layouts/settings, disabling the mod, or opening the Quest system menu cancels unsaved positioning and restores the last saved placement. **Cancel Positioning** provides the same safe exit. Flat/curved controls continue to apply to an undocked screen.
 
-Allow Chroma Override retains priority only when an authored map actually supplies Cinema/Chroma presentation data. With that option on, authored presentation wins; without authored presentation, the selected Big Screen layout—including an undocked screen—wins. Turning Allow Chroma Override off always forces the selected Big Screen layout.
+Allow Chroma Override retains priority only when an authored map actually supplies Cinema/Chroma presentation data. With that option on, authored presentation wins; without authored presentation, the selected Big Screen layout—including an undocked screen—wins. Turning Allow Chroma Override off first restores Big Screen's neutral back-wall canvas, then applies the selected layout; mapper X/Y/Z, rotation, and size are not retained as hidden offsets.
 
 ## Environment
 
@@ -198,11 +202,17 @@ Available when Automatic Performance is on. This 1–15% slider selects the vide
 
 #### Scaling Response Time — default: 5.0 seconds
 
-Available when Automatic Performance is on. This 0.5–10.0 second slider controls how long either condition must continue before one quality step is taken. The same duration is used for downscaling and recovery. Short times react quickly but may change tiers more often; longer times require more sustained evidence before changing quality.
+Available when Automatic Performance is on. This 0.5–10.0 second slider defaults to 5.0 seconds and controls how long either condition must continue before one quality step is taken. The same duration is used for downscaling and recovery. It operates during gameplay and Video Library preview playback. Short times react quickly but may change tiers more often; longer times require more sustained evidence before changing quality.
 
 #### Show Performance Information — default: Off
 
 Displays source/output resolution and FPS, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning quality, or reporting performance problems.
+
+#### Record Power Benchmark — default: Off
+
+Records one sample per second for every played map, including maps played with **Video In Map** off. Each sample contains the Quest battery charge counter, instantaneous and Android-averaged battery current when the headset exposes them, battery percentage/charging state, whole Beat Saber process CPU time, Big Screen decoder-worker CPU time, active output tier, and playback statistics. Data stays in memory during gameplay and is appended to CSV files only after the map ends or is exited.
+
+Use this for controlled A/B tests, not as a permanent gameplay option. Unplug USB/external power, hold brightness, refresh rate, map, difficulty, modifiers, graphics, and headset temperature constant, then play the same map once with video off and once with video on. A blank battery field means the Quest firmware reported that individual Android property as unsupported; it is not treated as zero.
 
 ## Song-selection header controls
 
@@ -225,4 +235,5 @@ These belong to the selected library entry, not the global settings file:
 - **Video Playback Offset:** shifts video time relative to song time; negative values create lead-in before video frame zero.
 - **Lead-In Background:** on shows negative-time lead-in as solid black; off keeps the screen transparent/hidden until video begins.
 - **Play/Pause, scrubber, time:** previews map audio and video together for timing. Scrubbing after end restarts a valid preview position.
-- **Remove Video:** removes the assignment. Managed downloads can be deleted; local/import files are only unregistered and the confirmation explains that the source file remains.
+- **Show File Browser:** opens a wide center-screen browser over a translucent dark background. Custom/WIP songs begin in their map folder; built-in songs begin in the automatically created Video Import folder. **Back One Folder** and clickable path breadcrumbs navigate anywhere under readable Quest shared storage. Folder scanning and MP4 compatibility probes run off the UI thread.
+- **Remove Video:** removes the assignment. Managed downloads can be deleted; browser-selected files are only unregistered and the confirmation explains that the source file remains in its original folder.

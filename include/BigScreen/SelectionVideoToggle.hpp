@@ -5,6 +5,7 @@
 #include "BigScreen/VideoLibrary.hpp"
 
 namespace BSML {
+    class FloatingScreen;
     class IncrementSetting;
     class ToggleSetting;
 }
@@ -18,8 +19,8 @@ namespace TMPro {
     class TextMeshProUGUI;
 }
 
-namespace HMUI {
-    class ImageView;
+namespace UnityEngine {
+    class GameObject;
 }
 
 namespace UnityEngine::UI {
@@ -27,8 +28,8 @@ namespace UnityEngine::UI {
 }
 
 namespace BigScreen {
-    /// Owns the persistent Preview Video and Video In Map switches shown at
-    /// the top-right of Beat Saber's song-selection screen.
+    /// Owns the persistent Preview Video and Video In Map switches shown on a
+    /// slim floating row directly below Beat Saber's song-selection screen.
     ///
     /// Its state is global rather than per-song: scrolling the song list never
     /// changes the switch or unexpectedly starts a sequence of new previews.
@@ -74,6 +75,12 @@ namespace BigScreen {
         /// preference changes; gameplay playback is intentionally untouched.
         void MenuPreviewPreferenceChanged();
 
+        /// Mirrors a layout change made from Big Screen's main settings page
+        /// into the compact selector on Beat Saber's song-selection screen.
+        /// Both controls edit the same saved setting; this method only redraws
+        /// the second UI surface and never writes another preference value.
+        void ScreenLayoutPreferenceChanged();
+
         bool IsEnabledForSelectedLevel() const;
 
     private:
@@ -81,17 +88,32 @@ namespace BigScreen {
 
         void PreviewToggleChanged(bool enabled);
         void InMapToggleChanged(bool enabled);
+        void LayoutSelectorChanged(float value);
         void DownloadButtonPressed();
         void ReportDownloadFailure(const std::string& detail);
+        void BringHeaderControlsToFront();
+        /// Places the floating controls canvas at the proven-visible top
+        /// strip above the song panel (detail-view local (0, 64)). Runs after
+        /// creation and on every SongSelectionShown, because menu transforms
+        /// are only final once Beat Saber has activated the view hierarchy.
+        void PositionControlsRow();
         void RefreshUi();
 
+        // Slim self-raycasting canvas hosting the three global controls below
+        // the song panel. Owned by this class, not by the detail view.
+        BSML::FloatingScreen* controlsScreen_ = nullptr;
+        // Needed to re-derive the floating row's placement whenever song
+        // selection is shown. Cleared in ForgetUi with the other pointers.
+        GlobalNamespace::StandardLevelDetailView* detailView_ = nullptr;
         BSML::ToggleSetting* previewUi_ = nullptr;
         BSML::ToggleSetting* inMapUi_ = nullptr;
         BSML::IncrementSetting* layoutUi_ = nullptr;
+        // Cinema-parity download row between the difficulty selector and the
+        // Play/Practice buttons: cloned native background, italic status
+        // label, and the Download/Cancel/Retry button on one centered row.
+        UnityEngine::GameObject* downloadRow_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
-        HMUI::ImageView* downloadProgressTrack_ = nullptr;
-        HMUI::ImageView* downloadProgressFill_ = nullptr;
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
         std::string selectedLevelId_;
         // A failed worker remains in a terminal state until another task is

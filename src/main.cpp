@@ -1,22 +1,30 @@
 #include "main.hpp"
 
+#include <algorithm>
 #include <format>
+#include <optional>
+#include <vector>
 
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/PauseMenuLayoutSelector.hpp"
 #include "BigScreen/PerformancePanel.hpp"
+#include "BigScreen/PowerBenchmark.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
+#include "BigScreen/LocalVideoBrowserMenu.hpp"
+#include "BigScreen/UpDownShowcaseTimeline.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/BasicBeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapCallbacksController.hpp"
+#include "GlobalNamespace/BeatmapLevel.hpp"
 #include "GlobalNamespace/BeatmapCharacteristicSO.hpp"
 #include "GlobalNamespace/BeatmapKey.hpp"
 #include "GlobalNamespace/BeatmapDataItem.hpp"
@@ -101,6 +109,79 @@ bool IsMenuPreviewEnabled()
 }
 
 namespace {
+    struct ShowcaseRingState {
+        UnityW<UnityEngine::GameObject> object = nullptr;
+        bool originallyActive = true;
+    };
+
+    std::vector<ShowcaseRingState> showcaseRingStates;
+    std::optional<bool> appliedShowcaseRingVisibility;
+
+    void RestoreShowcaseTrackRings()
+    {
+        // Restore exactly what was captured rather than blindly enabling every
+        // ring. This matters if a mapper intentionally began with an inactive
+        // ring object. UnityW makes cleanup harmless after a scene unload.
+        for(auto& state : showcaseRingStates)
+        {
+            if(UnityW<UnityEngine::GameObject>::isAlive(state.object))
+                state.object->SetActive(state.originallyActive);
+        }
+        showcaseRingStates.clear();
+        appliedShowcaseRingVisibility.reset();
+    }
+
+    void CaptureShowcaseTrackRings()
+    {
+        RestoreShowcaseTrackRings();
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive())
+            return;
+
+        for(auto* ring : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::TrackLaneRing*>(true))
+        {
+            if(!ring)
+                continue;
+            auto gameObject = ring->get_gameObject();
+            if(!gameObject)
+                continue;
+
+            const bool duplicate = std::any_of(
+                showcaseRingStates.begin(), showcaseRingStates.end(),
+                [gameObject](const ShowcaseRingState& existing)
+                {
+                    return existing.object.unsafePtr() == gameObject;
+                });
+            if(!duplicate)
+            {
+                showcaseRingStates.push_back(
+                    {gameObject, gameObject->get_activeSelf()});
+            }
+        }
+        PaperLogger.info(
+            "Captured {} track-ring objects for the Up & Down visibility strobe",
+            showcaseRingStates.size());
+    }
+
+    void UpdateShowcaseTrackRings(double songTimeSeconds)
+    {
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive() ||
+           showcaseRingStates.empty())
+            return;
+
+        const bool visible =
+            BigScreen::UpDownShowcase::CenterRingVisible(songTimeSeconds);
+        if(appliedShowcaseRingVisibility == visible)
+            return;
+
+        for(auto& state : showcaseRingStates)
+        {
+            if(UnityW<UnityEngine::GameObject>::isAlive(state.object))
+                state.object->SetActive(visible && state.originallyActive);
+        }
+        appliedShowcaseRingVisibility = visible;
+    }
+
     void CenterResultsRect(UnityEngine::RectTransform* rect)
     {
         if(!rect)
@@ -731,18 +812,29 @@ namespace {
         // this helper. Preparing here is early enough to influence environment
         // selection but late enough to avoid hooking both overloaded Init APIs.
         auto& playback = BigScreen::PlaybackSession::Instance();
+        auto beatmapKey = self->get_beatmapKey();
+        std::string characteristic;
+        if(beatmapKey.beatmapCharacteristic)
+        {
+            const auto serializedName =
+                beatmapKey.beatmapCharacteristic->get_serializedName();
+            if(serializedName)
+                characteristic = std::string(serializedName);
+        }
+        auto* level = self->get_beatmapLevel();
+        // Prepare the independent benchmark identity even when Video In Map is
+        // off. That makes a baseline run and a video run directly comparable.
+        BigScreen::PowerBenchmark::Instance().Prepare(
+            level && level->levelID ? std::string(level->levelID) : std::string{},
+            level && level->songName ? std::string(level->songName) : "Unknown song",
+            level && level->songAuthorName
+                ? std::string(level->songAuthorName)
+                : "Unknown artist",
+            characteristic,
+            beatmapKey.difficulty.value__);
         if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
         {
-            playback.Prepare(self->get_beatmapLevel());
-            auto beatmapKey = self->get_beatmapKey();
-            std::string characteristic;
-            if(beatmapKey.beatmapCharacteristic)
-            {
-                const auto serializedName =
-                    beatmapKey.beatmapCharacteristic->get_serializedName();
-                if(serializedName)
-                    characteristic = std::string(serializedName);
-            }
+            playback.Prepare(level);
             playback.ConfigureGameplayBeatmap(
                 characteristic,
                 beatmapKey.difficulty.value__);
@@ -966,7 +1058,16 @@ namespace {
                settings.HideSideLaserLights())
                 HideSideLaserGeometry();
             BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
+            // The showcase keeps the map's authored environment intact, then
+            // temporarily strobes only the central track-ring meshes from a
+            // cached set. Capture once; never search the Unity scene per frame.
+            CaptureShowcaseTrackRings();
         });
+        auto& playback = BigScreen::PlaybackSession::Instance();
+        BigScreen::PowerBenchmark::Instance().Start(
+            playback.IsGameplayActive(),
+            playback.IsGameplayActive() && playback.ShowcaseActive(),
+            playback.Diagnostics());
     }
 
     MAKE_HOOK_MATCH(
@@ -997,6 +1098,14 @@ namespace {
         SongPreviewPlayer_Update(self);
 
         BigScreen::Settings::Instance().TickPersistence();
+        // The benchmark toggle may already be enabled from the prior app run.
+        // Probe from the first stable main-menu update so battery telemetry is
+        // verified before the user spends time on an A/B gameplay pair.
+        BigScreen::PowerBenchmark::Instance().ProbeBatteryAccessOnce();
+        // This must run even when Big Screen has disabled itself: it releases
+        // only the main-menu entry after Beat Saber's dismissal hierarchy is
+        // safe, preventing immediate re-entry from freezing every menu panel.
+        BigScreen::TickMenuReentryGuard();
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
         BigScreen::ErrorManager::Instance().TickMainThread();
@@ -1008,6 +1117,7 @@ namespace {
             BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
             BigScreen::VideoLibraryMenu::Instance().Tick(self);
             BigScreen::StorageMaintenanceMenu::Instance().Tick();
+            BigScreen::LocalVideoBrowserMenu::Instance().Tick();
             BigScreen::ScreenPreview::Instance().TickUndockedEditor();
             BigScreen::PerformancePanel::Instance().TickInteraction();
         });
@@ -1069,7 +1179,13 @@ namespace {
         // pause, jumps on restart/scrub, incorporates practice speed, and is the
         // timeline Replay advances during playback and frame-by-frame capture.
         BigScreen::ErrorManager::Instance().Guard("updating gameplay video", [&]() {
-            BigScreen::PlaybackSession::Instance().Tick(self->get_songTime());
+            const double songTimeSeconds = self->get_songTime();
+            auto& playback = BigScreen::PlaybackSession::Instance();
+            playback.Tick(songTimeSeconds);
+            BigScreen::PowerBenchmark::Instance().Tick(
+                songTimeSeconds,
+                playback.Diagnostics());
+            UpdateShowcaseTrackRings(songTimeSeconds);
             BigScreen::PerformancePanel::Instance().TickInteraction();
         });
     }
@@ -1087,8 +1203,11 @@ namespace {
         // Stop unconditionally because the circuit breaker may have changed
         // ModEnabled during the song while a screen/decoder still exists.
         BigScreen::ErrorManager::Instance().Guard("stopping gameplay video", [&]() {
+            RestoreShowcaseTrackRings();
             BigScreen::PlaybackSession::Instance().Stop();
         });
+        BigScreen::PowerBenchmark::Instance().Finish(
+            BigScreen::PlaybackSession::Instance().LastResultsData());
         BigScreen::ErrorManager::Instance().SetGameplayActive(false);
         StandardLevelScenesTransitionSetupDataSO_Finish(self, levelCompletionResults);
     }
