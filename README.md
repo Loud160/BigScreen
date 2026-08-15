@@ -46,7 +46,8 @@ when its surfaces are animated in real time:
 
 - Split one presentation into coordinated multi-screen formations
 - Send screens toward and past the player while keeping the note lanes clear
-- Float screens around the environment and build a rotating corkscrew tunnel
+- Build corkscrews, vortexes, tunnels, and almost any other screen formation
+  you can imagine
 - Bend the video with distortion and flag-wave deformation
 - Crack and shatter a playing screen into hundreds of video-bearing fragments
 - Synchronize screen movement, environment visibility, and transitions to the song
