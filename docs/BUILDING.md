@@ -2,7 +2,7 @@
 
 ## Supported target
 
-The tracked package targets Beat Saber `1.37.0_9064817954`, ARM64 Quest, and C++20. Dependency versions are locked in `qpm.json`/`qpm.shared.json`; native code generated for another Beat Saber build must not be presented as compatible without a separate build and headset test.
+The tracked package targets Beat Saber `1.40.8_7379`, ARM64 Quest, and C++20. Dependency versions are locked in `qpm.json`/`qpm.shared.json`; native code generated for another Beat Saber build must not be presented as compatible without a separate build and headset test. This port remains alpha until it has completed on-headset regression testing against that exact APK.
 
 ## Tools
 

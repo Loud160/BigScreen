@@ -480,10 +480,10 @@ namespace BigScreen {
             lawless,
             GlobalNamespace::BeatmapDifficulty::ExpertPlus);
         System::Nullable_1<
-            GlobalNamespace::__SelectLevelCategoryViewController__LevelCategory>
+            GlobalNamespace::SelectLevelCategoryViewController_LevelCategory>
             noCategory{};
         solo->Setup(
-            GlobalNamespace::__LevelSelectionFlowCoordinator__State::New_ctor(
+            GlobalNamespace::LevelSelectionFlowCoordinator_State::New_ctor(
                 noCategory,
                 pack,
                 byref(key),

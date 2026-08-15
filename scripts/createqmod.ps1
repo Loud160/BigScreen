@@ -67,7 +67,7 @@ $requiredLibraries = @(
     "libavcodec-bigscreen9.so",
     "libavutil-bigscreen9.so",
     "libswscale-bigscreen9.so",
-    "libbeatsaber-hook_5_1_9.so",
+    "libbeatsaber-hook.so",
     "libpython3.14.so",
     "libssl_python.so",
     "libcrypto_python.so",

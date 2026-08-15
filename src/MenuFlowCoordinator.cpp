@@ -130,7 +130,7 @@ namespace BigScreen {
             try
             {
                 GlobalNamespace::OVRManager::set_foveatedRenderingLevel(
-                    GlobalNamespace::__OVRManager__FoveatedRenderingLevel{
+                    GlobalNamespace::OVRManager_FoveatedRenderingLevel{
                         savedFoveationLevel});
                 GlobalNamespace::OVRManager::set_useDynamicFoveatedRendering(
                     savedDynamicFoveation);
@@ -167,7 +167,7 @@ namespace BigScreen {
                 // raise the level again after the explicit Off request.
                 GlobalNamespace::OVRManager::set_useDynamicFoveatedRendering(false);
                 GlobalNamespace::OVRManager::set_foveatedRenderingLevel(
-                    GlobalNamespace::__OVRManager__FoveatedRenderingLevel::Off);
+                    GlobalNamespace::OVRManager_FoveatedRenderingLevel::Off);
                 PaperLogger.info(
                     "Temporarily disabled foveated rendering for Big Screen's menu (saved level {}, dynamic {})",
                     savedFoveationLevel,

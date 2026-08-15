@@ -56,10 +56,10 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/strip.cmake)
 # public ELF surface. Required mod-loader entry points carry explicit export
 # attributes, so a broad linker exclude rule is both unnecessary and unsafe.
 project( bigscreen
-        VERSION ${PACKAGE_VERSION})
+        VERSION ${CMAKE_PACKAGE_VERSION})
 
 add_compile_definitions(MOD_ID="${CMAKE_PROJECT_NAME}")
-add_compile_definitions(VERSION="${CMAKE_PROJECT_VERSION}")
+add_compile_definitions(VERSION="${PACKAGE_VERSION}")
 
 # Set COMPILE_ID for qpm purposes
 set(COMPILE_ID ${CMAKE_PROJECT_NAME})

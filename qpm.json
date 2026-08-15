@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.schema.json",
-  "version": "0.6.6",
+  "version": "0.7.0-alpha.1",
   "sharedDir": "shared",
   "dependenciesDir": "extern",
   "info": {
     "name": "Big Screen",
     "id": "bigscreen",
-    "version": "0.6.6",
+    "version": "0.7.0-alpha.1",
     "url": "https://github.com/Loud160/BigScreen",
     "additionalData": {
       "overrideSoName": "libbigscreen.so",
@@ -52,29 +52,29 @@
   "dependencies": [
     {
       "id": "beatsaber-hook",
-      "versionRange": "=5.1.9",
+      "versionRange": "^6.4.2",
       "additionalData": {}
     },
     {
       "id": "scotland2",
-      "versionRange": "=0.1.4",
+      "versionRange": "^0.1.6",
       "additionalData": {
         "includeQmod": false
       }
     },
     {
-      "id": "paper",
-      "versionRange": "=3.7.0",
+      "id": "paper2_scotland2",
+      "versionRange": "^4.6.4",
       "additionalData": {}
     },
     {
       "id": "bs-cordl",
-      "versionRange": "=3700.0.0",
+      "versionRange": "4008.*",
       "additionalData": {}
     },
     {
       "id": "songcore",
-      "versionRange": "=1.1.16",
+      "versionRange": "^1.1.23",
       "additionalData": {}
     },
     {
@@ -84,12 +84,12 @@
     },
     {
       "id": "bsml",
-      "versionRange": "=0.4.43",
+      "versionRange": "^0.4.54",
       "additionalData": {}
     },
     {
       "id": "custom-types",
-      "versionRange": "=0.17.10",
+      "versionRange": "^0.18.3",
       "additionalData": {}
     }
   ]

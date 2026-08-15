@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
+
+- Retargeted the Quest package to Beat Saber 1.40.8 (`1.40.8_7379`) with
+  bs-cordl 4008 bindings and the matching current Quest core dependencies.
+- Migrated from Paper 3 to Paper2 Scotland2, updated CustomTypes declarations
+  and generated nested-type names, and adapted preview-audio and environment
+  transition APIs changed by Beat Saber 1.40.8.
+- Preserved the map's original environment while applying Big Screen or
+  mapper-requested overrides to Beat Saber's new target-environment field.
+- This is a compile-validated alpha port. Full UI, gameplay, Chroma/Noodle,
+  Replay, downloader, hardware-decoder, and showcase behavior still requires
+  validation on a Quest running the exact 1.40.8 APK.
+
 - Fixed development deployments leaving an older Big Screen binary in the
   opposite Scotland2 load phase. Loading both copies initialized CPython twice
   and could abort Beat Saber during startup.
@@ -16,7 +29,7 @@
 - Added behavioral codec-policy coverage for H.264, H.265/HEVC, VP8, VP9,
   HDR/10-bit rejection, and the hardware-only greater-than-1080p boundary.
 
-## 0.6.6 — unreleased beta
+## 0.6.6 — Beat Saber 1.37 alpha baseline
 
 - Quest-native H.264 video playback for OST, DLC, custom, and WIP songs.
 - Video Library with mapper, YouTube, map-folder, and Video Import sources.

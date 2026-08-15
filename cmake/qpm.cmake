@@ -20,6 +20,16 @@ string(JSON PACKAGE_NAME GET ${PACKAGE_INFO} name)
 string(JSON PACKAGE_ID GET ${PACKAGE_INFO} id)
 string(JSON PACKAGE_VERSION GET ${PACKAGE_INFO} version)
 
+# CMake's project(VERSION) grammar accepts only numeric major/minor/patch
+# components, while QMOD and QPM versions may carry SemVer prerelease labels.
+# Preserve the complete package version for the mod and expose only its numeric
+# core to CMake's project metadata.
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" CMAKE_PACKAGE_VERSION
+       "${PACKAGE_VERSION}")
+if(NOT CMAKE_PACKAGE_VERSION)
+    message(FATAL_ERROR "Package version '${PACKAGE_VERSION}' has no numeric SemVer core")
+endif()
+
 message(STATUS "PACKAGE NAME: ${PACKAGE_NAME}")
 message(STATUS "PACKAGE VERSION: ${PACKAGE_VERSION}")
 

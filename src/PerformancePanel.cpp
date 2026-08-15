@@ -141,7 +141,7 @@ namespace BigScreen {
             if(!screen || !screen->handle)
                 return;
 
-            // BSML 0.4.43 exposes a Full handle, but it is not reliably
+            // BSML exposes a Full handle, but it is not reliably
             // draggable on Quest. The undocked-screen editor proved that the
             // native Top handle receives controller grabs consistently. Keep
             // that working handler and collider, center it, then expand its
@@ -391,7 +391,7 @@ namespace BigScreen {
                 return;
 
             // BSML normally performs this rotation in FloatingScreenHandle's
-            // Update. On Quest/BSML 0.4.43 that portion does not consistently
+            // Update. On Quest, that portion does not consistently
             // follow wrist rotation after the Top collider is expanded to make
             // this entire panel grabbable, although translation still works.
             // Reapply BSML's own captured controller-relative quaternion here;

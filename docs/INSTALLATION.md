@@ -3,10 +3,10 @@
 ## Requirements
 
 - Meta Quest 2 or Quest 3.
-- A modded standalone Quest installation of **Beat Saber 1.37.0 (`1.37.0_9064817954`)**.
+- A modded standalone Quest installation of **Beat Saber 1.40.8 (`1.40.8_7379`)**.
 - Enough free internal storage for the QMOD runtime and any downloaded videos. Big Screen reserves 512 MB before beginning a new download.
 
-The current QMOD is version-specific. A newer or older Beat Saber APK can change native APIs and must use a separately tested build.
+The current QMOD is version-specific. A newer or older Beat Saber APK can change native APIs and must use a separately tested build. Beat Saber 1.37.x users must install the QMOD built from the maintained `release/bs-1.37-alpha` branch instead.
 
 ## Install
 

@@ -112,6 +112,8 @@ mod_template = json.loads((root / "mod.template.json").read_text(encoding="utf-8
 stage_notices = (root / "scripts/stage-runtime-notices.ps1").read_text(
     encoding="utf-8")
 create_qmod = (root / "scripts/createqmod.ps1").read_text(encoding="utf-8")
+validate_mod_json = (root / "scripts/validate-modjson.ps1").read_text(
+    encoding="utf-8")
 
 assert "GNU GENERAL PUBLIC LICENSE" in license_text
 assert "Version 3, 29 June 2007" in license_text
@@ -133,6 +135,29 @@ assert "https://github.com/Loud160/BigScreen" in notice_text
 assert "https://github.com/Loud160/BigScreen" in additional_terms
 assert mod_template["author"] == "Loud160 (AKA Whisp)"
 assert qpm["info"]["url"] == "https://github.com/Loud160/BigScreen"
+assert mod_template["packageVersion"] == "1.40.8_7379"
+assert qpm["version"] == mod_template["version"]
+assert qpm_shared["config"]["version"] == mod_template["version"]
+resolved_dependencies = {
+    entry["dependency"]["id"]: entry["version"]
+    for entry in qpm_shared["restoredDependencies"]
+}
+for dependency_id, dependency_version in {
+    "beatsaber-hook": "6.4.2",
+    "paper2_scotland2": "4.8.0",
+    "bs-cordl": "4008.0.0",
+    "songcore": "1.1.26",
+    "bsml": "0.4.55",
+    "custom-types": "0.18.4",
+}.items():
+    assert resolved_dependencies[dependency_id] == dependency_version
+for packaging_guard in (
+    "Programs/QPM/qpm.exe",
+    '"packageVersion"',
+    "mod.json dependencies do not match qpm.shared.json",
+    "Run 'qpm qmod manifest'",
+):
+    assert packaging_guard in validate_mod_json
 assert "source%20license-GPL--3.0--only-blue" in readme
 for marker in (
     "GPL-3.0-only",
@@ -443,7 +468,7 @@ for map_install_guard in (
     assert map_install_guard in download_manager_source
 assert "SongCore::API::Loading::RefreshSongs(false)" in showcase_source
 assert "PresentFlowCoordinatorOrAskForTutorial" in showcase_source
-assert "__LevelSelectionFlowCoordinator__State::New_ctor(\n                noCategory" in showcase_source
+assert "LevelSelectionFlowCoordinator_State::New_ctor(\n                noCategory" in showcase_source
 # Once Solo is already visible, SelectLevel only records a future selection
 # and does not reproduce the row callback needed to present the level detail.
 # The launcher must use Beat Saber's real row-selection path so the showcase
@@ -748,7 +773,7 @@ for obsolete_counter in (
     assert obsolete_counter not in playback_header
     assert obsolete_counter not in playback_source
 
-# BSML 0.4.43's Full floating-screen handle is not reliably draggable on the
+# BSML's Full floating-screen handle is not reliably draggable on the
 # Quest. Keep the proven Top handler, expand its hit volume over the panel, and
 # leave status text wrapping enabled so startup messages cannot be clipped.
 assert "set_HandleSide(BSML::Side::Top)" in performance_panel_source

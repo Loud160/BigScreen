@@ -39,7 +39,7 @@ under their own terms. None of those components is relicensed by Big Screen.
   MP4/MOV/Matroska demuxing, local-file/JNI integration, and frame scaling.
   The QMOD includes the LGPL text, exact build configuration, and source-change
   records for both versions.
-- **beatsaber-hook 5.1.9** — MIT License. The QMOD includes the resolved runtime
+- **beatsaber-hook 6.4.2** — MIT License. The QMOD includes the resolved runtime
   library because Big Screen directly requires it.
 
 ## Build-time and separately distributed Quest dependencies
@@ -47,13 +47,14 @@ under their own terms. None of those components is relicensed by Big Screen.
 Versions and resolved sources are recorded in `qpm.json` and
 `qpm.shared.json`.
 
-- **Scotland2 0.1.4**, **SongCore 1.1.16**, and **custom-types 0.17.10** — MIT
+- **Scotland2 0.1.7**, **SongCore 1.1.26**, and **custom-types 0.18.4** — MIT
   License in their respective upstream repositories.
 - **fmt 11.0.2** — MIT License.
 - **RapidJSON** — MIT License for the core library, with upstream third-party
   components retaining the notices in RapidJSON's own `license.txt`.
 - **tinyxml2 10.0.0** — zlib License.
-- **BSML 0.4.43**, **Paper 3.7.0**, and generated **bs-cordl 3700.0.0** game
+- **BSML 0.4.55**, **Paper2 Scotland2 4.8.0**, and generated **bs-cordl
+  4008.0.0** game
   bindings — separately distributed Quest build/runtime interfaces. The
   resolved upstream repositories did not publish a root license file at the
   revisions inspected for this audit, so this notice deliberately makes no

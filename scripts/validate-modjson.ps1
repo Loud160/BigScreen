@@ -22,8 +22,18 @@ if (Test-Path -Path $modTemplate) {
 
     if ($update) {
         $qpmCommand = Get-Command qpm -ErrorAction SilentlyContinue
-        if ($qpmCommand) {
-            & $qpmCommand.Source qmod manifest
+        $qpmExecutable = if ($qpmCommand) { $qpmCommand.Source } else { $null }
+        if (-not $qpmExecutable -and $env:LOCALAPPDATA) {
+            # QPM's Windows installer does not always add its install folder to
+            # PATH. Resolve the standard per-user location without embedding a
+            # developer-specific absolute path in the repository.
+            $installedQpm = Join-Path $env:LOCALAPPDATA "Programs/QPM/qpm.exe"
+            if (Test-Path -LiteralPath $installedQpm) {
+                $qpmExecutable = $installedQpm
+            }
+        }
+        if ($qpmExecutable) {
+            & $qpmExecutable qmod manifest
             if ($LASTEXITCODE -ne 0) {
                 exit $LASTEXITCODE
             }
@@ -33,7 +43,7 @@ if (Test-Path -Path $modTemplate) {
             exit 1
         }
         else {
-            Write-Output "qpm is not on PATH; using the existing mod.json and synchronizing package fields."
+            Write-Output "qpm is unavailable; using the existing mod.json only after checking it against the tracked package metadata."
         }
     }
 }
@@ -63,6 +73,62 @@ foreach ($property in $requiredText) {
 if (-not $parsed.modFiles -or $parsed.modFiles.Count -lt 1) {
     Write-Output "Error: mod.json must declare at least one modFiles entry"
     exit 1
+}
+
+# A stale mod.json can still be structurally valid while targeting a different
+# Beat Saber APK and dependency ABI. This previously allowed a 1.40 native
+# build to be packaged as 1.37. Require every identity/version field owned by
+# the template to match before any QMOD archive is created.
+$template = Get-Content $modTemplate -Raw | ConvertFrom-Json -ErrorAction Stop
+$shared = if (Test-Path -LiteralPath $qpmShared) {
+    Get-Content $qpmShared -Raw | ConvertFrom-Json -ErrorAction Stop
+} else {
+    $null
+}
+foreach ($property in @("name", "id", "author", "version", "packageId", "packageVersion")) {
+    $expected = [string]$template.$property
+    if ($expected -eq '${mod_name}' -and $shared) {
+        $expected = [string]$shared.config.info.name
+    }
+    elseif ($expected -eq '${mod_id}' -and $shared) {
+        $expected = [string]$shared.config.info.id
+    }
+    if ([string]$parsed.$property -ne $expected) {
+        Write-Output "Error: mod.json field '$property' is stale (expected '$expected', found '$($parsed.$property)'). Run 'qpm qmod manifest'."
+        exit 1
+    }
+}
+
+# QPM derives QMOD dependencies from restored packages that publish a modLink,
+# except dependencies explicitly marked includeQmod=false. Validate the set so
+# an old Paper/BSML/SongCore manifest cannot accompany newer game bindings.
+if (Test-Path -LiteralPath $qpmShared) {
+    $expectedDependencyIds = @()
+    foreach ($configured in $shared.config.dependencies) {
+        $includeQmod = $true
+        if ($configured.additionalData -and
+            $configured.additionalData.PSObject.Properties["includeQmod"]) {
+            $includeQmod = [bool]$configured.additionalData.includeQmod
+        }
+        if (-not $includeQmod) {
+            continue
+        }
+        $restored = $shared.restoredDependencies | Where-Object {
+            $_.dependency.id -eq $configured.id
+        } | Select-Object -First 1
+        if ($restored -and $restored.dependency.additionalData.modLink) {
+            $expectedDependencyIds += [string]$configured.id
+        }
+    }
+    $actualDependencyIds = @($parsed.dependencies | ForEach-Object { [string]$_.id })
+    $dependencyDifference = Compare-Object `
+        ($expectedDependencyIds | Sort-Object -Unique) `
+        ($actualDependencyIds | Sort-Object -Unique)
+    if ($dependencyDifference) {
+        Write-Output "Error: mod.json dependencies do not match qpm.shared.json. Run 'qpm qmod manifest'."
+        Write-Output ($dependencyDifference | Format-Table -AutoSize | Out-String)
+        exit 1
+    }
 }
 
 $psVersion = $PSVersionTable.PSVersion.Major

@@ -9,7 +9,7 @@
 
 #include "scotland2/shared/modloader.h"
 #include "beatsaber-hook/shared/config/config-utils.hpp"
-#include "paper/shared/logger.hpp"
+#include "paper2_scotland2/shared/paperlog.hpp"
 #include "_config.hpp"
 
 /// Shared structured logger used by lifecycle and playback components. Paper

@@ -436,7 +436,7 @@ namespace BigScreen {
         editorScreen_->set_HandleSide(BSML::Side::Top);
         editorScreen_->set_HighlightHandle(true);
 
-        // BSML 0.4.43's BlankSprite uses Texture2D::blackTexture. Multiplying
+        // BSML's BlankSprite uses Texture2D::blackTexture. Multiplying
         // that sprite by cyan still produces black, so it cannot be used for
         // colored editor geometry. WhitePixel accepts the intended tint and
         // makes the frame/handles reliably cyan on Quest.

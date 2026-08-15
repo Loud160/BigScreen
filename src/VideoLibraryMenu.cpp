@@ -1570,7 +1570,7 @@ namespace BigScreen {
             for(auto* pack : repository->__cordl_internal_get__beatmapLevelPacks())
             {
                 if(!pack) continue;
-                for(auto* level : pack->__cordl_internal_get_beatmapLevels())
+                for(auto* level : pack->__cordl_internal_get__beatmapLevels())
                 {
                     auto* custom = level && level->levelID
                         ? SongCore::API::Loading::GetLevelByLevelID(std::string(level->levelID))
@@ -3005,8 +3005,9 @@ namespace BigScreen {
             return;
         }
 
-        audioLoadTask_ = previewMediaData_->GetPreviewAudioClip(
-            System::Threading::CancellationToken::get_None());
+        // Beat Saber 1.40.8 owns preview-audio cancellation internally and no
+        // longer accepts a caller-provided CancellationToken.
+        audioLoadTask_ = previewMediaData_->GetPreviewAudioClip();
         if(!audioLoadTask_)
             transientStatus_ = "Beat Saber could not start loading this song's audio.";
     }

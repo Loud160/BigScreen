@@ -8,9 +8,9 @@
 
 <p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Meta%20Quest%202%20%7C%203-00b2ff">
-  <img alt="Beat Saber" src="https://img.shields.io/badge/Beat%20Saber-1.37.0-orange">
+  <img alt="Beat Saber" src="https://img.shields.io/badge/Beat%20Saber-1.40.8-orange">
   <img alt="Language" src="https://img.shields.io/badge/language-C%2B%2B20-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-beta-yellow">
+  <img alt="Status" src="https://img.shields.io/badge/status-alpha-yellow">
   <img alt="License" src="https://img.shields.io/badge/source%20license-GPL--3.0--only-blue">
 </p>
 
@@ -20,8 +20,10 @@ the player chose their own. Normal use—including YouTube downloads, local-file
 selection, timing, screen setup, and playback—happens entirely inside the headset.
 
 > [!IMPORTANT]
-> The current beta targets **Beat Saber 1.37.0 (`1.37.0_9064817954`)** on Quest 2
-> and Quest 3. Quest mods are game-version specific.
+> This branch is an **alpha port for Beat Saber 1.40.8
+> (`1.40.8_7379`)** on Quest 2 and Quest 3. Quest mods are game-version
+> specific; use the separately maintained 1.37 alpha branch for Beat Saber
+> 1.37.x.
 
 ## The screen is part of the experience
 

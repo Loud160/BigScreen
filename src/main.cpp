@@ -1126,7 +1126,12 @@ namespace {
                            environment->get_serializedName()) ==
                            *mapperEnvironment)
                     {
-                        self->set_environmentInfo(environment);
+                        // Beat Saber 1.40 separates the map's original
+                        // environment from the target environment selected for
+                        // the gameplay transition. Override only the target so
+                        // the original remains available for restoration and
+                        // Chroma-aware fallback behavior.
+                        self->set_targetEnvironmentInfo(environment);
                         self->set_usingOverrideEnvironment(true);
                         PaperLogger.info(
                             "Allow Chroma Override loaded mapper environment '{}'",
@@ -1178,7 +1183,10 @@ namespace {
                 if(environment && std::string(
                        environment->get_serializedName()) == requestedName)
                 {
-                    self->set_environmentInfo(environment);
+                    // See the mapper-environment path above: 1.40 expects an
+                    // override to replace the transition target, not the
+                    // preserved original environment.
+                    self->set_targetEnvironmentInfo(environment);
                     self->set_usingOverrideEnvironment(true);
                     PaperLogger.info(
                         "Forced {} environment for video gameplay",
