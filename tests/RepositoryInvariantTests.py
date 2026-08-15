@@ -210,6 +210,20 @@ first_party_files: set[pathlib.Path] = {
     root / "CMakeLists.txt",
     root / "Build-And-Deploy.bat",
 }
+
+# Build and deployment scripts must be portable across developer machines.
+# Quest-side absolute paths are part of the Android install contract, but a
+# tracked Windows drive/install path would leak one workstation's layout and
+# break clones installed on another drive. Resolve host tools through PATH or
+# environment-derived roots instead.
+windows_absolute_path = re.compile(r"(?i)(?<![a-z0-9])[a-z]:[\\/]")
+for host_script in (
+    list((root / "scripts").glob("*.ps1"))
+    + list((root / "scripts").glob("*.py"))
+    + [root / "Build-And-Deploy.bat"]
+):
+    assert not windows_absolute_path.search(
+        host_script.read_text(encoding="utf-8")), host_script
 for directory, patterns in first_party_patterns.items():
     for pattern in patterns:
         first_party_files.update(directory.rglob(pattern))

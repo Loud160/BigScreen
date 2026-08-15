@@ -49,12 +49,29 @@ if ($help -eq $true) {
 }
 
 # QPM developers often have ADB through SideQuest without adding it to the
-# system PATH. Resolve that known installation before building so a deployment
-# cannot emit repeated command-not-found messages and still appear successful.
+# system PATH. Search environment-derived installation roots rather than
+# embedding one computer's drive or Program Files location in this portable
+# repository.
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-    $sideQuestAdb = "$env:ProgramFiles\SideQuest\resources\app.asar.unpacked\build\platform-tools\adb.exe"
-    if (Test-Path -LiteralPath $sideQuestAdb) {
-        $env:PATH = (Split-Path -Parent $sideQuestAdb) + [IO.Path]::PathSeparator + $env:PATH
+    $sideQuestCandidates = @()
+    foreach ($programRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if ($programRoot) {
+            $sideQuestCandidates += Join-Path $programRoot `
+                "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+        }
+    }
+    if ($env:LOCALAPPDATA) {
+        $sideQuestCandidates += Join-Path $env:LOCALAPPDATA `
+            "Programs/SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+        $sideQuestCandidates += Join-Path $env:LOCALAPPDATA `
+            "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+    }
+    $sideQuestAdb = $sideQuestCandidates |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if ($sideQuestAdb) {
+        $env:PATH = (Split-Path -Parent $sideQuestAdb) +
+            [IO.Path]::PathSeparator + $env:PATH
     }
 }
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {

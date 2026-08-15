@@ -8,8 +8,25 @@
 $ErrorActionPreference = "Stop"
 
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-    $sideQuestAdb = "$env:ProgramFiles\SideQuest\resources\app.asar.unpacked\build\platform-tools\adb.exe"
-    if (Test-Path -LiteralPath $sideQuestAdb) {
+    # Resolve optional SideQuest installations from Windows environment roots;
+    # never commit a developer-machine drive or install path.
+    $sideQuestCandidates = @()
+    foreach ($programRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if ($programRoot) {
+            $sideQuestCandidates += Join-Path $programRoot `
+                "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+        }
+    }
+    if ($env:LOCALAPPDATA) {
+        $sideQuestCandidates += Join-Path $env:LOCALAPPDATA `
+            "Programs/SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+        $sideQuestCandidates += Join-Path $env:LOCALAPPDATA `
+            "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"
+    }
+    $sideQuestAdb = $sideQuestCandidates |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if ($sideQuestAdb) {
         $env:PATH = (Split-Path -Parent $sideQuestAdb) +
             [IO.Path]::PathSeparator + $env:PATH
     }
