@@ -102,6 +102,16 @@ replacing proven Quest-specific behavior.
 - Repository invariant tests refuse Python optimized mode, where bare asserts
   would otherwise disappear.
 - Thread-safe `localtime_s`/`localtime_r` replaces shared-state `std::localtime`.
+- Both isolated FFmpeg builds now contain software H.264 and the optional LGPL
+  MediaCodec decoder, with configure-output gates that reject a silently
+  disabled JNI, MediaCodec, or decoder component. Hardware decoding remains an
+  off-by-default experiment. Each private libavcodec receives the Quest Java VM
+  captured by Scotland2 at preload rather than probing the linker-hidden
+  `JNI_GetCreatedJavaVMs` symbol. Each runtime registers that pointer
+  independently, reports the backend that actually opened, and automatically
+  reopens a mid-stream MediaCodec failure with software at the latest requested
+  timestamp. The established CPU-readable YUV, reusable RGBA, and Unity texture
+  path remains in place so hardware testing does not remove screen features.
 
 ## Reviewed and intentionally not changed
 

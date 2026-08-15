@@ -85,6 +85,32 @@ foreach ($runtime in @(
                 break
             }
         }
+        # A hash-valid staged runtime may still predate a configure change.
+        # Verify the component contract recorded by FFmpeg itself so changing
+        # this repository's allowlist automatically rebuilds both versions.
+        $configMak = Join-Path $ffmpegRoot "bigscreen-ffmpeg-config.mak"
+        if (-not (Test-Path -LiteralPath $configMak)) {
+            $ffmpegValid = $false
+        } else {
+            $configText = Get-Content -LiteralPath $configMak -Raw
+            foreach ($required in @(
+                "CONFIG_H264_DECODER=yes",
+                "CONFIG_H264_MEDIACODEC_DECODER=yes",
+                "CONFIG_HEVC_MEDIACODEC_DECODER=yes",
+                "CONFIG_VP8_DECODER=yes",
+                "CONFIG_VP8_MEDIACODEC_DECODER=yes",
+                "CONFIG_VP9_DECODER=yes",
+                "CONFIG_VP9_MEDIACODEC_DECODER=yes",
+                "CONFIG_MATROSKA_DEMUXER=yes")) {
+                if (-not $configText.Contains($required)) {
+                    $ffmpegValid = $false
+                    break
+                }
+            }
+            if ($configText.Contains("CONFIG_HEVC_DECODER=yes")) {
+                $ffmpegValid = $false
+            }
+        }
     }
     if (-not $ffmpegValid) {
         if (-not $wslCommand) {
@@ -123,7 +149,13 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" -B build
+# The current development package intentionally includes the hard-coded
+# Up & Down proof of concept. Pass this explicitly instead of relying only on
+# CMake's default: an existing cache can otherwise preserve OFF across every
+# later build and silently replace the showcase with ordinary single-screen
+# playback.
+& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
+    -DBIGSCREEN_UP_DOWN_SHOWCASE=ON -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

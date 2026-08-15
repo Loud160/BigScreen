@@ -28,25 +28,30 @@ namespace BigScreen {
         double missedVideoFramePercent = 0.0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
+        std::string decoderBackend;
         std::string decoderRuntime;
+        std::string codec;
     };
 
     /// Owns the movable performance-information panel shown in Big Screen's
-    /// menu and during video gameplay. Its transform is intentionally never
-    /// persisted: every enable or context activation recreates it at a known
-    /// safe position.
+    /// menu and during video gameplay. Menu and gameplay share one persisted
+    /// transform so a placement chosen in the menu remains useful in-map.
     class PerformancePanel final {
     public:
         static PerformancePanel& Instance();
 
-        /// Marks Big Screen's menu active and recreates the panel at its
-        /// documented starting position when diagnostics are enabled.
+        /// Marks Big Screen's menu active and recreates the panel at its saved
+        /// placement when diagnostics are enabled.
         void ActivateMenu() noexcept;
         /// Recreates the same panel for a video map. The BSML Top handle stays
         /// active so Beat Saber's pointer can move it, including from pause UI.
         void ActivateGameplay() noexcept;
-        /// Applies the live toggle. Re-enabling always resets panel placement.
+        /// Applies the live toggle. Disabling first commits the current
+        /// placement; re-enabling restores it.
         void SetEnabled(bool enabled) noexcept;
+        /// Restores the shared menu/gameplay transform to its safe default and
+        /// moves an active panel immediately without rebuilding its contents.
+        void ResetPlacement() noexcept;
         /// Removes the panel when Big Screen's menu is closed.
         void SuspendMenu() noexcept;
         void SuspendGameplay() noexcept;
@@ -63,8 +68,9 @@ namespace BigScreen {
     private:
         PerformancePanel() = default;
 
-        bool CreateAtDefaultPlacement();
+        bool CreateAtSavedPlacement();
         void ActivateForContext(bool gameplay) noexcept;
+        void SaveCurrentPlacement() noexcept;
         /// Writes the header subtitle and every fixed-height statistics row.
         /// A null pointer renders the waiting placeholders.
         void ApplyRows(const PerformancePanelData* data) noexcept;
@@ -93,7 +99,7 @@ namespace BigScreen {
         // One TMP element per statistics row, each height-locked by a
         // LayoutElement so the columns are laid out to the fixed body box.
         std::array<TMPro::TextMeshProUGUI*, 2> leftRows_{};
-        std::array<TMPro::TextMeshProUGUI*, 7> rightRows_{};
+        std::array<TMPro::TextMeshProUGUI*, 8> rightRows_{};
         // TMPro/handle failures can occur every frame while Unity tears down a
         // scene. Record each category once per panel lifetime instead of
         // flooding persistent storage with identical diagnostics.

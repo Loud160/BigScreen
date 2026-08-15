@@ -392,7 +392,9 @@ namespace BigScreen {
                 typeError.clear();
                 if(!iterator->is_regular_file(typeError) || typeError)
                     continue;
-                if(Lower(iterator->path().extension().string()) == ".mp4")
+                const auto extension =
+                    Lower(iterator->path().extension().string());
+                if(extension == ".mp4" || extension == ".webm")
                 {
                     result.videos.push_back(
                         VideoLibrary::Instance().InspectLocalVideo(
@@ -420,9 +422,9 @@ namespace BigScreen {
                         return Lower(left.fileName) < Lower(right.fileName);
                     });
                 result.message = result.videos.empty()
-                    ? "No MP4 files are present in this folder."
+                    ? "No MP4 or WebM files are present in this folder."
                     : std::to_string(result.videos.size()) +
-                        " MP4 file(s) found. Select a green file, then choose Set Video.";
+                        " video file(s) found. Select a green file, then choose Set Video.";
             }
         }
         catch(const std::exception& exception)
@@ -705,10 +707,10 @@ namespace BigScreen {
         {
             ErrorManager::Instance().ReportUserVisible(
                 "Local video could not be assigned",
-                error.empty() ? "The selected MP4 could not be assigned." : error);
+                error.empty() ? "The selected video could not be assigned." : error);
             if(statusText_)
                 statusText_->set_text(
-                    error.empty() ? "The selected MP4 could not be assigned." : error);
+                    error.empty() ? "The selected video could not be assigned." : error);
             return;
         }
         const auto fileName = selectedPath_.filename().string();
@@ -722,7 +724,7 @@ namespace BigScreen {
             helpText_->set_text(
                 "<b>" + file.fileName + " cannot be used</b>\n\n" +
                 (file.problem.empty()
-                    ? "Big Screen could not identify a compatible H.264 video stream in this MP4."
+                    ? "Big Screen could not identify a compatible video stream in this file."
                     : file.problem));
         }
         if(helpModal_) helpModal_->Show();

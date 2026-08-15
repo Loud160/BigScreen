@@ -19,7 +19,7 @@ namespace UnityEngine { class GameObject; }
 namespace UnityEngine::UI { class Button; }
 
 namespace BigScreen {
-    /// Center-screen Quest file browser used to assign a local MP4 to any
+    /// Center-screen Quest file browser used to assign a local MP4 or WebM to any
     /// selected song. Directory enumeration and FFmpeg probing run off Unity's
     /// UI thread; only immutable scan snapshots are rendered by Tick().
     class LocalVideoBrowserMenu final {

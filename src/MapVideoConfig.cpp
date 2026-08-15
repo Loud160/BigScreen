@@ -300,18 +300,23 @@ namespace BigScreen {
         // user's layout: most Cinema configs use it only to protect timing.
         // Presentation ownership begins only when a mapper supplied an actual
         // screen/environment field that PC Cinema would honor.
-        config.hasMapperPresentation =
+        config.hasMapperScreenGeometry =
             Member(document, "screenPosition") ||
             Member(document, "screenRotation") ||
             Member(document, "screenHeight") ||
-            Member(document, "screenCurvature") ||
-            Member(document, "screenSubsurfaces") ||
-            Member(document, "curveYAxis") ||
-            Member(document, "transparency") ||
+            Member(document, "screenCurvature");
+        config.hasMapperEnvironmentPresentation =
             Member(document, "environmentName") ||
             Member(document, "disableDefaultModifications") ||
             Member(document, "forceEnvironmentModifications") ||
             !config.environmentModifications.empty();
+        config.hasMapperPresentation =
+            config.hasMapperScreenGeometry ||
+            config.hasMapperEnvironmentPresentation ||
+            Member(document, "screenSubsurfaces") ||
+            Member(document, "curveYAxis") ||
+            Member(document, "transparency") ||
+            config.mapperTransparency.has_value();
 
         const double stopAt = NumberOr(document, "endVideoAt", 0.0);
         if(stopAt > 0.0)

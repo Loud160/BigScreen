@@ -16,6 +16,8 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/ShowcaseLauncher.hpp"
+#include "BigScreen/ShowcaseMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
 #include "BigScreen/UpDownShowcaseTimeline.hpp"
@@ -75,9 +77,13 @@
 #include "UnityEngine/MeshRenderer.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/Renderer.hpp"
 #include "UnityEngine/Transform.hpp"
+#include "UnityEngine/UI/Button.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
+#include "TMPro/TextMeshProUGUI.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
@@ -116,6 +122,29 @@ namespace {
 
     std::vector<ShowcaseRingState> showcaseRingStates;
     std::optional<bool> appliedShowcaseRingVisibility;
+    std::vector<ShowcaseRingState> showcaseSidePillarStates;
+    std::optional<bool> appliedShowcaseSidePillarVisibility;
+    struct ShowcaseRendererState {
+        UnityW<UnityEngine::Renderer> renderer = nullptr;
+        bool originallyEnabled = true;
+    };
+    std::vector<ShowcaseRendererState> showcaseBackgroundRenderers;
+    std::optional<bool> appliedShowcaseBackgroundVisibility;
+
+    void CaptureUniqueShowcaseObject(
+        std::vector<ShowcaseRingState>& states,
+        UnityEngine::GameObject* gameObject)
+    {
+        if(!gameObject)
+            return;
+        const bool duplicate = std::any_of(
+            states.begin(), states.end(), [gameObject](const auto& existing)
+            {
+                return existing.object.unsafePtr() == gameObject;
+            });
+        if(!duplicate)
+            states.push_back({gameObject, gameObject->get_activeSelf()});
+    }
 
     void RestoreShowcaseTrackRings()
     {
@@ -163,6 +192,150 @@ namespace {
             showcaseRingStates.size());
     }
 
+    void RestoreShowcaseSidePillars()
+    {
+        for(auto& state : showcaseSidePillarStates)
+        {
+            if(UnityW<UnityEngine::GameObject>::isAlive(state.object))
+                state.object->SetActive(state.originallyActive);
+        }
+        showcaseSidePillarStates.clear();
+        appliedShowcaseSidePillarVisibility.reset();
+    }
+
+    void CaptureShowcaseSidePillars()
+    {
+        RestoreShowcaseSidePillars();
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive())
+            return;
+
+        // These are the same exact Big Mirror roots used by the user's Hide
+        // Side Bars setting. Include inactive objects so a globally hidden bar
+        // remains hidden when the authored showcase cue later restores the
+        // map's visible pillars.
+        for(auto* transform : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Transform*>(true))
+        {
+            if(!transform)
+                continue;
+            auto gameObject = transform->get_gameObject();
+            if(!gameObject)
+                continue;
+            const std::string name(gameObject->get_name());
+            if(name != "NearBuildingLeft" && name != "NearBuildingRight")
+                continue;
+            CaptureUniqueShowcaseObject(showcaseSidePillarStates, gameObject);
+        }
+
+        // The two remaining side obstructions seen during the floating cue
+        // are controlled by the same menu settings as side lasers and
+        // spectrogram bars. Capture their actual rendered roots as well as the
+        // NearBuilding pair so the showcase invokes the already proven hide
+        // behavior without changing the user's saved toggles.
+        for(auto* transform : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Transform*>(true))
+        {
+            if(!transform)
+                continue;
+            auto gameObject = transform->get_gameObject();
+            if(!gameObject)
+                continue;
+            const std::string name(gameObject->get_name());
+            const bool directionalRail =
+                name == "NeonTubeDirectionalL" ||
+                name == "NeonTubeDirectionalR" ||
+                name == "NeonTubeDirectionalFL" ||
+                name == "NeonTubeDirectionalFR";
+            if(directionalRail || name.rfind("RotatingLasersPair", 0) == 0 ||
+               name.rfind("DoubleColorLaser", 0) == 0)
+                CaptureUniqueShowcaseObject(showcaseSidePillarStates, gameObject);
+        }
+        for(auto* spectrogram : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::Spectrogram*>(true))
+        {
+            if(!spectrogram)
+                continue;
+            CaptureUniqueShowcaseObject(
+                showcaseSidePillarStates, spectrogram->get_gameObject());
+            for(auto renderer : spectrogram->__cordl_internal_get__meshRenderers())
+                if(renderer)
+                    CaptureUniqueShowcaseObject(
+                        showcaseSidePillarStates, renderer->get_gameObject());
+        }
+        for(auto* row : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::SpectrogramRow*>(true))
+        {
+            if(!row)
+                continue;
+            CaptureUniqueShowcaseObject(
+                showcaseSidePillarStates, row->get_gameObject());
+            for(auto renderer : row->__cordl_internal_get__meshRenderers())
+                if(renderer)
+                    CaptureUniqueShowcaseObject(
+                        showcaseSidePillarStates, renderer->get_gameObject());
+        }
+        for(auto* spectrogram : UnityEngine::Object::FindObjectsOfType<
+                GlobalNamespace::TransformSpectrogram*>(true))
+        {
+            if(!spectrogram)
+                continue;
+            CaptureUniqueShowcaseObject(
+                showcaseSidePillarStates, spectrogram->get_gameObject());
+            for(auto transform : spectrogram->__cordl_internal_get__transforms())
+                if(transform)
+                    CaptureUniqueShowcaseObject(
+                        showcaseSidePillarStates, transform->get_gameObject());
+        }
+        PaperLogger.info(
+            "Captured {} side-obstruction objects for the Up & Down floating section",
+            showcaseSidePillarStates.size());
+    }
+
+    void RestoreShowcaseBackground()
+    {
+        for(auto& state : showcaseBackgroundRenderers)
+        {
+            if(UnityW<UnityEngine::Renderer>::isAlive(state.renderer))
+                state.renderer->set_enabled(state.originallyEnabled);
+        }
+        showcaseBackgroundRenderers.clear();
+        appliedShowcaseBackgroundVisibility.reset();
+    }
+
+    void CaptureShowcaseBackground()
+    {
+        RestoreShowcaseBackground();
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive())
+            return;
+        auto environment = UnityEngine::GameObject::Find("/Environment");
+        if(!environment)
+            return;
+        auto environmentTransform = environment->get_transform();
+        for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Renderer*>(true))
+        {
+            if(!renderer)
+                continue;
+            auto current = renderer->get_transform();
+            bool belongsToEnvironment = false;
+            while(current)
+            {
+                if(current == environmentTransform)
+                {
+                    belongsToEnvironment = true;
+                    break;
+                }
+                current = current->get_parent();
+            }
+            if(belongsToEnvironment)
+                showcaseBackgroundRenderers.push_back(
+                    {renderer, renderer->get_enabled()});
+        }
+        PaperLogger.info(
+            "Captured {} environment renderers for the Up & Down floating and corkscrew sections",
+            showcaseBackgroundRenderers.size());
+    }
+
     void UpdateShowcaseTrackRings(double songTimeSeconds)
     {
         if(!BigScreen::PlaybackSession::Instance().ShowcaseActive() ||
@@ -180,6 +353,51 @@ namespace {
                 state.object->SetActive(visible && state.originallyActive);
         }
         appliedShowcaseRingVisibility = visible;
+    }
+
+    void UpdateShowcaseSidePillars(double songTimeSeconds)
+    {
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive())
+            return;
+
+        const bool visible =
+            BigScreen::UpDownShowcase::SidePillarsVisible(songTimeSeconds);
+        // Chroma can finish constructing environment roots after StartSong.
+        // Re-run the same proven Side Bars, Side Lights, and Spectrogram object
+        // discovery exactly once when the authored hide cue begins. This
+        // captures late-created geometry without doing scene-wide searches on
+        // every gameplay frame or changing any saved environment toggle.
+        if(!visible && appliedShowcaseSidePillarVisibility != false)
+            CaptureShowcaseSidePillars();
+        if(showcaseSidePillarStates.empty())
+            return;
+        if(appliedShowcaseSidePillarVisibility == visible)
+            return;
+
+        for(auto& state : showcaseSidePillarStates)
+        {
+            if(UnityW<UnityEngine::GameObject>::isAlive(state.object))
+                state.object->SetActive(visible && state.originallyActive);
+        }
+        appliedShowcaseSidePillarVisibility = visible;
+    }
+
+    void UpdateShowcaseBackground(double songTimeSeconds)
+    {
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive() ||
+           showcaseBackgroundRenderers.empty())
+            return;
+        const bool visible =
+            BigScreen::UpDownShowcase::BackgroundEnvironmentVisible(
+                songTimeSeconds);
+        if(appliedShowcaseBackgroundVisibility == visible)
+            return;
+        for(auto& state : showcaseBackgroundRenderers)
+        {
+            if(UnityW<UnityEngine::Renderer>::isAlive(state.renderer))
+                state.renderer->set_enabled(visible && state.originallyEnabled);
+        }
+        appliedShowcaseBackgroundVisibility = visible;
     }
 
     void CenterResultsRect(UnityEngine::RectTransform* rect)
@@ -281,13 +499,15 @@ namespace {
         CreateResultsText(
             parent,
             std::format(
-                "<color=#75DFFF><b>VIDEO · FFMPEG {}</b></color>\n"
+                "<color=#75DFFF><b>VIDEO · {} · {} · FFMPEG {}</b></color>\n"
                 "<color=#AEBAC8>Source</color> <b>{}x{} @ {:.1f}</b>   "
                 "<color=#AEBAC8>Output</color> <b>{}x{} @ {} cap</b>\n"
                 "<color=#AEBAC8>Frames Skipped</color> <b>{}</b>   "
                 "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
                 "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
                 "<color=#AEBAC8>Decode</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
+                data.video.decoderBackend == "hardware" ? "HARDWARE" : "SOFTWARE",
+                data.video.codec.empty() ? "UNKNOWN" : data.video.codec,
                 data.video.decoderRuntime,
                 data.video.sourceWidth,
                 data.video.sourceHeight,
@@ -614,7 +834,7 @@ namespace {
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-               !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
+               !BigScreen::PlaybackSession::Instance().MapperEnvironmentPresentationActive() &&
                BigScreen::Settings::Instance().DisableEnvironmentMotion();
     }
 
@@ -622,7 +842,7 @@ namespace {
     {
         return BigScreen::Settings::Instance().ModEnabled() &&
                BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-               !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
+               !BigScreen::PlaybackSession::Instance().MapperEnvironmentPresentationActive() &&
                !BigScreen::Settings::Instance().MapLightShowEnabled();
     }
 
@@ -849,7 +1069,7 @@ namespace {
             environmentsListModel);
 
         const auto& settings = BigScreen::Settings::Instance();
-        if(playback.MapperPresentationActive())
+        if(playback.MapperEnvironmentPresentationActive())
         {
             // A mapper-requested environment is part of the Cinema scene
             // contract. If none is supplied, retain the map's normal Chroma-
@@ -943,7 +1163,7 @@ namespace {
 
         auto* effectiveSettings = playerSpecificSettings;
         if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           !BigScreen::PlaybackSession::Instance().MapperPresentationActive() &&
+           !BigScreen::PlaybackSession::Instance().MapperEnvironmentPresentationActive() &&
            !BigScreen::Settings::Instance().MapLightShowEnabled() &&
            playerSpecificSettings)
         {
@@ -1036,33 +1256,36 @@ namespace {
         BigScreen::ErrorManager::Instance().Guard("starting gameplay video", [&]() {
             const auto& settings = BigScreen::Settings::Instance();
             auto& playback = BigScreen::PlaybackSession::Instance();
-            const bool mapperControlsPresentation =
-                playback.MapperPresentationActive();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            const bool mapperControlsEnvironment =
+                playback.MapperEnvironmentPresentationActive();
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.DisableEnvironmentMotion())
                 DisableEnvironmentMotion();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                !settings.MapLightShowEnabled())
                 DisableEnvironmentLighting();
-            else if(playback.HasPreparedVideo() && !mapperControlsPresentation)
+            else if(playback.HasPreparedVideo() && !mapperControlsEnvironment)
                 DisableSelectedLightingChannels();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.HideTrackRings())
                 HideTrackLaneRings();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.HideSideBars())
                 HideSideBars();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.HideSpectrogramBars())
                 HideSpectrogramBars();
-            if(playback.HasPreparedVideo() && !mapperControlsPresentation &&
+            if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.HideSideLaserLights())
                 HideSideLaserGeometry();
             BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
             // The showcase keeps the map's authored environment intact, then
             // temporarily strobes only the central track-ring meshes from a
-            // cached set. Capture once; never search the Unity scene per frame.
+            // cached set and hides the two side pillars during the floating
+            // section. Capture once; never search the Unity scene per frame.
             CaptureShowcaseTrackRings();
+            CaptureShowcaseSidePillars();
+            CaptureShowcaseBackground();
         });
         auto& playback = BigScreen::PlaybackSession::Instance();
         BigScreen::PowerBenchmark::Instance().Start(
@@ -1114,6 +1337,16 @@ namespace {
            BigScreen::ErrorManager::Instance().MenuRecoveryActive())
             return;
 
+        // Showcase preparation spans downloads, SongCore refresh, menu
+        // dismissal, and Solo presentation. It must continue after Big
+        // Screen's own flow is no longer active, but remains on Unity's main
+        // thread so no IL2CPP menu object is touched by a worker.
+        BigScreen::ErrorManager::Instance().Guard(
+            "preparing the Big Screen showcase", []()
+            {
+                BigScreen::ShowcaseLauncher::Instance().Tick();
+            });
+
         BigScreen::ErrorManager::Instance().Guard("updating menu video UI", [&]() {
             BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
             // The remaining objects belong exclusively to Big Screen's own
@@ -1124,6 +1357,7 @@ namespace {
             {
                 BigScreen::VideoLibraryMenu::Instance().Tick(self);
                 BigScreen::StorageMaintenanceMenu::Instance().Tick();
+                BigScreen::ShowcaseMenu::Instance().Tick();
                 BigScreen::LocalVideoBrowserMenu::Instance().Tick();
                 BigScreen::ScreenPreview::Instance().TickUndockedEditor();
                 BigScreen::PerformancePanel::Instance().TickInteraction();
@@ -1195,6 +1429,8 @@ namespace {
                 songTimeSeconds,
                 playback.Diagnostics());
             UpdateShowcaseTrackRings(songTimeSeconds);
+            UpdateShowcaseSidePillars(songTimeSeconds);
+            UpdateShowcaseBackground(songTimeSeconds);
             BigScreen::PerformancePanel::Instance().TickInteraction();
         });
     }
@@ -1213,10 +1449,13 @@ namespace {
         // ModEnabled during the song while a screen/decoder still exists.
         BigScreen::ErrorManager::Instance().Guard("stopping gameplay video", [&]() {
             RestoreShowcaseTrackRings();
+            RestoreShowcaseSidePillars();
+            RestoreShowcaseBackground();
             BigScreen::PlaybackSession::Instance().Stop();
         });
         BigScreen::PowerBenchmark::Instance().Finish(
             BigScreen::PlaybackSession::Instance().LastResultsData());
+        BigScreen::ShowcaseLauncher::Instance().OnGameplayFinished();
         BigScreen::ErrorManager::Instance().SetGameplayActive(false);
         StandardLevelScenesTransitionSetupDataSO_Finish(self, levelCompletionResults);
     }

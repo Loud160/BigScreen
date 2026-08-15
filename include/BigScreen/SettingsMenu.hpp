@@ -35,6 +35,7 @@ namespace BigScreen {
             HMUI::ViewController* viewController,
             std::function<void()> onBack,
             std::function<void()> onManageStorage,
+            std::function<void()> onShowShowcase,
             std::function<void(bool)> onModEnabledChanged);
         /// Clears scene-owned IL2CPP references before a replacement menu
         /// hierarchy is constructed. Native singletons outlive MenuCore's
@@ -121,9 +122,11 @@ namespace BigScreen {
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
         BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
+        BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
         BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;
+        UnityEngine::UI::Button* performancePanelResetButton_ = nullptr;
         BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
         BSML::ToggleSetting* powerBenchmarkToggle_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
@@ -136,6 +139,8 @@ namespace BigScreen {
         BSML::ModalView* unsavedScreenModal_ = nullptr;
         BSML::ModalView* errorModal_ = nullptr;
         TMPro::TextMeshProUGUI* errorModalText_ = nullptr;
+        UnityEngine::UI::Button* showcaseButton_ = nullptr;
+        TMPro::TextMeshProUGUI* showcaseStatus_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
         HMUI::HoverHint* updaterHoverHint_ = nullptr;
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;

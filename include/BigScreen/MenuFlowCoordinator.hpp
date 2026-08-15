@@ -18,6 +18,10 @@ namespace BigScreen {
     /// Cancels mod-owned interaction and dismisses Big Screen without routing
     /// through controls that may be part of the failed UI operation.
     bool ExitBigScreenMenuAfterError() noexcept;
+    /// Safely dismisses Big Screen before the managed showcase opens Beat
+    /// Saber's Solo flow. Beat Saber owns all navigation again after gameplay;
+    /// Big Screen never tries to reconstruct or reopen its retained hierarchy.
+    bool ExitBigScreenMenuForShowcase() noexcept;
 }
 
 /// Places Big Screen's settings and navigation on Beat Saber's left panel and
@@ -28,6 +32,7 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator,
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, libraryEditorViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, storageViewController);
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, showcaseViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
 
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);

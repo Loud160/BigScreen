@@ -72,6 +72,18 @@ video_library_header = (
 video_library_source = (root / "src/VideoLibrary.cpp").read_text(
     encoding="utf-8"
 )
+showcase_source = (root / "src/ShowcaseLauncher.cpp").read_text(
+    encoding="utf-8"
+)
+showcase_menu_source = (root / "src/ShowcaseMenu.cpp").read_text(
+    encoding="utf-8"
+)
+showcase_timeline_source = (root / "src/UpDownShowcaseTimeline.cpp").read_text(
+    encoding="utf-8"
+)
+screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
+    encoding="utf-8"
+)
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
 qpm_shared = json.loads((root / "qpm.shared.json").read_text(encoding="utf-8"))
 
@@ -99,6 +111,26 @@ assert 'runtime_tag="44"' in ffmpeg_build
 assert 'runtime_tag="9"' in ffmpeg_build
 assert 'build_suffix="-bigscreen${runtime_tag}"' in ffmpeg_build
 assert 'symbol_namespace="BIGSCREEN${runtime_tag}"' in ffmpeg_build
+for required_media_option in (
+    "--enable-jni",
+    "--enable-mediacodec",
+    "--enable-decoder=h264",
+    "--enable-decoder=h264_mediacodec",
+    "--enable-decoder=hevc_mediacodec",
+    "--enable-decoder=vp8",
+    "--enable-decoder=vp8_mediacodec",
+    "--enable-decoder=vp9",
+    "--enable-decoder=vp9_mediacodec",
+    "--enable-demuxer=matroska",
+):
+    assert required_media_option in ffmpeg_build
+for required_config_gate in (
+    "CONFIG_JNI",
+    "CONFIG_MEDIACODEC",
+    "CONFIG_H264_DECODER",
+    "CONFIG_H264_MEDIACODEC_DECODER",
+):
+    assert required_config_gate in ffmpeg_build
 for runtime_tag in ("44", "9"):
     assert f"libavformat-bigscreen{runtime_tag}.so" in cmake
     assert f"libavcodec-bigscreen{runtime_tag}.so" in cmake
@@ -121,6 +153,23 @@ assert "BIGSCREEN_FFMPEG_BACKEND_EXPORT" in frame_decoder_header
 assert 'ReadBool(document, "useFfmpeg9", false)' in settings_source
 assert 'Replace(document, "useFfmpeg9", useFfmpeg9_)' in settings_source
 assert '"Use FFmpeg 9"' in settings_menu_source
+assert 'ReadBool(\n            document, "hardwareDecodingEnabled", false)' in settings_source
+assert 'Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_)' in settings_source
+assert '"Hardware Video Decoding"' in settings_menu_source
+assert '"Experimental: uses the Quest' in settings_menu_source
+for panel_transform_key in (
+    "performancePanelPositionX",
+    "performancePanelPositionY",
+    "performancePanelPositionZ",
+    "performancePanelRotationX",
+    "performancePanelRotationY",
+    "performancePanelRotationZ",
+):
+    assert panel_transform_key in settings_source
+assert "SetPerformancePanelPlacement" in performance_panel_source
+assert "ResetPerformancePanelPlacement" in performance_panel_source
+assert 'performanceParent, "↻"' not in settings_menu_source
+assert 'diagnosticsParent, "↻"' in settings_menu_source
 assert "ApplyDisplaySettingsAndRefreshPreview();" in settings_menu_source
 assert workflow.count("BIGSCREEN_FFMPEG_VERSION=") == 2
 for warning in ("-Wall", "-Wextra", "-Wpedantic"):
@@ -157,6 +206,7 @@ for runtime_only_library in (
     assert f'Join-Path $nativeLibraryStage $runtimeOnlyLibrary' in runtime_fetch
 assert "wslpath -a" in build_script
 assert "SHA256SUMS" in build_script
+assert "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON" in build_script
 
 # Decoder shutdown changes the wait predicate under the waiter's mutex, and
 # ordinary FFmpeg EOF/EAGAIN remains distinct from a hard worker failure.
@@ -167,6 +217,27 @@ for function_name in ("FrameDecoder::Close()", "FrameDecoder::SetWorkerError"):
     assert function.index("lock(requestMutex_)") < function.index("stopWorker_ = true")
 assert "AVERROR(EAGAIN)" in frame_decoder_source
 assert "av_strerror" in frame_decoder_source
+assert 'CodecPolicy{"H.264", "h264", "h264_mediacodec", false}' in frame_decoder_source
+assert 'CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", true}' in frame_decoder_source
+assert 'CodecPolicy{"VP8", "vp8", "vp8_mediacodec", false}' in frame_decoder_source
+assert 'CodecPolicy{"VP9", "vp9", "vp9_mediacodec", false}' in frame_decoder_source
+assert "std::once_flag registration" in frame_decoder_source
+assert "RegisterJavaVmForThisRuntime(javaVm)" in frame_decoder_source
+assert "const auto applyUserVideoControls" in playback_source
+assert playback_source.count("applyUserVideoControls();") >= 2
+assert "config_->letterboxTransparent =" in playback_source
+assert "bool PlaybackSession::MapperScreenPresentationActive() const" in playback_source
+assert "chromaMapDetected_ &&" in playback_source
+assert "baseConfig_->hasMapperScreenGeometry" in playback_source
+assert "bool PlaybackSession::MapperEnvironmentPresentationActive() const" in playback_source
+assert "static_cast<AVPixelFormat>(decoded_->format)" in frame_decoder_source
+assert "AV_FRAME_CROP_UNALIGNED" in frame_decoder_source
+assert "sws_setColorspaceDetails" in frame_decoder_source
+assert '#include "main.hpp"' in frame_decoder_facade
+assert "return modloader_jvm;" in frame_decoder_facade
+assert 'dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs")' not in frame_decoder_facade
+assert "ReopenWithSoftwareAfterHardwareFailure" in frame_decoder_facade
+assert 'return UsingHardwareDecoder() ? "hardware" : "software";' in frame_decoder_facade
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
@@ -182,6 +253,118 @@ assert set_failure.index("remove(statusPath_, removeError)") < set_failure.index
 assert "PyErr_Print" not in download_manager_source
 assert "PyEval_GetBuiltins" not in download_manager_source
 assert "PyImport_ImportModule(\"builtins\")" in download_manager_source
+
+# Both user-facing download entry points must consume the probe's exact tier
+# list. Backend support alone is insufficient: otherwise the old single button
+# silently sends DownloadRequest's default 1080p value for every source.
+assert "std::vector<int> availableHeights" in download_manager_header
+assert "request.requestedHeight = height" in library_menu_source
+assert "request.requestedHeight = height" in selection_toggle_source
+assert "request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit()" in (
+    library_menu_source
+)
+assert "request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit()" in (
+    selection_toggle_source
+)
+assert "download.availableHeights" in library_menu_source
+assert "snapshot.availableHeights" in selection_toggle_source
+assert "verifiedAvailableHeights" in download_manager_source
+assert "validatedCompletedTransfer" in library_menu_source
+# The side editor deliberately uses compact one-row labels beside the video
+# thumbnail; the song-selection modal has enough width for the longer form.
+assert 'std::to_string(height) + "p"' in library_menu_source
+assert '"DOWNLOAD " + std::to_string(height) + "p"' in library_menu_source
+assert '"DOWNLOAD " +' in selection_toggle_source
+assert "1440p requires Hardware Video Decoding" in library_menu_source
+assert "1440p requires Hardware Video Decoding" in selection_toggle_source
+assert "Your local file will not be deleted" in library_menu_source
+assert "Local files are never deleted by replacement" in selection_toggle_source
+assert "class StagedFileReplacement final" in download_manager_source
+assert "IncomingSibling(finalPath)" in download_manager_source
+assert download_manager_source.index("videoReplacement.Promote()") < (
+    download_manager_source.index("VideoLibrary::Instance().CommitDownload(")
+)
+
+# The optional demo is fetched rather than redistributed. Its map revision is
+# immutable, extraction is bounded/contained, both required mods are checked by
+# live SongCore capability, and launch remains on Beat Saber's normal Solo path.
+assert 'ShowcaseMapKey = "11cf8"' in showcase_source
+assert '"2aa85aad10e124eb674d18d49251bc94ee1a4283"' in showcase_source
+assert '"https://youtu.be/oJa7Kr7_9dw"' in showcase_source
+assert 'CapabilityAvailable("Chroma")' in showcase_source
+assert 'CapabilityAvailable("Noodle Extensions")' in showcase_source
+assert "StartMapPackage" in download_manager_header
+assert "MapPackageScript" in download_manager_source
+for map_install_guard in (
+    "maximumArchiveBytes",
+    "maximumExpandedBytes",
+    "maximumEntries",
+    "os.path.commonpath",
+    "stat.S_IFLNK",
+    "api.beatsaver.com",
+    "r2cdn.beatsaver.com",
+    "'lawless'",
+    "'expertplus'",
+):
+    assert map_install_guard in download_manager_source
+assert "SongCore::API::Loading::RefreshSongs(false)" in showcase_source
+assert "PresentFlowCoordinatorOrAskForTutorial" in showcase_source
+assert "__LevelSelectionFlowCoordinator__State::New_ctor(\n                noCategory" in showcase_source
+# Once Solo is already visible, SelectLevel only records a future selection
+# and does not reproduce the row callback needed to present the level detail.
+# The launcher must use Beat Saber's real row-selection path so the showcase
+# starts without requiring the player to click the map manually.
+assert "HandleLevelCollectionViewControllerDidSelectLevel" in showcase_source
+assert "collection->SelectLevel(level)" not in showcase_source
+assert "solo->StartLevel(nullptr, false)" in showcase_source
+assert '"Play Big Screen Showcase"' in settings_menu_source
+assert "ShowcaseReadiness ShowcaseLauncher::Readiness() const" in showcase_source
+assert "bool ShowcaseLauncher::DownloadMap" in showcase_source
+assert "bool ShowcaseLauncher::DownloadVideo" in showcase_source
+assert "bool ShowcaseLauncher::Play" in showcase_source
+assert '"Download Map"' in showcase_menu_source
+assert '"Download Video"' in showcase_menu_source
+assert '"Recheck Map"' in showcase_menu_source
+assert '"Play Showcase"' in showcase_menu_source
+assert "ShowcaseMenu::Show()" in showcase_menu_source
+showcase_show = showcase_menu_source.split(
+    "void ShowcaseMenu::Show()", 1
+)[1].split("void ShowcaseMenu::Tick()", 1)[0]
+assert ".DownloadMap(" not in showcase_show
+assert ".DownloadVideo(" not in showcase_show
+assert "DismissTransientUi()" in showcase_show
+assert "warningModal_->Hide()" in showcase_menu_source
+assert "object->SetActive(false)" in showcase_menu_source
+assert "transitionFrames_ < 12" in showcase_source
+assert '"Return to Big Screen"' not in main_source
+assert "RequestReturnToBigScreen" not in main_source
+assert "WaitingForResultsDismissal" not in showcase_source
+assert "RestoreShowcasePageAfterGameplay" not in showcase_source
+
+# Showcase glass remains deterministic, programmatic, and isolated from the
+# normal video surface. Only the authored 2:03 damage sequence uses it. Its
+# final break freezes the displayed GPU texture and spreads pieces forward as
+# they fall; ordinary floating screens retain their established safe paths.
+for fracture_symbol in (
+    "SeededFractureRandom",
+    "GenerateFracturePattern",
+    "GenerateRadialCracks",
+    "PartitionFractureRevealGroups",
+    "MaximumFracturePieces",
+):
+    assert fracture_symbol in core_logic
+assert "freezeOnShatter" in core_logic
+assert "FractureShardTransform" in core_logic
+assert "shardTransformCount" in core_logic
+assert "fractureShardTranslations_" in screen_surface_source
+assert "UnityEngine::Graphics::CopyTexture" in screen_surface_source
+assert "CoreLogic::FracturePhase::Shattered" in showcase_timeline_source
+assert "ImpactSequence" in showcase_timeline_source
+assert "RevealedImpactCount" in showcase_timeline_source
+assert "gravityDistance = 110.0f" in showcase_timeline_source
+assert "forwardScatterDistance" in core_logic
+assert "forwardScatterDistance = 42.0f" in showcase_timeline_source
+assert "randomizedForwardAmount" in screen_surface_source
 
 # Error timestamps are generated from thread-safe platform APIs because worker
 # failures can reach the logger concurrently with game-thread failures.
@@ -226,6 +409,8 @@ assert '"getIntProperty"' in power_benchmark_source
 assert '"getLongProperty"' in power_benchmark_source
 assert "power-benchmark-summary.csv" in power_benchmark_source
 assert "power-benchmark-samples.csv" in power_benchmark_source
+assert power_benchmark_source.count("decoder_backend") >= 2
+assert "Archived older power benchmark schema" in power_benchmark_source
 benchmark_tick = power_benchmark_source.split(
     "void PowerBenchmark::Tick", 1
 )[1].split("void PowerBenchmark::Finish", 1)[0]
@@ -252,13 +437,23 @@ preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
 )[1].split("void VideoLibraryMenu::LoopPreviewPlayback()", 1)[0]
 assert "playback.Tick(previewSongTime_)" in preview_audio_start
-assert "if(!playback.FirstFrameUploaded())" in preview_audio_start
+assert "if(!playback.SynchronizedAudioReady(previewSongTime_))" in preview_audio_start
 assert "CrossfadeTo(" in preview_audio_start
-assert preview_audio_start.index("if(!playback.FirstFrameUploaded())") < \
+assert preview_audio_start.index("if(!playback.SynchronizedAudioReady(previewSongTime_))") < \
     preview_audio_start.index("CrossfadeTo(")
 assert preview_audio_start.index("BeginLibraryPreviewMeasurement") < \
     preview_audio_start.index("CrossfadeTo(")
 assert "StartSelectedPreview();" not in preview_audio_start.split("CrossfadeTo(", 1)[1]
+assert "shouldDeleteMapperDownload" in library_menu_source
+assert "library.DeleteMapperDownload(levelId)" in library_menu_source
+assert "descriptor.hasUserOverride || descriptor.hasMapperDownload" in library_menu_source
+assert "const MapVideoConfig* EditorTimingConfig(" in library_menu_source
+assert "if(descriptor.mapperDefinition)" in library_menu_source
+assert library_menu_source.count("const auto* timing = EditorTimingConfig(descriptor);") >= 2
+assert "offset_ = timing ? timing->offsetSeconds : 0.0;" in library_menu_source
+assert "std::vector<UnityEngine::GameObject*> timingRows_;" in library_menu_header
+assert "mapperTimingWaitingForVideo" in library_menu_source
+assert "This timing comes from the map author's Cinema configuration" in library_menu_source
 assert 'document.RemoveMember((prefix + "Transparency").c_str())' in settings_source
 
 # User layout geometry must start from Big Screen's neutral canvas when Chroma
@@ -437,6 +632,8 @@ assert "set_childForceExpandHeight(false)" in performance_panel_source
 assert "titleBorders_" in performance_panel_source
 assert "instructionBorders_" in performance_panel_source
 assert "BodyRowHeight = 7.0f" in performance_panel_source
+assert "BodyRowCount = 8.0f" in performance_panel_source
+assert 'row(rightRows_[0], "Decoder"' in performance_panel_source
 assert "HeaderHeight + BodyHeight + FooterHeight" in performance_panel_source
 
 # Song-screen global controls live on their own floating canvas below the

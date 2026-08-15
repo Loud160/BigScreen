@@ -15,6 +15,7 @@
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
+#include "BigScreen/ShowcaseLauncher.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
@@ -50,10 +51,11 @@
 
 namespace BigScreen {
     namespace {
-        std::array<std::string_view, 3> ResolutionChoices{
+        std::array<std::string_view, 4> ResolutionChoices{
             "480p",
             "720p",
-            "1080p"
+            "1080p",
+            "1440p"
         };
 
         std::array<std::string_view, 3> PlaybackFpsChoices{
@@ -92,6 +94,8 @@ namespace BigScreen {
                 return 480;
             if(text == "1080p")
                 return 1080;
+            if(text == "1440p")
+                return 1440;
             return 720;
         }
 
@@ -160,6 +164,7 @@ namespace BigScreen {
         HMUI::ViewController* viewController,
         std::function<void()> onBack,
         std::function<void()> onManageStorage,
+        std::function<void()> onShowShowcase,
         std::function<void(bool)> onModEnabledChanged)
     {
         if(!viewController)
@@ -235,9 +240,11 @@ namespace BigScreen {
         playbackFpsDropdown_ = nullptr;
         resolutionDropdown_ = nullptr;
         ffmpeg9Toggle_ = nullptr;
+        hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
         automaticPerformanceResponseSlider_ = nullptr;
+        performancePanelResetButton_ = nullptr;
         performanceDiagnosticsToggle_ = nullptr;
         powerBenchmarkToggle_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
@@ -255,6 +262,8 @@ namespace BigScreen {
         resetButton_ = nullptr;
         errorModal_ = nullptr;
         errorModalText_ = nullptr;
+        showcaseButton_ = nullptr;
+        showcaseStatus_ = nullptr;
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
         // navigation inside this left panel. Anchor a dedicated header to the
@@ -482,6 +491,53 @@ namespace BigScreen {
                ->GetComponent<UnityEngine::UI::LayoutElement*>())
             spacerLayout->set_preferredHeight(2.0f);
 
+        auto* showcaseSectionTitle = BSML::Lite::CreateText(
+            storageContainer, "Showcase", 4.2f);
+        if(showcaseSectionTitle)
+        {
+            showcaseSectionTitle->set_fontStyle(TMPro::FontStyles::Bold);
+            showcaseSectionTitle->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            showcaseSectionTitle->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            if(auto* layout = showcaseSectionTitle->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(5.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        showcaseButton_ = BSML::Lite::CreateUIButton(
+            storageContainer,
+            "Play Big Screen Showcase",
+            {0.0f, 0.0f},
+            {42.0f, 8.0f},
+            [callback = std::move(onShowShowcase)]()
+            {
+                if(callback)
+                    callback();
+            });
+        BSML::Lite::SetButtonTextSize(showcaseButton_, 2.8f);
+        BSML::Lite::AddHoverHint(
+            showcaseButton_,
+            "Opens a readiness page where you can check requirements, download missing showcase assets, and start Lawless Expert+.");
+        showcaseStatus_ = BSML::Lite::CreateText(
+            storageContainer, "", 2.5f);
+        if(showcaseStatus_)
+        {
+            showcaseStatus_->set_enableWordWrapping(true);
+            showcaseStatus_->set_alignment(
+                TMPro::TextAlignmentOptions::Center);
+            if(auto* layout = showcaseStatus_->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+                layout->set_preferredHeight(5.0f);
+        }
+        auto* showcaseSectionSpacer = BSML::Lite::CreateText(
+            storageContainer, "", 1.0f,
+            {0.0f, 0.0f}, {48.0f, 2.0f});
+        if(auto* spacerLayout = showcaseSectionSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            spacerLayout->set_preferredHeight(2.0f);
+
         auto* performanceSectionTitle = BSML::Lite::CreateText(
             storageContainer, "Performance", 4.2f);
         if(performanceSectionTitle)
@@ -557,7 +613,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             resolutionDropdown_,
-            "Sets the highest resolution used during playback. It does not download another copy or change the saved MP4. Lower-resolution videos are not enlarged. 720p is recommended; 1080p may reduce performance and battery life.");
+            "Sets the highest resolution used during playback. It never changes which download choices are offered or replaces the saved video. Lower-resolution videos are not enlarged. 720p is recommended; 1080p and 1440p may reduce performance and battery life. 1440p requires hardware decoding.");
 
         ffmpeg9Toggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -575,6 +631,23 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             ffmpeg9Toggle_,
             "Experimental: selects the FFmpeg 9.0.1 playback decoder for side-by-side performance and compatibility testing. Off uses the proven FFmpeg 4.4.8 default. An active Video Library preview restarts at the same position; gameplay uses the selection on the next map. This does not change or redownload the video.");
+
+        hardwareDecodingToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Hardware Video Decoding",
+            settings.HardwareDecodingEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetHardwareDecodingEnabled(enabled);
+                // Decoder ownership and pixel format are fixed when an FFmpeg
+                // context opens. Reuse the proven preview recreation path so
+                // the experiment changes immediately in the Video Library,
+                // while gameplay adopts it only on the next map.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            hardwareDecodingToggle_,
+            "Experimental: uses the Quest's dedicated MediaCodec decoders to reduce CPU work. H.264, VP8, and VP9 at 1080p or lower can fall back to software. H.265 and video above 1080p require hardware and stop video safely if it fails. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -628,20 +701,68 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             automaticPerformanceResponseSlider_,
             "Sets how long video performance must remain at or above the trigger before quality drops one step, or below it before quality rises one step. Automatic Performance keeps reevaluating this interval throughout the map.");
+        // Keep the recovery action visibly attached to the diagnostics toggle.
+        // The panel is freely movable in six degrees, so this one-click default
+        // is the escape hatch if it is accidentally dragged out of reach.
+        auto* diagnosticsRow = BSML::Lite::CreateHorizontalLayoutGroup(
+            performanceParent);
+        if(diagnosticsRow)
+        {
+            diagnosticsRow->set_spacing(2.0f);
+            diagnosticsRow->set_childControlWidth(true);
+            diagnosticsRow->set_childControlHeight(true);
+            diagnosticsRow->set_childForceExpandWidth(false);
+            diagnosticsRow->set_childForceExpandHeight(false);
+            diagnosticsRow->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
+            if(auto* layout = diagnosticsRow->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(8.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        }
+        const BSML::Lite::TransformWrapper diagnosticsParent = diagnosticsRow
+            ? BSML::Lite::TransformWrapper(diagnosticsRow)
+            : performanceParent;
+        performancePanelResetButton_ = BSML::Lite::CreateUIButton(
+            diagnosticsParent, "↻", {0.0f, 0.0f}, {8.0f, 8.0f},
+            []()
+            {
+                PerformancePanel::Instance().ResetPlacement();
+                PaperLogger.info("Reset performance panel placement to defaults");
+            });
+        BSML::Lite::SetButtonTextSize(performancePanelResetButton_, 4.2f);
+        if(auto* layout = performancePanelResetButton_->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            layout->set_minWidth(8.0f);
+            layout->set_preferredWidth(8.0f);
+            layout->set_preferredHeight(8.0f);
+            layout->set_flexibleWidth(0.0f);
+        }
+        BSML::Lite::AddHoverHint(
+            performancePanelResetButton_,
+            "Returns the movable performance panel to its safe default position and angle. This placement is shared by the Video Library and video gameplay.");
+
         performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
-            performanceParent,
+            diagnosticsParent,
             "Show Performance Information",
             settings.PerformanceDiagnosticsEnabled(),
             [](bool enabled)
             {
                 Settings::Instance().SetPerformanceDiagnosticsEnabled(enabled);
-                // This panel deliberately has no saved transform. Re-enabling
-                // it recreates the panel at the safe default position.
                 PerformancePanel::Instance().SetEnabled(enabled);
             });
+        if(auto* layout = performanceDiagnosticsToggle_->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+        {
+            layout->set_minWidth(82.0f);
+            layout->set_preferredWidth(82.0f);
+            layout->set_flexibleWidth(1.0f);
+        }
         BSML::Lite::AddHoverHint(
             performanceDiagnosticsToggle_,
-            "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move it; pausing provides the easiest gameplay access. Turning this off and back on resets its position. Completed, failed, and exited video maps are appended to the performance log.");
+            "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move and angle it. Its placement is saved when you turn it off or leave the menu, then reused during gameplay. Completed, failed, and exited video maps are appended to the performance log.");
 
         powerBenchmarkToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -1696,8 +1817,8 @@ namespace BigScreen {
         auto* localVideoInstructions = BSML::Lite::CreateText(
             localVideoInstructionsModal_,
             "<size=3.8><b>Add Your Own Video</b></size>\n\n"
-            "For a custom or WIP map, copy an H.264/AVC MP4 (up to 1080p) into that map's folder.\n\n"
-            "For any song—including OST and DLC—copy the MP4 into:\n"
+            "For a custom or WIP map, copy a compatible MP4 or WebM video into that map's folder.\n\n"
+            "For any song—including OST and DLC—copy the video into:\n"
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import\n\n"
             "Open Video Library, choose the song, and press SET beside the file. You can then adjust timing normally. Big Screen only registers these user-owned files; Remove Video never deletes them.",
             TMPro::FontStyles::Normal,
@@ -1754,7 +1875,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             addLocalVideoButton,
-            "Explains how to assign an H.264 MP4 from a map folder or Big Screen's Video Import folder.");
+            "Explains how to assign a compatible MP4 or WebM video from a map folder or Big Screen's Video Import folder.");
 
         resetButton_ = BSML::Lite::CreateUIButton(
             generalActions,
@@ -1912,6 +2033,8 @@ namespace BigScreen {
             automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
         SetToggleWithoutNotification(ffmpeg9Toggle_, settings.UseFfmpeg9());
         SetToggleWithoutNotification(
+            hardwareDecodingToggle_, settings.HardwareDecodingEnabled());
+        SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
             powerBenchmarkToggle_, settings.PowerBenchmarkEnabled());
@@ -2005,7 +2128,8 @@ namespace BigScreen {
         {
             const int index = settings.ResolutionHeight() == 480
                 ? 0
-                : settings.ResolutionHeight() == 1080 ? 2 : 1;
+                : settings.ResolutionHeight() == 1080 ? 2
+                : settings.ResolutionHeight() == 1440 ? 3 : 1;
             resolutionDropdown_->index = index;
             if(resolutionDropdown_->dropdown)
                 resolutionDropdown_->dropdown->SelectCellWithIdx(index);
@@ -2209,6 +2333,8 @@ namespace BigScreen {
             resolutionDropdown_->set_interactable(enabled);
         if(ffmpeg9Toggle_)
             ffmpeg9Toggle_->set_interactable(enabled);
+        if(hardwareDecodingToggle_)
+            hardwareDecodingToggle_->set_interactable(enabled);
         if(automaticPerformanceToggle_)
             automaticPerformanceToggle_->set_interactable(enabled);
         if(automaticPerformanceThresholdSlider_)
@@ -2217,6 +2343,8 @@ namespace BigScreen {
         if(automaticPerformanceResponseSlider_)
             automaticPerformanceResponseSlider_->set_interactable(
                 enabled && settings.AutomaticPerformanceEnabled());
+        if(performancePanelResetButton_)
+            performancePanelResetButton_->set_interactable(enabled);
         if(performanceDiagnosticsToggle_)
             performanceDiagnosticsToggle_->set_interactable(enabled);
         if(powerBenchmarkToggle_)
@@ -2225,6 +2353,11 @@ namespace BigScreen {
             nightlyUpdatesToggle_->set_interactable(enabled);
         if(updaterButton_)
             updaterButton_->set_interactable(enabled && DownloadManager::Instance().IsReady());
+        if(showcaseButton_)
+            // The readiness page must remain reachable when the downloader is
+            // unavailable or an asset transfer is active; that page is where
+            // the user sees the actionable status and progress.
+            showcaseButton_->set_interactable(enabled);
     }
 
     void SettingsMenu::RefreshCurvatureControl()
@@ -2514,6 +2647,7 @@ namespace BigScreen {
         SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(settings.VideoEnabled());
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
         ScreenPreview::Instance().SetEnabled(settings.ModEnabled());
+        PerformancePanel::Instance().SetEnabled(false);
         ApplyDistractionFreeMenu();
         RefreshControls();
         PaperLogger.info("Reset all Big Screen settings to defaults");
@@ -2537,6 +2671,19 @@ namespace BigScreen {
                 errorModal_->Show();
                 RefreshControls();
             }
+        }
+        if(showcaseButton_ && showcaseStatus_)
+        {
+            const auto showcase = ShowcaseLauncher::Instance().Snapshot();
+            showcaseStatus_->set_text(
+                showcase.Active() ? showcase.message : "");
+            BSML::Lite::SetButtonText(
+                showcaseButton_,
+                showcase.Active()
+                    ? "Open Showcase Progress"
+                    : "Play Big Screen Showcase");
+            showcaseButton_->set_interactable(
+                Settings::Instance().ModEnabled());
         }
         if(!updaterButton_ || !updaterStatus_) return;
         const auto snapshot = DownloadManager::Instance().Snapshot();

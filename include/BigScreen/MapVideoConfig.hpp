@@ -51,6 +51,15 @@ namespace BigScreen {
         // merely a video URL and timing. Allow Chroma Override uses this guard
         // so ordinary videos continue using the player's selected layout.
         bool hasMapperPresentation = false;
+        // Screen ownership is narrower than general presentation ownership.
+        // Environment, transparency, and timing fields must not disable Big
+        // Screen's canvas controls. Only authored position, rotation, size, or
+        // curvature qualifies as custom screen geometry.
+        bool hasMapperScreenGeometry = false;
+        // Environment ownership remains independent from screen ownership so
+        // a Chroma map can retain its intended scene without taking over an
+        // otherwise ordinary Big Screen video canvas.
+        bool hasMapperEnvironmentPresentation = false;
         bool disableDefaultModifications = false;
         bool forceEnvironmentModifications = false;
 

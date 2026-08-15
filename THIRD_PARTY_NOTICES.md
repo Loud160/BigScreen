@@ -20,7 +20,8 @@ also use independent third-party components under their own terms:
   Screen builds and dynamically links two private Android ARM64 runtimes under the
   GNU Lesser General Public License 2.1 or later. It is configured without
   `--enable-gpl`, `--enable-version3`, or `--enable-nonfree`; it contains only
-  H.264 decoding, MP4/MOV demuxing, local-file access, and frame scaling. The
+  software and Android MediaCodec H.264 decoding, MP4/MOV demuxing, local-file
+  access, JNI/MediaCodec integration, and frame scaling. The
   QMOD includes the LGPL text, both versions' exact build information, and
   source changes. Distinct SONAMEs, symbol namespaces, and decoder backends let
   both runtimes coexist for an in-game A/B selector; 4.4.8 remains the default.

@@ -31,7 +31,9 @@ namespace BigScreen {
         double peakDecodeMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
         int automaticReductions = 0;
+        std::string decoderBackend;
         std::string decoderRuntime;
+        std::string codec;
     };
 
     /// Immutable snapshot used by the results-screen presentation. Keeping the
@@ -106,16 +108,25 @@ namespace BigScreen {
         void Stop();
 
         bool HasPreparedVideo() const { return config_.has_value(); }
-        /// True only when both the global opt-in and actual mapper-authored
-        /// presentation data are present. Environment hooks use the same
-        /// predicate as screen rendering so the two halves cannot disagree.
-        bool MapperPresentationActive() const;
+        /// True only when Allow Chroma Override is enabled, the map actually
+        /// uses Chroma, and its video metadata authors custom screen geometry.
+        /// Only this predicate may suppress the player's canvas controls.
+        bool MapperScreenPresentationActive() const;
+        /// True when Chroma or Cinema environment metadata should retain
+        /// ownership of the gameplay scene. This intentionally does not imply
+        /// ownership of the video canvas.
+        bool MapperEnvironmentPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
         /// True after a decoded image from the active session has reached the
         /// Unity texture. Menu audio uses this as the same pre-start readiness
         /// boundary that gameplay receives from its scene-transition prewarm.
         bool FirstFrameUploaded() const { return started_ && firstFrameUploaded_; }
+        /// True when menu audio may safely start at the requested song time.
+        /// Visible video positions require an uploaded picture; an intentional
+        /// negative lead-in is already ready because its correct presentation
+        /// is the configured black or transparent background, not frame zero.
+        bool SynchronizedAudioReady(double songTimeSeconds) const;
         /// Starts the measured Library-preview interval after its untimed
         /// decoder prewarm. Gameplay gets this same boundary from Start(),
         /// which runs after PrewarmGameplay during the scene transition.

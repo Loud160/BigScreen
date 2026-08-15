@@ -1,12 +1,15 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 #include "BigScreen/VideoLibrary.hpp"
 
 namespace BSML {
     class FloatingScreen;
     class IncrementSetting;
+    class ModalView;
     class ToggleSetting;
 }
 
@@ -90,6 +93,12 @@ namespace BigScreen {
         void InMapToggleChanged(bool enabled);
         void LayoutSelectorChanged(float value);
         void DownloadButtonPressed();
+        void OpenResolutionDialog();
+        void RefreshResolutionDialog();
+        void ResolutionButtonPressed(std::size_t buttonIndex);
+        void RequestResolutionDownload(int height);
+        void ConfirmPendingResolutionDownload();
+        void StartResolutionDownload(int height);
         void ReportDownloadFailure(const std::string& detail);
         void BringHeaderControlsToFront();
         /// Places the floating controls canvas at the proven-visible top
@@ -114,6 +123,11 @@ namespace BigScreen {
         UnityEngine::GameObject* downloadRow_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
+        BSML::ModalView* resolutionModal_ = nullptr;
+        TMPro::TextMeshProUGUI* resolutionModalText_ = nullptr;
+        std::vector<UnityEngine::UI::Button*> resolutionButtons_;
+        std::vector<int> displayedResolutionHeights_;
+        UnityEngine::UI::Button* confirmResolutionButton_ = nullptr;
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
         std::string selectedLevelId_;
         // A failed worker remains in a terminal state until another task is
@@ -129,6 +143,9 @@ namespace BigScreen {
         // the owner that started it. Downloads begun in Big Screen's library
         // must survive the stock song panel being hidden.
         std::string ownedDownloadLevelId_;
+        std::string probedDownloadUrl_;
+        int pendingDownloadHeight_ = 0;
+        bool resolutionModalOpen_ = false;
         // Map metadata is immutable while one song remains selected. Keeping
         // its descriptor here avoids reparsing Cinema JSON and probing files
         // ten times per second merely to redraw an unchanged download button.

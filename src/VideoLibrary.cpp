@@ -24,6 +24,7 @@ extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
 #include "libavutil/error.h"
+#include "libavutil/pixdesc.h"
 }
 
 namespace BigScreen {
@@ -250,6 +251,43 @@ namespace BigScreen {
             return buffer;
         }
 
+        bool IsHdrTransfer(AVColorTransferCharacteristic transfer)
+        {
+            return transfer == AVCOL_TRC_SMPTE2084 ||
+                   transfer == AVCOL_TRC_ARIB_STD_B67;
+        }
+
+        std::string UnsupportedPixelReason(const AVCodecParameters* parameters)
+        {
+            if(!parameters)
+                return "This file does not contain readable video parameters.";
+            if(IsHdrTransfer(parameters->color_trc))
+                return "HDR video is not supported. Re-export it as 8-bit SDR.";
+            if(parameters->codec_id == AV_CODEC_ID_HEVC &&
+               parameters->profile == FF_PROFILE_HEVC_MAIN_10)
+                return "H.265/HEVC Main10 is not supported. Re-export it as 8-bit SDR HEVC Main profile.";
+            if(parameters->codec_id == AV_CODEC_ID_VP9 &&
+               parameters->profile == FF_PROFILE_VP9_2)
+                return "VP9 profile 2 is a 10-bit/HDR format and is not supported. Re-export it as 8-bit SDR VP9 profile 0.";
+            const auto format = static_cast<AVPixelFormat>(parameters->format);
+            if(format == AV_PIX_FMT_NONE)
+                return {};
+            const auto* description = av_pix_fmt_desc_get(format);
+            if(!description)
+                return {};
+            if((description->flags & AV_PIX_FMT_FLAG_ALPHA) != 0)
+                return "WebM alpha video is not supported. Export an ordinary 8-bit 4:2:0 video without transparency.";
+            for(int component = 0; component < description->nb_components; ++component)
+            {
+                if(description->comp[component].depth > 8)
+                    return "10-bit video is not supported. Re-export it as 8-bit SDR.";
+            }
+            if(description->log2_chroma_w != 1 ||
+               description->log2_chroma_h != 1)
+                return "Only 8-bit 4:2:0 video is supported. Re-export it using yuv420p.";
+            return {};
+        }
+
         LocalVideoFile ProbeLocalVideo(const std::filesystem::path& path)
         {
             LocalVideoFile result;
@@ -263,7 +301,7 @@ namespace BigScreen {
             if(status < 0)
             {
                 result.problem =
-                    "Big Screen could not open this MP4. The file may still be copying, may be damaged, or may not actually be an MP4 file. FFmpeg reported: " +
+                    "Big Screen could not open this video. The file may still be copying, may be damaged, or may use an unsupported container. FFmpeg reported: " +
                     FfmpegError(status);
                 return result;
             }
@@ -277,7 +315,7 @@ namespace BigScreen {
             if(status < 0)
             {
                 result.problem =
-                    "Big Screen could not read this MP4's stream information. The file may be incomplete or damaged. FFmpeg reported: " +
+                    "Big Screen could not read this video's stream information. The file may be incomplete or damaged. FFmpeg reported: " +
                     FfmpegError(status);
                 closeFormat();
                 return result;
@@ -286,25 +324,28 @@ namespace BigScreen {
             const std::string container = format->iformat && format->iformat->name
                 ? format->iformat->name
                 : "";
-            if(container.find("mp4") == std::string::npos)
+            auto extension = path.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            const bool mp4Container = container.find("mov") != std::string::npos ||
+                container.find("mp4") != std::string::npos;
+            const bool webmContainer = container.find("matroska") != std::string::npos ||
+                container.find("webm") != std::string::npos;
+            if((extension == ".mp4" && !mp4Container) ||
+               (extension == ".webm" && !webmContainer))
             {
                 result.problem =
-                    "This file has an .mp4 name, but its internal container is not MP4. Convert or remux it to a real MP4 file before using it with Big Screen.";
+                    "This file's extension does not match its internal container. Use MP4 for H.264/H.265 or WebM for VP8/VP9.";
                 closeFormat();
                 return result;
             }
 
-#if LIBAVCODEC_VERSION_MAJOR >= 59
-            const AVCodec* decoder = nullptr;
-#else
-            AVCodec* decoder = nullptr;
-#endif
             const int streamIndex = av_find_best_stream(
-                format, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
-            if(streamIndex < 0 || !decoder)
+                format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+            if(streamIndex < 0)
             {
                 result.problem =
-                    "This MP4 does not contain a video stream that Big Screen can decode.";
+                    "This file does not contain a video stream that Big Screen can decode.";
                 closeFormat();
                 return result;
             }
@@ -315,11 +356,25 @@ namespace BigScreen {
             result.codec = parameters
                 ? std::string(avcodec_get_name(parameters->codec_id))
                 : "unknown";
-            if(!parameters || parameters->codec_id != AV_CODEC_ID_H264)
+            const bool codecMatchesContainer = parameters &&
+                ((mp4Container &&
+                  (parameters->codec_id == AV_CODEC_ID_H264 ||
+                   parameters->codec_id == AV_CODEC_ID_HEVC)) ||
+                 (webmContainer &&
+                  (parameters->codec_id == AV_CODEC_ID_VP8 ||
+                   parameters->codec_id == AV_CODEC_ID_VP9)));
+            if(!codecMatchesContainer)
             {
                 result.problem =
                     "This video uses " + result.codec +
-                    ". Big Screen requires H.264/AVC video inside an MP4 because that is the supported Quest software-decoding format.";
+                    ". Big Screen supports MP4 with H.264/H.265 and WebM with VP8/VP9.";
+                closeFormat();
+                return result;
+            }
+            if(const auto pixelProblem = UnsupportedPixelReason(parameters);
+               !pixelProblem.empty())
+            {
+                result.problem = pixelProblem;
                 closeFormat();
                 return result;
             }
@@ -331,11 +386,11 @@ namespace BigScreen {
             }
             const int longEdge = std::max(result.width, result.height);
             const int shortEdge = std::min(result.width, result.height);
-            if(longEdge > 1920 || shortEdge > 1080)
+            if(longEdge > 2560 || shortEdge > 1440)
             {
                 std::ostringstream message;
                 message << "This video is " << result.width << 'x' << result.height
-                        << ". Big Screen accepts Full HD (1920x1080) or lower; 2K and 4K files are too demanding for Quest software decoding.";
+                        << ". Big Screen supports videos through 2560x1440 (or 1440x2560 portrait). Larger videos must be re-exported at 1440p or lower.";
                 result.problem = message.str();
                 closeFormat();
                 return result;
@@ -352,7 +407,7 @@ namespace BigScreen {
             return result;
         }
 
-        /// Enumerates MP4 candidates without hiding invalid files. Showing a
+        /// Enumerates MP4 and WebM candidates without hiding invalid files. Showing a
         /// red HELP row is more useful than silently ignoring a mistyped or
         /// unsupported file that the user deliberately copied to the headset.
         std::vector<LocalVideoFile> DiscoverVideosInDirectory(
@@ -369,7 +424,7 @@ namespace BigScreen {
                 auto extension = iterator->path().extension().string();
                 std::transform(extension.begin(), extension.end(), extension.begin(),
                     [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-                if(extension == ".mp4")
+                if(extension == ".mp4" || extension == ".webm")
                     files.push_back(ProbeLocalVideo(iterator->path()));
             }
             std::sort(files.begin(), files.end(), [](const auto& left, const auto& right)
@@ -571,10 +626,20 @@ namespace BigScreen {
 
     std::filesystem::path VideoLibrary::AllocateVideoPath(
         const std::string& levelId,
-        VideoOrigin origin) const
+        VideoOrigin origin,
+        std::string_view extension) const
     {
         std::scoped_lock lock(mutex_);
-        const auto suffix = origin == VideoOrigin::User ? "-user.mp4" : "-mapper.mp4";
+        std::string normalizedExtension(extension);
+        std::transform(
+            normalizedExtension.begin(), normalizedExtension.end(),
+            normalizedExtension.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if(normalizedExtension != ".mp4" && normalizedExtension != ".webm")
+            normalizedExtension = ".mp4";
+        const auto suffix = origin == VideoOrigin::User
+            ? "-user" + normalizedExtension
+            : "-mapper" + normalizedExtension;
         return videoPath_ / (StableKey(levelId) + suffix);
     }
 
@@ -656,12 +721,12 @@ namespace BigScreen {
             {
                 return static_cast<char>(std::tolower(value));
             });
-        if(extension != ".mp4")
+        if(extension != ".mp4" && extension != ".webm")
         {
             LocalVideoFile result;
             result.fileName = path.filename().string();
             result.path = path;
-            result.problem = "Big Screen can select MP4 files only.";
+            result.problem = "Big Screen can select MP4 and WebM video files only.";
             return result;
         }
         return ProbeLocalVideo(path);
@@ -1354,10 +1419,26 @@ namespace BigScreen {
             record.songAuthor = level->songAuthorName
                 ? std::string(level->songAuthorName) : std::string{};
             const auto key = StableKey(levelId);
-            const auto recoverOne = [&](const char* suffix) -> std::optional<StoredVideo>
+            const auto recoverOne = [&](const char* stem) -> std::optional<StoredVideo>
             {
-                const auto path = videoPath_ / (key + suffix);
-                if(!std::filesystem::is_regular_file(path))
+                std::filesystem::path path;
+                std::filesystem::file_time_type newest{};
+                for(const auto extension : {".mp4", ".webm"})
+                {
+                    const auto candidate = videoPath_ /
+                        (key + stem + extension);
+                    std::error_code timeError;
+                    if(!std::filesystem::is_regular_file(candidate, timeError))
+                        continue;
+                    const auto modified =
+                        std::filesystem::last_write_time(candidate, timeError);
+                    if(path.empty() || (!timeError && modified > newest))
+                    {
+                        path = candidate;
+                        if(!timeError) newest = modified;
+                    }
+                }
+                if(path.empty())
                     return std::nullopt;
                 const auto probe = ProbeLocalVideo(path);
                 if(!probe.compatible)
@@ -1372,8 +1453,8 @@ namespace BigScreen {
                 video.height = probe.height;
                 return video;
             };
-            record.user = recoverOne("-user.mp4");
-            record.mapper = recoverOne("-mapper.mp4");
+            record.user = recoverOne("-user");
+            record.mapper = recoverOne("-mapper");
             if(!record.user && !record.mapper)
                 continue;
             records_.emplace_back(levelId, std::move(record));

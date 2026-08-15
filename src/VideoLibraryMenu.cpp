@@ -34,6 +34,7 @@
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "HMUI/InputFieldView.hpp"
+#include "HMUI/HoverHint.hpp"
 #include "HMUI/ImageView.hpp"
 #include "HMUI/ScrollView.hpp"
 #include "HMUI/TableCell.hpp"
@@ -55,6 +56,7 @@
 #include "UnityEngine/RectOffset.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Sprite.hpp"
+#include "UnityEngine/TextAnchor.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ColorBlock.hpp"
@@ -98,6 +100,28 @@ namespace BigScreen {
         // can place the handle in VR and work for songs of any duration.
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
+        constexpr std::string_view MapperTimingLockedHint =
+            "This timing comes from the map author's Cinema configuration. Download or assign the video before changing it.";
+        constexpr std::string_view FitTimingHint =
+            "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed.";
+        constexpr std::string_view RateTimingHint =
+            "Controls how quickly the video advances. 1.00 is normal speed; lower values slow it down and higher values speed it up. Fit to Song manages this value automatically when enabled.";
+        constexpr std::string_view OffsetTimingHint =
+            "Aligns the video with the song. Negative values wait before showing video frame zero; positive values begin farther into the video.";
+        constexpr std::string_view LeadInTimingHint =
+            "Controls the waiting time created by a negative Video Playback Offset. On shows a solid black screen; off keeps the screen hidden until the video begins.";
+
+        void SetBrightButtonLabel(
+            UnityEngine::UI::Button* button,
+            float fontSize)
+        {
+            if(!button)
+                return;
+            BSML::Lite::SetButtonTextSize(button, fontSize);
+            if(auto* text = button->get_gameObject()
+                   ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                text->set_color(UnityEngine::Color::get_white());
+        }
 
         // These sprites are created only from the configured video's cached
         // YouTube thumbnail. Beat Saber's song/album cover is deliberately not
@@ -117,6 +141,21 @@ namespace BigScreen {
             std::optional<std::filesystem::path> path;
         };
         std::unordered_map<std::string, RowVideoThumbnail> RowVideoThumbnails;
+
+        /// Supplies the timing values that a Video Library download should
+        /// inherit. A playable user/mapper assignment is authoritative while
+        /// it exists. With no MP4 present, retain the mapper's Cinema timing
+        /// as hidden download defaults instead of resetting the request to
+        /// zero merely because playback controls are intentionally concealed.
+        const MapVideoConfig* EditorTimingConfig(
+            const VideoDescriptor& descriptor)
+        {
+            if(descriptor.playableConfig)
+                return &*descriptor.playableConfig;
+            if(descriptor.mapperDefinition)
+                return &*descriptor.mapperDefinition;
+            return nullptr;
+        }
 
         void EvictVideoThumbnail(const std::string& path)
         {
@@ -598,6 +637,7 @@ namespace BigScreen {
         editorController_ = editorController;
         navigate_ = std::move(navigate);
         browseLocalVideo_ = std::move(browseLocalVideo);
+        timingRows_.clear();
         videoOnlyRows_.clear();
 
         // Qounters-style pages use one layout-owned content tree per view
@@ -802,7 +842,7 @@ namespace BigScreen {
         // reorder it inside the horizontal group so the action occupies the
         // left edge and the song/artist block receives the remaining width.
         searchYouTubeButton_->get_transform()->SetAsFirstSibling();
-        BSML::Lite::SetButtonTextSize(searchYouTubeButton_, 2.2f);
+        SetBrightButtonLabel(searchYouTubeButton_, 2.2f);
         if(auto* searchText = searchYouTubeButton_->get_gameObject()
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
         {
@@ -838,10 +878,10 @@ namespace BigScreen {
                     browseLocalVideo_(selected_);
             });
         ConfigureLayout(showFileBrowserButton_, 20.0f, 7.5f, 0.0f);
-        BSML::Lite::SetButtonTextSize(showFileBrowserButton_, 2.25f);
+        SetBrightButtonLabel(showFileBrowserButton_, 2.25f);
         BSML::Lite::AddHoverHint(
             showFileBrowserButton_,
-            "Opens the Quest file browser at this map's folder. Built-in songs start in Big Screen's Video Import folder. You can navigate anywhere in shared storage and assign a compatible H.264 MP4.");
+            "Opens the Quest file browser at this map's folder. Built-in songs start in Big Screen's Video Import folder. You can navigate anywhere in shared storage and assign an 8-bit SDR H.264/H.265 MP4 or VP8/VP9 WebM video up to 1440p.");
         localVideoStatusText_ = BSML::Lite::CreateText(
             localRow, "", 2.45f);
         ConfigureLayout(localVideoStatusText_, 0.0f, 7.5f, 1.0f);
@@ -889,19 +929,23 @@ namespace BigScreen {
             {13.0f, 7.5f},
             [this]() { PasteUrlFromClipboard(); });
         ConfigureLayout(pasteUrlButton_, 13.0f, 7.5f, 0.0f);
-        BSML::Lite::SetButtonTextSize(pasteUrlButton_, 2.45f);
+        SetBrightButtonLabel(pasteUrlButton_, 2.45f);
         pasteUrlButtonText_ = pasteUrlButton_->get_gameObject()
             ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
-        if(pasteUrlButtonText_)
-            pasteUrlButtonText_->set_color(UnityEngine::Color::get_white());
         urlInput_ = BSML::Lite::CreateStringSetting(
             urlEntryRow, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
                 transientStatus_.clear();
                 if(!suppressUrlCallback_)
+                {
+                    mapperProvidedUrl_ = false;
+                    RefreshUrlTextColor();
                     BeginUrlProbe();
+                }
             });
         ConfigureLayout(urlInput_, 0.0f, 8.0f, 1.0f);
+        urlInputText_ = urlInput_->__cordl_internal_get__textView().ptr();
+        RefreshUrlTextColor();
         checkUrlButton_ = BSML::Lite::CreateUIButton(
             urlEntryRow,
             "Check",
@@ -909,7 +953,7 @@ namespace BigScreen {
             {10.0f, 7.5f},
             [this]() { BeginUrlProbe(); });
         ConfigureLayout(checkUrlButton_, 10.0f, 7.5f, 0.0f);
-        BSML::Lite::SetButtonTextSize(checkUrlButton_, 2.35f);
+        SetBrightButtonLabel(checkUrlButton_, 2.35f);
         BSML::Lite::AddHoverHint(
             checkUrlButton_,
             "Checks the displayed YouTube address and enables Download Video when the video is available. Use this for a mapper-provided address that has not been checked yet.");
@@ -944,48 +988,118 @@ namespace BigScreen {
         auto* urlPreviewRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlPreviewRow);
         urlPreviewRow->set_spacing(0.45f);
-        ConfigureLayout(urlPreviewRow, -1.0f, 9.0f, 1.0f);
+        urlPreviewRow->set_childAlignment(UnityEngine::TextAnchor::MiddleLeft);
+        ConfigureLayout(urlPreviewRow, -1.0f, 10.5f, 1.0f);
         if(auto* previewRowLayout = EnsureLayout(urlPreviewRow))
-            previewRowLayout->set_minHeight(9.0f);
+            previewRowLayout->set_minHeight(10.5f);
         urlThumbnail_ = BSML::Lite::CreateImage(
             urlPreviewRow,
             BSML::Utilities::ImageResources::GetBlankSprite());
-        ConfigureLayout(urlThumbnail_, 15.0f, 7.7f, 0.0f);
+        // Keep the established preview artwork large enough to identify the
+        // video at a glance. Resolution choices consume horizontal space, not
+        // the thumbnail's height or aspect ratio.
+        ConfigureLayout(urlThumbnail_, 17.0f, 9.2f, 0.0f);
         urlThumbnail_->set_color({0.08f, 0.10f, 0.13f, 0.85f});
         urlThumbnail_->set_preserveAspect(true);
+
+        // The probe can expose as many as four exact source tiers. Give the
+        // entire remaining row to those choices instead of retaining the old
+        // single centered Download Video button and decorative balance image.
+        // This is the visible half of the explicit-resolution contract: the
+        // global output limiter never filters these source download choices.
+        // Keep all four choices in one row, but use an explicit action verb so
+        // the values cannot be mistaken for passive metadata. The wider native
+        // backgrounds and single-line labels remain readable on Quest.
+        auto* downloadChoices = BSML::Lite::CreateHorizontalLayoutGroup(urlPreviewRow);
+        ConfigureGroup(downloadChoices);
+        downloadChoices->set_spacing(0.35f);
+        downloadChoices->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
+        ConfigureLayout(downloadChoices, 0.0f, 9.2f, 1.0f);
+        downloadTierButtons_.clear();
+        displayedDownloadHeights_.clear();
+        for(std::size_t index = 0; index < 4; ++index)
+        {
+            auto* button = BSML::Lite::CreateUIButton(
+                downloadChoices,
+                "DOWNLOAD 480p",
+                {0.0f, 0.0f},
+                {17.0f, 7.5f},
+                [this, index]() { DownloadResolutionPressed(index); });
+            ConfigureLayout(button, 17.0f, 7.5f, 0.0f);
+            SetBrightButtonLabel(button, 2.9f);
+            if(auto* tierText = button->get_gameObject()
+                   ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            {
+                tierText->set_enableWordWrapping(false);
+                tierText->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+            }
+            BSML::Lite::AddHoverHint(
+                button,
+                "Downloads this exact source resolution and assigns it to the selected song. The separate playback-resolution setting may downscale it later.");
+            button->get_gameObject()->SetActive(false);
+            downloadTierButtons_.push_back(button);
+        }
         downloadButton_ = BSML::Lite::CreateUIButton(
-            urlPreviewRow, "Download Video", {0.0f, 0.0f}, {18.5f, 7.5f},
+            downloadChoices, "Download Video", {0.0f, 0.0f}, {20.0f, 7.5f},
             [this]() { StartOrCancelDownload(); });
-        ConfigureLayout(downloadButton_, 18.5f, 7.5f, 0.0f);
-        BSML::Lite::SetButtonTextSize(downloadButton_, 2.45f);
+        ConfigureLayout(downloadButton_, 20.0f, 7.5f, 0.0f);
+        SetBrightButtonLabel(downloadButton_, 2.45f);
         downloadButtonText_ = downloadButton_->get_gameObject()
             ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
         BSML::Lite::AddHoverHint(
             downloadButton_,
-            "Downloads the checked YouTube video as an H.264 MP4 and assigns it to this song. While active, the same button can pause the download.");
+            "Downloads the selected source tier and assigns it to this song. Resolutions through 1080p use H.264 MP4; 1440p uses VP9 WebM and requires hardware decoding. While active, the same button can pause the download.");
         downloadButton_->get_gameObject()->SetActive(false);
         // Preserve the thumbnail/action row geometry while the real button is
         // hidden. Swapping this transparent slot out when validation succeeds
         // prevents the thumbnail from jumping sideways as the button appears.
         auto* downloadButtonPlaceholder = BSML::Lite::CreateImage(
-            urlPreviewRow,
+            downloadChoices,
             BSML::Utilities::ImageResources::GetBlankSprite());
         downloadButtonPlaceholder->set_color({0.0f, 0.0f, 0.0f, 0.0f});
         downloadButtonPlaceholder->set_raycastTarget(false);
-        ConfigureLayout(downloadButtonPlaceholder, 18.5f, 7.5f, 0.0f);
         downloadButtonPlaceholder_ = downloadButtonPlaceholder->get_gameObject();
-        auto* thumbnailBalance = BSML::Lite::CreateImage(
-            urlPreviewRow,
-            BSML::Utilities::ImageResources::GetBlankSprite());
-        thumbnailBalance->set_color({0.0f, 0.0f, 0.0f, 0.0f});
-        thumbnailBalance->set_raycastTarget(false);
-        ConfigureLayout(thumbnailBalance, 15.0f, 8.4f, 0.0f);
         BSML::Lite::AddHoverHint(
             urlInput_,
             "Enter a normal youtube.com video address or a youtu.be Share link. Big Screen checks the link before the Download Video button appears.");
         BSML::Lite::AddHoverHint(
             pasteUrlButton_,
             "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
+
+        downloadConfirmModal_ = BSML::Lite::CreateModal(
+            editorController, {76.0f, 42.0f}, nullptr, true);
+        downloadConfirmationText_ = BSML::Lite::CreateText(
+            downloadConfirmModal_,
+            "",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 5.0f},
+            {68.0f, 24.0f});
+        downloadConfirmationText_->set_enableWordWrapping(true);
+        downloadConfirmationText_->set_enableAutoSizing(true);
+        downloadConfirmationText_->set_fontSizeMin(2.45f);
+        downloadConfirmationText_->set_fontSizeMax(3.0f);
+        downloadConfirmationText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        downloadConfirmationText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            downloadConfirmModal_->get_transform(),
+            "Cancel",
+            {20.0f, -31.0f},
+            {23.0f, 8.0f},
+            [this]()
+            {
+                pendingDownloadHeight_ = 0;
+                if(downloadConfirmModal_)
+                    downloadConfirmModal_->Hide();
+            });
+        confirmDownloadButton_ = BSML::Lite::CreateUIButton(
+            downloadConfirmModal_->get_transform(),
+            "Download",
+            {54.0f, -31.0f},
+            {29.0f, 8.0f},
+            [this]() { ConfirmPendingResolutionDownload(); });
 
         // Status and progress belong directly below the controls they describe.
         // This keeps recognition errors and active download feedback visually
@@ -1056,10 +1170,10 @@ namespace BigScreen {
             });
         ConfigureLayout(fitToggle_, -1.0f, 7.8f, 1.0f);
         StyleToggleRow(fitToggle_);
-        BSML::Lite::AddHoverHint(
+        fitTimingHint_ = BSML::Lite::AddHoverHint(
             fitToggle_,
-            "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed.");
-        videoOnlyRows_.push_back(timingToggleColumn->get_gameObject());
+            std::string(FitTimingHint));
+        timingRows_.push_back(timingToggleColumn->get_gameObject());
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Playback Speed", 2, 0.05f, 1.0f,
@@ -1077,10 +1191,10 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
-        videoOnlyRows_.push_back(rateSetting_->get_gameObject());
-        BSML::Lite::AddHoverHint(
+        timingRows_.push_back(rateSetting_->get_gameObject());
+        rateTimingHint_ = BSML::Lite::AddHoverHint(
             rateSetting_,
-            "Controls how quickly the video advances. 1.00 is normal speed; lower values slow it down and higher values speed it up. Fit to Song manages this value automatically when enabled.");
+            std::string(RateTimingHint));
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
             editorBody, "Video Playback Offset", 2, 0.25f, 0.0f,
@@ -1106,10 +1220,10 @@ namespace BigScreen {
                 }
             });
         ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
-        videoOnlyRows_.push_back(offsetSetting_->get_gameObject());
-        BSML::Lite::AddHoverHint(
+        timingRows_.push_back(offsetSetting_->get_gameObject());
+        offsetTimingHint_ = BSML::Lite::AddHoverHint(
             offsetSetting_,
-            "Aligns the video with the song. Negative values wait before showing video frame zero; positive values begin farther into the video.");
+            std::string(OffsetTimingHint));
 
         blackLeadInToggle_ = BSML::Lite::CreateToggle(
             editorBody,
@@ -1130,10 +1244,10 @@ namespace BigScreen {
             });
         ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
         StyleToggleRow(blackLeadInToggle_);
-        BSML::Lite::AddHoverHint(
+        leadInTimingHint_ = BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
-            "Controls the waiting time created by a negative Video Playback Offset. On shows a solid black screen; off keeps the screen hidden until the video begins.");
-        videoOnlyRows_.push_back(blackLeadInToggle_->get_gameObject());
+            std::string(LeadInTimingHint));
+        timingRows_.push_back(blackLeadInToggle_->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
         // alter video synchronization. The title, scrubber, transport button,
@@ -1489,7 +1603,7 @@ namespace BigScreen {
             target->set_color(UnityEngine::Color::get_white());
         BSML::Lite::AddHoverHint(
             removeButton_,
-            "Removes the current user video assignment after confirmation. Downloaded Big Screen videos are deleted; map-folder and Video Import files are only unassigned and remain on the Quest.");
+            "Removes this song's assigned video after confirmation. Big Screen downloads are deleted; map-folder, Video Import, and other local files are only unassigned and remain on the Quest.");
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
@@ -1704,20 +1818,20 @@ namespace BigScreen {
         transientStatus_.clear();
         ClearThumbnail();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
-        offset_ = descriptor.playableConfig ? descriptor.playableConfig->offsetSeconds : 0.0;
-        rate_ = descriptor.playableConfig ? descriptor.playableConfig->playbackRate : 1.0;
-        fitToSong_ = descriptor.playableConfig
-            ? descriptor.playableConfig->fitToSong
-            : false;
-        blackDuringLeadIn_ = descriptor.playableConfig
-            ? descriptor.playableConfig->blackDuringLeadIn
-            : false;
+        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
+            descriptor.downloadOrigin == VideoOrigin::Mapper;
+        offset_ = timing ? timing->offsetSeconds : 0.0;
+        rate_ = timing ? timing->playbackRate : 1.0;
+        fitToSong_ = timing ? timing->fitToSong : false;
+        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
         }
         suppressTimingCallbacks_ = true;
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
@@ -1863,6 +1977,86 @@ namespace BigScreen {
             RefreshDetails();
             return;
         }
+        // Retry and Resume keep the exact tier chosen before the transfer
+        // failed or was cancelled. A direct/non-enumerated fallback uses the
+        // historic 1080p request only when the probe supplied no tier list.
+        const int requestedHeight = current.levelId == selectedLevelId &&
+            current.requestedHeight > 0
+                ? current.requestedHeight
+                : 1080;
+        RequestResolutionDownload(requestedHeight);
+    }
+
+    void VideoLibraryMenu::DownloadResolutionPressed(std::size_t buttonIndex)
+    {
+        if(buttonIndex >= displayedDownloadHeights_.size())
+            return;
+        RequestResolutionDownload(displayedDownloadHeights_[buttonIndex]);
+    }
+
+    void VideoLibraryMenu::RequestResolutionDownload(int height)
+    {
+        if(!selected_ || height < 1 || height > 1440)
+            return;
+
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const bool localFile = descriptor.userOverrideIsMapLocal ||
+            descriptor.userOverrideIsImported ||
+            descriptor.userOverrideIsExternal ||
+            (descriptor.hasMapperLocalFile && !descriptor.hasUserOverride);
+        const bool needsWarning = height == 1440;
+        const bool replacing = descriptor.CanPlay();
+        if(!needsWarning && !replacing)
+        {
+            StartResolutionDownload(height);
+            return;
+        }
+
+        pendingDownloadHeight_ = height;
+        std::ostringstream message;
+        message << "<b>Download " << height << "p video";
+        if(replacing)
+            message << " and replace the current assignment";
+        message << "?</b>\n\n";
+        if(needsWarning)
+        {
+            message << "1440p requires Hardware Video Decoding. Software decoding is not supported. If hardware decoding fails, Big Screen stops the video while the map continues.\n\n";
+        }
+        if(replacing)
+        {
+            if(descriptor.activeMapFileName)
+                message << "Currently assigned: "
+                        << *descriptor.activeMapFileName << "\n";
+            message << "The current video remains available until the new download succeeds.";
+            if(localFile)
+                message << " Your local file will not be deleted; Big Screen only changes this song's assignment.";
+        }
+        if(downloadConfirmationText_)
+            downloadConfirmationText_->set_text(message.str());
+        if(confirmDownloadButton_)
+            BSML::Lite::SetButtonText(
+                confirmDownloadButton_,
+                "Download " + std::to_string(height) + "p");
+        if(downloadConfirmModal_)
+            downloadConfirmModal_->Show();
+    }
+
+    void VideoLibraryMenu::ConfirmPendingResolutionDownload()
+    {
+        const int height = pendingDownloadHeight_;
+        pendingDownloadHeight_ = 0;
+        if(downloadConfirmModal_)
+            downloadConfirmModal_->Hide();
+        if(height > 0)
+            StartResolutionDownload(height);
+    }
+
+    void VideoLibraryMenu::StartResolutionDownload(int height)
+    {
+        auto& downloader = DownloadManager::Instance();
+        if(!selected_)
+            return;
+        const auto selectedLevelId = std::string(selected_->levelID);
         url_ = Trim(url_);
         if(url_.empty())
         {
@@ -1877,14 +2071,28 @@ namespace BigScreen {
             RefreshDetails();
             return;
         }
-        DownloadRequest request{
-            std::string(selected_->levelID),
-            selected_->songName ? std::string(selected_->songName) : std::string("Unknown Song"),
-            selected_->songAuthorName ? std::string(selected_->songAuthorName) : std::string{},
-            url_, VideoOrigin::User, ExplicitAllowed(), offset_, rate_,
-            fitToSong_, blackDuringLeadIn_};
+        DownloadRequest request;
+        request.levelId = selectedLevelId;
+        request.songName = selected_->songName
+            ? std::string(selected_->songName)
+            : std::string("Unknown Song");
+        request.songAuthor = selected_->songAuthorName
+            ? std::string(selected_->songAuthorName)
+            : std::string{};
+        request.sourceUrl = url_;
+        request.origin = VideoOrigin::User;
+        request.explicitContentAllowed = ExplicitAllowed();
+        request.offsetSeconds = offset_;
+        request.playbackRate = rate_;
+        request.fitToSong = fitToSong_;
+        request.blackDuringLeadIn = blackDuringLeadIn_;
+        request.requestedHeight = height;
+        request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
         std::string error;
-        PaperLogger.info("Download button pressed for {}", selectedLevelId);
+        PaperLogger.info(
+            "Download {}p button pressed for {}",
+            height,
+            selectedLevelId);
         if(!downloader.Start(std::move(request), error))
         {
             transientStatus_ = error.empty()
@@ -1927,9 +2135,11 @@ namespace BigScreen {
             }
 
             url_ = clipboard;
+            mapperProvidedUrl_ = false;
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
             BeginUrlProbe();
         }
         catch(const std::exception& error)
@@ -2083,7 +2293,7 @@ namespace BigScreen {
             {
                 localVideoStatusText_->set_text(
                     "Local video: " +
-                    descriptor.activeMapFileName.value_or("selected MP4"));
+                    descriptor.activeMapFileName.value_or("selected video"));
                 localVideoStatusText_->set_color(
                     {0.20f, 1.0f, 0.36f, 1.0f});
             }
@@ -2146,11 +2356,13 @@ namespace BigScreen {
         suppressTimingCallbacks_ = false;
 
         url_.clear();
+        mapperProvidedUrl_ = false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText("");
             suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
         }
         ClearThumbnail();
         transientStatus_ = imported
@@ -2176,7 +2388,7 @@ namespace BigScreen {
             ((index < localVideoImported_.size() && localVideoImported_[index])
                 ? "Video Import: " : "") + file.fileName + "\n\n" +
             (file.problem.empty()
-                ? "This MP4 is not compatible with Big Screen. Use H.264/AVC video at 1080p or lower inside a valid MP4 container."
+                ? "This file is not compatible with Big Screen. Use 8-bit SDR H.264/H.265 MP4 or VP8/VP9 WebM video up to 1440p."
                 : file.problem));
         localVideoHelpModal_->Show();
     }
@@ -2211,11 +2423,13 @@ namespace BigScreen {
         suppressTimingCallbacks_ = false;
 
         url_.clear();
+        mapperProvidedUrl_ = false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText("");
             suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
         }
         ClearThumbnail();
         transientStatus_ = "Local video assigned: " + fileName;
@@ -2234,12 +2448,17 @@ namespace BigScreen {
         if(!selected_) return;
 
         const auto removedDescriptor = VideoLibrary::Instance().Describe(selected_);
+        const bool hasUserOverride = removedDescriptor.hasUserOverride;
+        const bool hasMapperDownload = removedDescriptor.hasMapperDownload;
         const bool removingLocalMapFile =
             removedDescriptor.userOverrideIsMapLocal;
         const bool removingImportedFile =
             removedDescriptor.userOverrideIsImported;
         const bool removingExternalFile =
             removedDescriptor.userOverrideIsExternal;
+        const bool removingManagedUserDownload = hasUserOverride &&
+            !removingLocalMapFile && !removingImportedFile &&
+            !removingExternalFile;
 
         // Stop both clocks before changing the active assignment. Managed
         // downloads may be deleted after their decoder closes; map-folder MP4s
@@ -2251,20 +2470,40 @@ namespace BigScreen {
 
         auto& library = VideoLibrary::Instance();
         const auto levelId = std::string(selected_->levelID);
-        const auto thumbnailPath = library.AllocateThumbnailPath(
+        const auto userThumbnailPath = library.AllocateThumbnailPath(
             levelId, VideoOrigin::User).string();
-        if(!library.RemoveUserOverride(levelId, true))
+        const auto mapperThumbnailPath = library.AllocateThumbnailPath(
+            levelId, VideoOrigin::Mapper).string();
+
+        bool removed = false;
+        if(hasUserOverride)
+            removed = library.RemoveUserOverride(levelId, true);
+
+        // Downloads initiated from the song-selection screen are mapper
+        // records, while downloads replaced from this editor are user records.
+        // If both owned files exist, exposing the mapper copy immediately after
+        // "Remove Video" makes the action appear to have done nothing and
+        // wastes storage. Removing a managed user download therefore removes
+        // its managed mapper fallback as part of the same confirmed action.
+        // User-owned local/import/external files retain the non-destructive
+        // unassign-and-fall-back behavior promised by their dialog.
+        const bool shouldDeleteMapperDownload = hasMapperDownload &&
+            (!hasUserOverride || removingManagedUserDownload);
+        if(shouldDeleteMapperDownload)
+            removed = library.DeleteMapperDownload(levelId) || removed;
+
+        if(!removed)
         {
-            transientStatus_ = "No user video was available to remove.";
+            transientStatus_ = "No removable video was available for this song.";
             RefreshDetails();
             return;
         }
 
-        // The row sprite outlives the file it was decoded from, so explicitly
-        // evict and destroy it when its user video is removed. If the song has
-        // a mapper video underneath, that separate mapper thumbnail will be
-        // selected the next time the browser is rebuilt.
-        EvictVideoThumbnail(thumbnailPath);
+        // Row sprites outlive the files from which they were decoded. Evict
+        // both possible managed identities; this is harmless when one source
+        // remains because the next refresh reloads its still-existing JPEG.
+        EvictVideoThumbnail(userThumbnailPath);
+        EvictVideoThumbnail(mapperThumbnailPath);
 
         // The thumbnail sprite is UI-owned and independent of the downloaded
         // MP4. Delete the probe image associated with this song as well, then
@@ -2289,31 +2528,27 @@ namespace BigScreen {
         }
         ClearThumbnail();
         transientStatus_ = removingLocalMapFile
-            ? "Local video assignment removed. The MP4 remains in the map folder."
+            ? "Local video assignment removed. The video file remains in the map folder."
             : removingImportedFile
-                ? "Imported video assignment removed. The MP4 remains in Video Import."
+                ? "Imported video assignment removed. The video file remains in Video Import."
             : removingExternalFile
-                ? "Local video assignment removed. The MP4 remains in its original folder."
-                : "Downloaded user video removed.";
+                ? "Local video assignment removed. The video file remains in its original folder."
+                : "Downloaded video removed. The mapper URL remains available if you want to download it again.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
-        offset_ = descriptor.playableConfig
-            ? descriptor.playableConfig->offsetSeconds
-            : 0.0;
-        rate_ = descriptor.playableConfig
-            ? descriptor.playableConfig->playbackRate
-            : 1.0;
-        fitToSong_ = descriptor.playableConfig
-            ? descriptor.playableConfig->fitToSong
-            : false;
-        blackDuringLeadIn_ = descriptor.playableConfig
-            ? descriptor.playableConfig->blackDuringLeadIn
-            : false;
+        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
+            descriptor.downloadOrigin == VideoOrigin::Mapper;
+        offset_ = timing ? timing->offsetSeconds : 0.0;
+        rate_ = timing ? timing->playbackRate : 1.0;
+        fitToSong_ = timing ? timing->fitToSong : false;
+        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
         if(urlInput_)
         {
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
         }
         suppressTimingCallbacks_ = true;
         if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
@@ -2529,6 +2764,21 @@ namespace BigScreen {
         return true;
     }
 
+    void VideoLibraryMenu::RefreshUrlTextColor()
+    {
+        if(!urlInputText_)
+            return;
+
+        // A muted mapper address communicates that it came from the map's
+        // metadata. As soon as the player types or pastes a replacement, the
+        // same editable field becomes full white so ownership of the value is
+        // clear without introducing another label or consuming panel space.
+        urlInputText_->set_color(
+            mapperProvidedUrl_
+                ? UnityEngine::Color{0.66f, 0.68f, 0.72f, 1.0f}
+                : UnityEngine::Color::get_white());
+    }
+
     void VideoLibraryMenu::RefreshDetails()
     {
         const auto libraryBytes = VideoLibrary::Instance().LibraryBytes();
@@ -2596,12 +2846,14 @@ namespace BigScreen {
         {
             removeConfirmationText_->set_text(
                 descriptor.userOverrideIsMapLocal
-                    ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the map folder."
+                    ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in the map folder."
                     : descriptor.userOverrideIsImported
-                        ? "Unassign this imported video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in the Video Import folder."
+                        ? "Unassign this imported video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in the Video Import folder."
                     : descriptor.userOverrideIsExternal
-                        ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The MP4 file will remain unchanged in its current Quest folder."
-                    : "Remove this downloaded video?\n\nThe downloaded MP4 and its timing settings will be deleted from Big Screen storage.");
+                        ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in its current Quest folder."
+                    : descriptor.hasUserOverride && descriptor.hasMapperDownload
+                        ? "Remove this song's downloaded videos?\n\nBig Screen will delete both owned downloads and their timing settings. The mapper URL will remain available if you want to download it again."
+                    : "Remove this downloaded video?\n\nThe downloaded video and its timing settings will be deleted from Big Screen storage. The mapper URL, when present, will remain available for downloading again.");
         }
         const auto download = DownloadManager::Instance().Snapshot();
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
@@ -2671,13 +2923,13 @@ namespace BigScreen {
                 ? DownloadStatus(download)
             : descriptor.userOverrideIsMapLocal
                 ? "Local map video active: " +
-                    descriptor.activeMapFileName.value_or("selected MP4")
+                    descriptor.activeMapFileName.value_or("selected video")
             : descriptor.userOverrideIsImported
                 ? "Imported video active: " +
-                    descriptor.activeMapFileName.value_or("selected MP4")
+                    descriptor.activeMapFileName.value_or("selected video")
             : descriptor.userOverrideIsExternal
                 ? "Local video active: " +
-                    descriptor.activeMapFileName.value_or("selected MP4")
+                    descriptor.activeMapFileName.value_or("selected video")
             : descriptor.hasUserOverride ? "Downloaded user video active" :
               descriptor.CanPlay() ? "Mapper video ready" :
               descriptor.CanDownload() ? "Mapper video available to download" :
@@ -2743,14 +2995,50 @@ namespace BigScreen {
                 !download.metadataOnly &&
                 (download.state == DownloadState::Preparing ||
                  download.state == DownloadState::Downloading ||
-                 download.state == DownloadState::Completed ||
-                 download.state == DownloadState::Cancelled ||
-                 download.state == DownloadState::Failed);
-            const bool showDownloadButton = validatedProbe ||
-                validatedTransferState;
+                  download.state == DownloadState::Cancelled ||
+                  download.state == DownloadState::Failed);
+            const bool validatedCompletedTransfer = currentUrlWasProbed &&
+                !download.metadataOnly &&
+                download.state == DownloadState::Completed;
+            const bool showTierButtons =
+                (validatedProbe || validatedCompletedTransfer) &&
+                !download.availableHeights.empty();
+            const bool showDownloadButton = validatedTransferState ||
+                (validatedProbe && download.availableHeights.empty());
             downloadButton_->get_gameObject()->SetActive(showDownloadButton);
+            displayedDownloadHeights_.clear();
+            if(showTierButtons)
+            {
+                const auto count = std::min(
+                    download.availableHeights.size(),
+                    downloadTierButtons_.size());
+                displayedDownloadHeights_.assign(
+                    download.availableHeights.begin(),
+                    download.availableHeights.begin() + count);
+            }
+            for(std::size_t index = 0;
+                index < downloadTierButtons_.size(); ++index)
+            {
+                auto* tierButton = downloadTierButtons_[index];
+                if(!tierButton)
+                    continue;
+                const bool visible = index < displayedDownloadHeights_.size();
+                tierButton->get_gameObject()->SetActive(visible);
+                if(visible)
+                {
+                    const int height = displayedDownloadHeights_[index];
+                    BSML::Lite::SetButtonText(
+                        tierButton,
+                        "DOWNLOAD " + std::to_string(height) + "p");
+                    if(auto* tierText = tierButton->get_gameObject()
+                           ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                        tierText->set_color(UnityEngine::Color::get_white());
+                    tierButton->set_interactable(true);
+                }
+            }
             if(downloadButtonPlaceholder_)
-                downloadButtonPlaceholder_->SetActive(!showDownloadButton);
+                downloadButtonPlaceholder_->SetActive(
+                    !showDownloadButton && !showTierButtons);
 
             const bool downloadInteractable = showDownloadButton &&
                 download.state != DownloadState::Probing;
@@ -2773,6 +3061,11 @@ namespace BigScreen {
             checkUrlButton_->set_interactable(
                 IsYouTubeUrl(url_) && !(thisDownload && download.Active()));
         }
+        const bool mapperTimingWaitingForVideo = !descriptor.CanPlay() &&
+            descriptor.mapperDefinition.has_value();
+        for(auto* row : timingRows_)
+            if(row) row->SetActive(
+                descriptor.CanPlay() || mapperTimingWaitingForVideo);
         for(auto* row : videoOnlyRows_)
             if(row) row->SetActive(descriptor.CanPlay());
         if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
@@ -2782,7 +3075,19 @@ namespace BigScreen {
         if(blackLeadInToggle_) blackLeadInToggle_->set_interactable(descriptor.CanPlay());
         if(playbackScrubber_) playbackScrubber_->set_interactable(descriptor.CanPlay());
         if(playPauseButton_) playPauseButton_->set_interactable(descriptor.CanPlay());
-        if(removeButton_) removeButton_->set_interactable(descriptor.hasUserOverride);
+        if(removeButton_) removeButton_->set_interactable(
+            descriptor.hasUserOverride || descriptor.hasMapperDownload);
+        const auto timingHint = mapperTimingWaitingForVideo
+            ? std::string(MapperTimingLockedHint)
+            : std::string{};
+        if(fitTimingHint_) fitTimingHint_->set_text(
+            mapperTimingWaitingForVideo ? timingHint : std::string(FitTimingHint));
+        if(rateTimingHint_) rateTimingHint_->set_text(
+            mapperTimingWaitingForVideo ? timingHint : std::string(RateTimingHint));
+        if(offsetTimingHint_) offsetTimingHint_->set_text(
+            mapperTimingWaitingForVideo ? timingHint : std::string(OffsetTimingHint));
+        if(leadInTimingHint_) leadInTimingHint_->set_text(
+            mapperTimingWaitingForVideo ? timingHint : std::string(LeadInTimingHint));
         if(thisDownload && download.state == DownloadState::Completed)
         {
             const auto completedIdentity =
@@ -2798,7 +3103,11 @@ namespace BigScreen {
                 previewSongTime_ = 0.0;
                 playWhenAudioReady_ = true;
                 RequestSelectedAudio();
-                StartSelectedPreview();
+                // StartPreviewAudio owns the single decoder-open attempt once
+                // audio is ready. Calling StartSelectedPreview first caused a
+                // failed container/hardware open to be attempted twice in one
+                // frame, producing duplicate dialogs and making the menu look
+                // locked behind stacked modal errors.
                 if(IsAlive(previewAudioClip_))
                     StartPreviewAudio();
             }
@@ -2935,7 +3244,7 @@ namespace BigScreen {
                 StartSelectedPreview();
             if(playback.IsLibraryPreviewActive())
                 playback.Tick(previewSongTime_);
-            if(!playback.FirstFrameUploaded())
+            if(!playback.SynchronizedAudioReady(previewSongTime_))
             {
                 playWhenVideoReady_ = true;
                 playWhenAudioReady_ = false;
@@ -2944,7 +3253,7 @@ namespace BigScreen {
                 RefreshPlaybackControls();
                 return;
             }
-            if(!previewMeasurementStarted_)
+            if(!previewMeasurementStarted_ && playback.FirstFrameUploaded())
             {
                 playback.BeginLibraryPreviewMeasurement(previewSongTime_);
                 previewMeasurementStarted_ = true;
@@ -2999,7 +3308,7 @@ namespace BigScreen {
             return;
         }
         playback.Tick(previewSongTime_);
-        if(!playback.FirstFrameUploaded())
+        if(!playback.SynchronizedAudioReady(previewSongTime_))
         {
             previewPlaying_ = false;
             playWhenAudioReady_ = false;
@@ -3009,7 +3318,7 @@ namespace BigScreen {
             RefreshPlaybackControls();
             return;
         }
-        if(!previewMeasurementStarted_)
+        if(!previewMeasurementStarted_ && playback.FirstFrameUploaded())
         {
             playback.BeginLibraryPreviewMeasurement(previewSongTime_);
             previewMeasurementStarted_ = true;
@@ -3366,7 +3675,7 @@ namespace BigScreen {
             if(playback.IsLibraryPreviewActive())
             {
                 playback.Tick(previewSongTime_);
-                if(playback.FirstFrameUploaded())
+                if(playback.SynchronizedAudioReady(previewSongTime_))
                 {
                     playWhenVideoReady_ = false;
                     StartPreviewAudio();
@@ -3394,8 +3703,21 @@ namespace BigScreen {
                     LoopPreviewPlayback();
                     return;
                 }
-                if(PlaybackSession::Instance().IsLibraryPreviewActive())
-                    PlaybackSession::Instance().Tick(previewSongTime_);
+                auto& playback = PlaybackSession::Instance();
+                if(playback.IsLibraryPreviewActive())
+                {
+                    playback.Tick(previewSongTime_);
+                    // A transparent/black lead-in starts audio before a video
+                    // frame exists. Establish the diagnostics baseline only
+                    // once the first visible picture arrives, preserving the
+                    // same untimed-prewarm exclusion used by ordinary starts.
+                    if(!previewMeasurementStarted_ &&
+                       playback.FirstFrameUploaded())
+                    {
+                        playback.BeginLibraryPreviewMeasurement(previewSongTime_);
+                        previewMeasurementStarted_ = true;
+                    }
+                }
             }
             else
             {

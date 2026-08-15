@@ -10,7 +10,7 @@ Sets the maximum number of frames Big Screen presents per second: 15, 30, or 60.
 
 ### Video Resolution — default: 720p
 
-Sets the maximum output height: 480p, 720p, or 1080p. Big Screen keeps the source MP4 unchanged and downsizes decoded output in memory; switching this option does not download another file. Sources below the selected limit are not enlarged. 720p is the recommended Quest balance. 1080p consumes more CPU, memory bandwidth, battery, and texture upload time.
+Sets the maximum output tier: 480p, 720p, 1080p, or 1440p. Big Screen keeps the selected source file unchanged and downsizes decoded output in memory; switching this option does not download another file. Sources below the selected limit are not enlarged. This playback-only setting never filters the resolution buttons offered by a YouTube probe. 720p is the recommended Quest balance. 1080p costs more; 1440p is hardware-only and is intended for careful testing.
 
 ### Big Screen Enabled — default: On
 
@@ -50,7 +50,7 @@ Enables independent video framing and free screen placement for the selected lay
 
 ### Allow Chroma Override — default: On
 
-When a video map contains Cinema/Chroma presentation data, lets the mapper control screen geometry, curvature/transparency choices, requested environment, and environment-object modifications. Chroma detection is map-wide and applies regardless of whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force the active Big Screen layout/environment options. Timing metadata remains honored either way.
+Preserves the intended Chroma/Cinema environment for a video map. The map takes ownership of the screen canvas only when both conditions are true: the map is detected as using Chroma, and its video metadata supplies custom position, rotation, size, or curvature. Otherwise the selected Big Screen layout and its Screen Canvas controls remain active. Video Controls, Video Opacity, and Letterbox Transparency always control how the picture is composed inside whichever canvas is active. Detection is map-wide and works whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force Big Screen's canvas and environment options. Timing metadata remains honored either way.
 
 ### Screen Distance Offset — default: 0, range: -40 to +40
 
@@ -190,15 +190,29 @@ On restart, Big Screen import-tests the candidate. An incompatible candidate is 
 
 Opens a centered review page and stops any active library preview. **Scan Storage** finds only Big Screen-owned orphan downloads, unused thumbnails, and abandoned temporary files. Candidates are checked by default; uncheck individual files to keep them, then confirm removal of only the remaining checked files. Assigned downloads, the embedded runtime, map-folder MP4s, and Video Import MP4s are protected.
 
+### Showcase
+
+#### Play Big Screen Showcase
+
+Opens a dedicated center-screen readiness page. It checks SongCore's live capability registry for both Chroma and Noodle Extensions, reports the downloader runtime, and independently reports whether the exact showcase map and its video are ready. A mod that is installed but failed to load is treated as unavailable.
+
+Opening the page never starts a download. A missing map gets its own **Download Map** button; downloaded files that SongCore has not recognized get **Recheck Map**; and a missing video gets **Download Video** after the map is ready. The map action obtains the immutable `11cf8` Up & Down revision from BeatSaver, validates and safely extracts it under Big Screen's managed `DemoLevels` folder, registers the folder with SongCore, and waits for the song refresh. The video action uses the ordinary managed video library at 1080p. Existing user-installed maps and user video overrides are never replaced or deleted.
+
+**Play Showcase** remains disabled until Chroma, Noodle Extensions, the map, and the video are all ready. It then shows the motion-sickness warning, closes the readiness page, waits for Beat Saber's main menu hierarchy to stabilize, and starts Lawless Expert+ directly. Big Screen does not alter the completed/failed results page or attempt to reopen itself afterward; use Beat Saber's normal navigation, then reopen Big Screen from Mods when wanted.
+
 ### Performance
 
 #### Use FFmpeg 9 — default: Off
 
 This is an experimental comparison option. It selects which bundled decoder runtime opens the next video. Off uses FFmpeg 4.4.8; on uses FFmpeg 9.0.1. It does not change, convert, or redownload the video. If a Video Library preview is active, changing the switch safely recreates playback at the retained song position. A map already in gameplay is never switched underneath its running decoder; the new choice applies when the next playback session starts. The performance overlay and results summary identify the runtime that actually opened.
 
+#### Hardware Video Decoding — default: Off
+
+Experimental comparison option. Off uses the permitted FFmpeg software decoder for H.264, VP8, or VP9 content at no more than 1080p. On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever FFmpeg runtime is selected. MediaCodec output is copied into CPU-readable memory for Big Screen's existing color conversion and Unity texture upload; this preserves every screen shape and effect but is not a zero-copy GPU path. Startup or mid-video hardware failures reopen with software only when the codec and resolution policy permits it. HEVC and content above 1080p instead stop video safely while the map continues. The live panel, results summary, error history, and power benchmark identify the backend that actually remained active. Changing this option restarts an active Video Library preview at its retained time and applies to gameplay on the next map.
+
 #### Automatic Performance — default: Off
 
-Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the MP4, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
+Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1440→1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the source video, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
 
 #### Frame Rate Loss Trigger — default: 5%
 
@@ -210,7 +224,7 @@ Available when Automatic Performance is on. This 0.5–10.0 second slider defaul
 
 #### Show Performance Information — default: Off
 
-Displays source/output resolution and FPS, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning quality, or reporting performance problems.
+Displays the active hardware/software backend, source/output resolution and FPS, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. Hold the trigger anywhere on the panel to move and angle it. Big Screen saves that transform when the switch is turned off or the menu/gameplay context closes, and the same placement is reused in the Video Library and during video maps. The circular reset button immediately to the left of this switch returns the panel to its safe default position and angle. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning quality, or reporting performance problems.
 
 #### Record Power Benchmark — default: Off
 
@@ -223,7 +237,7 @@ Use this for controlled A/B tests, not as a permanent gameplay option. Unplug US
 - **Screen Layout:** global Layout 1–5 selector; available while the mod is enabled.
 - **Preview Video:** same global preference as General.
 - **Video In Map:** same global master as General.
-- **Download Video:** appears when mapper metadata has a valid YouTube source but no local video. Shows preparation and byte progress, supports cancellation, and records the result in the same library as Video Library downloads.
+- **Download Video:** appears when mapper metadata has a valid YouTube source but no local video. It opens a modal that checks and lists the source's available 480p/720p/1080p/1440p tiers (or its single best lower tier), then shows preparation and byte progress in the existing row. Cancel and Retry retain the selected tier, and the result is recorded in the same library as Video Library downloads.
 
 ## Pause-menu controls
 

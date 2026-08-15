@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 
@@ -91,7 +92,7 @@ namespace BigScreen {
         bool CanPlay() const { return playableConfig.has_value(); }
     };
 
-    /// Result of probing one MP4 found directly inside a custom map folder.
+    /// Result of probing one MP4/WebM found in a user-readable video folder.
     /// Invalid files remain in the list so the UI can explain why they cannot
     /// be selected instead of silently hiding them.
     struct LocalVideoFile {
@@ -123,7 +124,8 @@ namespace BigScreen {
 
         std::filesystem::path AllocateVideoPath(
             const std::string& levelId,
-            VideoOrigin origin) const;
+            VideoOrigin origin,
+            std::string_view extension = ".mp4") const;
         std::filesystem::path AllocateThumbnailPath(
             const std::string& levelId,
             VideoOrigin origin) const;
@@ -136,10 +138,10 @@ namespace BigScreen {
         std::vector<LocalVideoFile> DiscoverLocalVideos(
             GlobalNamespace::BeatmapLevel* level) const;
         std::vector<LocalVideoFile> DiscoverImportedVideos() const;
-        /// Validates one user-selected MP4 without changing the library.
+        /// Validates one user-selected MP4/WebM without changing the library.
         LocalVideoFile InspectLocalVideo(
             const std::filesystem::path& path) const;
-        /// Assigns any compatible MP4 under Quest shared storage. Files in a
+        /// Assigns any compatible MP4/WebM under Quest shared storage. Files in a
         /// map or Video Import folder retain their existing source identity;
         /// other files are referenced in place and remain user-owned.
         bool SetVideoFileOverride(

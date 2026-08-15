@@ -15,6 +15,7 @@
 #include "UnityEngine/SceneManagement/SceneManager.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Graphics.hpp"
 #include "UnityEngine/LayerMask.hpp"
 #include "UnityEngine/Material.hpp"
 #include "UnityEngine/Quaternion.hpp"
@@ -62,6 +63,51 @@ namespace BigScreen {
                 previousZ = z;
             }
             return pathLength > 0.0001f ? 1.0f / pathLength : 1.0f;
+        }
+
+        std::uint32_t FractureHash(std::uint32_t seed, std::size_t shard)
+        {
+            std::uint32_t value = seed ^
+                (static_cast<std::uint32_t>(shard) + 1U) * 0x9E3779B9U;
+            value ^= value >> 16;
+            value *= 0x7FEB352DU;
+            value ^= value >> 15;
+            value *= 0x846CA68BU;
+            value ^= value >> 16;
+            return value;
+        }
+
+        float HashSigned(std::uint32_t value)
+        {
+            return static_cast<float>((value >> 8) & 0x00FFFFFFU) /
+                static_cast<float>(0x007FFFFFU) - 1.0f;
+        }
+
+        UnityEngine::Vector3 RotateFractureVertex(
+            UnityEngine::Vector3 value,
+            UnityEngine::Vector3 center,
+            float xDegrees,
+            float yDegrees,
+            float zDegrees)
+        {
+            constexpr float DegreesToRadians = Pi / 180.0f;
+            float x = value.x - center.x;
+            float y = value.y - center.y;
+            float z = value.z - center.z;
+            const float cx = std::cos(xDegrees * DegreesToRadians);
+            const float sx = std::sin(xDegrees * DegreesToRadians);
+            const float cy = std::cos(yDegrees * DegreesToRadians);
+            const float sy = std::sin(yDegrees * DegreesToRadians);
+            const float cz = std::cos(zDegrees * DegreesToRadians);
+            const float sz = std::sin(zDegrees * DegreesToRadians);
+            const float firstY = y * cx - z * sx;
+            const float firstZ = y * sx + z * cx;
+            const float secondX = x * cy + firstZ * sy;
+            const float secondZ = -x * sy + firstZ * cy;
+            return {
+                center.x + secondX * cz - firstY * sz,
+                center.y + secondX * sz + firstY * cz,
+                center.z + secondZ};
         }
 
         struct ContentVertex {
@@ -159,7 +205,7 @@ namespace BigScreen {
         int videoHeight)
     {
         return CreateInternal(
-            config, videoWidth, videoHeight, nullptr, "CinemaScreen");
+            config, videoWidth, videoHeight, nullptr, "CinemaScreen", false);
     }
 
     bool ScreenSurface::CreateShared(
@@ -172,7 +218,7 @@ namespace BigScreen {
         if(!sharedTexture)
             return false;
         return CreateInternal(
-            config, videoWidth, videoHeight, sharedTexture, rootName);
+            config, videoWidth, videoHeight, sharedTexture, rootName, true);
     }
 
     bool ScreenSurface::CreateInternal(
@@ -180,11 +226,13 @@ namespace BigScreen {
         int videoWidth,
         int videoHeight,
         UnityEngine::Texture2D* sharedTexture,
-        const char* rootName)
+        const char* rootName,
+        bool prepareDeformation)
     {
         Destroy();
         if(videoWidth <= 0 || videoHeight <= 0 || !rootName)
             return false;
+        prepareDeformation_ = prepareDeformation;
 
         // PC Cinema and Chroma maps conventionally target this exact root name
         // (often with the regex CinemaScreen$). Keeping the compatible name is
@@ -224,6 +272,8 @@ namespace BigScreen {
         });
 
         const float aspectRatio = static_cast<float>(videoWidth) / videoHeight;
+        geometryConfig_ = config;
+        geometryAspectRatio_ = aspectRatio;
         const float flatWidth = config.screenWidthOverride.value_or(
             config.screenHeight * aspectRatio);
         screenWidth_ = config.maintainAspectRatioWhenCurved &&
@@ -453,9 +503,12 @@ namespace BigScreen {
         std::vector<UnityEngine::Vector3> vertices;
         std::vector<UnityEngine::Vector2> uvs;
         std::vector<std::int32_t> triangles;
+        std::vector<DeformationBaseVertex> deformationVertices;
         vertices.reserve(columns * rows * 12);
         uvs.reserve(columns * rows * 12);
         triangles.reserve(columns * rows * 12);
+        if(prepareDeformation_)
+            deformationVertices.reserve(columns * rows * 12);
 
         const bool cinemaCurve = config.cinemaCurvatureDegrees.has_value();
         const float cinemaArcRadians = cinemaCurve
@@ -514,6 +567,15 @@ namespace BigScreen {
             {
                 vertices.push_back(mapToSurface(value));
                 uvs.push_back({value.u, value.v});
+                if(prepareDeformation_)
+                {
+                    deformationVertices.push_back({
+                        value.x,
+                        value.y,
+                        value.z,
+                        std::clamp(value.x / frameWidth + 0.5f, 0.0f, 1.0f),
+                        std::clamp(value.y / frameHeight + 0.5f, 0.0f, 1.0f)});
+                }
             }
             for(std::size_t index = 1; index + 1 < polygon.size(); ++index)
             {
@@ -557,6 +619,22 @@ namespace BigScreen {
         videoMesh_->set_triangles(unityTriangles);
         videoMesh_->RecalculateNormals();
         videoMesh_->RecalculateBounds();
+
+        // Only showcase clones retain managed vertex/UV arrays plus planar
+        // coordinates. They are allocated with the mesh and reused for every
+        // song-time or real-time sample; normal map screens pay no extra cost.
+        if(prepareDeformation_)
+        {
+            deformationBaseVertices_ = std::move(deformationVertices);
+            undeformedVideoVertices_ = unityVertices;
+            dynamicVideoVertices_ = ArrayW<UnityEngine::Vector3>(vertices.size());
+            std::copy(
+                vertices.begin(), vertices.end(), dynamicVideoVertices_.begin());
+            undeformedVideoUvs_ = unityUvs;
+            dynamicVideoUvs_ = ArrayW<UnityEngine::Vector2>(uvs.size());
+            std::copy(uvs.begin(), uvs.end(), dynamicVideoUvs_.begin());
+        }
+        deformationWasApplied_ = false;
         return true;
     }
 
@@ -607,6 +685,11 @@ namespace BigScreen {
         // operation, preventing the gray flash caused by recreating a screen.
         filter->set_sharedMesh(mesh_);
         videoFilter->set_sharedMesh(videoMesh_);
+        fractureMeshActive_ = false;
+        fractureShapeCaptured_ = false;
+        fractureSnapshotActive_ = false;
+        if(material_)
+            material_->set_mainTexture(texture_);
         if(previousMesh)
             UnityEngine::Object::Destroy(previousMesh);
         if(previousVideoMesh)
@@ -631,6 +714,8 @@ namespace BigScreen {
                 config.screenSegments)
             : flatWidth;
         screenHeight_ = config.screenHeight;
+        geometryConfig_ = config;
+        geometryAspectRatio_ = aspectRatio;
 
         // Diagnostics is an overlay inside the lower part of the screen. Its
         // RectTransform is centered on X, so placing the object at the old
@@ -993,8 +1078,667 @@ namespace BigScreen {
             backgroundMaterial_->SetInt("_Cull", cullMode);
     }
 
+    bool ScreenSurface::SetDeformation(
+        const CoreLogic::SurfaceDeformationSettings& deformation,
+        double songTimeSeconds,
+        double realTimeSeconds)
+    {
+        if(!videoMesh_ || deformationBaseVertices_.empty() ||
+           !undeformedVideoVertices_ || !dynamicVideoVertices_ ||
+           !undeformedVideoUvs_ || !dynamicVideoUvs_)
+            return false;
+
+        if(!deformation.enabled)
+        {
+            if(!deformationWasApplied_)
+                return true;
+            std::copy(
+                undeformedVideoVertices_.begin(),
+                undeformedVideoVertices_.end(),
+                dynamicVideoVertices_.begin());
+            std::copy(
+                undeformedVideoUvs_.begin(),
+                undeformedVideoUvs_.end(),
+                dynamicVideoUvs_.begin());
+            videoMesh_->set_vertices(dynamicVideoVertices_);
+            videoMesh_->set_uv(dynamicVideoUvs_);
+            videoMesh_->RecalculateBounds();
+            deformationWasApplied_ = false;
+            return true;
+        }
+
+        const float frameWidth = std::max(screenWidth_, 0.0001f);
+        const float frameHeight = std::max(screenHeight_, 0.0001f);
+        const bool cinemaCurve = geometryConfig_.cinemaCurvatureDegrees.has_value();
+        const float cinemaArcRadians = cinemaCurve
+            ? *geometryConfig_.cinemaCurvatureDegrees * Pi / 180.0f : 0.0f;
+        const bool cinemaCurveIsFlat =
+            !cinemaCurve || std::abs(cinemaArcRadians) < 0.000001f;
+        const float cinemaCurveLength = geometryConfig_.cinemaCurveYAxis
+            ? frameHeight : frameWidth;
+        const float cinemaRadius = cinemaCurveIsFlat
+            ? 0.0f : cinemaCurveLength / cinemaArcRadians;
+        const double waveClock = deformation.wave.clock ==
+                CoreLogic::DeformationClock::RealTime
+            ? realTimeSeconds : songTimeSeconds;
+
+        constexpr float VideoLayerOffset = -0.015f;
+        for(std::size_t index = 0; index < deformationBaseVertices_.size(); ++index)
+        {
+            const auto& base = deformationBaseVertices_[index];
+            const auto corner = CoreLogic::BilinearCornerOffset(
+                deformation.cornerWarp, base.normalizedU, base.normalizedV);
+            float x = base.x + corner.x;
+            float y = base.y + corner.y;
+            float z = base.z + corner.z;
+
+            // Composition order is deliberate: normalized grid, corner warp,
+            // the layout's existing curvature, and finally the flag wave.
+            if(cinemaCurve && !cinemaCurveIsFlat)
+            {
+                if(geometryConfig_.cinemaCurveYAxis)
+                {
+                    const float theta = y / frameHeight * cinemaArcRadians;
+                    y = std::sin(theta) * cinemaRadius;
+                    z += std::cos(theta) * cinemaRadius - cinemaRadius;
+                }
+                else
+                {
+                    const float theta = x / frameWidth * cinemaArcRadians;
+                    x = std::sin(theta) * cinemaRadius;
+                    z += std::cos(theta) * cinemaRadius - cinemaRadius;
+                }
+            }
+            else if(!cinemaCurve)
+            {
+                const float normalizedX = std::clamp(
+                    x / frameWidth + 0.5f, 0.0f, 1.0f);
+                z += -geometryConfig_.screenCurvature * frameWidth * 0.12f *
+                    CurveEdgeShape(normalizedX);
+            }
+
+            const auto wave = CoreLogic::FlagWaveOffset(
+                deformation.wave, base.normalizedU, waveClock);
+            dynamicVideoVertices_[index] = {
+                x + wave.x,
+                y + wave.y,
+                z + wave.z + VideoLayerOffset};
+        }
+
+        const float cover = CoreLogic::DeformationAutoCoverScale(
+            frameWidth, frameHeight, deformation);
+        for(std::size_t index = 0; index < undeformedVideoUvs_.size(); ++index)
+        {
+            const auto uv = undeformedVideoUvs_[index];
+            dynamicVideoUvs_[index] = {
+                std::clamp(0.5f + (uv.x - 0.5f) / cover, 0.0f, 1.0f),
+                std::clamp(0.5f + (uv.y - 0.5f) / cover, 0.0f, 1.0f)};
+        }
+        videoMesh_->set_vertices(dynamicVideoVertices_);
+        videoMesh_->set_uv(dynamicVideoUvs_);
+        // Normals are irrelevant to the unlit video material. Recalculating
+        // only bounds keeps Unity culling correct without avoidable CPU work.
+        videoMesh_->RecalculateBounds();
+        deformationWasApplied_ = true;
+        return true;
+    }
+
+    UnityEngine::Vector3 ScreenSurface::MapFracturePoint(
+        CoreLogic::FracturePoint point,
+        const CoreLogic::SurfaceDeformationSettings& deformation,
+        double songTimeSeconds,
+        double realTimeSeconds) const
+    {
+        const float frameWidth = std::max(screenWidth_, 0.0001f);
+        const float frameHeight = std::max(screenHeight_, 0.0001f);
+        const auto corner = CoreLogic::BilinearCornerOffset(
+            deformation.cornerWarp, point.x, point.y);
+        float x = (point.x - 0.5f) * frameWidth + corner.x;
+        float y = (point.y - 0.5f) * frameHeight + corner.y;
+        float z = corner.z;
+
+        const bool cinemaCurve = geometryConfig_.cinemaCurvatureDegrees.has_value();
+        const float cinemaArcRadians = cinemaCurve
+            ? *geometryConfig_.cinemaCurvatureDegrees * Pi / 180.0f : 0.0f;
+        if(cinemaCurve && std::abs(cinemaArcRadians) >= 0.000001f)
+        {
+            const float curveLength = geometryConfig_.cinemaCurveYAxis
+                ? frameHeight : frameWidth;
+            const float radius = curveLength / cinemaArcRadians;
+            if(geometryConfig_.cinemaCurveYAxis)
+            {
+                const float theta = y / frameHeight * cinemaArcRadians;
+                y = std::sin(theta) * radius;
+                z += std::cos(theta) * radius - radius;
+            }
+            else
+            {
+                const float theta = x / frameWidth * cinemaArcRadians;
+                x = std::sin(theta) * radius;
+                z += std::cos(theta) * radius - radius;
+            }
+        }
+        else if(!cinemaCurve)
+        {
+            z += -geometryConfig_.screenCurvature * frameWidth * 0.12f *
+                CurveEdgeShape(point.x);
+        }
+
+        const double waveClock = deformation.wave.clock ==
+                CoreLogic::DeformationClock::RealTime
+            ? realTimeSeconds : songTimeSeconds;
+        const auto wave = CoreLogic::FlagWaveOffset(
+            deformation.wave, point.x, waveClock);
+        return {x + wave.x, y + wave.y, z + wave.z - 0.015f};
+    }
+
+    void ScreenSurface::RestoreWholeVideoMesh()
+    {
+        if(videoObject_ && videoMesh_)
+        {
+            if(auto* filter = videoObject_->GetComponent<UnityEngine::MeshFilter*>())
+                filter->set_sharedMesh(videoMesh_);
+        }
+        if(material_ && texture_)
+            material_->set_mainTexture(texture_);
+        if(crackObject_)
+            crackObject_->SetActive(false);
+        fractureMeshActive_ = false;
+        fractureShapeCaptured_ = false;
+        fractureSnapshotActive_ = false;
+    }
+
+    void ScreenSurface::DestroyFractureResources()
+    {
+        RestoreWholeVideoMesh();
+        if(crackObject_)
+            UnityEngine::Object::Destroy(crackObject_);
+        if(crackMesh_)
+            UnityEngine::Object::Destroy(crackMesh_);
+        if(crackMaterial_)
+            UnityEngine::Object::Destroy(crackMaterial_);
+        if(crackTexture_)
+            UnityEngine::Object::Destroy(crackTexture_);
+        if(fractureMesh_)
+            UnityEngine::Object::Destroy(fractureMesh_);
+        if(fractureSnapshot_)
+            UnityEngine::Object::Destroy(fractureSnapshot_);
+        crackObject_ = nullptr;
+        crackMesh_ = nullptr;
+        crackMaterial_ = nullptr;
+        crackTexture_ = nullptr;
+        fractureMesh_ = nullptr;
+        fractureSnapshot_ = nullptr;
+        fracturePattern_ = {};
+        fractureRevealGroups_.clear();
+        fractureVertexMetadata_.clear();
+        fractureShardCenters_.clear();
+        fractureShardBaseCenters_.clear();
+        fractureShardTranslations_.clear();
+        fractureShardRotations_.clear();
+        fractureShardScales_.clear();
+        fractureBaseVertices_ = nullptr;
+        dynamicFractureVertices_ = nullptr;
+        fractureUvs_ = nullptr;
+        dynamicCrackVertices_ = nullptr;
+        fracturePrepared_ = false;
+        preparedFractureImpactCount_ = 0;
+    }
+
+    bool ScreenSurface::PrepareFracture(
+        const CoreLogic::FractureEffectSettings& fracture)
+    {
+        const auto& requested = fracture.pattern;
+        // The public programmatic struct intentionally uses a fixed impact
+        // array so a future mapper/API wrapper cannot make setup unbounded.
+        // Clamp the accompanying count at this final consumer boundary as
+        // well. Include both source and cache capacities even though their
+        // types currently match, so a future data-model change cannot turn
+        // this copy back into an out-of-bounds UnityMain write.
+        const std::size_t impactCount = std::min({
+            fracture.impactCount,
+            fracture.impacts.size(),
+            preparedFractureImpacts_.size()});
+        bool sameConfiguration = fracturePrepared_ &&
+            requested.seed == preparedFractureSettings_.seed &&
+            requested.pieceCount == preparedFractureSettings_.pieceCount &&
+            requested.spokeCount == preparedFractureSettings_.spokeCount &&
+            requested.ringCount == preparedFractureSettings_.ringCount &&
+            requested.jitter == preparedFractureSettings_.jitter &&
+            requested.impactPoint.x == preparedFractureSettings_.impactPoint.x &&
+            requested.impactPoint.y == preparedFractureSettings_.impactPoint.y &&
+            impactCount == preparedFractureImpactCount_;
+        for(std::size_t index = 0;
+            sameConfiguration && index < impactCount; ++index)
+        {
+            sameConfiguration = CoreLogic::SameFracturePoint(
+                fracture.impacts[index], preparedFractureImpacts_[index],
+                0.000001f);
+        }
+        if(sameConfiguration)
+            return true;
+
+        DestroyFractureResources();
+        if(!prepareDeformation_ || !videoObject_ || !material_ || !texture_)
+            return false;
+
+        fracturePattern_ = CoreLogic::GenerateFracturePattern(requested);
+        if(fracturePattern_.cells.empty() || fracturePattern_.edges.empty())
+            return false;
+        std::vector<CoreLogic::FracturePoint> impacts;
+        impacts.reserve(impactCount);
+        for(std::size_t index = 0; index < impactCount; ++index)
+            impacts.push_back(fracture.impacts[index]);
+        if(impacts.empty())
+            impacts.push_back(requested.impactPoint);
+        fractureRevealGroups_ = CoreLogic::PartitionFractureRevealGroups(
+            fracturePattern_.edges, impacts);
+
+        std::size_t vertexCount = 0;
+        for(const auto& cell : fracturePattern_.cells)
+            if(cell.vertices.size() >= 3)
+                vertexCount += (cell.vertices.size() - 2) * 3;
+        if(vertexCount == 0)
+            return false;
+
+        fractureVertexMetadata_.reserve(vertexCount);
+        fractureShardCenters_.reserve(fracturePattern_.cells.size());
+        fractureShardBaseCenters_.resize(fracturePattern_.cells.size());
+        fractureShardTranslations_.resize(fracturePattern_.cells.size());
+        fractureShardRotations_.resize(fracturePattern_.cells.size());
+        fractureShardScales_.resize(fracturePattern_.cells.size(), 1.0f);
+        std::vector<UnityEngine::Vector2> uvs;
+        std::vector<std::int32_t> triangles;
+        uvs.reserve(vertexCount);
+        triangles.reserve(vertexCount);
+        for(std::size_t shard = 0; shard < fracturePattern_.cells.size(); ++shard)
+        {
+            const auto& cell = fracturePattern_.cells[shard];
+            fractureShardCenters_.push_back(cell.site);
+            const auto fan = CoreLogic::TriangulateFractureCell(cell);
+            for(const auto& triangle : fan)
+            {
+                const std::array<CoreLogic::FracturePoint, 3> points{
+                    triangle.a, triangle.b, triangle.c};
+                for(const auto point : points)
+                {
+                    fractureVertexMetadata_.push_back({point, shard});
+                    uvs.push_back({point.x, 1.0f - point.y});
+                    triangles.push_back(
+                        static_cast<std::int32_t>(triangles.size()));
+                }
+            }
+        }
+        fractureBaseVertices_ = ArrayW<UnityEngine::Vector3>(vertexCount);
+        dynamicFractureVertices_ = ArrayW<UnityEngine::Vector3>(vertexCount);
+        fractureUvs_ = ArrayW<UnityEngine::Vector2>(vertexCount);
+        ArrayW<std::int32_t> unityTriangles(triangles.size());
+        std::copy(uvs.begin(), uvs.end(), fractureUvs_.begin());
+        std::copy(triangles.begin(), triangles.end(), unityTriangles.begin());
+        fractureMesh_ = UnityEngine::Mesh::New_ctor();
+        if(!fractureMesh_)
+            return false;
+        fractureMesh_->set_vertices(fractureBaseVertices_);
+        fractureMesh_->set_uv(fractureUvs_);
+        fractureMesh_->set_triangles(unityTriangles);
+
+        const std::size_t edgeCount = fracturePattern_.edges.size();
+        dynamicCrackVertices_ = ArrayW<UnityEngine::Vector3>(edgeCount * 4);
+        ArrayW<UnityEngine::Vector2> crackUvs(edgeCount * 4);
+        ArrayW<std::int32_t> crackTriangles(edgeCount * 6);
+        for(std::size_t edge = 0; edge < edgeCount; ++edge)
+        {
+            const std::size_t vertex = edge * 4;
+            crackUvs[vertex] = {0.0f, 0.0f};
+            crackUvs[vertex + 1] = {1.0f, 0.0f};
+            crackUvs[vertex + 2] = {1.0f, 1.0f};
+            crackUvs[vertex + 3] = {0.0f, 1.0f};
+            const std::size_t triangle = edge * 6;
+            crackTriangles[triangle] = static_cast<std::int32_t>(vertex);
+            crackTriangles[triangle + 1] = static_cast<std::int32_t>(vertex + 1);
+            crackTriangles[triangle + 2] = static_cast<std::int32_t>(vertex + 2);
+            crackTriangles[triangle + 3] = static_cast<std::int32_t>(vertex);
+            crackTriangles[triangle + 4] = static_cast<std::int32_t>(vertex + 2);
+            crackTriangles[triangle + 5] = static_cast<std::int32_t>(vertex + 3);
+        }
+        crackMesh_ = UnityEngine::Mesh::New_ctor();
+        auto shader = UnityEngine::Shader::Find("Unlit/Transparent");
+        if(!shader)
+            shader = UnityEngine::Shader::Find("Unlit/Texture");
+        if(!crackMesh_ || !shader)
+            return false;
+        crackMesh_->set_vertices(dynamicCrackVertices_);
+        crackMesh_->set_uv(crackUvs);
+        crackMesh_->set_triangles(crackTriangles);
+
+        crackTexture_ = UnityEngine::Texture2D::New_ctor(
+            4, 1, UnityEngine::TextureFormat::RGBA32, false, false);
+        crackMaterial_ = UnityEngine::Material::New_ctor(shader);
+        crackObject_ = UnityEngine::GameObject::New_ctor("Big Screen Glass Cracks");
+        if(!crackTexture_ || !crackMaterial_ || !crackObject_)
+            return false;
+        ArrayW<UnityEngine::Color> crackColors(4);
+        crackColors[0] = {0.82f, 0.90f, 1.0f, 0.92f};
+        crackColors[1] = {0.015f, 0.02f, 0.03f, 0.86f};
+        crackColors[2] = {0.015f, 0.02f, 0.03f, 0.86f};
+        crackColors[3] = {0.82f, 0.90f, 1.0f, 0.92f};
+        crackTexture_->SetPixels(crackColors);
+        crackTexture_->Apply(false, false);
+        crackMaterial_->set_mainTexture(crackTexture_);
+        crackMaterial_->set_color(UnityEngine::Color::get_white());
+        crackMaterial_->SetInt("_SrcBlend", 5);
+        crackMaterial_->SetInt("_DstBlend", 10);
+        crackMaterial_->SetInt("_ZWrite", 0);
+        crackMaterial_->SetInt("_Cull", 0);
+        crackMaterial_->EnableKeyword("_ALPHABLEND_ON");
+        crackMaterial_->set_renderQueue(3100);
+        crackObject_->set_layer(videoObject_->get_layer());
+        crackObject_->get_transform()->SetParent(videoObject_->get_transform(), false);
+        auto* crackFilter = crackObject_->AddComponent<UnityEngine::MeshFilter*>();
+        auto* crackRenderer = crackObject_->AddComponent<UnityEngine::MeshRenderer*>();
+        if(!crackFilter || !crackRenderer)
+            return false;
+        crackFilter->set_sharedMesh(crackMesh_);
+        crackRenderer->set_sharedMaterial(crackMaterial_);
+        crackObject_->SetActive(false);
+
+        fractureSnapshot_ = UnityEngine::Texture2D::New_ctor(
+            textureWidth_, textureHeight_, UnityEngine::TextureFormat::RGBA32,
+            false, false);
+        if(!fractureSnapshot_)
+            return false;
+
+        preparedFractureSettings_ = requested;
+        preparedFractureImpactCount_ = impactCount;
+        for(std::size_t index = 0; index < preparedFractureImpactCount_; ++index)
+            preparedFractureImpacts_[index] = fracture.impacts[index];
+        fracturePrepared_ = true;
+        fractureShapeCaptured_ = false;
+        return true;
+    }
+
+    bool ScreenSurface::UpdateCrackOverlay(
+        const CoreLogic::FractureEffectSettings& fracture,
+        const CoreLogic::SurfaceDeformationSettings& deformation,
+        double songTimeSeconds,
+        double realTimeSeconds)
+    {
+        if(!crackMesh_ || !crackObject_ || !dynamicCrackVertices_)
+            return false;
+        constexpr float CrackHalfWidth = 0.045f;
+        // Every Voronoi seam is an independent quad. Butt-ended quads leave
+        // tiny visible gaps where several short seams meet, especially near
+        // the outer screen edges, and the resulting crack looks like a dotted
+        // line in the headset. Extend both ends by slightly more than half the
+        // line width so neighboring segments overlap without making the main
+        // fracture branches materially thicker.
+        constexpr float CrackEndOverlap = CrackHalfWidth * 0.65f;
+        for(std::size_t edge = 0; edge < fracturePattern_.edges.size(); ++edge)
+        {
+            const auto& source = fracturePattern_.edges[edge];
+            const bool revealed = edge < fractureRevealGroups_.size() &&
+                fractureRevealGroups_[edge] < fracture.revealedGroupCount;
+            const auto from = MapFracturePoint(
+                source.from, deformation, songTimeSeconds, realTimeSeconds);
+            const auto to = MapFracturePoint(
+                source.to, deformation, songTimeSeconds, realTimeSeconds);
+            const std::size_t vertex = edge * 4;
+            if(!revealed)
+            {
+                dynamicCrackVertices_[vertex] = from;
+                dynamicCrackVertices_[vertex + 1] = from;
+                dynamicCrackVertices_[vertex + 2] = from;
+                dynamicCrackVertices_[vertex + 3] = from;
+                continue;
+            }
+            const float dx = to.x - from.x;
+            const float dy = to.y - from.y;
+            const float inverseLength = 1.0f /
+                std::max(0.0001f, std::sqrt(dx * dx + dy * dy));
+            const float tangentX = dx * inverseLength;
+            const float tangentY = dy * inverseLength;
+            const float offsetX = -dy * inverseLength * CrackHalfWidth;
+            const float offsetY = dx * inverseLength * CrackHalfWidth;
+            const float fromX = from.x - tangentX * CrackEndOverlap;
+            const float fromY = from.y - tangentY * CrackEndOverlap;
+            const float toX = to.x + tangentX * CrackEndOverlap;
+            const float toY = to.y + tangentY * CrackEndOverlap;
+            dynamicCrackVertices_[vertex] =
+                {fromX - offsetX, fromY - offsetY, from.z - 0.04f};
+            dynamicCrackVertices_[vertex + 1] =
+                {fromX + offsetX, fromY + offsetY, from.z - 0.04f};
+            dynamicCrackVertices_[vertex + 2] =
+                {toX + offsetX, toY + offsetY, to.z - 0.04f};
+            dynamicCrackVertices_[vertex + 3] =
+                {toX - offsetX, toY - offsetY, to.z - 0.04f};
+        }
+        crackMesh_->set_vertices(dynamicCrackVertices_);
+        crackMesh_->RecalculateBounds();
+        if(crackMaterial_)
+            crackMaterial_->set_color({1.0f, 1.0f, 1.0f,
+                std::clamp(fracture.crackOpacity, 0.0f, 1.0f)});
+        crackObject_->SetActive(true);
+        return true;
+    }
+
+    bool ScreenSurface::CaptureFractureShape(
+        const CoreLogic::FractureEffectSettings& fracture,
+        const CoreLogic::SurfaceDeformationSettings& deformation,
+        double songTimeSeconds,
+        double realTimeSeconds)
+    {
+        if(!fractureMesh_ || !fractureBaseVertices_ || !fractureUvs_)
+            return false;
+        const float cover = CoreLogic::DeformationAutoCoverScale(
+            screenWidth_, screenHeight_, deformation);
+        for(std::size_t index = 0; index < fractureVertexMetadata_.size(); ++index)
+        {
+            const auto point = fractureVertexMetadata_[index].point;
+            fractureBaseVertices_[index] = MapFracturePoint(
+                point, deformation, songTimeSeconds, realTimeSeconds);
+            dynamicFractureVertices_[index] = fractureBaseVertices_[index];
+            fractureUvs_[index] = {
+                std::clamp(0.5f + (point.x - 0.5f) / cover, 0.0f, 1.0f),
+                std::clamp(0.5f + ((1.0f - point.y) - 0.5f) / cover,
+                           0.0f, 1.0f)};
+        }
+        for(std::size_t shard = 0; shard < fractureShardCenters_.size(); ++shard)
+            fractureShardBaseCenters_[shard] = MapFracturePoint(
+                fractureShardCenters_[shard], deformation,
+                songTimeSeconds, realTimeSeconds);
+        fractureMesh_->set_vertices(fractureBaseVertices_);
+        fractureMesh_->set_uv(fractureUvs_);
+        fractureMesh_->RecalculateBounds();
+        fractureShapeCaptured_ = true;
+        if(fracture.freezeOnShatter)
+        {
+            UnityEngine::Graphics::CopyTexture(texture_, fractureSnapshot_);
+            material_->set_mainTexture(fractureSnapshot_);
+            fractureSnapshotActive_ = true;
+        }
+        else
+        {
+            material_->set_mainTexture(texture_);
+            fractureSnapshotActive_ = false;
+        }
+        return true;
+    }
+
+    bool ScreenSurface::UpdateFractureVertices(
+        const CoreLogic::FractureEffectSettings& fracture)
+    {
+        if(!fractureMesh_ || !fractureBaseVertices_ ||
+           !dynamicFractureVertices_)
+            return false;
+        const float separation = std::clamp(fracture.separation, 0.0f, 1.0f);
+        const auto impact = fracture.pattern.impactPoint;
+        const std::size_t overrideCount = std::min(
+            fracture.shardTransformCount, fracture.shardTransforms.size());
+        for(std::size_t shard = 0; shard < fractureShardCenters_.size(); ++shard)
+        {
+            const auto centerPoint = fractureShardCenters_[shard];
+            float directionX =
+                (centerPoint.x - impact.x) * std::max(screenWidth_, 0.001f);
+            float directionY =
+                (centerPoint.y - impact.y) * std::max(screenHeight_, 0.001f);
+            const float radius = std::sqrt(
+                directionX * directionX + directionY * directionY);
+            if(radius > 0.0001f)
+            {
+                directionX /= radius;
+                directionY /= radius;
+            }
+            const float normalizedRadius = std::clamp(
+                std::sqrt(
+                    (centerPoint.x - impact.x) * (centerPoint.x - impact.x) +
+                    (centerPoint.y - impact.y) * (centerPoint.y - impact.y)) *
+                    1.6f,
+                0.0f, 1.0f);
+            const float delay = (1.0f - normalizedRadius) *
+                std::clamp(fracture.stagger, 0.0f, 0.8f);
+            const float local = std::clamp(
+                (separation - delay) / std::max(0.001f, 1.0f - delay),
+                0.0f, 1.0f);
+            const float eased = local * local * (3.0f - 2.0f * local);
+            const std::uint32_t hash = FractureHash(fracture.pattern.seed, shard);
+            const float randomX = HashSigned(hash);
+            const float randomY = HashSigned(hash ^ 0xA511E9B3U);
+            const float randomZ = HashSigned(hash ^ 0x63D83595U);
+            CoreLogic::FractureShardTransform authored{};
+            authored.shardIndex = shard;
+            for(std::size_t index = 0; index < overrideCount; ++index)
+            {
+                if(fracture.shardTransforms[index].shardIndex == shard)
+                {
+                    authored = fracture.shardTransforms[index];
+                    break;
+                }
+            }
+            const float rotation = fracture.tumbleDegrees * eased;
+            fractureShardRotations_[shard] = {
+                rotation * randomX + authored.rotationDegrees.x * eased,
+                rotation * randomY + authored.rotationDegrees.y * eased,
+                rotation * randomZ + authored.rotationDegrees.z * eased};
+            UnityEngine::Vector3 value{};
+            const float kick = fracture.outwardDistance * eased *
+                (0.72f + std::abs(randomX) * 0.36f);
+            value.x = directionX * kick + randomX * kick * 0.18f +
+                authored.translation.x * eased;
+            value.y = directionY * kick + randomY * kick * 0.14f -
+                fracture.gravityDistance * local * local +
+                authored.translation.y * eased;
+            const float randomizedForwardAmount =
+                0.25f + (randomZ * 0.5f + 0.5f) * 0.75f;
+            const float forwardTravel = fracture.forwardScatterDistance > 0.0f
+                ? fracture.forwardScatterDistance * eased *
+                    randomizedForwardAmount
+                : kick * (0.35f + std::abs(randomZ) * 0.35f);
+            // Negative local Z is toward the player for the back-wall screen.
+            // A separately authored depth range lets shards fall forward as a
+            // three-dimensional cloud instead of remaining a thin glass row.
+            value.z = -forwardTravel + authored.translation.z * eased;
+            fractureShardTranslations_[shard] = value;
+            fractureShardScales_[shard] = std::max(
+                0.01f, 1.0f + (authored.scale - 1.0f) * eased);
+        }
+        for(std::size_t index = 0; index < fractureVertexMetadata_.size(); ++index)
+        {
+            const std::size_t shard = fractureVertexMetadata_[index].shard;
+            const auto center = fractureShardBaseCenters_[shard];
+            const auto rotation = fractureShardRotations_[shard];
+            auto value = RotateFractureVertex(
+                fractureBaseVertices_[index], center,
+                rotation.x, rotation.y, rotation.z);
+            const float scale = fractureShardScales_[shard];
+            value.x = center.x + (value.x - center.x) * scale;
+            value.y = center.y + (value.y - center.y) * scale;
+            value.z = center.z + (value.z - center.z) * scale;
+            const auto translation = fractureShardTranslations_[shard];
+            value.x += translation.x;
+            value.y += translation.y;
+            value.z += translation.z;
+            dynamicFractureVertices_[index] = value;
+        }
+        fractureMesh_->set_vertices(dynamicFractureVertices_);
+        fractureMesh_->RecalculateBounds();
+        return true;
+    }
+
+    bool ScreenSurface::SetFractureEffect(
+        const CoreLogic::FractureEffectSettings& fracture,
+        const CoreLogic::SurfaceDeformationSettings& deformation,
+        double songTimeSeconds,
+        double realTimeSeconds)
+    {
+        if(!fracture.enabled ||
+           fracture.phase == CoreLogic::FracturePhase::Inactive)
+        {
+            if(fractureMeshActive_ || fractureSnapshotActive_ ||
+               (crackObject_ && crackObject_->get_activeSelf()))
+                RestoreWholeVideoMesh();
+            return true;
+        }
+        if(!PrepareFracture(fracture))
+            return false;
+
+        if(fracture.phase == CoreLogic::FracturePhase::Prepared)
+        {
+            if(fractureMeshActive_ || fractureSnapshotActive_ ||
+               (crackObject_ && crackObject_->get_activeSelf()))
+                RestoreWholeVideoMesh();
+            return true;
+        }
+        if(fracture.phase == CoreLogic::FracturePhase::CrackOnly)
+        {
+            if(fractureMeshActive_ || fractureSnapshotActive_)
+                RestoreWholeVideoMesh();
+            return UpdateCrackOverlay(
+                fracture, deformation, songTimeSeconds, realTimeSeconds);
+        }
+
+        if(!fractureShapeCaptured_ &&
+           !CaptureFractureShape(
+               fracture, deformation, songTimeSeconds, realTimeSeconds))
+            return false;
+        if(fracture.freezeOnShatter)
+        {
+            if(!fractureSnapshotActive_)
+                UnityEngine::Graphics::CopyTexture(texture_, fractureSnapshot_);
+            material_->set_mainTexture(fractureSnapshot_);
+            fractureSnapshotActive_ = true;
+        }
+        else if(!fracture.freezeOnShatter && fractureSnapshotActive_)
+        {
+            material_->set_mainTexture(texture_);
+            fractureSnapshotActive_ = false;
+        }
+        if(crackObject_)
+            crackObject_->SetActive(false);
+        if(!fractureMeshActive_)
+        {
+            auto* filter = videoObject_->GetComponent<UnityEngine::MeshFilter*>();
+            if(!filter)
+                return false;
+            filter->set_sharedMesh(fractureMesh_);
+            fractureMeshActive_ = true;
+        }
+        if(!UpdateFractureVertices(fracture))
+            return false;
+
+        if(fracture.phase == CoreLogic::FracturePhase::Rejoining &&
+           fracture.separation <= 0.0001f)
+        {
+            RestoreWholeVideoMesh();
+            if(fracture.retainCracksAfterRejoin)
+                return UpdateCrackOverlay(
+                    fracture, deformation, songTimeSeconds, realTimeSeconds);
+        }
+        return true;
+    }
+
     void ScreenSurface::Destroy()
     {
+        DestroyFractureResources();
         if(diagnosticsObject_)
             UnityEngine::Object::Destroy(diagnosticsObject_);
         diagnosticsObject_ = nullptr;
@@ -1034,6 +1778,15 @@ namespace BigScreen {
         visible_ = false;
         leadInActive_ = false;
         leadInBlack_ = false;
+        geometryConfig_ = {};
+        geometryAspectRatio_ = 1.0f;
+        deformationBaseVertices_.clear();
+        undeformedVideoVertices_ = nullptr;
+        dynamicVideoVertices_ = nullptr;
+        undeformedVideoUvs_ = nullptr;
+        dynamicVideoUvs_ = nullptr;
+        prepareDeformation_ = false;
+        deformationWasApplied_ = false;
     }
 
     void ScreenSurface::SetDiagnosticsText(const std::string& text)

@@ -5,6 +5,7 @@
 #include <exception>
 
 #include "UnityEngine/Quaternion.hpp"
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "main.hpp"
 
@@ -19,7 +20,11 @@ namespace BigScreen {
                 "Big Screen Showcase Panel 5",
                 "Big Screen Showcase Panel 6",
                 "Big Screen Showcase Panel 7",
-                "Big Screen Showcase Panel 8"};
+                "Big Screen Showcase Panel 8",
+                "Big Screen Showcase Panel 9",
+                "Big Screen Showcase Panel 10",
+                "Big Screen Showcase Panel 11",
+                "Big Screen Showcase Panel 12"};
     }
 
     MapVideoConfig ShowcaseSurfaceGroup::GeometryConfig(
@@ -37,7 +42,10 @@ namespace BigScreen {
         config.cinemaCurvatureDegrees.reset();
         config.cinemaCurveYAxis = false;
         config.maintainAspectRatioWhenCurved = false;
-        config.screenSegments = 24;
+        // Showcase panels are the only surfaces that can receive the flag
+        // wave. Provision their reusable mesh at the demonstrated 64-column
+        // ceiling up front so enabling the effect never allocates mid-song.
+        config.screenSegments = 64;
         config.letterboxTransparent = true;
         config.videoOpacity = 0.75f;
         config.videoRotation = 0.0f;
@@ -160,6 +168,8 @@ namespace BigScreen {
                 return false;
 
             const auto frame = UpDownShowcase::Sample(songTimeSeconds);
+            const double realTimeSeconds =
+                UnityEngine::Time::get_realtimeSinceStartup();
             timelineActive_ = frame.active;
             for(std::size_t index = 0; index < panels_.size(); ++index)
             {
@@ -183,10 +193,42 @@ namespace BigScreen {
                     panels_[index].SetWorldScale(
                         {state.scale.x, state.scale.y, state.scale.z});
                     panels_[index].SetVideoLocalRoll(state.videoRoll);
+                    const bool shardsOwnGeometry = state.fracture.enabled &&
+                        (state.fracture.phase ==
+                             CoreLogic::FracturePhase::Shattered ||
+                         (state.fracture.phase ==
+                              CoreLogic::FracturePhase::Rejoining &&
+                          state.fracture.separation > 0.0001f));
+                    if(!shardsOwnGeometry &&
+                       !panels_[index].SetDeformation(
+                           state.deformation,
+                           songTimeSeconds,
+                           realTimeSeconds))
+                    {
+                        PaperLogger.error(
+                            "Unity rejected showcase deformation for panel {}",
+                            index + 1);
+                        return false;
+                    }
                     if(!panels_[index].SetOpacity(state.opacity))
                     {
                         PaperLogger.error(
                             "Unity rejected showcase opacity for panel {}",
+                            index + 1);
+                        return false;
+                    }
+                    if(!panels_[index].SetFractureEffect(
+                           state.fracture,
+                           state.deformation,
+                           songTimeSeconds,
+                           realTimeSeconds))
+                    {
+                        // A fracture is spectacle, never a playback
+                        // dependency. Leave the ordinary synchronized screen
+                        // visible and report the setup failure once through
+                        // the existing showcase circuit breaker.
+                        PaperLogger.error(
+                            "Unity rejected showcase glass effect for panel {}",
                             index + 1);
                         return false;
                     }

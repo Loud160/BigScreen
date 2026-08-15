@@ -126,8 +126,11 @@ cd "${build_root}"
 # This is intentionally a decoder-only configuration.  In particular, it does
 # not use --enable-gpl, --enable-version3, --enable-nonfree, libx264, libx265,
 # libvidstab, or any encoder/filter dependency.  Big Screen downloads an
-# existing H.264 MP4 stream and only needs to demux, decode, seek, and convert
-# decoded frames to RGBA.
+# existing H.264/VP8/VP9 stream and only needs to demux, decode, seek, and
+# convert decoded frames to RGBA. HEVC is deliberately MediaCodec-only: Big
+# Screen does not compile or ship FFmpeg's software HEVC decoder. All enabled
+# components remain LGPL and the explicit allowlist below is the license and
+# footprint boundary.
 "${source_root}/configure" \
     --prefix="${install_root}" \
     --target-os=android \
@@ -159,9 +162,21 @@ cd "${build_root}"
     --enable-avformat \
     --enable-avutil \
     --enable-swscale \
+    --enable-jni \
+    --enable-mediacodec \
     --enable-decoder=h264 \
+    --enable-decoder=h264_mediacodec \
+    --enable-decoder=hevc_mediacodec \
+    --enable-decoder=vp8 \
+    --enable-decoder=vp8_mediacodec \
+    --enable-decoder=vp9 \
+    --enable-decoder=vp9_mediacodec \
     --enable-demuxer=mov \
+    --enable-demuxer=matroska \
     --enable-parser=h264 \
+    --enable-parser=hevc \
+    --enable-parser=vp8 \
+    --enable-parser=vp9 \
     --enable-protocol=file \
     --extra-cflags='-O3 -fPIC' \
     --extra-ldflags='-Wl,-Bsymbolic'
@@ -176,6 +191,41 @@ for forbidden_option in CONFIG_GPL CONFIG_VERSION3 CONFIG_NONFREE; do
         exit 1
     fi
 done
+
+# A successful configure can silently disable a requested component when a
+# future FFmpeg dependency changes. Refuse to publish a runtime whose build
+# record cannot actually provide both the experimental hardware decoder and
+# the software fallback promised by Big Screen's UI.
+for required_option in \
+    CONFIG_JNI \
+    CONFIG_MEDIACODEC \
+    CONFIG_H264_DECODER \
+    CONFIG_H264_MEDIACODEC_DECODER \
+    CONFIG_HEVC_MEDIACODEC_DECODER \
+    CONFIG_VP8_DECODER \
+    CONFIG_VP8_MEDIACODEC_DECODER \
+    CONFIG_VP9_DECODER \
+    CONFIG_VP9_MEDIACODEC_DECODER \
+    CONFIG_MOV_DEMUXER \
+    CONFIG_MATROSKA_DEMUXER \
+    CONFIG_H264_PARSER \
+    CONFIG_HEVC_PARSER \
+    CONFIG_VP8_PARSER \
+    CONFIG_VP9_PARSER; do
+    if ! grep -q "^${required_option}=yes$" "${build_root}/ffbuild/config.mak"; then
+        printf 'Required FFmpeg decoder option was not enabled: %s\n' "${required_option}" >&2
+        exit 1
+    fi
+done
+
+# HEVC must remain hardware-only. This negative assertion is as important as
+# the positive decoder checks above: accidentally enabling CONFIG_HEVC_DECODER
+# would add a software HEVC implementation and violate Big Screen's stated
+# runtime and licensing policy.
+if grep -q '^CONFIG_HEVC_DECODER=yes$' "${build_root}/ffbuild/config.mak"; then
+    printf 'Software HEVC decoder must not be enabled.\n' >&2
+    exit 1
+fi
 
 make -j"$(nproc)"
 make install

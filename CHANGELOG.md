@@ -8,6 +8,12 @@
 
 - Quest-native H.264 video playback for OST, DLC, custom, and WIP songs.
 - Video Library with mapper, YouTube, map-folder, and Video Import sources.
+- Added explicit per-source download buttons for every available 480p, 720p,
+  1080p, and 1440p tier in the Video Library plus the same tier chooser on song
+  selection. Replacement confirmation preserves the prior assignment until the
+  new file commits, and 1440p carries its hardware-only warning.
+- Added H.265/HEVC, VP8, and VP9 playback policy, WebM local-file support,
+  1440p output limiting, HDR/10-bit rejection, and codec-aware diagnostics.
 - Five flat/curved layouts, pause/song-selection controls, environment cleanup, Cinema/Chroma and Replay compatibility.
 - Advanced layout-scoped screen rotation, video rotation/zoom/pan/perspective tilt, stretch or transparency-aware letterboxing, and controller-based undocked screen placement.
 - Embedded CPython/yt-dlp plus an in-process QuickJS-NG challenge engine, with verified updates, provider compatibility testing, rejection, and rollback.
@@ -15,6 +21,23 @@
 - Automatic library recovery, storage maintenance, performance diagnostics/reduction, error containment, host tests, and CI.
 - Release hardening adds HTTPS YouTube mapper URL restrictions, metadata/list bounds, decoder-worker exception containment, pinned CI actions, and packaged third-party notices.
 - Downloader hardening adds bounded QuickJS input/output/stack use, exception-safe Python ownership, real EJS startup validation, transactional update activation, stale native-extension pruning, fresh QMOD verification, and source-rebuild CI.
+- Added an optional Misc-tab Up & Down showcase with a center readiness page, live Chroma/Noodle checks, separate user-triggered map/video downloads, hash-pinned BeatSaver installation, a motion warning, and keyed direct Lawless Expert+ launch. Post-song navigation remains Beat Saber's stock flow.
+- Polished the Up & Down showcase with a lane-safe four-panel fly-by, an
+  arena-sized flat punchline, denser upper/lower flapping and floating fields,
+  timed side-pillar removal, a wider corkscrew entrance, and a twelve-panel
+  closing corridor.
+- Added one deterministic authored showcase glass sequence: every downward
+  impact from about 2:03 accumulates cracks across one 200-piece pane, then the
+  current video frame freezes onto the shards as they tumble well below the
+  runway at about 2:15. Unrelated sections no longer receive generic fracture
+  demonstrations.
+- Hardened the showcase navigation lifecycle so the motion warning cannot
+  survive as an input-blocking retained modal. Gameplay completion clears all
+  launcher state and leaves Beat Saber's Results, Replay, and Continue paths
+  unchanged, so reopening Showcase always starts from an idle readiness page.
+- The movable performance panel now persists one shared menu/gameplay
+  placement and includes an adjacent reset-glyph recovery button. Video
+  Library tier actions use larger `DOWNLOAD 1080p`-style labels.
 - Playback hardening adds source-aware/VFR timing, reusable RGBA buffers, full request-cost diagnostics, gameplay decoder prewarming, and material-state updates only when invariants change.
 - Menu and storage work is rate-limited and cached; downloader progress avoids per-block flash synchronization, network waits are bounded, and error dialogs back off safely.
 - The runtime now uses CPython 3.14.7 and one pinned Android NDK r27d toolchain. Reproducible LGPL FFmpeg 4.4.8 and 9.0.1 builds remain side by side for controlled on-headset comparison.

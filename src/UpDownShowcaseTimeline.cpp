@@ -8,6 +8,30 @@ namespace BigScreen::UpDownShowcase {
         constexpr float Pi = 3.14159265358979323846f;
         constexpr float BaseY = 17.0f;
         constexpr float BaseZ = 58.0f;
+        constexpr double ShapeDeformStartBeat = 52.0 * BeatsPerMinute / 60.0;
+        constexpr double ShapeDeformEndBeat = 58.0 * BeatsPerMinute / 60.0;
+        // The quadrant flyby is intentionally specified in seconds even though
+        // the timeline samples beats. Four seconds carry the panes from the
+        // back wall to the player plane; one more second keeps them visible as
+        // they pass behind the platform. This replaces the former 0.8-second
+        // rush that looked like an abrupt disappearance, even in slow motion.
+        constexpr double QuadrantFlyStartBeat = 101.15;
+        constexpr double QuadrantFlyPlayerBeat =
+            QuadrantFlyStartBeat + 4.0 * BeatsPerMinute / 60.0;
+        constexpr double QuadrantFlyEndBeat =
+            QuadrantFlyPlayerBeat + 1.0 * BeatsPerMinute / 60.0;
+        // Move the complete break one additional second earlier. At 138 BPM,
+        // one second is exactly 2.3 beats, so the successful 12.5-beat fall is
+        // preserved while the shards now separate well before the replacement
+        // formation appears at beat 311.
+        constexpr double FinaleShatterStartBeat = 304.2;
+        constexpr double FinaleShatterEndBeat = 316.7;
+        // A shattered surface uses a frozen texture so every shard retains one
+        // coherent picture. Starting at zero separation froze that picture for
+        // several visually static frames before any breakup could be seen.
+        // Enter with a small visible separation instead: freezing and breaking
+        // now happen together, so the video never appears to pause first.
+        constexpr float FinaleInitialSeparation = 0.14f;
 
         float Clamp01(double value)
         {
@@ -97,6 +121,189 @@ namespace BigScreen::UpDownShowcase {
                 PhaseOffsets[index];
             return std::sin(phase) + 0.42f * std::sin(phase * 1.73f + index);
         }
+
+        void ApplyFreeShape(PanelState& panel, double beat, float phaseOffset = 0.0f)
+        {
+            if(beat < ShapeDeformStartBeat || beat >= ShapeDeformEndBeat)
+                return;
+            const float progress = Segment(
+                beat, ShapeDeformStartBeat, ShapeDeformEndBeat);
+            const float envelope = std::sin(progress * Pi);
+            const float phase = progress * Pi * 5.0f + phaseOffset;
+            auto& deformation = panel.deformation;
+            deformation.enabled = true;
+            deformation.fillMode = progress < 0.5f
+                ? CoreLogic::DeformationFillMode::StretchToFill
+                : CoreLogic::DeformationFillMode::AutoZoomCover;
+            // Four unrelated corner trajectories make the surface fold and
+            // shear rather than merely scaling a rectangular mesh.
+            deformation.cornerWarp.corners = {{
+                {-4.8f * envelope * std::sin(phase),
+                 -3.1f * envelope * std::cos(phase * 0.73f),
+                  5.8f * envelope * std::sin(phase * 0.61f)},
+                {-2.7f * envelope * std::cos(phase * 0.89f),
+                  4.6f * envelope * std::sin(phase * 0.68f),
+                 -6.5f * envelope * std::cos(phase * 0.57f)},
+                { 4.2f * envelope * std::sin(phase * 0.81f + 0.7f),
+                  3.7f * envelope * std::cos(phase * 0.64f + 0.4f),
+                  7.2f * envelope * std::sin(phase * 0.52f + 1.0f)},
+                { 5.1f * envelope * std::cos(phase * 0.76f + 0.2f),
+                 -4.0f * envelope * std::sin(phase * 0.91f + 0.5f),
+                 -5.4f * envelope * std::cos(phase * 0.66f + 0.8f)}}};
+        }
+
+        void ApplyDramaticFlagWave(PanelState& panel)
+        {
+            auto& deformation = panel.deformation;
+            deformation.enabled = true;
+            deformation.fillMode = CoreLogic::DeformationFillMode::AutoZoomCover;
+            deformation.wave.enabled = true;
+            deformation.wave.cyclesAcross = 1.15f;
+            // One complete wave every four beats keeps the motion deep and
+            // deliberate instead of looking like a rapidly vibrating cloth.
+            deformation.wave.speedCyclesPerSecond =
+                static_cast<float>(BeatsPerMinute / 240.0);
+            // The earlier value overwhelmed the image, especially while the
+            // canvas was also rocking. This remains unmistakably three-
+            // dimensional without folding the picture into itself.
+            deformation.wave.depth = 5.1f;
+            deformation.wave.ripple = 0.82f;
+            deformation.wave.anchorRamp = 0.72f;
+            deformation.wave.anchoredEdge = CoreLogic::WaveAnchorEdge::Left;
+            deformation.wave.phaseOffset = 0.25f;
+            deformation.wave.clock = CoreLogic::DeformationClock::SongTime;
+        }
+
+        // One deterministic impact is assigned to every low point in the two
+        // bounce phrases from about 2:03 until the 2:15 break. The positions
+        // deliberately alternate edges, corners, and center regions so the
+        // accumulating web reads as repeated structural damage rather than a
+        // single crack graphic becoming brighter.
+        constexpr std::array<CoreLogic::FracturePoint, 18> ImpactSequence{{
+            {0.16f, 0.77f}, {0.83f, 0.70f}, {0.36f, 0.21f},
+            {0.67f, 0.37f}, {0.48f, 0.84f}, {0.91f, 0.28f},
+            {0.10f, 0.42f}, {0.57f, 0.58f}, {0.27f, 0.62f},
+            {0.76f, 0.88f}, {0.43f, 0.39f}, {0.70f, 0.16f},
+            {0.20f, 0.91f}, {0.88f, 0.51f}, {0.33f, 0.73f},
+             {0.61f, 0.29f}, {0.51f, 0.68f}, {0.79f, 0.43f}}};
+
+        template<std::size_t ImpactCount>
+        void ConfigureGlass(
+            PanelState& panel,
+            std::size_t preset,
+            std::size_t pieces,
+            const std::array<CoreLogic::FracturePoint, ImpactCount>& impacts,
+            CoreLogic::FracturePhase phase,
+            std::size_t revealedGroups,
+            bool freeze,
+            float separation)
+        {
+            auto& glass = panel.fracture;
+            glass.enabled = true;
+            glass.phase = phase;
+            glass.pattern.seed = CoreLogic::CuratedFractureSeeds[
+                preset % CoreLogic::CuratedFractureSeeds.size()].second;
+            glass.pattern.pieceCount = pieces;
+            glass.pattern.impactPoint = impacts.back();
+            glass.pattern.spokeCount = ImpactCount == 4 ? 13 : 10;
+            glass.pattern.ringCount = 3;
+            glass.pattern.jitter = 0.22f;
+            glass.impactCount = ImpactCount;
+            for(std::size_t index = 0; index < ImpactCount; ++index)
+                glass.impacts[index] = impacts[index];
+            glass.revealedGroupCount = std::min(revealedGroups, ImpactCount);
+            glass.freezeOnShatter = freeze;
+            glass.separation = std::clamp(separation, 0.0f, 1.0f);
+        }
+
+        std::size_t RevealedImpactCount(double beat)
+        {
+            // HalfBeatBounce reaches its lower endpoint at each whole beat.
+            // The first phrase lands at beats 284..290 and the second at
+            // 296..306. The static bridge between them keeps all existing
+            // cracks but does not invent impacts while the pane is stationary.
+            std::size_t revealed = 0;
+            if(beat >= 284.0)
+                revealed = std::min<std::size_t>(
+                    7, static_cast<std::size_t>(std::floor(beat - 284.0)) + 1);
+            if(beat >= 296.0)
+                revealed += std::min<std::size_t>(
+                    11, static_cast<std::size_t>(std::floor(beat - 296.0)) + 1);
+            return std::min(revealed, ImpactSequence.size());
+        }
+
+        FrameState ApplyGlassCues(FrameState frame, double beat)
+        {
+            if(!frame.active)
+                return frame;
+
+            // This is the showcase's only glass cue. The same foreground panel
+            // persists throughout both bounce phrases, so every downbeat adds
+            // damage to one physical pane. The complete 200-piece partition is
+            // prepared once; changing revealedGroupCount exposes more of its
+            // seams without reallocating or regenerating geometry mid-song.
+            if(beat >= 282.75 && beat < FinaleShatterStartBeat &&
+               frame.panels[0].visible)
+            {
+                const auto reveals = RevealedImpactCount(beat);
+                ConfigureGlass(
+                    frame.panels[0], 11, 200, ImpactSequence,
+                    reveals == 0
+                        ? CoreLogic::FracturePhase::Prepared
+                        : CoreLogic::FracturePhase::CrackOnly,
+                    reveals, true, 0.0f);
+                frame.panels[0].fracture.crackOpacity = 0.86f;
+            }
+
+            // Shortly before the following formation, freeze the currently
+            // displayed frame on every shard and let the pane fall forward
+            // through a deep volume. The initial non-zero separation makes the
+            // breakup visible on the same frame that captures the snapshot;
+            // there is no static frozen-image interval before the shatter.
+            // Keep the fragments alive into the following formation: a longer
+            // 12.5-beat curve takes roughly 2-3 seconds to reach lane height,
+            // then continues well below and behind the player. Once the next
+            // formation starts at beat 311, shift its surfaces up one slot;
+            // panel zero remains the falling glass without another decoder.
+            if(beat >= FinaleShatterStartBeat && beat < FinaleShatterEndBeat)
+            {
+                if(beat >= 311.0)
+                {
+                    for(std::size_t index = frame.panels.size() - 1;
+                        index > 0; --index)
+                        frame.panels[index] = frame.panels[index - 1];
+                }
+
+                PanelState broken{};
+                broken.visible = true;
+                broken.position = {0.0f, 19.0f, 51.0f};
+                broken.rotation = {-6.0f, 0.0f, 0.0f};
+                broken.scale = {1.85f, 1.85f, 1.0f};
+                broken.opacity = 1.0f -
+                    0.60f * Segment(
+                        beat, FinaleShatterEndBeat - 2.5,
+                        FinaleShatterEndBeat);
+                broken.geometry = Geometry::Wide;
+                ConfigureGlass(
+                    broken, 11, 200, ImpactSequence,
+                    CoreLogic::FracturePhase::Shattered,
+                    ImpactSequence.size(), true,
+                    Lerp(
+                        FinaleInitialSeparation,
+                        1.0f,
+                        Smooth(Segment(
+                            beat, FinaleShatterStartBeat,
+                            FinaleShatterEndBeat))));
+                broken.fracture.outwardDistance = 15.0f;
+                broken.fracture.forwardScatterDistance = 42.0f;
+                broken.fracture.gravityDistance = 110.0f;
+                broken.fracture.tumbleDegrees = 560.0f;
+                broken.fracture.stagger = 0.16f;
+                broken.fracture.crackOpacity = 0.9f;
+                frame.panels[0] = broken;
+            }
+            return frame;
+        }
     }
 
     bool MatchesTarget(
@@ -122,7 +329,7 @@ namespace BigScreen::UpDownShowcase {
 #endif
     }
 
-    FrameState Sample(double songTimeSeconds)
+    FrameState SampleBase(double songTimeSeconds)
     {
         FrameState frame;
         if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
@@ -239,45 +446,116 @@ namespace BigScreen::UpDownShowcase {
             return frame;
         }
 
-        // 88-102: four actual surfaces each reveal one source quadrant, then
-        // physically fracture the image before rebuilding it.
-        if(beat < 102.0)
+        // 88-approximately 49 seconds: four actual surfaces each reveal one
+        // source quadrant and
+        // physically fracture the image. Rather than softly rebuilding the
+        // tiled picture before the next cue, the last half of the phrase sends
+        // all four spinning past the player on wide, lane-safe trajectories.
+        if(beat < QuadrantFlyEndBeat)
         {
-            const float entry = EaseOutBack(Segment(beat, 88.0, 89.0));
-            const float fracture = std::sin(static_cast<float>(
-                Segment(beat, 90.0, 100.5) * Pi));
+            // Keep the independent rubber-band movement alive until the final
+            // hand-off. Only then turn each pane edge-on toward the lane and
+            // drive it past the player along Z; a large lateral target made
+            // the previous version look as though the panes simply slid off
+            // the left and right edges of the back wall.
+            const double fractureBeat = std::min(beat, QuadrantFlyStartBeat);
+            const float entry = EaseOutBack(Segment(fractureBeat, 88.0, 89.0));
+            const float fracture = Smooth(Segment(fractureBeat, 89.0, 91.0));
+            const float toPlayer = Smooth(Segment(
+                beat, QuadrantFlyStartBeat, QuadrantFlyPlayerBeat));
+            const float pastPlayer = Smooth(Segment(
+                beat, QuadrantFlyPlayerBeat, QuadrantFlyEndBeat));
+            const bool behindPlayer = beat >= QuadrantFlyPlayerBeat;
+            const float travel = behindPlayer
+                ? Lerp(0.8f, 1.0f, pastPlayer)
+                : 0.8f * toPlayer;
+            const float turn = Smooth(Segment(
+                beat, QuadrantFlyStartBeat, QuadrantFlyStartBeat + 1.6));
             for(std::size_t i = 0; i < 4; ++i)
             {
                 const float side = (i & 1U) == 0 ? -1.0f : 1.0f;
                 const float row = i < 2 ? 1.0f : -1.0f;
                 const Geometry geometry = static_cast<Geometry>(
                     static_cast<int>(Geometry::QuadrantTopLeft) + static_cast<int>(i));
-                const float spring = FractureSpring(beat, i) * fracture;
+                const float spring = FractureSpring(fractureBeat, i) * fracture;
                 const float springReach = (2.8f + static_cast<float>(i) * 0.55f) * spring;
-                const float verticalSpring = FractureSpring(beat + 0.37, (i + 1) % 4) *
+                const float verticalSpring = FractureSpring(
+                    fractureBeat + 0.37, (i + 1) % 4) *
                     fracture * (1.4f + static_cast<float>(i) * 0.25f);
+                const float startX = side * Lerp(
+                    1.0f, 19.0f + 9.0f * fracture + springReach, entry);
+                const float startY = BaseY + row * Lerp(
+                    1.0f, 10.5f + 4.5f * fracture + verticalSpring, entry);
+                const float startZ = BaseZ +
+                    fracture * (i == 0 || i == 3 ? -12.0f : 10.0f) +
+                    spring * (i < 2 ? 2.4f : -2.0f);
+                const float startPitch =
+                    -7.0f + row * fracture * (8.0f + spring * 4.0f);
+                const float startYaw =
+                    side * fracture * (28.0f + spring * 9.0f);
+                const float startRoll =
+                    side * row * fracture * (16.0f + spring * 11.0f);
+
+                // Two panes travel down each side of the block lanes. Their
+                // fronts face inward at one another while distinct X-axis
+                // spins preserve the chaotic departure. They disappear only
+                // after passing well behind the player platform.
+                constexpr std::array<float, 4> LaneX{11.5f, 14.0f, 13.0f, 15.5f};
+                constexpr std::array<float, 4> PassY{29.0f, 23.0f, 9.0f, 2.0f};
+                constexpr std::array<float, 4> PassZ{-38.0f, -50.0f, -43.0f, -57.0f};
+                constexpr std::array<float, 4> SpinDegrees{540.0f, -690.0f, -610.0f, 760.0f};
+                const float laneArc = std::sin(travel * Pi) *
+                    (1.5f + static_cast<float>(i) * 0.35f);
+                const float inwardYaw = -side * (88.0f + i * 1.2f);
                 Put(frame, i,
-                    {side * Lerp(1.0f, 19.0f + 9.0f * fracture + springReach, entry),
-                     BaseY + row * Lerp(
-                         1.0f, 10.5f + 4.5f * fracture + verticalSpring, entry),
-                     BaseZ + fracture * (i == 0 || i == 3 ? -12.0f : 10.0f) +
-                         spring * (i < 2 ? 2.4f : -2.0f)},
-                    {-7.0f + row * fracture * (8.0f + spring * 4.0f),
-                     side * fracture * (28.0f + spring * 9.0f),
-                     side * row * fracture * (16.0f + spring * 11.0f)},
-                    {0.92f, 0.92f, 1.0f}, geometry, 1.0f,
-                    -side * row * fracture * (16.0f + spring * 11.0f));
+                    {Lerp(startX, side * LaneX[i], travel) + side * laneArc,
+                     Lerp(startY, PassY[i], travel) +
+                         std::sin(travel * Pi * (1.0f + i * 0.18f)) * row * 2.2f,
+                     behindPlayer
+                         ? Lerp(0.0f, PassZ[i], pastPlayer)
+                         : Lerp(startZ, 0.0f, toPlayer)},
+                    {Lerp(startPitch, SpinDegrees[i], travel),
+                     Lerp(startYaw, inwardYaw, turn),
+                     Lerp(startRoll, side * row * 8.0f, turn)},
+                    {Lerp(0.92f, 1.10f + static_cast<float>(i) * 0.05f, travel),
+                     Lerp(0.92f, 1.10f + static_cast<float>(i) * 0.05f, travel),
+                     1.0f},
+                    geometry,
+                    1.0f - Segment(
+                        beat, QuadrantFlyEndBeat - 0.75,
+                        QuadrantFlyEndBeat));
+            }
+
+            // Bring the following pair up before the rubber-band panels have
+            // passed the player. All six surfaces coexist through the readable
+            // five-second flyby, turning the transition into a sustained hand-
+            // off rather than a soft cut to an unrelated formation.
+            if(beat >= 101.45)
+            {
+                const float sideEntry = EaseOutBack(Segment(beat, 101.45, 102.35));
+                for(std::size_t i = 0; i < 2; ++i)
+                {
+                    const float side = i == 0 ? -1.0f : 1.0f;
+                    const float wave = std::sin(static_cast<float>((beat - 102.0) * Pi));
+                    Put(frame, 4 + i,
+                        {side * 23.0f, BaseY + side * wave * 9.0f,
+                         55.0f + side * wave * 4.0f},
+                        {-8.0f, side * 10.0f, side * wave * 9.0f},
+                        {Lerp(0.05f, 1.18f, sideEntry),
+                         Lerp(0.05f, 1.55f, sideEntry), 1.0f},
+                        Geometry::Tall, 1.0f, -side * wave * 9.0f);
+                }
             }
             return frame;
         }
 
-        if(beat < 121.5)
+        if(beat < 116.0)
         {
             for(std::size_t i = 0; i < 2; ++i)
             {
                 const float side = i == 0 ? -1.0f : 1.0f;
                 const float wave = std::sin(static_cast<float>((beat - 102.0) * Pi));
-                Put(frame, i,
+                Put(frame, 4 + i,
                     {side * 23.0f, BaseY + side * wave * 9.0f,
                      55.0f + side * wave * 4.0f},
                     {-8.0f, side * 10.0f, side * wave * 9.0f},
@@ -286,17 +564,34 @@ namespace BigScreen::UpDownShowcase {
             }
             return frame;
         }
+        if(beat < 121.5)
+        {
+            // The visual punchline near 0:51 needs arena scale. Keep the
+            // source at its ordinary wide aspect/zoom and enlarge only the
+            // physical flat canvas, with a restrained beat pulse so the image
+            // itself is never cropped differently.
+            const float entrance = EaseOutBack(Segment(beat, 116.0, 116.65));
+            const float pulse = Pulse(beat, 0.5);
+            const float scale = std::min(
+                2.95f,
+                Lerp(0.12f, 2.78f + pulse * 0.12f, entrance));
+            PutSingle(frame,
+                {0.0f, 18.5f, 49.0f},
+                {-5.0f, 0.0f, 0.0f},
+                {scale, scale, 1.0f},
+                Geometry::Wide);
+            ApplyFreeShape(frame.panels[0], beat);
+            return frame;
+        }
         if(beat < 122.0)
         {
             const float t = Smooth(Segment(beat, 121.5, 122.0));
-            for(std::size_t i = 0; i < 2; ++i)
-            {
-                const float side = i == 0 ? -1.0f : 1.0f;
-                Put(frame, i, {side * Lerp(23.0f, 0.0f, t), BaseY, 55.0f},
-                    {-8.0f, side * Lerp(10.0f, 0.0f, t), 0.0f},
-                    {Lerp(1.18f, 0.82f, t), Lerp(1.55f, 1.45f, t), 1.0f},
-                    Geometry::Tall, 1.0f - i * t);
-            }
+            PutSingle(frame,
+                {0.0f, Lerp(18.5f, BaseY, t), Lerp(49.0f, 55.0f, t)},
+                {Lerp(-5.0f, -7.0f, t), 0.0f, 0.0f},
+                {Lerp(2.84f, 1.35f, t), Lerp(2.84f, 1.95f, t), 1.0f},
+                t < 0.55f ? Geometry::Wide : Geometry::Tall);
+            ApplyFreeShape(frame.panels[0], beat);
             return frame;
         }
         if(beat < 136.0)
@@ -308,12 +603,74 @@ namespace BigScreen::UpDownShowcase {
             PutSingle(frame, {0.0f, BaseY, 55.0f}, {-7.0f, 0.0f, 0.0f},
                 tall ? Float3{1.35f, 1.95f, 1.0f} : Float3{2.2f, 1.25f, 1.0f},
                 tall ? Geometry::Tall : Geometry::UltraWide, opacity);
+            ApplyFreeShape(frame.panels[0], beat);
+            if(beat >= 132.0)
+            {
+                for(std::size_t echo = 0; echo < 4; ++echo)
+                {
+                    const std::size_t index = 1 + echo;
+                    const float side = (echo & 1U) == 0 ? -1.0f : 1.0f;
+                    const float row = echo < 2 ? 1.0f : -1.0f;
+                    const float entry = EaseOutBack(Segment(
+                        beat, 132.0 + echo * 0.12, 133.1 + echo * 0.12));
+                    const float flap = std::sin(static_cast<float>(
+                        (beat - 132.0) * 1.7 + echo * 0.82));
+                    const float targetScale = tall ? 0.88f : 1.02f;
+                    Put(frame, index,
+                        {side * (21.0f + (echo & 1U) * 8.0f),
+                         BaseY + row * (25.0f + std::abs(flap) * 4.0f),
+                         61.0f + (echo & 1U) * 8.0f},
+                        {-7.0f + row * flap * 12.0f,
+                         side * flap * 24.0f,
+                         side * (18.0f + flap * 16.0f)},
+                        {Lerp(0.04f, targetScale, entry),
+                         Lerp(0.04f, targetScale, entry), 1.0f},
+                        tall ? Geometry::Tall : Geometry::UltraWide,
+                        opacity * 0.90f,
+                        -side * (18.0f + flap * 16.0f));
+                    ApplyFreeShape(frame.panels[index], beat, echo * 0.8f);
+                    // One echo deliberately uses wall-clock animation while
+                    // the hero surface remains song-time deterministic. This
+                    // proves both clocks can coexist without coupling them.
+                    if(echo == 0 && frame.panels[index].deformation.enabled)
+                    {
+                        auto& wave = frame.panels[index].deformation.wave;
+                        wave.enabled = true;
+                        wave.cyclesAcross = 1.0f;
+                        wave.speedCyclesPerSecond = 0.35f;
+                        wave.depth = 2.2f;
+                        wave.ripple = 0.35f;
+                        wave.anchorRamp = 1.0f;
+                        wave.clock = CoreLogic::DeformationClock::RealTime;
+                    }
+                }
+            }
             return frame;
         }
         if(beat < 138.0)
         {
             PutSingle(frame, {0.0f, BaseY, 54.0f}, {-7.0f, 0.0f, 0.0f},
                 {1.8f, 1.8f, 1.0f}, Geometry::CurvedIn);
+            for(std::size_t echo = 0; echo < 4; ++echo)
+            {
+                const std::size_t index = 1 + echo;
+                const float side = (echo & 1U) == 0 ? -1.0f : 1.0f;
+                const float row = echo < 2 ? 1.0f : -1.0f;
+                const float flap = std::sin(static_cast<float>(
+                    (beat - 136.0) * 1.8 + echo * 0.88));
+                Put(frame, index,
+                    {side * (22.0f + (echo & 1U) * 8.0f),
+                     BaseY + row * (25.0f + std::abs(flap) * 4.0f),
+                     59.0f + (echo & 1U) * 9.0f},
+                    {-8.0f + row * flap * 13.0f,
+                     side * flap * 27.0f,
+                     side * (22.0f + flap * 18.0f)},
+                    {0.98f, 1.08f, 1.0f},
+                    (echo & 1U) == 0
+                        ? Geometry::CurvedIn : Geometry::CurvedOut,
+                    0.90f,
+                    -side * (22.0f + flap * 18.0f));
+            }
             return frame;
         }
         if(beat < 142.0)
@@ -328,6 +685,36 @@ namespace BigScreen::UpDownShowcase {
                     {1.25f, Lerp(0.15f, 1.65f, t), 1.0f},
                     i == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
                     1.0f, -side * 360.0f * t);
+            }
+
+            // Four staggered echoes continue the same flap above and below
+            // the front pair. Their greater depth and slightly smaller scale
+            // leave the original two readable while eliminating the empty
+            // upper/lower arena without introducing visible gaps.
+            for(std::size_t echo = 0; echo < 4; ++echo)
+            {
+                const std::size_t index = 2 + echo;
+                const float side = (echo & 1U) == 0 ? -1.0f : 1.0f;
+                const float row = echo < 2 ? 1.0f : -1.0f;
+                const float echoT = EaseOutBack(Segment(
+                    beat, 138.10 + echo * 0.13, 142.0));
+                const float phase = static_cast<float>(echo) * 0.72f;
+                const float flap = std::sin(
+                    static_cast<float>((beat - 138.0) * 1.35) + phase);
+                const float targetScale = 1.04f + (echo & 1U) * 0.10f;
+                Put(frame, index,
+                    {side * Lerp(11.0f, 27.0f + (echo & 1U) * 4.0f, echoT),
+                     BaseY + row * (25.0f + std::abs(flap) * 5.0f),
+                     56.0f + (echo & 1U) * 8.0f + row * 2.0f},
+                    {-8.0f + row * flap * 14.0f,
+                     side * Lerp(72.0f, 18.0f + echo * 4.0f, echoT),
+                     side * (310.0f * echoT + echo * 38.0f) + flap * 11.0f},
+                    {Lerp(0.04f, targetScale, echoT),
+                     Lerp(0.04f, targetScale * 1.12f, echoT), 1.0f},
+                    (echo & 1U) == 0
+                        ? Geometry::CurvedIn : Geometry::CurvedOut,
+                    0.90f,
+                    -side * (310.0f * echoT + echo * 38.0f));
             }
             return frame;
         }
@@ -355,6 +742,31 @@ namespace BigScreen::UpDownShowcase {
                     i == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
                     0.96f, -tumble * 0.92f);
             }
+
+            for(std::size_t echo = 0; echo < 4; ++echo)
+            {
+                const std::size_t index = 2 + echo;
+                const float side = (echo & 1U) == 0 ? -1.0f : 1.0f;
+                const float row = echo < 2 ? 1.0f : -1.0f;
+                const float phase = act * (0.46f + echo * 0.035f) + echo * 1.17f;
+                const float flap = std::sin(phase);
+                const float echoScale = 0.90f + Pulse(beat + echo * 0.27, 0.5) * 0.30f;
+                const float tumble = act * (side < 0.0f
+                    ? 15.0f + echo * 1.2f
+                    : -17.0f - echo * 1.1f);
+                Put(frame, index,
+                    {side * (spread + 9.0f + (echo & 1U) * 5.0f),
+                     BaseY + row * (25.0f + flap * 5.5f),
+                     59.0f + (echo & 1U) * 10.0f + flap * 3.0f},
+                    {-8.0f + row * flap * 18.0f,
+                     side * (20.0f + std::cos(phase * 0.73f) * 17.0f),
+                     tumble},
+                    {echoScale, echoScale * (0.93f + std::abs(flap) * 0.14f), 1.0f},
+                    (echo & 1U) == 0
+                        ? Geometry::CurvedIn : Geometry::CurvedOut,
+                    0.88f,
+                    -tumble * 0.88f);
+            }
             return frame;
         }
         if(beat < 168.0)
@@ -368,7 +780,11 @@ namespace BigScreen::UpDownShowcase {
         }
         if(beat < 219.0)
         {
-            // Slow four-screen carousel. Each screen enters on its own lane,
+            // Slow eight-screen carousel. The four hero screens retain their
+            // original lanes; four smaller satellites occupy high and low
+            // paths at distinct depths so the transparent arena is filled
+            // without any surface crossing another or the playable lanes.
+            // Each screen enters on its own lane,
             // crosses at a distinct height/depth, and rotates in the opposite
             // direction from the previous screen. The separated lanes keep
             // the large curved surfaces from passing through one another.
@@ -407,6 +823,49 @@ namespace BigScreen::UpDownShowcase {
                     0.94f,
                     -tumble * 0.78f);
             }
+
+            constexpr std::array<double, 4> SatelliteStarts{
+                171.0, 178.0, 185.0, 192.0};
+            constexpr std::array<float, 4> SatelliteHeights{
+                46.0f, -9.0f, 57.0f, -18.0f};
+            constexpr std::array<float, 4> SatelliteDepths{
+                62.0f, 71.0f, 49.0f, 82.0f};
+            for(std::size_t satellite = 0; satellite < 4; ++satellite)
+            {
+                if(beat < SatelliteStarts[satellite])
+                    continue;
+                const std::size_t index = 4 + satellite;
+                const float direction = (satellite & 1U) == 0 ? -1.0f : 1.0f;
+                const float t = Smooth(Segment(
+                    beat, SatelliteStarts[satellite], 219.0));
+                const float entry = EaseOutBack(Segment(
+                    beat,
+                    SatelliteStarts[satellite],
+                    SatelliteStarts[satellite] + 1.6));
+                const float arc = std::sin(t * Pi);
+                const float weave = std::sin(static_cast<float>(
+                    (beat - SatelliteStarts[satellite]) *
+                    (0.27 + satellite * 0.035) + satellite * 0.9));
+                const float tumble = direction *
+                    (65.0f + t * (300.0f + satellite * 48.0f));
+                Put(frame, index,
+                    {direction * Lerp(52.0f, -52.0f, t),
+                     SatelliteHeights[satellite] + weave * 4.0f +
+                         arc * (satellite < 2 ? 3.0f : -3.0f),
+                     SatelliteDepths[satellite] + arc *
+                         (satellite & 1U ? -5.0f : 6.0f)},
+                    {-8.0f + weave * 9.0f,
+                     tumble,
+                     direction * (18.0f + weave * 22.0f)},
+                    {Lerp(0.04f, 0.58f + satellite * 0.045f, entry),
+                     Lerp(0.04f, 0.58f + satellite * 0.045f, entry),
+                     1.0f},
+                    (satellite & 1U) == 0
+                        ? Geometry::CurvedOut : Geometry::CurvedIn,
+                    0.84f,
+                    -tumble * 0.74f);
+            }
+
             return frame;
         }
         if(beat < 223.0)
@@ -427,24 +886,15 @@ namespace BigScreen::UpDownShowcase {
         if(beat < 247.0)
         {
             const float t = Smooth(Segment(beat, 223.0, 247.0));
-            // Reuse the opposing frame/picture distortion vocabulary from the
-            // successful 1:02 section without disturbing the deliberately
-            // calm carousel that precedes it.
-            const int morphStep = static_cast<int>((beat - 223.0) / 4.0);
-            const float distortion = std::sin(
-                static_cast<float>((beat - 223.0) * Pi * 0.5));
-            const float shear = std::abs(distortion);
+            // Let the flag deformation carry this phrase by itself. Rocking
+            // the physical canvas at the same time masked the slower fabric
+            // wave and made the motion unnecessarily aggressive.
             PutSingle(frame,
-                {distortion * 3.0f, Lerp(BaseY, 19.0f, t) + distortion * 2.2f,
-                 Lerp(61.0f, 39.0f, t)},
-                {-6.0f + distortion * 7.0f,
-                 distortion * 12.0f,
-                 distortion * 7.0f},
-                {Lerp(1.5f, 2.35f, t) * (1.0f + shear * 0.22f),
-                 Lerp(1.5f, 2.1f, t) * (1.0f - shear * 0.16f), 1.0f},
-                (morphStep & 1) == 0 ? Geometry::CurvedIn : Geometry::CurvedOut,
-                1.0f,
-                -distortion * 15.0f);
+                {0.0f, Lerp(BaseY, 19.0f, t), Lerp(61.0f, 39.0f, t)},
+                {-6.0f, 0.0f, 0.0f},
+                {Lerp(1.5f, 2.35f, t), Lerp(1.5f, 2.1f, t), 1.0f},
+                Geometry::Wide);
+            ApplyDramaticFlagWave(frame.panels[0]);
             return frame;
         }
 
@@ -453,6 +903,12 @@ namespace BigScreen::UpDownShowcase {
         if(beat < 263.0)
         {
             const float travel = static_cast<float>(beat - 247.0);
+            // Open as a broad cone, then blend back to the established tunnel
+            // over the first phrase. The nearest layers receive the greatest
+            // radial expansion, making the corkscrew immediately readable in
+            // the wide arena while preserving its already-successful ending.
+            const float entranceFan =
+                1.0f - Smooth(Segment(beat, 247.0, 253.5));
             for(std::size_t i = 0; i < 7; ++i)
             {
                 const float depth = static_cast<float>(i) / 6.0f;
@@ -464,8 +920,14 @@ namespace BigScreen::UpDownShowcase {
                 // of covering the screens behind it.
                 const float frontWeight = std::max(0.0f, 1.0f - depth * 2.5f);
                 const float frontLift = frontWeight * frontWeight * 20.0f;
-                const float radius = 5.0f + depth * 18.0f + frontLift * 0.30f;
-                const float verticalOrbit = radius * 0.62f + frontLift * 0.22f;
+                const float settledRadius =
+                    5.0f + depth * 18.0f + frontLift * 0.30f;
+                const float entranceRadius = Lerp(34.0f, 14.0f, depth);
+                const float radius =
+                    Lerp(settledRadius, entranceRadius, entranceFan);
+                const float verticalOrbit =
+                    radius * Lerp(0.62f, 0.82f, entranceFan) +
+                    frontLift * 0.22f;
                 const float baseScale = Lerp(1.15f, 0.48f, depth);
                 const float clearedScale = baseScale * (1.0f - frontWeight * 0.20f);
                 Put(frame, i,
@@ -594,7 +1056,10 @@ namespace BigScreen::UpDownShowcase {
             // much of the depth formation, so the nearest center copy becomes
             // a small moving ceiling/keystone. Three independently twisting
             // side pairs form the walls, leaving a direct sightline to the
-            // terminal screen at the vanishing point. All eight panels remain
+            // terminal screen at the vanishing point. Four additional canopy
+            // and under-runway satellites fill the formerly bare quadrants at
+            // different depths without touching the corridor or note lanes.
+            // All twelve panels remain
             // backed by the same texture and single frame upload.
             const float section = Segment(beat, 311.0, 322.5);
             const float keystoneEntry = EaseOutBack(Segment(beat, 311.0, 312.0));
@@ -673,6 +1138,45 @@ namespace BigScreen::UpDownShowcase {
                     0.72f,
                     -terminalRoll);
             }
+
+            constexpr std::array<double, 4> AccentStarts{
+                311.25, 311.60, 311.95, 312.30};
+            constexpr std::array<float, 4> AccentX{
+                -21.0f, 27.0f, -39.0f, 42.0f};
+            constexpr std::array<float, 4> AccentY{
+                49.0f, -13.0f, 42.0f, -21.0f};
+            constexpr std::array<float, 4> AccentZ{
+                48.0f, 54.0f, 68.0f, 74.0f};
+            for(std::size_t accent = 0; accent < 4; ++accent)
+            {
+                if(beat < AccentStarts[accent])
+                    continue;
+                const std::size_t index = 8 + accent;
+                const float side = AccentX[accent] < 0.0f ? -1.0f : 1.0f;
+                const float verticalSide = AccentY[accent] < 0.0f ? -1.0f : 1.0f;
+                const float entry = EaseOutBack(Segment(
+                    beat, AccentStarts[accent], AccentStarts[accent] + 1.0));
+                const float phase = static_cast<float>(
+                    (beat - 311.0) * (0.74 + accent * 0.09) + accent * 1.33);
+                const float sway = std::sin(phase);
+                const float bob = std::cos(phase * 0.71f + accent);
+                const float roll = side * (24.0f + accent * 13.0f) + sway * 19.0f;
+                const float targetScale = 0.66f + accent * 0.055f;
+                Put(frame, index,
+                    {side * Lerp(3.0f, std::abs(AccentX[accent]) + sway * 5.0f, entry),
+                     Lerp(18.0f, AccentY[accent] + bob * 4.5f, entry),
+                     Lerp(91.0f, AccentZ[accent] - section *
+                         (1.5f + accent * 0.55f), entry)},
+                    {-8.0f + verticalSide * sway * 15.0f,
+                     -side * (38.0f + accent * 9.0f) + bob * 8.0f,
+                     roll},
+                    {Lerp(0.03f, targetScale, entry),
+                     Lerp(0.03f, targetScale, entry), 1.0f},
+                    (accent & 1U) == 0
+                        ? Geometry::CurvedOut : Geometry::CurvedIn,
+                    0.82f,
+                    -roll * 0.86f);
+            }
             return frame;
         }
         if(beat < 338.5)
@@ -706,6 +1210,15 @@ namespace BigScreen::UpDownShowcase {
         return frame;
     }
 
+    FrameState Sample(double songTimeSeconds)
+    {
+        auto frame = SampleBase(songTimeSeconds);
+        if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
+            return frame;
+        return ApplyGlassCues(
+            std::move(frame), songTimeSeconds * BeatsPerMinute / 60.0);
+    }
+
     bool CenterRingVisible(double songTimeSeconds)
     {
         if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
@@ -717,6 +1230,13 @@ namespace BigScreen::UpDownShowcase {
         // back on the exact boundary where the carousel merges into the next
         // section. This is a steady hide, separate from the later strobe.
         if(beat >= 168.0 && beat < 219.0)
+            return false;
+
+        // Hide the spinner for the complete flag-wave phrase so the deforming
+        // canvas remains unobstructed. The corkscrew begins on the same exact
+        // boundary and also requires an open center, so keep it hidden without
+        // a one-frame restore/flicker and return it when the corkscrew ends.
+        if(beat >= 223.0 && beat < 263.0)
             return false;
 
         // Begin with the singularity at 2:01 and finish before the settled
@@ -733,5 +1253,31 @@ namespace BigScreen::UpDownShowcase {
         const auto step = static_cast<std::size_t>(
             std::floor((beat - 278.5) * 2.0));
         return Pattern[step % Pattern.size()];
+    }
+
+    bool SidePillarsVisible(double songTimeSeconds)
+    {
+        if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
+            return true;
+
+        const double beat = songTimeSeconds * BeatsPerMinute / 60.0;
+        // Match the complete floating-screen carousel. The structures return
+        // at the same deterministic beat where its last panels leave, so a
+        // pause, Replay seek, or practice jump cannot strand them hidden.
+        return beat < 168.0 || beat >= 219.0;
+    }
+
+    bool BackgroundEnvironmentVisible(double songTimeSeconds)
+    {
+        if(!std::isfinite(songTimeSeconds) || songTimeSeconds < 0.0)
+            return true;
+        const double beat = songTimeSeconds * BeatsPerMinute / 60.0;
+        // Remove the complete rendered environment during the floating-screen
+        // carousel, not only the previously enumerated side obstructions. The
+        // short section between the carousel and corkscrew restores the map,
+        // then the corkscrew hides it again for an unobstructed depth effect.
+        const bool floatingScreens = beat >= 168.0 && beat < 219.0;
+        const bool corkscrew = beat >= 247.0 && beat < 263.0;
+        return !floatingScreens && !corkscrew;
     }
 }

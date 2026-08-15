@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 
 #include "BigScreen/VideoLibrary.hpp"
 
@@ -38,6 +39,22 @@ namespace BigScreen {
         double playbackRate = 1.0;
         bool fitToSong = false;
         bool blackDuringLeadIn = false;
+        // Exact source tier selected by the player. This is independent from
+        // the playback output limiter, which may downscale the stored file.
+        int requestedHeight = 1080;
+        // When YouTube exposes multiple frame rates at one tier, retain the
+        // best source no faster than the user's saved presentation ceiling.
+        int maximumSourceFps = 30;
+    };
+
+    /// Describes one exact BeatSaver revision that Big Screen is allowed to
+    /// install into its own managed demo-level directory. The expected hash is
+    /// used to select the immutable revision from BeatSaver's map metadata;
+    /// SongCore performs the final content identity check after extraction.
+    struct MapPackageRequest {
+        std::string mapKey;
+        std::string expectedHash;
+        std::filesystem::path destinationDirectory;
     };
 
     struct DownloadSnapshot {
@@ -51,6 +68,10 @@ namespace BigScreen {
         std::string title;
         std::string thumbnailPath;
         bool metadataOnly = false;
+        std::vector<int> availableHeights;
+        // Retained in memory across status-file refreshes so Retry/Resume and
+        // progress UI continue referring to the exact tier the user selected.
+        int requestedHeight = 0;
 
         bool Active() const {
             return state == DownloadState::Probing ||
@@ -72,6 +93,7 @@ namespace BigScreen {
             std::string sourceUrl,
             std::string& error);
         bool Start(DownloadRequest request, std::string& error);
+        bool StartMapPackage(MapPackageRequest request, std::string& error);
         bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
         void StartScheduledUpdaterCheck(bool nightly);
         void QueueVideoThumbnail(
@@ -94,6 +116,7 @@ namespace BigScreen {
         DownloadManager& operator=(const DownloadManager&) = delete;
 
         void Run(DownloadRequest request, std::filesystem::path finalPath);
+        void RunMapPackage(MapPackageRequest request);
         void RunProbe(std::string levelId, std::string sourceUrl);
         void RunUpdater(bool nightly, bool install);
         void RunThumbnailQueue();

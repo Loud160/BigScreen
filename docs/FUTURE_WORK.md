@@ -44,3 +44,12 @@ that would make regressions unnecessarily difficult to isolate.
 - Extend diagnostics if a future Beat Saber mode introduces a results/failure
   screen that uses neither the normal ResultsViewController nor the standard
   failed-level controller.
+- The showcase-only corner-warp and flag-wave engine deliberately has no UI,
+  mapper file format, or public mod API. If the proof of concept earns mapper
+  interest, design a versioned, validated external timeline contract rather
+  than exposing the current hard-coded Up & Down data structures directly.
+- The showcase-only glass fracture engine is intentionally under the same API
+  boundary. Its seeds, impact groups, freeze/live selection, shard transforms,
+  and rejoin phases are programmatic proof-of-concept controls—not a mapper
+  format. A future external contract should wrap validated parameters and
+  deterministic song-time cues instead of serializing internal mesh buffers.

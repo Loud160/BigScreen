@@ -115,12 +115,19 @@ namespace BigScreen {
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         int ResolutionHeight() const { return resolutionHeight_; }
         bool UseFfmpeg9() const { return useFfmpeg9_; }
+        bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
         float AutomaticPerformanceResponseSeconds() const {
             return automaticPerformanceResponseSeconds_;
         }
         bool PerformanceDiagnosticsEnabled() const { return performanceDiagnosticsEnabled_; }
+        float PerformancePanelPositionX() const { return performancePanelPositionX_; }
+        float PerformancePanelPositionY() const { return performancePanelPositionY_; }
+        float PerformancePanelPositionZ() const { return performancePanelPositionZ_; }
+        float PerformancePanelRotationX() const { return performancePanelRotationX_; }
+        float PerformancePanelRotationY() const { return performancePanelRotationY_; }
+        float PerformancePanelRotationZ() const { return performancePanelRotationZ_; }
         bool PowerBenchmarkEnabled() const { return powerBenchmarkEnabled_; }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
@@ -166,10 +173,22 @@ namespace BigScreen {
         void SetPlaybackFpsLimit(int value);
         void SetResolutionHeight(int value);
         void SetUseFfmpeg9(bool value);
+        void SetHardwareDecodingEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
         void SetAutomaticPerformanceResponseSeconds(float value);
         void SetPerformanceDiagnosticsEnabled(bool value);
+        /// Stores the diagnostics panel's last safe six-degree-of-freedom
+        /// placement. Callers commit this only at toggle/menu/gameplay
+        /// boundaries, never during controller movement.
+        void SetPerformancePanelPlacement(
+            float positionX,
+            float positionY,
+            float positionZ,
+            float rotationX,
+            float rotationY,
+            float rotationZ);
+        void ResetPerformancePanelPlacement();
         void SetPowerBenchmarkEnabled(bool value);
         void SetNightlyDownloaderUpdates(bool value);
 
@@ -207,10 +226,23 @@ namespace BigScreen {
         // FFmpeg 4.4.8 remains the conservative default until repeated Quest
         // comparisons justify promoting the newer runtime.
         bool useFfmpeg9_ = false;
+        // MediaCodec is an opt-in experiment until repeated Quest 2 and Quest
+        // 3 measurements establish its compatibility, latency, and power use.
+        // Every failure automatically returns the affected file to software.
+        bool hardwareDecodingEnabled_ = false;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceResponseSeconds_ = 5.0f;
         bool performanceDiagnosticsEnabled_ = false;
+        // Both menu and gameplay recreate the movable diagnostics panel from
+        // this shared transform. The default remains above the note lanes and
+        // central menu, where it cannot cover important controls.
+        float performancePanelPositionX_ = 0.0f;
+        float performancePanelPositionY_ = 3.05f;
+        float performancePanelPositionZ_ = 4.25f;
+        float performancePanelRotationX_ = 0.0f;
+        float performancePanelRotationY_ = 0.0f;
+        float performancePanelRotationZ_ = 0.0f;
         bool powerBenchmarkEnabled_ = false;
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;

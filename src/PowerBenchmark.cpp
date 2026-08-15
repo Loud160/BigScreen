@@ -101,9 +101,37 @@ namespace BigScreen {
             std::string_view header)
         {
             std::error_code error;
-            const bool needsHeader =
-                !std::filesystem::exists(path, error) ||
+            bool needsHeader = !std::filesystem::exists(path, error) ||
                 std::filesystem::file_size(path, error) == 0;
+
+            // The decoder_backend column changes the CSV schema. Preserve any
+            // measurements written by older development builds instead of
+            // appending wider rows beneath their shorter header. This runs
+            // only during gameplay teardown, under the benchmark's existing
+            // no-I/O-during-gameplay contract.
+            if(!needsHeader)
+            {
+                std::ifstream existing(path);
+                std::string existingHeader;
+                std::getline(existing, existingHeader);
+                if(existingHeader != header)
+                {
+                    const auto timestamp = std::chrono::system_clock::to_time_t(
+                        std::chrono::system_clock::now());
+                    const auto archived = path.parent_path() /
+                        (path.stem().string() + "-legacy-" +
+                         std::to_string(timestamp) + path.extension().string());
+                    std::filesystem::rename(path, archived, error);
+                    if(error)
+                        throw std::runtime_error(
+                            "Could not preserve the previous benchmark CSV schema: " +
+                            error.message());
+                    PaperLogger.info(
+                        "Archived older power benchmark schema as '{}'",
+                        archived.filename().string());
+                    needsHeader = true;
+                }
+            }
             std::ofstream output(path, std::ios::app);
             if(!output)
                 throw std::runtime_error("Could not open " + path.string());
@@ -453,7 +481,7 @@ namespace BigScreen {
         std::filesystem::create_directories(LogDirectory);
         AppendHeaderIfEmpty(
             SamplesPath,
-            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
+            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decoder_backend,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
         {
             std::ofstream output(SamplesPath, std::ios::app);
             if(!output)
@@ -470,6 +498,10 @@ namespace BigScreen {
                     << sample.songTimeSeconds << ','
                     << (videoActive_ ? 1 : 0) << ','
                     << (showcaseActive_ ? 1 : 0) << ','
+                    << Csv(sample.diagnostics.decoderBackend.empty()
+                           ? "none" : sample.diagnostics.decoderBackend) << ','
+                    << Csv(sample.diagnostics.codec.empty()
+                           ? "none" : sample.diagnostics.codec) << ','
                     << sample.processCpuMilliseconds << ','
                     << sample.decoderCpuMilliseconds << ','
                     << OptionalNumber(sample.battery.chargeMicroampHours) << ','
@@ -540,7 +572,7 @@ namespace BigScreen {
             : last.diagnostics;
         AppendHeaderIfEmpty(
             SummaryPath,
-            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
+            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decoder_backend,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
         std::ofstream summary(SummaryPath, std::ios::app);
         if(!summary)
             throw std::runtime_error("Could not append the power summary log");
@@ -554,6 +586,10 @@ namespace BigScreen {
             << difficulty_ << ','
             << (videoActive_ ? 1 : 0) << ','
             << (showcaseActive_ ? 1 : 0) << ','
+            << Csv(finalDiagnostics.decoderBackend.empty()
+                   ? "none" : finalDiagnostics.decoderBackend) << ','
+            << Csv(finalDiagnostics.codec.empty()
+                   ? "none" : finalDiagnostics.codec) << ','
             << wallSeconds << ','
             << processCpu << ','
             << CoreLogic::CpuPercentOfOneCore(processCpu, wallSeconds) << ','

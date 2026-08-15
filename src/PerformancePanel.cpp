@@ -3,6 +3,7 @@
 
 #include <exception>
 #include <format>
+#include <cmath>
 
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/Settings.hpp"
@@ -46,10 +47,10 @@ namespace BigScreen {
         constexpr float HeaderHeight = 8.0f;
         constexpr float FooterHeight = 7.0f;
         // The body holds a column-caption row ("Quest" / "Video") plus the
-        // tallest column's 7 statistics rows. Each row gets a fixed share;
+        // tallest column's 8 statistics rows. Each row gets a fixed share;
         // text auto-sizes down to fit rather than growing the row.
         constexpr float ColumnHeaderHeight = 7.0f;
-        constexpr float BodyRowCount = 7.0f;
+        constexpr float BodyRowCount = 8.0f;
         constexpr float BodyRowHeight = 7.0f;
         constexpr float BodyHeight =
             ColumnHeaderHeight + BodyRowCount * BodyRowHeight;
@@ -69,10 +70,6 @@ namespace BigScreen {
         constexpr float ColumnSpacing = 4.0f;
         constexpr float DividerX = -PanelWidth * 0.5f + BodyPaddingX +
             LeftColumnWidth + ColumnSpacing * 0.5f;
-        // Keep the default above the note lanes and the central Beat Saber UI.
-        // Both menu and gameplay use this exact reset position.
-        constexpr UnityEngine::Vector3 DefaultPosition{0.0f, 3.05f, 4.25f};
-
         void CenterRect(UnityEngine::RectTransform* rect)
         {
             if(!rect)
@@ -168,16 +165,18 @@ namespace BigScreen {
 
     void PerformancePanel::ActivateForContext(bool gameplay) noexcept
     {
-        context_ = gameplay ? Context::Gameplay : Context::Menu;
-        // Menu re-entry is also a reset boundary. Do not retain a location
-        // from the previous visit or map where the user may no longer find it.
+        // Capture the old scene's transform before changing ownership. The
+        // next menu or gameplay panel therefore opens exactly where the player
+        // deliberately left it in the previous context.
+        SaveCurrentPlacement();
         Destroy();
+        context_ = gameplay ? Context::Gameplay : Context::Menu;
         if(Settings::Instance().ModEnabled() &&
            Settings::Instance().PerformanceDiagnosticsEnabled())
         {
             try
             {
-                if(!CreateAtDefaultPlacement())
+                if(!CreateAtSavedPlacement())
                     ErrorManager::Instance().RecordError(
                         "Creating the performance panel",
                         "BSML could not create the floating panel");
@@ -200,13 +199,14 @@ namespace BigScreen {
 
     void PerformancePanel::SetEnabled(bool enabled) noexcept
     {
+        SaveCurrentPlacement();
         Destroy();
         if(!enabled || context_ == Context::None ||
            !Settings::Instance().ModEnabled())
             return;
         try
         {
-            if(!CreateAtDefaultPlacement())
+            if(!CreateAtSavedPlacement())
                 ErrorManager::Instance().RecordError(
                     "Enabling the performance panel",
                     "BSML could not create the floating panel");
@@ -226,6 +226,32 @@ namespace BigScreen {
         }
     }
 
+    void PerformancePanel::ResetPlacement() noexcept
+    {
+        auto& settings = Settings::Instance();
+        settings.ResetPerformancePanelPlacement();
+        settings.Flush();
+        try
+        {
+            if(!screen_)
+                return;
+            screen_->get_transform()->SetPositionAndRotation(
+                {settings.PerformancePanelPositionX(),
+                 settings.PerformancePanelPositionY(),
+                 settings.PerformancePanelPositionZ()},
+                UnityEngine::Quaternion::Euler({
+                    settings.PerformancePanelRotationX(),
+                    settings.PerformancePanelRotationY(),
+                    settings.PerformancePanelRotationZ()}));
+        }
+        catch(...)
+        {
+            ErrorManager::Instance().RecordError(
+                "Resetting the performance panel",
+                "Unity rejected the default diagnostics-panel transform");
+        }
+    }
+
     void PerformancePanel::SuspendMenu() noexcept
     {
         // A gameplay panel may already exist while Beat Saber's menu flow is
@@ -233,6 +259,7 @@ namespace BigScreen {
         // destroy the new map's panel.
         if(context_ != Context::Menu)
             return;
+        SaveCurrentPlacement();
         context_ = Context::None;
         Destroy();
     }
@@ -241,6 +268,7 @@ namespace BigScreen {
     {
         if(context_ != Context::Gameplay)
             return;
+        SaveCurrentPlacement();
         context_ = Context::None;
         Destroy();
     }
@@ -293,29 +321,35 @@ namespace BigScreen {
                 live && d.sampledFrames > 0
                     ? std::format("{:.1f}", d.maximumFps)
                     : std::string("--"));
-            row(rightRows_[0], "Source",
-                live ? std::format(
-                           "{}x{} @ {:.1f}",
-                           d.sourceWidth, d.sourceHeight, d.sourceFps)
+            row(rightRows_[0], "Decoder",
+                live ? (d.decoderBackend == "hardware"
+                            ? std::string("Hardware")
+                            : std::string("Software"))
                      : std::string("--"));
-            row(rightRows_[1], "Output",
+            row(rightRows_[1], "Source",
+                live ? std::format(
+                           "{}x{} @ {:.1f} {}",
+                           d.sourceWidth, d.sourceHeight, d.sourceFps,
+                           d.codec.empty() ? "Unknown" : d.codec)
+                     : std::string("--"));
+            row(rightRows_[2], "Output",
                 live ? std::format(
                            "{}x{} @ {} cap",
                            d.outputWidth, d.outputHeight, d.outputFpsLimit)
                      : std::string("--"));
-            row(rightRows_[2], "Frames Skipped",
+            row(rightRows_[3], "Frames Skipped",
                 live ? std::format("{}", d.totalMissedVideoFrames)
                      : std::string("--"));
-            row(rightRows_[3], "Video FPS Average",
+            row(rightRows_[4], "Video FPS Average",
                 live ? std::format("{:.1f}", d.averageVideoFramesPerSecond)
                      : std::string("--"));
-            row(rightRows_[4], "Frame Rate Loss",
+            row(rightRows_[5], "Frame Rate Loss",
                 live ? std::format("{:.1f}%", d.missedVideoFramePercent)
                      : std::string("--"));
-            row(rightRows_[5], "Decode Average",
+            row(rightRows_[6], "Decode Average",
                 live ? std::format("{:.2f} ms", d.averageDecodeMilliseconds)
                      : std::string("--"));
-            row(rightRows_[6], "Decode Peak",
+            row(rightRows_[7], "Decode Peak",
                 live ? std::format("{:.2f} ms", d.peakDecodeMilliseconds)
                      : std::string("--"));
         }
@@ -382,13 +416,55 @@ namespace BigScreen {
         }
     }
 
-    bool PerformancePanel::CreateAtDefaultPlacement()
+    void PerformancePanel::SaveCurrentPlacement() noexcept
     {
+        try
+        {
+            if(!screen_ || context_ == Context::None)
+                return;
+            const auto position = screen_->get_transform()->get_position();
+            const auto rotation = screen_->get_transform()->get_eulerAngles();
+            if(!std::isfinite(position.x) || !std::isfinite(position.y) ||
+               !std::isfinite(position.z) || !std::isfinite(rotation.x) ||
+               !std::isfinite(rotation.y) || !std::isfinite(rotation.z))
+            {
+                return;
+            }
+            auto& settings = Settings::Instance();
+            settings.SetPerformancePanelPlacement(
+                position.x, position.y, position.z,
+                rotation.x, rotation.y, rotation.z);
+            // This boundary occurs only when the toggle/context changes, so a
+            // durable write here does not turn controller motion into repeated
+            // flash writes. It also survives Beat Saber being closed directly
+            // after leaving Big Screen's menu.
+            settings.Flush();
+        }
+        catch(...)
+        {
+            if(!interactionFailureLogged_)
+            {
+                interactionFailureLogged_ = true;
+                ErrorManager::Instance().RecordError(
+                    "Saving the performance panel",
+                    "Unity rejected the diagnostics-panel transform during a scene transition");
+            }
+        }
+    }
+
+    bool PerformancePanel::CreateAtSavedPlacement()
+    {
+        const auto& settings = Settings::Instance();
         screen_ = BSML::FloatingScreen::CreateFloatingScreen(
             {PanelWidth, ScreenCanvasHeight},
             true,
-            DefaultPosition,
-            UnityEngine::Quaternion::Euler({0.0f, 0.0f, 0.0f}),
+            {settings.PerformancePanelPositionX(),
+             settings.PerformancePanelPositionY(),
+             settings.PerformancePanelPositionZ()},
+            UnityEngine::Quaternion::Euler({
+                settings.PerformancePanelRotationX(),
+                settings.PerformancePanelRotationY(),
+                settings.PerformancePanelRotationZ()}),
             0.0f,
             false);
         if(!screen_)

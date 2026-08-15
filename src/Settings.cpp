@@ -81,10 +81,11 @@ namespace BigScreen {
 
         int NormalizeResolution(int value)
         {
-            // The menu exposes exactly these three predictable performance
+            // The menu exposes exactly these four predictable performance
             // tiers. A hand-edited invalid value falls back to the balanced
             // Quest default instead of silently selecting an arbitrary size.
-            return value == 480 || value == 720 || value == 1080 ? value : 720;
+            return value == 480 || value == 720 || value == 1080 ||
+                value == 1440 ? value : 720;
         }
 
         int NormalizePlaybackFps(int value)
@@ -302,6 +303,8 @@ namespace BigScreen {
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
         useFfmpeg9_ = ReadBool(document, "useFfmpeg9", false);
+        hardwareDecodingEnabled_ = ReadBool(
+            document, "hardwareDecodingEnabled", false);
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
@@ -312,6 +315,18 @@ namespace BigScreen {
             10.0f);
         performanceDiagnosticsEnabled_ = ReadBool(
             document, "performanceDiagnosticsEnabled", false);
+        performancePanelPositionX_ = std::clamp(ReadFloat(
+            document, "performancePanelPositionX", 0.0f), -100.0f, 100.0f);
+        performancePanelPositionY_ = std::clamp(ReadFloat(
+            document, "performancePanelPositionY", 3.05f), -100.0f, 100.0f);
+        performancePanelPositionZ_ = std::clamp(ReadFloat(
+            document, "performancePanelPositionZ", 4.25f), -100.0f, 100.0f);
+        performancePanelRotationX_ = std::clamp(ReadFloat(
+            document, "performancePanelRotationX", 0.0f), -360.0f, 360.0f);
+        performancePanelRotationY_ = std::clamp(ReadFloat(
+            document, "performancePanelRotationY", 0.0f), -360.0f, 360.0f);
+        performancePanelRotationZ_ = std::clamp(ReadFloat(
+            document, "performancePanelRotationZ", 0.0f), -360.0f, 360.0f);
         powerBenchmarkEnabled_ = ReadBool(
             document, "powerBenchmarkEnabled", false);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
@@ -638,6 +653,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetHardwareDecodingEnabled(bool value)
+    {
+        hardwareDecodingEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetAutomaticPerformanceEnabled(bool value)
     {
         automaticPerformanceEnabled_ = value;
@@ -665,6 +686,37 @@ namespace BigScreen {
     void Settings::SetPerformanceDiagnosticsEnabled(bool value)
     {
         performanceDiagnosticsEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetPerformancePanelPlacement(
+        float positionX,
+        float positionY,
+        float positionZ,
+        float rotationX,
+        float rotationY,
+        float rotationZ)
+    {
+        // A corrupted or transient Unity transform must not make the panel
+        // permanently unrecoverable on the next launch. Runtime capture also
+        // checks finiteness before calling this boundary.
+        performancePanelPositionX_ = std::clamp(positionX, -100.0f, 100.0f);
+        performancePanelPositionY_ = std::clamp(positionY, -100.0f, 100.0f);
+        performancePanelPositionZ_ = std::clamp(positionZ, -100.0f, 100.0f);
+        performancePanelRotationX_ = std::clamp(rotationX, -360.0f, 360.0f);
+        performancePanelRotationY_ = std::clamp(rotationY, -360.0f, 360.0f);
+        performancePanelRotationZ_ = std::clamp(rotationZ, -360.0f, 360.0f);
+        Save();
+    }
+
+    void Settings::ResetPerformancePanelPlacement()
+    {
+        performancePanelPositionX_ = 0.0f;
+        performancePanelPositionY_ = 3.05f;
+        performancePanelPositionZ_ = 4.25f;
+        performancePanelRotationX_ = 0.0f;
+        performancePanelRotationY_ = 0.0f;
+        performancePanelRotationZ_ = 0.0f;
         Save();
     }
 
@@ -829,6 +881,7 @@ namespace BigScreen {
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
         Replace(document, "resolutionHeight", resolutionHeight_);
         Replace(document, "useFfmpeg9", useFfmpeg9_);
+        Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
         Replace(
@@ -836,6 +889,12 @@ namespace BigScreen {
             "automaticPerformanceResponseSeconds",
             automaticPerformanceResponseSeconds_);
         Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
+        Replace(document, "performancePanelPositionX", performancePanelPositionX_);
+        Replace(document, "performancePanelPositionY", performancePanelPositionY_);
+        Replace(document, "performancePanelPositionZ", performancePanelPositionZ_);
+        Replace(document, "performancePanelRotationX", performancePanelRotationX_);
+        Replace(document, "performancePanelRotationY", performancePanelRotationY_);
+        Replace(document, "performancePanelRotationZ", performancePanelRotationZ_);
         Replace(document, "powerBenchmarkEnabled", powerBenchmarkEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         try

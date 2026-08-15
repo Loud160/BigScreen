@@ -238,7 +238,8 @@ namespace BigScreen {
         // can be adjusted after playback stops. When mapper control is off,
         // strip authored geometry before applying the selected layout; Reset
         // Screen must therefore return to the actual back-wall defaults.
-        if(config.hasMapperPresentation && !settings.AllowChromaOverride())
+        if(config.hasMapperPresentation &&
+           !PlaybackSession::Instance().MapperScreenPresentationActive())
             config.ResetPresentationToDefaults();
         const auto& layout = settings.ActiveLayout();
         if(settings.AdvancedOptionsEnabled() && layout.undocked)

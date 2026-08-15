@@ -35,12 +35,51 @@ reusable RGBA allocation moves to Unity without an additional A/B abstraction
 copy. The Video Library's compatibility probe remains fixed to the conservative
 4.4 runtime and never hands FFmpeg structures to a playback backend.
 
+Each private backend contains LGPL software decoders for H.264, VP8, and VP9,
+plus Android MediaCodec paths for H.264, H.265/HEVC, VP8, and VP9. HEVC and
+content above 1080p are hardware-only; no software HEVC implementation is
+compiled or shipped. The facade obtains the process
+Java VM captured by Scotland2 during Android preload and passes it across the
+FFmpeg-type-free boundary so each isolated libavcodec instance registers the
+VM in its own internal state. MediaCodec is
+opened without an Android output Surface: FFmpeg copies the decoder's NV12 or
+YUV420P output into a CPU-readable frame, then the existing stride-aware
+swscale/RGBA mailbox path continues unchanged. This is not zero-copy, but it
+keeps curved screens, transparency, showcase panels, and every shader-facing
+feature identical. A hardware worker failure is consumed by the facade, which
+reopens the same runtime and file at the latest requested timestamp with
+software decoding when policy permits before the session decides playback has
+failed. Unsupported 10-bit, HDR, and alpha video is rejected explicitly.
+
+The URL probe publishes exact compatible source tiers through an atomic JSON
+status file. Both the Video Library and song-selection modal consume that same
+list and write the chosen height plus the saved FPS ceiling into the download
+job. Downloads use H.264 MP4 through 1080p and VP9 WebM at 1440p. Replacement
+files are downloaded to a sibling staging path; the old managed file remains in
+place until the new file and manifest assignment commit successfully.
+
 Menu state is event-driven or deliberately rate-limited. Resolved map video
 descriptors and video thumbnails are cached, the thumbnail cache has a bounded
 LRU, storage totals are sampled at most once per second, and download status is
 published and consumed at bounded rates. Terminal downloader state remains a
 durable atomic write; transient progress does not fsync Android flash for every
 network block.
+
+The optional showcase launcher is a main-thread state machine layered over
+those same boundaries. It checks Chroma/Noodle capabilities through SongCore,
+but its center-screen readiness view performs no network work on activation.
+Map and video downloads are separate explicit actions. The map action uses the
+existing CPython worker to query BeatSaver and safely extract one hash-pinned
+package, then waits on SongCore's asynchronous refresh future. ZIP paths, entry
+count, compressed size, expanded size, redirect hosts, map audio, and Lawless
+Expert+ data are all validated before an atomic publish into Big Screen's own
+`DemoLevels` root. The video action uses the ordinary mapper-video downloader.
+Only after the exact hash resolves and a playable video exists can the state
+machine dismiss Big Screen. It waits for MainFlowCoordinator and the stock main
+view to remain stable before presenting Solo, applies the Lawless Expert+ key,
+and invokes the normal single-player StartLevel path. The showcase marker is
+cleared at gameplay teardown; Results, Replay, Continue, Solo dismissal, and
+the user's eventual return to Big Screen all remain Beat Saber's normal path.
 
 Menu-controller singletons do not own an IL2CPP hierarchy. A MenuCore flow
 recreation calls each menu's `ForgetUi` boundary before new controllers are
@@ -50,7 +89,7 @@ non-null raw pointer from a destroyed menu scene is not a valid liveness check.
 
 The local-video browser follows the same boundary. Unity renders immutable
 directory snapshots on the center screen, while a worker thread enumerates the
-folder and opens MP4 containers through FFmpeg. Custom/WIP songs start at their
+folder and opens compatible MP4/MOV or Matroska/WebM containers through FFmpeg. Custom/WIP songs start at their
 map folder; other songs start at the automatically created Video Import folder.
 Navigation is confined to `/sdcard`. A selected file is referenced in place as
 user-owned media, so assignment replacement and Remove Video never delete it.
@@ -72,6 +111,36 @@ the decoded picture stays opaque, or the picture can blend over either kind of
 background. Output is scaled before entering the mailbox, reducing CPU memory
 traffic and Unity texture-upload cost. Fully opaque picture/background modes
 write depth; alpha-blended picture or background modes use transparent queues.
+
+The bundled Up & Down showcase can additionally deform its shared-texture
+surfaces without changing the normal screen path or decoder. Each showcase
+panel preallocates a 64-column video mesh and reusable Unity vertex/UV arrays.
+Per-frame evaluation composes normalized coordinates, bilinear four-corner
+warp, the existing signed/circular curvature, and an optional anchored flag
+wave. Song-time waves remain deterministic through pause, seek, practice, and
+Replay; a separately selectable real-time clock supports deliberate ambient
+motion. Stretch-to-fill preserves the original UVs, while auto-cover crops
+inward to avoid blank or edge-clamped pixels after deformation. The unlit
+material does not need recalculated normals, and all dynamic arrays are
+allocated when the showcase surfaces are created.
+
+The same showcase-only vertex path includes a deterministic glass-fracture
+system. `CoreLogic` uses a fixed seeded PRNG, radial site placement, rectangular
+Voronoi clipping, convex fan triangulation, and impact-proximity reveal groups;
+no Unity random state participates. The Up & Down timeline uses the system in
+one authored sequence only: eighteen low-point impacts progressively reveal a
+single precomputed 200-cell web from about 2:03 through 2:15. An intact surface
+renders the revealed edges as one textured seam mesh. At the final break, the
+video renderer switches to the triangle-expanded shard mesh and copies the
+current shared texture once with `Graphics.CopyTexture`, preserving the same
+frozen frame across every falling piece while the following live formation
+appears behind it. Bulk motion is calculated once per shard, and a bounded
+optional override list can address selected shards without exposing mesh
+buffers. Shattered geometry excludes ongoing corner warp and flag-wave updates:
+the pane is captured at the break instant, then only deterministic gravity,
+tumble, and separation transforms run. The fracture material does not need
+normals, so active animation updates only vertices and bounds and performs no
+per-frame C++ or managed-array allocation.
 
 Undocked placement is an explicit edit transaction. BSML's controller-tested
 floating-screen handle supplies move/rotation tracking, a second handle drives

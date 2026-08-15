@@ -37,6 +37,7 @@ def definitions(script: str, first_action: str) -> dict:
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 provider_source = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 download_script = extract(source, "DownloaderScript")
+map_package_script = extract(source, "MapPackageScript")
 probe_script = extract(source, "ProbeScript")
 updater_script = extract(source, "UpdaterScript")
 
@@ -65,6 +66,7 @@ assert "ejs_solver.lib(), ejs_solver.core()" in source
 # failure on the headset.
 for name, script in (
     ("DownloaderScript", download_script),
+    ("MapPackageScript", map_package_script),
     ("ProbeScript", probe_script),
     ("UpdaterScript", updater_script),
 ):
@@ -80,6 +82,22 @@ assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in download_script
 assert "raise KeyboardInterrupt('Video URL check cancelled')" in probe_script
 assert "raise KeyboardInterrupt('yt-dlp update cancelled')" in updater_script
 assert updater_script.count("cancelled()") >= 4
+assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in map_package_script
+assert map_package_script.count("cancelled()") >= 4
+
+# Managed BeatSaver extraction is intentionally narrower than a generic ZIP
+# installer: redirects are host-pinned, paths and symlinks are rejected, and
+# compressed/expanded work is bounded before the atomic final rename.
+for safeguard in (
+    "safe_https_url",
+    "maximumArchiveBytes",
+    "maximumExpandedBytes",
+    "maximumEntries",
+    "os.path.commonpath",
+    "stat.S_IFLNK",
+    "os.replace(publish_root, final_path)",
+):
+    assert safeguard in map_package_script
 
 # The Quest provider must remain an in-process bridge. Reintroducing the
 # upstream subprocess provider would appear to work on desktop while failing
@@ -218,11 +236,20 @@ with tempfile.TemporaryDirectory() as directory:
     assert calls == [True, False], calls
     assert final_path.read_bytes() == b"complete-video"
 
-# Full HD is a maximum pixel envelope, not a landscape-only height rule.
-# Portrait 1080x1920 must be accepted while 1440p/4K stays excluded.
-assert "max(width, height) <= 1920" in download_script
-assert "min(width, height) <= 1080" in download_script
-assert "int(f.get('width') or 0) * int(f.get('height') or 0)" in download_script
+# Resolution tiers are orientation-independent (short edge), downloads are
+# exact rather than silently substituting a different tier, and only the new
+# 1440 tier changes from H.264/MP4 to VP9/WebM.
+assert "return min(width, height)" in download_script
+assert "requested_height > 1440" in download_script
+assert "if requested_height == 1440:" in download_script
+assert "candidate.get('ext') == 'webm'" in download_script
+assert "codec.startswith('vp9')" in download_script
+assert "candidate.get('ext') == 'mp4'" in download_script
+assert "codec.startswith('avc1')" in download_script
+assert "tier(candidate) == requested_height" in download_script
+assert "within_fps_limit or formats" in download_script
+assert "available_heights = [height for height in (480, 720, 1080)" in probe_script
+assert "if 1440 in vp9_heights:" in probe_script
 
 download = definitions(download_script, "\ntry:\n    publish('preparing'")
 probe = definitions(probe_script, "\ntry:\n    publish('probing'")

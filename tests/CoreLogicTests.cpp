@@ -216,6 +216,140 @@ int main()
     Expect(ScreenBackgroundVisible(true, true),
            "a requested black lead-in overrides transparent letterboxing");
 
+    Expect(SynchronizedPreviewReady(-1.214, false),
+           "an intentional negative lead-in may start synchronized audio without a frame");
+    Expect(!SynchronizedPreviewReady(0.0, false),
+           "visible media time still waits for the decoder's first uploaded frame");
+    Expect(SynchronizedPreviewReady(0.0, true),
+           "visible media time becomes ready after its first picture reaches Unity");
+
+    CornerWarpSettings warp;
+    warp.corners[0] = {-2.0f, -1.0f, 0.0f};
+    warp.corners[1] = {-1.0f, 3.0f, 2.0f};
+    warp.corners[2] = {4.0f, 5.0f, 6.0f};
+    warp.corners[3] = {2.0f, -3.0f, 4.0f};
+    const auto exactTopRight = BilinearCornerOffset(warp, 1.0f, 1.0f);
+    Expect(exactTopRight.x == 4.0f && exactTopRight.y == 5.0f &&
+               exactTopRight.z == 6.0f,
+           "bilinear corner deformation preserves authored corner values");
+    const auto centerWarp = BilinearCornerOffset(warp, 0.5f, 0.5f);
+    Expect(std::abs(centerWarp.x - 0.75f) < 0.001f &&
+               std::abs(centerWarp.y - 1.0f) < 0.001f &&
+               std::abs(centerWarp.z - 3.0f) < 0.001f,
+           "bilinear corner deformation continuously blends all four corners");
+
+    FlagWaveSettings wave;
+    wave.enabled = true;
+    wave.depth = 8.0f;
+    wave.ripple = 2.0f;
+    wave.anchorRamp = 1.0f;
+    const auto anchored = FlagWaveOffset(wave, 0.0f, 0.25);
+    Expect(std::abs(anchored.y) < 0.001f && std::abs(anchored.z) < 0.001f,
+           "the selected flag edge remains stationary");
+    const auto freeEdge = FlagWaveOffset(wave, 1.0f, 0.0);
+    Expect(std::abs(freeEdge.y) > 1.9f,
+           "the free flag edge receives the full authored amplitude");
+
+    SurfaceDeformationSettings coverDeformation;
+    coverDeformation.enabled = true;
+    coverDeformation.fillMode = DeformationFillMode::AutoZoomCover;
+    coverDeformation.cornerWarp.corners[0].x = -2.0f;
+    coverDeformation.cornerWarp.corners[1].x = -2.0f;
+    coverDeformation.cornerWarp.corners[2].x = 2.0f;
+    coverDeformation.cornerWarp.corners[3].x = 2.0f;
+    Expect(DeformationAutoCoverScale(10.0f, 6.0f, coverDeformation) > 1.39f,
+           "auto-cover crops inward when deformation expands the canvas");
+    coverDeformation.fillMode = DeformationFillMode::StretchToFill;
+    Expect(DeformationAutoCoverScale(10.0f, 6.0f, coverDeformation) == 1.0f,
+           "stretch mode preserves the original UV range");
+
+    FracturePatternSettings fractureSettings;
+    fractureSettings.seed = CuratedFractureSeeds[0].second;
+    fractureSettings.pieceCount = 72;
+    fractureSettings.impactPoint = {0.43f, 0.58f};
+    fractureSettings.spokeCount = 11;
+    fractureSettings.ringCount = 3;
+    fractureSettings.jitter = 0.2f;
+    const auto fracture = GenerateFracturePattern(fractureSettings);
+    Expect(fracture.cells.size() == 72,
+           "the requested nondegenerate Voronoi shard count is preserved");
+    double cellArea = 0.0;
+    double triangleArea = 0.0;
+    bool allVerticesInside = true;
+    bool allShardTrianglesFacePlayer = true;
+    for(const auto& cell : fracture.cells)
+    {
+        cellArea += FracturePolygonArea(cell.vertices);
+        const auto triangles = TriangulateFractureCell(cell);
+        for(const auto& triangle : triangles)
+        {
+            triangleArea += FracturePolygonArea(
+                {triangle.a, triangle.b, triangle.c});
+            const float signedTwiceArea =
+                (triangle.b.x - triangle.a.x) *
+                    (triangle.c.y - triangle.a.y) -
+                (triangle.b.y - triangle.a.y) *
+                    (triangle.c.x - triangle.a.x);
+            allShardTrianglesFacePlayer =
+                allShardTrianglesFacePlayer && signedTwiceArea < 0.0f;
+        }
+        for(const auto& point : cell.vertices)
+            allVerticesInside = allVerticesInside &&
+                point.x >= -0.0001f && point.x <= 1.0001f &&
+                point.y >= -0.0001f && point.y <= 1.0001f;
+    }
+    Expect(allVerticesInside && std::abs(cellArea - 1.0) < 0.0005,
+           "Voronoi cells tile the normalized pane without gaps or overflow");
+    Expect(std::abs(cellArea - triangleArea) < 0.0005,
+           "fan triangulation preserves total fracture-cell area");
+    Expect(allShardTrianglesFacePlayer,
+           "fracture shards use the video mesh's player-facing winding");
+
+    const auto sameFracture = GenerateFracturePattern(fractureSettings);
+    bool deterministic = fracture.cells.size() == sameFracture.cells.size() &&
+                         fracture.edges.size() == sameFracture.edges.size();
+    for(std::size_t index = 0;
+        deterministic && index < fracture.cells.size(); ++index)
+    {
+        deterministic = fracture.cells[index].vertices.size() ==
+            sameFracture.cells[index].vertices.size();
+        for(std::size_t vertex = 0;
+            deterministic && vertex < fracture.cells[index].vertices.size(); ++vertex)
+        {
+            deterministic = SameFracturePoint(
+                fracture.cells[index].vertices[vertex],
+                sameFracture.cells[index].vertices[vertex], 0.0000001f);
+        }
+    }
+    Expect(deterministic,
+           "the seeded fracture generator is byte-stable for equal inputs");
+    fractureSettings.seed ^= 0x9E3779B9U;
+    const auto differentFracture = GenerateFracturePattern(fractureSettings);
+    Expect(!SameFracturePoint(
+               fracture.cells[1].site, differentFracture.cells[1].site,
+               0.000001f),
+           "different fracture seeds produce different cell sites");
+
+    fractureSettings.pieceCount = 500;
+    const auto cappedFracture = GenerateFracturePattern(fractureSettings);
+    Expect(cappedFracture.cells.size() <= MaximumFracturePieces,
+           "fracture generation enforces the 200-piece safety ceiling");
+
+    const std::vector<FracturePoint> impacts{
+        {0.2f, 0.2f}, {0.8f, 0.25f}, {0.5f, 0.8f}};
+    const auto revealGroups = PartitionFractureRevealGroups(
+        fracture.edges, impacts);
+    bool validPartition = revealGroups.size() == fracture.edges.size();
+    for(const auto group : revealGroups)
+        validPartition = validPartition && group < impacts.size();
+    Expect(validPartition,
+           "reveal grouping assigns every fracture edge exactly once");
+    Expect(!fracture.radialEdges.empty() &&
+               SameFracturePoint(
+                   fracture.radialEdges.front().from,
+                   {0.43f, 0.58f}, 0.0001f),
+           "the radial spider-web begins in the requested impact region");
+
     if(failures == 0)
         std::cout << "All Big Screen core tests passed.\n";
     return failures == 0 ? 0 : 1;

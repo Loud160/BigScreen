@@ -1,7 +1,34 @@
+# Local caches and generated release artifacts
 .cache/
 artifacts/
 __pycache__/
 *.pyc
+
+# Local assistant/review material is never part of the distributable source.
+/.claude/
+/.codex/
+/.cursor/
+/CLAUDE.md
+/AGENTS.md
+/_cloud_transfer/
+/tmp-inspect/
+/BigScreen-code-review*.md
+/codex-prompt-*.md
+
+# Local diagnostics and headset captures. Keep intentional documentation
+# images under docs/ with descriptive names instead of committing these
+# root-level development captures.
+/bigscreen-*.png
+/bigscreen-*.jpg
+/bigscreen-live-settings.json
+/current-screen-tab.png
+/live-menu.png
+/song-header-*.png
+/song-selection-*.png
+/*.mp4
+/*.webm
+/*.mkv
+/*.mov
 
 # Prerequisites
 *.d
@@ -36,12 +63,8 @@ __pycache__/
 *.out
 *.app
 
-# VSCode config stuff
-!.vscode/c_cpp_properties.json
-!.vscode/tasks.json
-!.vscode/settings.json
-
-# Jetbrains IDEs
+# Local editor configuration
+.vscode/
 .idea/
 
 # NDK stuff
@@ -67,8 +90,15 @@ qpm_defines.cmake
 
 # CMake stuff
 [Bb]uild/
-build-host-tests/
+[Bb]uild-*/
 cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
 extern.cmake
 
 # QMOD Schema

@@ -20,7 +20,7 @@ namespace GlobalNamespace {
     class IPreviewMediaData;
     class SongPreviewPlayer;
 }
-namespace HMUI { class ImageView; class InputFieldView; class ViewController; }
+namespace HMUI { class HoverHint; class ImageView; class InputFieldView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
 namespace System::Threading::Tasks { template<class TResult> class Task_1; }
 namespace UnityEngine { class AudioClip; class AudioSource; class GameObject; class Sprite; }
@@ -69,6 +69,13 @@ namespace BigScreen {
         void ChangeFilter(int direction);
         void BeginUrlProbe();
         void StartOrCancelDownload();
+        /// Handles one of the exact resolution buttons populated by the URL
+        /// probe. The height is captured from the latest probe result rather
+        /// than inferred from the global playback-resolution setting.
+        void DownloadResolutionPressed(std::size_t buttonIndex);
+        void RequestResolutionDownload(int height);
+        void ConfirmPendingResolutionDownload();
+        void StartResolutionDownload(int height);
         void PasteUrlFromClipboard();
         void SearchSelectedSongOnYouTube();
         void RefreshLocalVideoFiles();
@@ -78,6 +85,10 @@ namespace BigScreen {
         void RemoveOverride();
         bool ApplyFitToSong(bool reportStatus);
         bool SaveTiming();
+        /// Keeps mapper-authored addresses visually distinct from addresses
+        /// the user typed or pasted without changing whether the field can be
+        /// edited. Mapper metadata is muted gray; user input is full white.
+        void RefreshUrlTextColor();
         void RefreshDetails();
         void ClearThumbnail();
         void RefreshVisibleVideoThumbnails();
@@ -125,20 +136,27 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* detailLibraryStorage_ = nullptr;
         TMPro::TextMeshProUGUI* detailFreeStorage_ = nullptr;
         TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
+        TMPro::TextMeshProUGUI* urlInputText_ = nullptr;
         TMPro::TextMeshProUGUI* pasteUrlButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* downloadButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* localVideoHelpText_ = nullptr;
         TMPro::TextMeshProUGUI* localVideoStatusText_ = nullptr;
         TMPro::TextMeshProUGUI* removeConfirmationText_ = nullptr;
+        TMPro::TextMeshProUGUI* downloadConfirmationText_ = nullptr;
         HMUI::ImageView* downloadProgressTrack_ = nullptr;
         HMUI::ImageView* downloadProgressFill_ = nullptr;
         HMUI::ImageView* playbackScrubberFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
         BSML::ModalView* removeConfirmModal_ = nullptr;
+        BSML::ModalView* downloadConfirmModal_ = nullptr;
         BSML::ModalView* localVideoHelpModal_ = nullptr;
         UnityEngine::GameObject* localVideoListContent_ = nullptr;
         UnityEngine::GameObject* storageSpacer_ = nullptr;
         UnityEngine::GameObject* storagePanel_ = nullptr;
+        // Timing rows remain visible but locked when a mapper supplied Cinema
+        // timing and its MP4 has not been downloaded yet. Transport rows have
+        // no useful function without playable media and remain video-only.
+        std::vector<UnityEngine::GameObject*> timingRows_;
         std::vector<UnityEngine::GameObject*> videoOnlyRows_;
         std::vector<UnityEngine::GameObject*> localVideoRowObjects_;
         std::vector<LocalVideoFile> localVideoFiles_;
@@ -154,8 +172,18 @@ namespace BigScreen {
         UnityEngine::UI::Button* showFileBrowserButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::GameObject* downloadButtonPlaceholder_ = nullptr;
+        // Four slots cover the normal 480/720/1080/1440 probe result. When a
+        // source offers none of those, slot zero is reused for the one real
+        // lower height (for example 360p) returned by the downloader.
+        std::vector<UnityEngine::UI::Button*> downloadTierButtons_;
+        std::vector<int> displayedDownloadHeights_;
+        UnityEngine::UI::Button* confirmDownloadButton_ = nullptr;
         UnityEngine::UI::Button* playPauseButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
+        HMUI::HoverHint* fitTimingHint_ = nullptr;
+        HMUI::HoverHint* rateTimingHint_ = nullptr;
+        HMUI::HoverHint* offsetTimingHint_ = nullptr;
+        HMUI::HoverHint* leadInTimingHint_ = nullptr;
         std::vector<BSML::ClickableText*> alphabetButtons_;
         std::vector<SongLibraryItem> catalog_;
         std::vector<SongLibraryItem*> visible_;
@@ -202,9 +230,11 @@ namespace BigScreen {
         float scrubberFollowResumeTime_ = 0.0f;
         bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
+        bool mapperProvidedUrl_ = false;
         int tickCounter_ = 0;
         int thumbnailTickCounter_ = 0;
         int playbackControlsTickCounter_ = 0;
         bool periodicDownloadWasActive_ = false;
+        int pendingDownloadHeight_ = 0;
     };
 }

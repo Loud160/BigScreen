@@ -42,6 +42,8 @@ namespace BigScreen {
         virtual bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
+            bool preferHardwareDecoding,
+            void* javaVm,
             std::string& error) = 0;
         virtual void Close() = 0;
         virtual void Request(double mediaSeconds) = 0;
@@ -61,6 +63,19 @@ namespace BigScreen {
         virtual double DurationSeconds() const = 0;
         virtual std::uint64_t BufferAllocations() const = 0;
         virtual const char* RuntimeVersion() const = 0;
+        virtual const char* CodecName() const = 0;
+        /// Reports what actually decoded the current file. This deliberately
+        /// does not mirror the preference setting because MediaCodec can fall
+        /// back to software for unsupported or failing content.
+        virtual bool UsingHardwareDecoder() const = 0;
+        /// Explains a handled startup fallback. An empty value means hardware
+        /// was not requested or it opened successfully.
+        virtual std::string HardwareFallbackReason() const = 0;
+        /// False for HEVC and for every source above the 1080p tier. The
+        /// facade consults this after a mid-stream MediaCodec failure so it
+        /// never reopens a file through a prohibited software decoder.
+        virtual bool SoftwareFallbackAllowed() const = 0;
+        virtual std::string SoftwareFallbackBlockedReason() const = 0;
     };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -100,7 +115,23 @@ namespace BigScreen {
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
+            bool preferHardwareDecoding,
+            void* javaVm,
             std::string& error) override;
+        /// Host fixture tests exercise the proven software path without an
+        /// Android VM. Keep their call site explicit and source-compatible.
+        bool Open(
+            const std::filesystem::path& videoPath,
+            int maximumOutputHeight,
+            std::string& error)
+        {
+            return Open(
+                videoPath,
+                maximumOutputHeight,
+                false,
+                nullptr,
+                error);
+        }
         void Close() override;
 
         /// Publishes the newest externally-clocked target. The worker may
@@ -135,6 +166,17 @@ namespace BigScreen {
         double DurationSeconds() const override { return durationSeconds_; }
         std::uint64_t BufferAllocations() const override { return bufferAllocations_.load(); }
         const char* RuntimeVersion() const override;
+        const char* CodecName() const override { return codecName_.c_str(); }
+        bool UsingHardwareDecoder() const override { return usingHardwareDecoder_; }
+        std::string HardwareFallbackReason() const override {
+            return hardwareFallbackReason_;
+        }
+        bool SoftwareFallbackAllowed() const override {
+            return softwareFallbackAllowed_;
+        }
+        std::string SoftwareFallbackBlockedReason() const override {
+            return softwareFallbackBlockedReason_;
+        }
 
     private:
         void WorkerMain() noexcept;
@@ -154,12 +196,21 @@ namespace BigScreen {
         AVFrame* decoded_ = nullptr;
         AVPacket* packet_ = nullptr;
         SwsContext* converter_ = nullptr;
+        int converterSourceWidth_ = 0;
+        int converterSourceHeight_ = 0;
+        int converterSourceFormat_ = -1;
+        int converterColorSpace_ = -1;
+        int converterColorRange_ = -1;
 
         int videoStream_ = -1;
         int width_ = 0;
         int height_ = 0;
         int sourceWidth_ = 0;
         int sourceHeight_ = 0;
+        int conversionWidth_ = 0;
+        int conversionHeight_ = 0;
+        int displayQuarterTurns_ = 0;
+        std::vector<std::uint8_t> rotationScratch_;
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
@@ -189,6 +240,11 @@ namespace BigScreen {
 
         std::mutex errorMutex_;
         std::optional<std::string> workerError_;
+        bool usingHardwareDecoder_ = false;
+        std::string hardwareFallbackReason_;
+        bool softwareFallbackAllowed_ = true;
+        std::string softwareFallbackBlockedReason_;
+        std::string codecName_ = "unknown";
     };
 #else
     /// Runtime-selecting facade used by gameplay and menu previews. Selecting
@@ -224,9 +280,27 @@ namespace BigScreen {
         double DurationSeconds() const;
         std::uint64_t BufferAllocations() const;
         const char* RuntimeVersion() const;
+        const char* CodecName() const;
+        bool UsingHardwareDecoder() const;
+        const char* DecoderBackendName() const;
 
     private:
+        std::unique_ptr<FrameDecoderBackend> CreateSelectedBackend() const;
+        bool ReopenWithSoftwareAfterHardwareFailure(
+            const std::string& hardwareError,
+            std::string& recoveryError);
+
         std::unique_ptr<FrameDecoderBackend> backend_;
+        std::filesystem::path videoPath_;
+        int maximumOutputHeight_ = 0;
+        double lastRequestedSeconds_ = 0.0;
+        bool useFfmpeg9_ = false;
+        bool hardwareRequested_ = false;
+        bool hardwareFallbackAttempted_ = false;
+        void* javaVm_ = nullptr;
+        double accumulatedWorkerCpuMilliseconds_ = 0.0;
+        std::uint64_t accumulatedBufferAllocations_ = 0;
+        double retainedPeakDecodeMilliseconds_ = 0.0;
     };
 #endif
 }

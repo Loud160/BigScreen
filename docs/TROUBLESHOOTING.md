@@ -26,6 +26,12 @@ During a map, playback failures are logged silently and any user-facing notice
 is deferred until gameplay has ended. This prevents a dialog from interrupting
 normal play or Replay capture.
 
+If a 1440p video reports that hardware decoding is required, enable **Hardware
+Video Decoding** or download a 1080p-or-lower tier. Big Screen never attempts a
+software decode above 1080p. HDR/10-bit files must be re-exported as 8-bit SDR;
+WebM alpha is also unsupported. These failures stop only video playback and do
+not interrupt the map.
+
 Big Screen does not require a separately installed JavaScript runtime. If a log
 mentions a missing JavaScript runtime, confirm the active QMOD contains the
 current `libbigscreen.so` and `Runtime/bigscreen_jsc_provider.py`. A successful

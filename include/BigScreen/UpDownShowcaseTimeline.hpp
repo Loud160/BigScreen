@@ -4,10 +4,15 @@
 #include <cstddef>
 #include <string_view>
 
+#include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/MapVideoConfig.hpp"
 
 namespace BigScreen::UpDownShowcase {
-    constexpr std::size_t MaximumPanels = 8;
+    // The showcase reuses one decoded texture across every surface. Twelve
+    // panels therefore add only transforms/material instances, not twelve
+    // decoders or twelve frame uploads. Normal Big Screen layouts remain
+    // unaffected by this demo-only capacity.
+    constexpr std::size_t MaximumPanels = 12;
     constexpr double BeatsPerMinute = 138.0;
 
     // Geometry changes are intentionally discrete. Transform-only animation is
@@ -33,6 +38,8 @@ namespace BigScreen::UpDownShowcase {
         float opacity = 1.0f;
         float videoRoll = 0.0f;
         Geometry geometry = Geometry::Wide;
+        CoreLogic::SurfaceDeformationSettings deformation{};
+        CoreLogic::FractureEffectSettings fracture{};
     };
 
     struct FrameState {
@@ -56,7 +63,19 @@ namespace BigScreen::UpDownShowcase {
 
     /// Returns the authored visibility of the map's central track-ring
     /// structure. This remains a pure song-time decision so pausing, seeking,
-    /// practice speed, and Replay cannot desynchronize the environment strobe.
-    /// Outside the 2:01-2:29 showcase cue the structure is always visible.
+    /// practice speed, and Replay cannot desynchronize the environment state.
+    /// It covers the floating carousel, flag-wave/corkscrew clearance, and the
+    /// later rhythmic damage cue; all exact boundaries restore deterministically.
     bool CenterRingVisible(double songTimeSeconds);
+
+    /// Temporarily removes Big Mirror's NearBuildingLeft/Right structures
+    /// during the floating-screen carousel. The gameplay hook restores their
+    /// captured state at the exact cue boundary and when the scene exits.
+    bool SidePillarsVisible(double songTimeSeconds);
+
+    /// The floating-screen carousel and corkscrew deliberately remove every
+    /// captured environment renderer so their depth formations read clearly.
+    /// Original renderer states are restored between cues, at each exact end
+    /// boundary, and on every gameplay teardown path.
+    bool BackgroundEnvironmentVisible(double songTimeSeconds);
 }

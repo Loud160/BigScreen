@@ -25,6 +25,31 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
 ```
 
+## Portable repository boundary
+
+A fresh clone contains the source, headers, tests, documentation, licenses,
+QPM manifests, CI configuration, and the versioned build/fetch recipes needed
+to reproduce Big Screen. It intentionally does not contain developer-specific
+editor settings, CMake caches, NDK installations, restored QPM dependencies,
+downloaded CPython/yt-dlp/QuickJS-NG sources, compiled FFmpeg libraries, QMOD
+packages, headset captures, crash-analysis extracts, or AI review/prompt files.
+
+Those inputs and outputs are generated beneath ignored cache, `extern`,
+`build*`, and `artifacts` paths. The dependency scripts retrieve the required
+upstream sources and binaries from pinned URLs and reject content that does not
+match the committed SHA-256 values. Consequently, copying a local generated
+library into Git is neither required nor a substitute for a reproducible build.
+
+Before committing, use `git status --short` and `git diff --cached --name-status`
+to verify that only intentional source files are staged. Do not use a forced
+add to bypass `.gitignore` for generated libraries or local diagnostic files.
+
+The current development package explicitly enables the hard-coded Up & Down
+proof of concept with `BIGSCREEN_UP_DOWN_SHOWCASE=ON`. Do not rely on a cached
+CMake value for this feature: an older `OFF` cache compiles its target matcher
+into a permanent false result and silently produces ordinary single-screen
+playback on the demonstration map.
+
 In addition to the CPython, certifi, yt-dlp, and FFmpeg inputs, the dependency
 scripts retrieve a pinned QuickJS-NG source archive. Every downloaded artifact
 has a fixed SHA-256; review the upstream release, ABI, contents, and license
@@ -71,7 +96,7 @@ modules and must not appear as direct `DT_NEEDED` entries in
 `libbigscreen.so`. The build script stages them for packaging without placing
 them in QPM's recursively linked input directory.
 
-`scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables only H.264 decoding, MP4/MOV demuxing, the local-file protocol, and `libswscale`; it explicitly omits GPL, version-3-only, and nonfree components.
+`scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV and Matroska/WebM demuxing; the local-file protocol; and `libswscale`. It explicitly omits GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container.
 
 The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA buffers without an extra frame copy.
 
@@ -85,12 +110,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-c
 ```
 
 Install that single QMOD, then use **Misc > Performance > Use FFmpeg 9** to
-switch between the bundled runtimes. Off selects 4.4.8; on selects 9.0.1. An
+switch between the bundled runtimes and **Hardware Video Decoding** to switch
+between supported software decoders and MediaCodec. Both switches default off. An
 active Video Library preview is recreated at its retained song position, while
 gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback
 interval. The performance overlay and results summary identify the runtime
-that actually opened the decoder and report presented-frame loss, decode
+that actually opened the runtime/backend and report presented-frame loss, decode
 delay, automatic reductions, and RGBA allocation count. Keep 4.4.8 as the
 default until 9.0.1 is at least equivalent in repeated Quest 2 and Quest 3
 tests.
@@ -147,6 +173,13 @@ With the intended Quest connected and authorized:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1
 ```
+
+On Windows, [Build-And-Deploy.bat](../Build-And-Deploy.bat) provides the same
+workflow as a double-clickable launcher. It keeps the console open afterward,
+prints a clear success or failure result, and preserves the underlying build or
+ADB error output for diagnosis. The batch file does not maintain a second copy
+of the deployment logic; it calls `scripts/copy.ps1`, which remains the single
+authoritative build, validation, complete-runtime deployment, and restart path.
 
 Deployment scripts are development conveniences, not part of ordinary end-user installation. Confirm the active Beat Saber package/version before replacing a mod binary.
 

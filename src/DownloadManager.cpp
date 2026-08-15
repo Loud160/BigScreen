@@ -149,6 +149,107 @@ namespace BigScreen {
             return leftStream.eof() && rightStream.eof();
         }
 
+        std::filesystem::path IncomingSibling(
+            const std::filesystem::path& destination)
+        {
+            return destination.parent_path() /
+                (destination.stem().string() + ".incoming" +
+                 destination.extension().string());
+        }
+
+        /// Atomically promotes a fully downloaded sibling while retaining the
+        /// old destination until its manifest commit succeeds. This closes the
+        /// subtle same-codec replacement hole where yt-dlp's overwrite option
+        /// could destroy the current 720p/1080p MP4 before a failed replacement
+        /// had produced a usable new file.
+        class StagedFileReplacement final {
+        public:
+            StagedFileReplacement(
+                std::filesystem::path incoming,
+                std::filesystem::path destination)
+                : incoming_(std::move(incoming)),
+                  destination_(std::move(destination)),
+                  backup_(destination_.string() + ".replacement-backup") {}
+
+            void Promote()
+            {
+                std::error_code error;
+                if(!std::filesystem::is_regular_file(incoming_, error) || error)
+                    throw std::runtime_error(
+                        "The completed download staging file is missing.");
+
+                const bool backupExists =
+                    std::filesystem::is_regular_file(backup_, error) && !error;
+                error.clear();
+                hadDestination_ =
+                    std::filesystem::is_regular_file(destination_, error) && !error;
+                if(backupExists)
+                {
+                    if(hadDestination_)
+                        std::filesystem::remove(backup_, error);
+                    else
+                        std::filesystem::rename(backup_, destination_, error);
+                    if(error)
+                        throw std::runtime_error(
+                            "Could not recover the previous video before replacement: " +
+                            error.message());
+                    hadDestination_ = true;
+                }
+
+                if(hadDestination_)
+                {
+                    std::filesystem::rename(destination_, backup_, error);
+                    if(error)
+                        throw std::runtime_error(
+                            "Could not preserve the current video before replacement: " +
+                            error.message());
+                }
+                std::filesystem::rename(incoming_, destination_, error);
+                if(error)
+                {
+                    Restore();
+                    throw std::runtime_error(
+                        "Could not publish the completed replacement video: " +
+                        error.message());
+                }
+                promoted_ = true;
+            }
+
+            void Commit() noexcept
+            {
+                committed_ = true;
+                std::error_code ignored;
+                std::filesystem::remove(backup_, ignored);
+            }
+
+            ~StagedFileReplacement()
+            {
+                if(promoted_ && !committed_)
+                    Restore();
+            }
+
+            StagedFileReplacement(const StagedFileReplacement&) = delete;
+            StagedFileReplacement& operator=(
+                const StagedFileReplacement&) = delete;
+
+        private:
+            void Restore() noexcept
+            {
+                std::error_code ignored;
+                std::filesystem::remove(destination_, ignored);
+                if(hadDestination_)
+                    std::filesystem::rename(backup_, destination_, ignored);
+                promoted_ = false;
+            }
+
+            std::filesystem::path incoming_;
+            std::filesystem::path destination_;
+            std::filesystem::path backup_;
+            bool hadDestination_ = false;
+            bool promoted_ = false;
+            bool committed_ = false;
+        };
+
         /// Owns the filesystem transaction that promotes a staged yt-dlp
         /// package. Any return before Accept() moves the candidate back to
         /// `next` and restores the prior active package, so an unrelated
@@ -383,6 +484,22 @@ namespace BigScreen {
             return value != object.MemberEnd() && value->value.IsNumber()
                 ? value->value.GetDouble()
                 : 0.0;
+        }
+
+        std::vector<int> ReadIntegerArray(
+            const rapidjson::Value& object,
+            const char* name)
+        {
+            std::vector<int> values;
+            if(!object.IsObject()) return values;
+            const auto member = object.FindMember(name);
+            if(member == object.MemberEnd() || !member->value.IsArray())
+                return values;
+            for(const auto& item : member->value.GetArray())
+            {
+                if(item.IsInt()) values.push_back(item.GetInt());
+            }
+            return values;
         }
 
         void AddString(
@@ -681,7 +798,7 @@ def classify(value):
     if 'not available in your country' in lower or 'geo' in lower and 'restricted' in lower:
         return 'failed', 'This video is not available in your region.'
     if 'requested format is not available' in lower or 'no video formats' in lower:
-        return 'failed', 'This video has no H.264 MP4 stream at 1080p or lower.'
+        return 'failed', 'The requested video resolution and codec are not available.'
     if 'no space left' in lower:
         return 'failed', 'The Quest ran out of free storage while downloading.'
     if 'http error 400' in lower or ('400' in lower and 'bad request' in lower):
@@ -758,14 +875,10 @@ try:
     # challenge provider before yt-dlp creates the YouTube extractor.
     import bigscreen_jsc_provider
     import yt_dlp
-    # Permit either orientation up to Full HD. A portrait 1080x1920 stream has
-    # height 1920 and was incorrectly rejected by the old height-only rule.
-    selector = 'bestvideo[ext=mp4][vcodec^=avc1][width<=1920][height<=1920]'
     common = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'format': selector,
         'continuedl': True,
         'nopart': False,
         'progress_hooks': [progress],
@@ -788,23 +901,47 @@ try:
     age_limit = int(info.get('age_limit') or 0)
     if age_limit >= 18 and not job.get('explicitContentAllowed', False):
         raise PermissionError('Big Screen blocked this age-restricted video because explicit content is disabled in Beat Saber parental controls.')
+    requested_height = int(job.get('requestedHeight') or 1080)
+    maximum_fps = max(1, int(job.get('maximumSourceFps') or 30))
+    if requested_height < 1 or requested_height > 1440:
+        raise RuntimeError('Requested format is not available: invalid resolution tier')
+
+    def is_sdr(candidate):
+        dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
+        note = str(candidate.get('format_note') or '').upper()
+        codec = str(candidate.get('vcodec') or '').lower()
+        return ('HDR' not in dynamic_range and 'HDR' not in note and
+                '.02' not in codec and not codec.startswith('vp09.02'))
+
+    def tier(candidate):
+        width = int(candidate.get('width') or 0)
+        height = int(candidate.get('height') or 0)
+        return min(width, height) if width > 0 and height > 0 else 0
+
     formats = []
     for candidate in info.get('formats') or []:
         width = int(candidate.get('width') or 0)
         height = int(candidate.get('height') or 0)
-        if (candidate.get('ext') == 'mp4'
-                and str(candidate.get('vcodec') or '').startswith('avc1')
-                and width > 0 and height > 0
-                and max(width, height) <= 1920
-                and min(width, height) <= 1080
-                and candidate.get('acodec') == 'none'):
+        codec = str(candidate.get('vcodec') or '').lower()
+        if width <= 0 or height <= 0 or candidate.get('acodec') != 'none' or not is_sdr(candidate):
+            continue
+        if requested_height == 1440:
+            compatible = (candidate.get('ext') == 'webm' and
+                (codec.startswith('vp9') or codec.startswith('vp09.00')))
+        else:
+            compatible = (candidate.get('ext') == 'mp4' and
+                codec.startswith('avc1'))
+        if compatible and tier(candidate) == requested_height:
             formats.append(candidate)
     if not formats:
-        raise RuntimeError('Requested format is not available: no H.264 MP4 video-only stream at 1080p or lower')
-    chosen = max(formats, key=lambda f: (
-        int(f.get('width') or 0) * int(f.get('height') or 0),
-        max(int(f.get('width') or 0), int(f.get('height') or 0)),
-        float(f.get('tbr') or 0)))
+        raise RuntimeError('Requested format is not available: no compatible %dp stream' % requested_height)
+    within_fps_limit = [candidate for candidate in formats
+        if float(candidate.get('fps') or 0) <= maximum_fps + 0.01]
+    selection_pool = within_fps_limit or formats
+    chosen = max(selection_pool, key=lambda f: (
+        float(f.get('fps') or 0) if within_fps_limit else -float(f.get('fps') or 0),
+        float(f.get('tbr') or 0),
+        int(f.get('filesize') or f.get('filesize_approx') or 0)))
     expected = int(chosen.get('filesize') or chosen.get('filesize_approx') or 0)
     free = shutil.disk_usage(os.path.dirname(job['finalPath'])).free
     required = expected + int(job['reserveBytes']) if expected else int(job['unknownRequiredBytes'])
@@ -891,6 +1028,7 @@ try:
         width=chosen.get('width') or 0,
         height=chosen.get('height') or 0,
         codec=chosen.get('vcodec') or 'h264',
+        requestedHeight=requested_height,
         thumbnailPath=published_thumbnail,
         diagnostic=retry_detail.strip(),
         bytes=size,
@@ -913,6 +1051,228 @@ except BaseException as error:
         message if state == 'cancelled' else message + ' (' + code + ')',
         errorCode=code,
         diagnostic=detail)
+)PY";
+
+        // BeatSaver map packages use the same private CPython worker as video
+        // downloads, but never import yt-dlp. Keeping network and ZIP work off
+        // Unity's main thread prevents the showcase button from stalling menu
+        // rendering. The script accepts only the exact requested BeatSaver
+        // revision and extracts through a bounded, traversal-safe staging
+        // directory before atomically publishing the managed map folder.
+        constexpr const char* MapPackageScript = R"PY(
+import json, os, shutil, stat, time, urllib.parse, urllib.request, zipfile
+
+job = json.loads(BIGSCREEN_JOB)
+status_path = job['statusPath']
+cancel_path = job['cancelPath']
+
+def publish(state, message='', durable=True, **values):
+    data = {'state': state, 'message': message}
+    data.update(values)
+    temporary = status_path + '.tmp'
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        json.dump(data, stream, ensure_ascii=False)
+        if durable:
+            stream.flush()
+            os.fsync(stream.fileno())
+    os.replace(temporary, status_path)
+
+def cancelled():
+    if os.path.exists(cancel_path):
+        raise RuntimeError('BIGSCREEN_CANCELLED')
+
+def safe_https_url(value, allowed_hosts):
+    parsed = urllib.parse.urlparse(str(value or ''))
+    return (parsed.scheme.lower() == 'https' and
+            (parsed.hostname or '').lower() in allowed_hosts)
+
+archive_path = job['archivePath']
+staging_path = job['stagingPath']
+final_path = job['destinationDirectory']
+
+try:
+    publish('preparing', 'Finding exact BeatSaver map revision')
+    cancelled()
+    map_key = str(job['mapKey'])
+    expected_hash = str(job['expectedHash']).lower()
+    api_url = 'https://api.beatsaver.com/maps/id/' + urllib.parse.quote(
+        map_key, safe='')
+    request = urllib.request.Request(
+        api_url,
+        headers={'User-Agent': 'Big-Screen-Beat-Saber/' + str(job['modVersion'])})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if not safe_https_url(response.geturl(), {'api.beatsaver.com'}):
+            raise RuntimeError('BeatSaver metadata redirected to an unexpected host.')
+        metadata_bytes = response.read(2 * 1024 * 1024 + 1)
+    if len(metadata_bytes) > 2 * 1024 * 1024:
+        raise RuntimeError('BeatSaver returned unexpectedly large map metadata.')
+    metadata = json.loads(metadata_bytes.decode('utf-8'))
+    revision = next(
+        (item for item in metadata.get('versions', [])
+         if str(item.get('hash') or '').lower() == expected_hash),
+        None)
+    if revision is None:
+        raise RuntimeError(
+            'BeatSaver no longer lists the exact showcase map revision.')
+    download_url = revision.get('downloadURL') or revision.get('downloadUrl')
+    allowed_cdn_hosts = {
+        'r2cdn.beatsaver.com', 'cdn.beatsaver.com', 'beatsaver.com'}
+    if not safe_https_url(download_url, allowed_cdn_hosts):
+        raise RuntimeError('BeatSaver returned an unexpected map download host.')
+
+    os.makedirs(os.path.dirname(final_path), exist_ok=True)
+    free = shutil.disk_usage(os.path.dirname(final_path)).free
+    if free < int(job['requiredFreeBytes']):
+        raise OSError(
+            'Not enough free Quest storage to install the showcase map and video.')
+
+    publish('downloading', 'Downloading showcase map')
+    request = urllib.request.Request(
+        download_url,
+        headers={'User-Agent': 'Big-Screen-Beat-Saber/' + str(job['modVersion'])})
+    downloaded = 0
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if not safe_https_url(response.geturl(), allowed_cdn_hosts):
+            raise RuntimeError('BeatSaver map download redirected to an unexpected host.')
+        total = int(response.headers.get('Content-Length') or 0)
+        if total > int(job['maximumArchiveBytes']):
+            raise RuntimeError('The BeatSaver map package is unexpectedly large.')
+        with open(archive_path, 'wb') as archive:
+            last_publish = 0.0
+            while True:
+                cancelled()
+                block = response.read(128 * 1024)
+                if not block:
+                    break
+                archive.write(block)
+                downloaded += len(block)
+                if downloaded > int(job['maximumArchiveBytes']):
+                    raise RuntimeError('The BeatSaver map package exceeded its safe size limit.')
+                now = time.monotonic()
+                if now - last_publish >= 0.125:
+                    last_publish = now
+                    publish(
+                        'downloading', 'Downloading showcase map', durable=False,
+                        downloadedBytes=downloaded, totalBytes=total)
+            archive.flush()
+            os.fsync(archive.fileno())
+
+    cancelled()
+    publish('preparing', 'Installing showcase map')
+    if os.path.isdir(staging_path):
+        shutil.rmtree(staging_path)
+    os.makedirs(staging_path)
+    staging_root = os.path.realpath(staging_path)
+    entry_count = 0
+    expanded_bytes = 0
+    with zipfile.ZipFile(archive_path) as package:
+        for entry in package.infolist():
+            cancelled()
+            entry_count += 1
+            if entry_count > int(job['maximumEntries']):
+                raise RuntimeError('The BeatSaver package contains too many files.')
+            normalized = entry.filename.replace('\\', '/')
+            if entry.is_dir():
+                normalized = normalized.rstrip('/')
+            if (not normalized or normalized.startswith('/') or
+                    any(part in ('', '.', '..') for part in normalized.split('/'))):
+                raise RuntimeError('The BeatSaver package contains an unsafe file path.')
+            unix_mode = (entry.external_attr >> 16) & 0o170000
+            if unix_mode == stat.S_IFLNK:
+                raise RuntimeError('The BeatSaver package contains an unsupported symbolic link.')
+            expanded_bytes += int(entry.file_size)
+            if expanded_bytes > int(job['maximumExpandedBytes']):
+                raise RuntimeError('The expanded BeatSaver map is unexpectedly large.')
+            destination = os.path.realpath(os.path.join(staging_root, normalized))
+            if os.path.commonpath((staging_root, destination)) != staging_root:
+                raise RuntimeError('The BeatSaver package tried to write outside its map folder.')
+            if entry.is_dir():
+                os.makedirs(destination, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            with package.open(entry) as source, open(destination, 'wb') as target:
+                shutil.copyfileobj(source, target, length=128 * 1024)
+
+    # BeatSaver archives are normally rooted directly at Info.dat, but accept
+    # one harmless wrapper directory while rejecting ambiguous layouts.
+    def find_info(root):
+        direct = [name for name in os.listdir(root)
+                  if name.lower() in ('info.dat', 'info.json') and
+                  os.path.isfile(os.path.join(root, name))]
+        if direct:
+            return root, direct[0]
+        children = [name for name in os.listdir(root)
+                    if os.path.isdir(os.path.join(root, name))]
+        if len(children) == 1:
+            child = os.path.join(root, children[0])
+            nested = [name for name in os.listdir(child)
+                      if name.lower() in ('info.dat', 'info.json') and
+                      os.path.isfile(os.path.join(child, name))]
+            if nested:
+                return child, nested[0]
+        raise RuntimeError('The BeatSaver package does not contain a valid map root.')
+
+    map_root, info_name = find_info(staging_root)
+    with open(os.path.join(map_root, info_name), encoding='utf-8-sig') as stream:
+        info = json.load(stream)
+    def declared_file_exists(name):
+        normalized = str(name or '').replace('\\', '/')
+        if (not normalized or normalized.startswith('/') or
+                any(part in ('', '.', '..') for part in normalized.split('/'))):
+            return False
+        candidate = os.path.realpath(os.path.join(map_root, normalized))
+        return (os.path.commonpath((os.path.realpath(map_root), candidate)) ==
+                os.path.realpath(map_root) and os.path.isfile(candidate))
+    song_file = info.get('_songFilename') or info.get('song', {}).get('songFilename')
+    if not declared_file_exists(song_file):
+        raise RuntimeError('The showcase map is missing its declared song audio.')
+    lawless_file = ''
+    for beatmap_set in info.get('_difficultyBeatmapSets', []):
+        if str(beatmap_set.get('_beatmapCharacteristicName') or '').lower() != 'lawless':
+            continue
+        for beatmap in beatmap_set.get('_difficultyBeatmaps', []):
+            if str(beatmap.get('_difficulty') or '').lower() == 'expertplus':
+                lawless_file = beatmap.get('_beatmapFilename') or ''
+    if not declared_file_exists(lawless_file):
+        raise RuntimeError('The showcase package is missing Lawless Expert+ data.')
+
+    # If the archive had a wrapper directory, promote its contents rather than
+    # installing another level of nesting that SongCore cannot identify.
+    publish_root = staging_root
+    if os.path.realpath(map_root) != staging_root:
+        promoted = staging_path + '.promoted'
+        if os.path.isdir(promoted):
+            shutil.rmtree(promoted)
+        os.replace(map_root, promoted)
+        shutil.rmtree(staging_root)
+        os.replace(promoted, staging_root)
+        publish_root = staging_root
+    if os.path.isdir(final_path):
+        shutil.rmtree(final_path)
+    os.replace(publish_root, final_path)
+    publish(
+        'completed', 'Showcase map installed',
+        bytes=expanded_bytes,
+        downloadedBytes=downloaded,
+        totalBytes=downloaded)
+except BaseException as error:
+    message = str(error).strip()
+    if 'BIGSCREEN_CANCELLED' in message:
+        publish('cancelled', 'Showcase download cancelled')
+    else:
+        publish(
+            'failed',
+            'Showcase map download failed: ' + message + ' (BS-DEMO-MAP-001)',
+            errorCode='BS-DEMO-MAP-001', diagnostic=message)
+finally:
+    for path in (archive_path, staging_path, staging_path + '.promoted'):
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
 )PY";
 
         constexpr const char* ProbeScript = R"PY(
@@ -988,13 +1348,52 @@ try:
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
-            'skip_download': True}) as probe:
+            'skip_download': True,
+            'extractor_args': {'youtube': {'player_client': ['android_vr']}}}) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
     cancelled()
     video_id = str(info.get('id') or '')
     title = str(info.get('title') or 'YouTube video')
     if not video_id:
         raise RuntimeError('YouTube did not return a video identifier.')
+
+    def is_sdr(candidate):
+        dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
+        note = str(candidate.get('format_note') or '').upper()
+        codec = str(candidate.get('vcodec') or '').lower()
+        return ('HDR' not in dynamic_range and 'HDR' not in note and
+                '.02' not in codec and not codec.startswith('vp09.02'))
+
+    def tier(candidate):
+        width = int(candidate.get('width') or 0)
+        height = int(candidate.get('height') or 0)
+        return min(width, height) if width > 0 and height > 0 else 0
+
+    h264_heights = set()
+    vp9_heights = set()
+    for candidate in info.get('formats') or []:
+        codec = str(candidate.get('vcodec') or '').lower()
+        height = tier(candidate)
+        if height <= 0 or candidate.get('acodec') != 'none' or not is_sdr(candidate):
+            continue
+        if candidate.get('ext') == 'mp4' and codec.startswith('avc1'):
+            h264_heights.add(height)
+        if (candidate.get('ext') == 'webm' and
+                (codec.startswith('vp9') or codec.startswith('vp09.00'))):
+            vp9_heights.add(height)
+
+    available_heights = [height for height in (480, 720, 1080)
+        if height in h264_heights]
+    if 1440 in vp9_heights:
+        available_heights.append(1440)
+    # Preserve unusual and old uploads: when none of the supported standard
+    # tiers exists, offer the single best real H.264 height below 480p.
+    if not available_heights:
+        lower = [height for height in h264_heights if height < 480]
+        if lower:
+            available_heights = [max(lower)]
+    if not available_heights:
+        raise RuntimeError('No compatible 8-bit SDR H.264 or VP9 download tier is available.')
 
     # The standard YouTube thumbnail endpoint is consistently JPEG, which
     # Unity can decode directly without bundling another image codec.
@@ -1017,7 +1416,8 @@ try:
         'probe_completed',
         'Recognized: ' + title,
         title=title,
-        thumbnailPath=job['thumbnailPath'])
+        thumbnailPath=job['thumbnailPath'],
+        availableHeights=available_heights)
 except KeyboardInterrupt:
     publish('cancelled', 'Video URL check cancelled')
 except BaseException as error:
@@ -1453,6 +1853,7 @@ os.replace(temporary, job['destination'])
     bool DownloadManager::Start(DownloadRequest request, std::string& error)
     {
         std::scoped_lock startLock(startMutex_);
+        std::vector<int> verifiedAvailableHeights;
         if(!initialized_)
         {
             error = UnavailableMessage();
@@ -1466,10 +1867,23 @@ os.replace(temporary, job['destination'])
                 error = "Another video is already downloading.";
                 return false;
             }
+            // A transfer is started from a successful metadata probe. Preserve
+            // that verified tier list while the snapshot changes from probe
+            // state to transfer state so the UI can restore the same explicit
+            // resolution choices after a successful replacement/download.
+            if(snapshot_.metadataOnly &&
+               snapshot_.state == DownloadState::ProbeCompleted &&
+               snapshot_.levelId == request.levelId)
+                verifiedAvailableHeights = snapshot_.availableHeights;
         }
         if(request.levelId.empty() || request.sourceUrl.empty())
         {
             error = "A song and YouTube URL are required.";
+            return false;
+        }
+        if(request.requestedHeight < 1 || request.requestedHeight > 1440)
+        {
+            error = "Select an available video resolution before downloading.";
             return false;
         }
         if(!CoreLogic::IsSupportedYouTubeUrl(request.sourceUrl))
@@ -1482,7 +1896,10 @@ os.replace(temporary, job['destination'])
         if(worker_.joinable()) worker_.join();
         std::scoped_lock lock(mutex_);
         auto& library = VideoLibrary::Instance();
-        const auto finalPath = library.AllocateVideoPath(request.levelId, request.origin);
+        const auto finalPath = library.AllocateVideoPath(
+            request.levelId,
+            request.origin,
+            request.requestedHeight == 1440 ? ".webm" : ".mp4");
         jobPath_ = library.RuntimePath() / "download-job.json";
         statusPath_ = library.RuntimePath() / "download-status.json";
         cancelPath_ = library.RuntimePath() / "download.cancel";
@@ -1492,12 +1909,75 @@ os.replace(temporary, job['destination'])
         snapshot_.state = DownloadState::Preparing;
         snapshot_.levelId = request.levelId;
         snapshot_.message = "Checking video information";
+        snapshot_.requestedHeight = request.requestedHeight;
+        snapshot_.availableHeights = std::move(verifiedAvailableHeights);
         PaperLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
             request.levelId);
         worker_ = std::thread([this, request = std::move(request), finalPath]() mutable {
             Run(std::move(request), finalPath);
+        });
+        return true;
+    }
+
+    bool DownloadManager::StartMapPackage(
+        MapPackageRequest request,
+        std::string& error)
+    {
+        std::scoped_lock startLock(startMutex_);
+        if(!initialized_)
+        {
+            error = UnavailableMessage();
+            return false;
+        }
+        {
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            if(snapshot_.Active())
+            {
+                error = "Another downloader task is already running.";
+                return false;
+            }
+        }
+        if(request.mapKey.empty() || request.expectedHash.size() != 40 ||
+           request.destinationDirectory.empty())
+        {
+            error = "The showcase map identity is incomplete.";
+            return false;
+        }
+
+        // MapPackageScript is intentionally restricted to a direct child of
+        // Big Screen/DemoLevels. This makes replacement of a stale managed
+        // install safe and prevents a future caller from turning ZIP install
+        // cleanup into deletion of an arbitrary Quest directory.
+        const auto demoRoot =
+            (VideoLibrary::Instance().RootPath() / "DemoLevels").lexically_normal();
+        const auto destination = request.destinationDirectory.lexically_normal();
+        if(destination.parent_path() != demoRoot ||
+           destination.filename().empty())
+        {
+            error = "The showcase map destination is outside Big Screen's managed demo folder.";
+            return false;
+        }
+
+        if(worker_.joinable()) worker_.join();
+        std::scoped_lock lock(mutex_);
+        const auto runtime = VideoLibrary::Instance().RuntimePath();
+        statusPath_ = runtime / "showcase-map-status.json";
+        cancelPath_ = runtime / "showcase-map.cancel";
+        std::filesystem::remove(statusPath_);
+        std::filesystem::remove(cancelPath_);
+        snapshot_ = {};
+        snapshot_.state = DownloadState::Preparing;
+        snapshot_.levelId = "__showcase_map__";
+        snapshot_.message = "Finding exact BeatSaver map revision";
+        PaperLogger.info(
+            "Starting managed BeatSaver map download for key '{}' revision '{}'",
+            request.mapKey,
+            request.expectedHash);
+        worker_ = std::thread([this, request = std::move(request)]() mutable {
+            RunMapPackage(std::move(request));
         });
         return true;
     }
@@ -1650,14 +2130,23 @@ os.replace(temporary, job['destination'])
             const auto thumbnailPath =
                 VideoLibrary::Instance().AllocateThumbnailPath(
                     request.levelId, request.origin);
+            const auto incomingVideoPath = IncomingSibling(finalPath);
+            const auto incomingThumbnailPath = IncomingSibling(thumbnailPath);
             rapidjson::Document document(rapidjson::kObjectType);
             auto& allocator = document.GetAllocator();
             AddString(document, "sourceUrl", request.sourceUrl, allocator);
-            AddString(document, "finalPath", finalPath.string(), allocator);
-            AddString(document, "thumbnailPath", thumbnailPath.string(), allocator);
+            AddString(
+                document, "finalPath", incomingVideoPath.string(), allocator);
+            AddString(
+                document,
+                "thumbnailPath",
+                incomingThumbnailPath.string(),
+                allocator);
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "cancelPath", cancelPath_.string(), allocator);
             document.AddMember("explicitContentAllowed", request.explicitContentAllowed, allocator);
+            document.AddMember("requestedHeight", request.requestedHeight, allocator);
+            document.AddMember("maximumSourceFps", request.maximumSourceFps, allocator);
             document.AddMember(
                 "reserveBytes",
                 static_cast<std::uint64_t>(RequiredReserve),
@@ -1818,12 +2307,36 @@ os.replace(temporary, job['destination'])
                 stored.bytes = static_cast<std::uint64_t>(ReadNumber(status, "bytes"));
                 stored.width = static_cast<int>(ReadNumber(status, "width"));
                 stored.height = static_cast<int>(ReadNumber(status, "height"));
+
+                // Promote only after yt-dlp has published a complete, probed
+                // file. The transactions roll back automatically if either
+                // filesystem publication or the manifest update throws.
+                StagedFileReplacement videoReplacement(
+                    incomingVideoPath, finalPath);
+                videoReplacement.Promote();
+                std::optional<StagedFileReplacement> thumbnailReplacement;
+                std::error_code thumbnailError;
+                if(std::filesystem::is_regular_file(
+                       incomingThumbnailPath, thumbnailError) &&
+                   !thumbnailError)
+                {
+                    thumbnailReplacement.emplace(
+                        incomingThumbnailPath, thumbnailPath);
+                    thumbnailReplacement->Promote();
+                }
                 VideoLibrary::Instance().CommitDownload(
                     request.levelId,
                     request.songName,
                     request.songAuthor,
                     request.origin,
                     std::move(stored));
+                videoReplacement.Commit();
+                if(thumbnailReplacement)
+                    thumbnailReplacement->Commit();
+                snapshot_.thumbnailPath =
+                    std::filesystem::is_regular_file(thumbnailPath)
+                        ? thumbnailPath.string()
+                        : std::string{};
                 const auto diagnostic = ReadString(status, "diagnostic");
                 if(!diagnostic.empty())
                     PaperLogger.warn(
@@ -1843,6 +2356,116 @@ os.replace(temporary, job['destination'])
         catch(...)
         {
             SetFailure("Downloader stopped because of an unexpected internal error.");
+        }
+    }
+
+    void DownloadManager::RunMapPackage(MapPackageRequest request)
+    {
+        try
+        {
+            const auto runtime = VideoLibrary::Instance().RuntimePath();
+            rapidjson::Document document(rapidjson::kObjectType);
+            auto& allocator = document.GetAllocator();
+            AddString(document, "mapKey", request.mapKey, allocator);
+            AddString(document, "expectedHash", request.expectedHash, allocator);
+            AddString(
+                document,
+                "destinationDirectory",
+                request.destinationDirectory.string(),
+                allocator);
+            AddString(
+                document,
+                "archivePath",
+                (runtime / "showcase-map.zip.part").string(),
+                allocator);
+            AddString(
+                document,
+                "stagingPath",
+                (runtime / "showcase-map.installing").string(),
+                allocator);
+            AddString(document, "statusPath", statusPath_.string(), allocator);
+            AddString(document, "cancelPath", cancelPath_.string(), allocator);
+            AddString(document, "modVersion", VERSION, allocator);
+            document.AddMember(
+                "requiredFreeBytes",
+                static_cast<std::uint64_t>(RequiredReserve),
+                allocator);
+            document.AddMember(
+                "maximumArchiveBytes",
+                static_cast<std::uint64_t>(16ull * 1024ull * 1024ull),
+                allocator);
+            document.AddMember("maximumEntries", 256, allocator);
+            document.AddMember(
+                "maximumExpandedBytes",
+                static_cast<std::uint64_t>(96ull * 1024ull * 1024ull),
+                allocator);
+            rapidjson::StringBuffer buffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+            document.Accept(writer);
+
+            bool runtimeFailed = false;
+            std::string pythonFailure;
+            {
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals(
+                    buffer.GetString(), buffer.GetSize());
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        MapPackageScript,
+                        Py_file_input,
+                        globals.get(),
+                        globals.get()));
+                if(!globals || !result)
+                {
+                    pythonFailure = TakePythonExceptionText();
+                    runtimeFailed = true;
+                }
+            }
+            if(runtimeFailed)
+            {
+                PaperLogger.error(
+                    "Embedded showcase-map Python failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Installing the showcase map",
+                    pythonFailure);
+                SetFailure(
+                    "The embedded downloader could not install the showcase map (BS-DEMO-MAP-002). See Big Screen's error log for details.");
+                return;
+            }
+
+            std::scoped_lock lock(mutex_);
+            RefreshSnapshotFromDiskLocked();
+            if(snapshot_.state == DownloadState::Failed)
+            {
+                std::ifstream diagnosticStream(statusPath_, std::ios::binary);
+                const std::string diagnosticJson{
+                    std::istreambuf_iterator<char>(diagnosticStream), {}};
+                rapidjson::Document diagnosticStatus;
+                diagnosticStatus.Parse(
+                    diagnosticJson.data(), diagnosticJson.size());
+                const auto code = ReadString(diagnosticStatus, "errorCode");
+                const auto detail = ReadString(diagnosticStatus, "diagnostic");
+                ErrorManager::Instance().RecordError(
+                    code.empty() ? "Showcase map download" : code,
+                    detail.empty() ? snapshot_.message : detail);
+            }
+            PaperLogger.info(
+                "Showcase map downloader finished with state '{}': {}",
+                StateName(snapshot_.state),
+                snapshot_.message);
+        }
+        catch(const std::exception& exception)
+        {
+            SetFailure(
+                std::string("Showcase map installer stopped: ") +
+                exception.what());
+        }
+        catch(...)
+        {
+            SetFailure(
+                "Showcase map installer stopped because of an unexpected internal error.");
         }
     }
 
@@ -2061,6 +2684,12 @@ os.replace(temporary, job['destination'])
         const auto thumbnailPath = ReadString(document, "thumbnailPath");
         if(!title.empty()) snapshot_.title = title;
         if(!thumbnailPath.empty()) snapshot_.thumbnailPath = thumbnailPath;
+        const auto heights = ReadIntegerArray(document, "availableHeights");
+        if(!heights.empty()) snapshot_.availableHeights = heights;
+        const int requestedHeight =
+            static_cast<int>(ReadNumber(document, "requestedHeight"));
+        if(requestedHeight > 0)
+            snapshot_.requestedHeight = requestedHeight;
     }
 
     void DownloadManager::SetFailure(std::string message)

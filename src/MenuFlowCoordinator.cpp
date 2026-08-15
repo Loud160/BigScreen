@@ -6,6 +6,7 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/ShowcaseMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/MainFlowCoordinator.hpp"
@@ -278,6 +279,50 @@ namespace BigScreen {
         return false;
     }
 
+    bool ExitBigScreenMenuForShowcase() noexcept
+    {
+        auto* coordinator = activeMenuFlow.ptr();
+        if(!coordinator)
+            return false;
+        try
+        {
+            ScreenPreview::Instance().CancelUndockedEditing();
+            VideoLibraryMenu::Instance().StopActivePreview();
+            auto parent =
+                coordinator->__cordl_internal_get__parentFlowCoordinator();
+            if(!parent)
+                throw std::runtime_error(
+                    "Big Screen's parent menu flow was unavailable");
+            BeginMenuReentryGuard();
+            parent->DismissFlowCoordinator(
+                coordinator,
+                HMUI::ViewController::AnimationDirection::Horizontal,
+                nullptr,
+                true);
+            PaperLogger.info(
+                "Dismissed Big Screen before opening the managed showcase");
+            return true;
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not dismiss Big Screen for the showcase: {}",
+                exception.what());
+            ErrorManager::Instance().RecordError(
+                "Dismissing Big Screen for the showcase",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not dismiss Big Screen for the showcase: unknown exception");
+            ErrorManager::Instance().RecordError(
+                "Dismissing Big Screen for the showcase",
+                "Unknown native exception");
+        }
+        return false;
+    }
+
     void RestoreDistractionFreeMenu()
     {
         if(!distractionFreeMenuActive)
@@ -387,6 +432,7 @@ namespace BigScreen {
             SettingsMenu::Instance().ForgetUi();
             VideoLibraryMenu::Instance().ForgetUi();
             StorageMaintenanceMenu::Instance().ForgetUi();
+            ShowcaseMenu::Instance().ForgetUi();
             LocalVideoBrowserMenu::Instance().ForgetUi();
             centerViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
@@ -397,6 +443,8 @@ namespace BigScreen {
             libraryEditorViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             storageViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            showcaseViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             localVideoBrowserViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
@@ -417,6 +465,20 @@ namespace BigScreen {
                     StorageMaintenanceMenu::Instance().Show();
                     ReplaceTopViewController(
                         storageViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::In,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                },
+                [this]()
+                {
+                    // The showcase readiness page owns all of its download
+                    // actions. Opening it is read-only apart from stopping an
+                    // active preview so its center-screen status remains easy
+                    // to understand.
+                    VideoLibraryMenu::Instance().StopActivePreview();
+                    ShowcaseMenu::Instance().Show();
+                    ReplaceTopViewController(
+                        showcaseViewController,
                         nullptr,
                         HMUI::ViewController::AnimationType::In,
                         HMUI::ViewController::AnimationDirection::Horizontal);
@@ -445,6 +507,16 @@ namespace BigScreen {
                 });
             StorageMaintenanceMenu::Instance().CreateUi(
                 storageViewController,
+                [this]()
+                {
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                });
+            ShowcaseMenu::Instance().CreateUi(
+                showcaseViewController,
                 [this]()
                 {
                     ReplaceTopViewController(
@@ -559,6 +631,7 @@ namespace BigScreen {
         // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();
         VideoLibraryMenu::Instance().Deactivate();
+        ShowcaseMenu::Instance().DismissTransientUi();
         RestoreDistractionFreeMenu();
         RestoreMenuFoveation();
 

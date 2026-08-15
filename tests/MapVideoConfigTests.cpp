@@ -60,6 +60,10 @@ int main()
     {
         Expect(config->hasMapperPresentation,
                "screen/environment fields claim mapper presentation");
+        Expect(config->hasMapperScreenGeometry,
+               "authored screen placement and size should claim screen geometry");
+        Expect(config->hasMapperEnvironmentPresentation,
+               "authored environment changes should claim environment presentation");
         Expect(config->disableDefaultModifications,
                "disableDefaultModifications should be retained");
         Expect(Near(config->screenPosition.x, -2.5f) &&
@@ -116,6 +120,25 @@ int main()
         root, error);
     Expect(timingOnly && !timingOnly->hasMapperPresentation,
            "timing-only metadata should keep the user screen layout");
+
+    // Environment-only Cinema data can preserve a Chroma scene without
+    // disabling the player's screen layout controls.
+    {
+        std::ofstream output(metadata, std::ios::trunc);
+        output << R"({
+            "videoID":"TcHvEFxk_78",
+            "environmentName":"BigMirrorEnvironment"
+        })";
+    }
+    const auto environmentOnly =
+        BigScreen::MapVideoConfig::LoadDefinitionFromLevel(root, error);
+    Expect(environmentOnly && environmentOnly->hasMapperPresentation,
+           "environment metadata should remain presentation data");
+    Expect(environmentOnly &&
+           environmentOnly->hasMapperEnvironmentPresentation,
+           "environment metadata should retain environment ownership");
+    Expect(environmentOnly && !environmentOnly->hasMapperScreenGeometry,
+           "environment metadata must not claim video screen geometry");
 
     {
         std::ofstream output(metadata, std::ios::trunc);

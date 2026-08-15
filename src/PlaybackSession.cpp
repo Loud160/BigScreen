@@ -40,7 +40,7 @@ namespace BigScreen {
         return config_ ? config_->requestedEnvironment : noEnvironment;
     }
 
-    bool PlaybackSession::MapperPresentationActive() const
+    bool PlaybackSession::MapperScreenPresentationActive() const
     {
         // The developer showcase is authored specifically around the complete
         // Chroma/Noodle environment. Treat it as mapper-owned presentation
@@ -49,7 +49,17 @@ namespace BigScreen {
         return showcaseEligible_ ||
                (Settings::Instance().AllowChromaOverride() &&
                 baseConfig_ &&
-                (baseConfig_->hasMapperPresentation || chromaMapDetected_));
+                chromaMapDetected_ &&
+                baseConfig_->hasMapperScreenGeometry);
+    }
+
+    bool PlaybackSession::MapperEnvironmentPresentationActive() const
+    {
+        return showcaseEligible_ ||
+               (Settings::Instance().AllowChromaOverride() &&
+                baseConfig_ &&
+                (chromaMapDetected_ ||
+                 baseConfig_->hasMapperEnvironmentPresentation));
     }
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
@@ -79,7 +89,9 @@ namespace BigScreen {
             decoder_.PeakDecodeMilliseconds(),
             accumulatedDecoderCpuMilliseconds_ + activeDecoderCpu,
             automaticReductions_,
-            decoder_.RuntimeVersion()};
+            decoder_.DecoderBackendName(),
+            decoder_.RuntimeVersion(),
+            decoder_.CodecName()};
     }
 
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
@@ -236,28 +248,43 @@ namespace BigScreen {
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
         // scale adjustments from accumulating on the selected song.
         const auto& settings = Settings::Instance();
-        // Allow Chroma Override has one predictable meaning in gameplay, song
-        // preview, and the Video Library: mapper geometry wins while it is on.
-        // Turning it off follows the user-layout branch below. Keeping the
-        // Library as a hidden exception made its preview disagree with both
-        // the toggle and the eventual map placement.
+        const auto applyUserVideoControls = [&settings, this]()
+        {
+            // Chroma/Cinema may own the canvas transform, but Big Screen's
+            // Video Controls describe how the decoded picture is composed
+            // inside that canvas. Keeping these independent lets a mapper
+            // place/size/curve the screen without silently disabling the
+            // user's rotation, zoom, pan, tilt, or stretch controls.
+            config_->videoOpacity = settings.VideoOpacity();
+            if(settings.AdvancedOptionsEnabled())
+            {
+                config_->videoRotation = settings.VideoRotation();
+                config_->videoZoom = settings.VideoZoom();
+                config_->videoOffsetX = settings.VideoOffsetX();
+                config_->videoOffsetY = settings.VideoOffsetY();
+                config_->videoTilt = settings.VideoTilt();
+                config_->stretchVideoToFit = settings.StretchVideoToFit();
+            }
+        };
+        // Mapper screen geometry wins only when the map both uses Chroma and
+        // explicitly authors the video canvas. Chroma environment ownership
+        // is evaluated separately; merely using Chroma must not make the
+        // player's Screen Canvas controls inert.
         (void)intendedContext;
-        if(MapperPresentationActive())
+        if(MapperScreenPresentationActive())
         {
             // Cinema/Chroma compatibility is deliberately all-or-nothing for
             // geometry. Mixing a mapper's close, angled screen with a user's
             // back-wall offsets is the exact failure this opt-in prevents.
-            // Cinema's nullable transparency field remains authoritative only
-            // when the mapper explicitly supplied it. Otherwise the selected
-            // layout controls the letterbox canvas and picture opacity as two
-            // independent presentation settings.
-            const auto mapperTransparency = config_->mapperTransparency;
-            config_->letterboxTransparent = mapperTransparency.value_or(
+            // Mapper ownership is limited to the canvas and environment.
+            // Letterbox Transparency, Video Opacity, and the transforms under
+            // Video Controls remain player-owned, including when Cinema's
+            // legacy `transparency` field is present. Treating that field as a
+            // forced black background made the visible control lie and left
+            // black bars around videos in mapper-positioned screens.
+            config_->letterboxTransparent =
                 settings.AdvancedOptionsEnabled() &&
-                settings.LetterboxTransparencyEnabled());
-            config_->videoOpacity = mapperTransparency.has_value()
-                ? (*mapperTransparency ? 0.75f : 1.0f)
-                : settings.VideoOpacity();
+                settings.LetterboxTransparencyEnabled();
             if(!config_->cinemaCurvatureDegrees)
             {
                 config_->screenCurvature = settings.CurvedScreenEnabled()
@@ -266,8 +293,9 @@ namespace BigScreen {
                     settings.CurvedScreenEnabled() &&
                     settings.MaintainCurveAspectRatio();
             }
+            applyUserVideoControls();
             PaperLogger.info(
-                "Allow Chroma Override is yielding screen and environment presentation to the mapper/Chroma");
+                "Allow Chroma Override is yielding custom screen geometry to this Chroma map");
             return;
         }
 
@@ -313,16 +341,7 @@ namespace BigScreen {
         // a basic per-layout control and therefore applies in both modes.
         config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
             settings.LetterboxTransparencyEnabled();
-        config_->videoOpacity = settings.VideoOpacity();
-        if(settings.AdvancedOptionsEnabled())
-        {
-            config_->videoRotation = settings.VideoRotation();
-            config_->videoZoom = settings.VideoZoom();
-            config_->videoOffsetX = settings.VideoOffsetX();
-            config_->videoOffsetY = settings.VideoOffsetY();
-            config_->videoTilt = settings.VideoTilt();
-            config_->stretchVideoToFit = settings.StretchVideoToFit();
-        }
+        applyUserVideoControls();
     }
 
     bool PlaybackSession::ApplyActiveScreenLayoutLive()
@@ -330,7 +349,8 @@ namespace BigScreen {
         // Mapper/Chroma presentation intentionally ignores user layouts. The
         // pause control is hidden for that case, but keep this guard here so a
         // stale callback can never override the mapper's live screen.
-        if(!IsGameplayActive() || !baseConfig_ || MapperPresentationActive())
+        if(!IsGameplayActive() || !baseConfig_ ||
+           MapperScreenPresentationActive())
             return false;
 
         const auto previousConfig = config_;
@@ -399,7 +419,7 @@ namespace BigScreen {
             gameplayPrewarmFailed_ = false;
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback error",
-                "Big Screen could not prepare this video's H.264 stream. " +
+                "Big Screen could not prepare this video's stream. " +
                     gameplayPrewarmError_);
             gameplayPrewarmError_.clear();
             return;
@@ -410,7 +430,7 @@ namespace BigScreen {
             PaperLogger.error("Could not start video playback: {}", error);
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback error",
-                "Big Screen could not open this video's H.264 stream. " + error);
+                "Big Screen could not open this video's stream. " + error);
             return;
         }
         gameplayDecoderPrewarmed_ = false;
@@ -479,7 +499,8 @@ namespace BigScreen {
         diagnosticsFrameCounter_ = 0;
         diagnosticsVisible_ = false;
         mapperEnvironmentApplyCountdown_ =
-            context == PlaybackContext::Gameplay && MapperPresentationActive()
+            context == PlaybackContext::Gameplay &&
+            MapperEnvironmentPresentationActive()
                 ? 3 : 0;
 
         if(context == PlaybackContext::Gameplay &&
@@ -561,6 +582,18 @@ namespace BigScreen {
         decoder_.ResetPeakDecodeMilliseconds();
         PaperLogger.info(
             "Started Video Library performance measurement after decoder prewarm");
+    }
+
+    bool PlaybackSession::SynchronizedAudioReady(double songTimeSeconds) const
+    {
+        if(!started_ || !config_)
+            return false;
+        const double mediaTime = config_->MediaTimeForSong(
+            songTimeSeconds,
+            decoder_.DurationSeconds());
+        return CoreLogic::SynchronizedPreviewReady(
+            mediaTime,
+            firstFrameUploaded_);
     }
 
     bool PlaybackSession::OpenDecoder(std::string& error)
@@ -828,7 +861,9 @@ namespace BigScreen {
                 currentWindowMissed,
                 d.averageDecodeMilliseconds,
                 d.peakDecodeMilliseconds,
-                d.decoderRuntime});
+                d.decoderBackend,
+                d.decoderRuntime,
+                d.codec});
             if(completedDiagnosticsWindow)
                 decoder_.ResetPeakDecodeMilliseconds();
             diagnosticsVisible_ = true;
@@ -1182,6 +1217,7 @@ namespace BigScreen {
         text << diagnostics.sourceWidth << 'x' << diagnostics.sourceHeight
              << " @ " << std::fixed << std::setprecision(1)
              << diagnostics.sourceFps << " FPS source  |  "
+             << "Codec " << diagnostics.codec << "  |  "
              << diagnostics.outputWidth << 'x' << diagnostics.outputHeight
              << " @ " << diagnostics.outputFpsLimit << " FPS output\n"
              << "Delivered " << diagnostics.presentedFrames << " / "
@@ -1193,8 +1229,9 @@ namespace BigScreen {
              << std::setprecision(2) << diagnostics.averageDecodeMilliseconds
              << " ms average / " << diagnostics.peakDecodeMilliseconds
              << " ms peak  |  RGBA allocations "
-             << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
-             << diagnostics.decoderRuntime;
+              << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
+              << diagnostics.decoderRuntime << "  |  Decoder "
+              << diagnostics.decoderBackend;
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
         const auto frameRate = CoreLogic::SummarizeFrameRate(
@@ -1271,7 +1308,9 @@ namespace BigScreen {
                 diagnostics.presentedFrames),
             diagnostics.averageDecodeMilliseconds,
             diagnostics.peakDecodeMilliseconds,
-            diagnostics.decoderRuntime});
+            diagnostics.decoderBackend,
+            diagnostics.decoderRuntime,
+            diagnostics.codec});
         diagnosticsVisible_ = true;
     }
 }

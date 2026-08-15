@@ -41,7 +41,8 @@
       not cancel an active Video Library download.
 - [ ] A forced C++ worker failure cannot be overwritten by stale active status
       JSON; a new download can start without restarting Beat Saber.
-- [ ] Center file browser starts in the map/Video Import folder, navigates shared storage, colors compatible/invalid MP4s green/red, gates Set Video, shows HELP, replaces assignments, and unregisters without deleting user files.
+- [ ] Center file browser starts in the map/Video Import folder, navigates shared storage, colors compatible/invalid MP4/WebM files green/red, gates Set Video, shows HELP, replaces assignments, and unregisters without deleting user files.
+- [ ] A probed YouTube URL shows one Video Library button per available source tier; song selection opens the same tier list in a modal. 1440p warns that software decoding is unavailable.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
 - [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
 - [ ] Advanced video rotation/zoom/pan/tilt/stretch values are layout-scoped, Letterbox Transparency affects only unused canvas, and Video Opacity affects both docked and undocked pictures.
@@ -53,12 +54,24 @@
       retained position, affects the next gameplay decoder, and the overlay /
       results identify the runtime actually used.
 - [ ] Repeated identical-map runs compare FFmpeg 4.4.8 and 9.0.1 on Quest 2 and Quest 3 before changing the release default.
+- [ ] Hardware Video Decoding off reports Software and matches prior playback.
+- [ ] Hardware Video Decoding on reports Hardware for compatible H.264 on both
+      FFmpeg runtimes; colors, crop edges, pause, seek, practice speed, Replay,
+      and full-song synchronization remain correct.
+- [ ] A MediaCodec failure logs its reason, reports Software after automatic
+      fallback, and never interrupts Beat Saber gameplay.
+- [ ] Controlled software/hardware A/B runs compare decode average/peak,
+      decoder CPU, whole-process CPU, video loss, Quest FPS, and battery use.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.
 - [ ] A deliberately missing `library.json` with a valid backup recovers; a
       first run with neither manifest nor backups starts empty without error.
 - [ ] Corrupt settings JSON is quarantined and reported before defaults are saved.
 - [ ] Stable updater check/install/restart passes; a deliberately incompatible candidate rolls back and is not reoffered.
 - [ ] A YouTube URL requiring an EJS challenge reports `Big Screen QuickJS-NG` in the log and downloads without a missing-runtime warning.
+- [ ] Misc > Showcase opens a center readiness page without starting network work; missing/inactive Chroma or Noodle Extensions are reported and the missing map/video each have a working adjacent action.
+- [ ] Showcase map/video progress remains on the readiness page, Cancel/Close never becomes trapped behind the left panel, and Play stays disabled until all requirements are ready.
+- [ ] The first ready launch starts Lawless Expert+ directly without manually opening Solo; Replay, Continue, and post-song navigation remain stock; reopening Misc > Showcase afterward shows an idle, reusable Play button rather than stale launch status.
+- [ ] A malformed, oversized, path-traversing, wrong-host, or wrong-revision showcase package is rejected without changing user custom-map folders.
 - [ ] Two simulated internal errors trigger one disable dialog without popup spam; gameplay failures never interrupt the map.
 
 ## Publication

@@ -11,9 +11,15 @@
 
 extern "C" {
 #include "libavcodec/avcodec.h"
+#if defined(__ANDROID__)
+#include "libavcodec/jni.h"
+#endif
 #include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
 #include "libavutil/error.h"
+#include "libavutil/display.h"
+#include "libavutil/frame.h"
+#include "libavutil/pixdesc.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/version.h"
 #include "libswscale/swscale.h"
@@ -41,6 +47,127 @@ namespace BigScreen {
 #endif
             return 0;
         }
+
+        struct CodecPolicy {
+            const char* displayName;
+            const char* softwareName;
+            const char* hardwareName;
+            bool hardwareOnly;
+        };
+
+        std::optional<CodecPolicy> PolicyForCodec(AVCodecID codec)
+        {
+            switch(codec)
+            {
+                case AV_CODEC_ID_H264:
+                    return CodecPolicy{"H.264", "h264", "h264_mediacodec", false};
+                case AV_CODEC_ID_HEVC:
+                    return CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", true};
+                case AV_CODEC_ID_VP8:
+                    return CodecPolicy{"VP8", "vp8", "vp8_mediacodec", false};
+                case AV_CODEC_ID_VP9:
+                    return CodecPolicy{"VP9", "vp9", "vp9_mediacodec", false};
+                default:
+                    return std::nullopt;
+            }
+        }
+
+        bool IsHdrTransfer(AVColorTransferCharacteristic transfer)
+        {
+            return transfer == AVCOL_TRC_SMPTE2084 ||
+                   transfer == AVCOL_TRC_ARIB_STD_B67;
+        }
+
+        std::string UnsupportedPixelReason(
+            AVPixelFormat format,
+            AVColorTransferCharacteristic transfer,
+            AVCodecID codec,
+            int profile)
+        {
+            if(IsHdrTransfer(transfer))
+                return "HDR video is not supported - re-export the video as 8-bit SDR.";
+            // FFmpeg 9 renamed public profile constants from FF_PROFILE_* to
+            // AV_PROFILE_*. Their numeric values are part of the codec spec,
+            // so select the matching API name at compile time for each
+            // separately built backend.
+#if defined(AV_PROFILE_HEVC_MAIN_10)
+            if(codec == AV_CODEC_ID_HEVC && profile == AV_PROFILE_HEVC_MAIN_10)
+#else
+            if(codec == AV_CODEC_ID_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
+#endif
+                return "H.265/HEVC Main10 video is not supported - re-export the video as 8-bit SDR Main profile.";
+#if defined(AV_PROFILE_VP9_2)
+            if(codec == AV_CODEC_ID_VP9 && profile == AV_PROFILE_VP9_2)
+#else
+            if(codec == AV_CODEC_ID_VP9 && profile == FF_PROFILE_VP9_2)
+#endif
+                return "VP9 profile 2 (10-bit/HDR) is not supported - re-export the video as 8-bit SDR VP9 profile 0.";
+            if(format == AV_PIX_FMT_NONE)
+                return {};
+            const auto* description = av_pix_fmt_desc_get(format);
+            if(!description)
+                return {};
+            if((description->flags & AV_PIX_FMT_FLAG_ALPHA) != 0)
+                return "Video with an alpha channel is not supported - export ordinary 8-bit 4:2:0 video without transparency.";
+            for(int component = 0; component < description->nb_components; ++component)
+            {
+                if(description->comp[component].depth > 8)
+                    return "10-bit video is not supported - re-export the video as 8-bit SDR.";
+            }
+            // Big Screen's color conversion and MediaCodec contract are
+            // intentionally limited to 4:2:0. Reject 4:2:2/4:4:4 instead of
+            // silently accepting a format that a Quest decoder may reinterpret.
+            if(description->log2_chroma_w != 1 || description->log2_chroma_h != 1)
+                return "Only 8-bit 4:2:0 video is supported - re-export this video using yuv420p.";
+            return {};
+        }
+
+        int DisplayQuarterTurns(const AVStream* stream)
+        {
+            if(!stream)
+                return 0;
+#if LIBAVFORMAT_VERSION_MAJOR >= 61
+            const auto* sideData = av_packet_side_data_get(
+                stream->codecpar->coded_side_data,
+                stream->codecpar->nb_coded_side_data,
+                AV_PKT_DATA_DISPLAYMATRIX);
+            const auto* matrix = sideData
+                ? reinterpret_cast<const int32_t*>(sideData->data)
+                : nullptr;
+            const std::size_t sideDataSize = sideData ? sideData->size : 0;
+#else
+            int sideDataSize = 0;
+            const auto* matrix = reinterpret_cast<const int32_t*>(
+                av_stream_get_side_data(
+                    stream, AV_PKT_DATA_DISPLAYMATRIX, &sideDataSize));
+#endif
+            if(!matrix || sideDataSize < sizeof(int32_t) * 9)
+                return 0;
+            const double degrees = av_display_rotation_get(matrix);
+            if(!std::isfinite(degrees))
+                return 0;
+            int turns = static_cast<int>(std::lround(degrees / 90.0));
+            turns %= 4;
+            if(turns < 0) turns += 4;
+            return turns;
+        }
+
+#if defined(__ANDROID__)
+        int RegisterJavaVmForThisRuntime(void* javaVm)
+        {
+            // FrameDecoder.cpp is compiled once into each private backend SO,
+            // so these statics are deliberately independent for FFmpeg 4.4
+            // and FFmpeg 9. libavcodec documents VM registration as process-
+            // lifetime setup; repeating it for every video is unnecessary and
+            // can race when previews are rapidly recreated.
+            static std::once_flag registration;
+            static int registrationResult = AVERROR(EINVAL);
+            std::call_once(registration, [javaVm]() {
+                registrationResult = av_jni_set_java_vm(javaVm, nullptr);
+            });
+            return registrationResult;
+        }
+#endif
     }
 
     FrameDecoder::~FrameDecoder()
@@ -51,6 +178,8 @@ namespace BigScreen {
     bool FrameDecoder::Open(
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
+        bool preferHardwareDecoding,
+        void* javaVm,
         std::string& error)
     {
         Close();
@@ -58,6 +187,12 @@ namespace BigScreen {
         // can read it after join. A new Open begins a distinct decoder
         // lifetime and therefore resets the counter here.
         workerCpuNanoseconds_ = 0;
+        usingHardwareDecoder_ = false;
+        hardwareFallbackReason_.clear();
+        softwareFallbackAllowed_ = true;
+        softwareFallbackBlockedReason_.clear();
+        codecName_ = "unknown";
+        displayQuarterTurns_ = 0;
         error.clear();
         {
             std::scoped_lock lock(errorMutex_);
@@ -67,7 +202,7 @@ namespace BigScreen {
         int result = avformat_open_input(&format_, videoPath.string().c_str(), nullptr, nullptr);
         if(result < 0)
         {
-            error = "FFmpeg could not open the MP4: " + FfmpegError(result);
+            error = "FFmpeg could not open the video container: " + FfmpegError(result);
             Close();
             return false;
         }
@@ -75,58 +210,186 @@ namespace BigScreen {
         result = avformat_find_stream_info(format_, nullptr);
         if(result < 0)
         {
-            error = "FFmpeg could not read the MP4 stream table: " + FfmpegError(result);
+            error = "FFmpeg could not read the video stream table: " + FfmpegError(result);
             Close();
             return false;
         }
 
         // av_find_best_stream accounts for containers with artwork or multiple
-        // video tracks and returns the codec matching the selected stream.
-#if LIBAVCODEC_VERSION_MAJOR >= 59
-        const AVCodec* decoder = nullptr;
-#else
-        AVCodec* decoder = nullptr;
-#endif
-        videoStream_ = av_find_best_stream(format_, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
-        if(videoStream_ < 0 || !decoder)
+        // video tracks. Decoder selection happens through the explicit codec
+        // policy below; accepting FFmpeg's first registered decoder could
+        // accidentally treat a MediaCodec wrapper as a software fallback.
+        videoStream_ = av_find_best_stream(format_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+        if(videoStream_ < 0)
         {
-            error = "The MP4 does not contain a decodable video stream";
+            error = "The file does not contain a supported video stream.";
             Close();
             return false;
         }
 
         AVStream* stream = format_->streams[videoStream_];
-        codec_ = avcodec_alloc_context3(decoder);
-        if(!codec_)
+        const auto policy = PolicyForCodec(stream->codecpar->codec_id);
+        if(!policy)
         {
-            error = "FFmpeg could not allocate a decoder context";
+            error = "This video uses " +
+                std::string(avcodec_get_name(stream->codecpar->codec_id)) +
+                ". Big Screen supports H.264, H.265/HEVC, VP8, and VP9.";
+            Close();
+            return false;
+        }
+        codecName_ = policy->displayName;
+        const int sourceShortEdge = std::min(
+            stream->codecpar->width, stream->codecpar->height);
+        softwareFallbackAllowed_ = !policy->hardwareOnly &&
+            sourceShortEdge <= 1080;
+        if(policy->hardwareOnly)
+            softwareFallbackBlockedReason_ =
+                "H.265/HEVC requires Hardware Video Decoding; Big Screen does not ship a software HEVC decoder.";
+        else if(sourceShortEdge > 1080)
+            softwareFallbackBlockedReason_ =
+                "This 1440p video requires hardware decoding. Video playback was stopped because software fallback is not supported above 1080p.";
+
+        const auto pixelReason = UnsupportedPixelReason(
+            static_cast<AVPixelFormat>(stream->codecpar->format),
+            stream->codecpar->color_trc,
+            stream->codecpar->codec_id,
+            stream->codecpar->profile);
+        if(!pixelReason.empty())
+        {
+            error = pixelReason;
             Close();
             return false;
         }
 
-        result = avcodec_parameters_to_context(codec_, stream->codecpar);
-        if(result < 0)
+        const AVCodec* softwareDecoder = policy->softwareName
+            ? avcodec_find_decoder_by_name(policy->softwareName)
+            : nullptr;
+        const AVCodec* selectedDecoder = softwareDecoder;
+        bool attemptingHardware = false;
+
+        // FFmpeg 4.4 drives MediaCodec through JNI, while newer runtimes can
+        // use Android's NDK wrapper. Register the process VM with each private
+        // libavcodec instance anyway: the two isolated runtimes do not share
+        // libavcodec's internal global state. No Surface is supplied, so
+        // MediaCodec returns CPU-readable YUV frames that preserve Big Screen's
+        // established RGBA conversion and Unity texture path.
+        if(preferHardwareDecoding)
         {
-            error = "FFmpeg could not apply video stream parameters: " + FfmpegError(result);
+            if(!javaVm)
+            {
+                hardwareFallbackReason_ =
+                    "the Android Java VM was unavailable";
+            }
+            #if defined(__ANDROID__)
+            else if((result = RegisterJavaVmForThisRuntime(javaVm)) < 0)
+            {
+                hardwareFallbackReason_ =
+                    "FFmpeg rejected the Android Java VM: " + FfmpegError(result);
+            }
+            else if(const AVCodec* hardwareDecoder =
+                        avcodec_find_decoder_by_name(policy->hardwareName))
+            {
+                selectedDecoder = hardwareDecoder;
+                attemptingHardware = true;
+            }
+            else
+            {
+                hardwareFallbackReason_ =
+                    "this private FFmpeg runtime does not expose " +
+                    std::string(policy->hardwareName);
+            }
+            #else
+            else
+            {
+                hardwareFallbackReason_ =
+                    "MediaCodec is available only in the Android build";
+            }
+            #endif
+        }
+
+        if(!attemptingHardware && !softwareFallbackAllowed_)
+        {
+            error = softwareFallbackBlockedReason_;
+            if(!preferHardwareDecoding)
+                error += " Enable Hardware Video Decoding or use a lower-resolution video.";
+            Close();
+            return false;
+        }
+        if(!attemptingHardware && !softwareDecoder)
+        {
+            error = "The selected FFmpeg runtime does not provide the required " +
+                codecName_ + " decoder.";
             Close();
             return false;
         }
 
-        // Big Screen already decodes on its own worker. Keep libavcodec itself
-        // single-threaded on Quest: an FFmpeg frame worker previously remained
-        // alive when a Unity teardown exception skipped PlaybackSession::Stop,
-        // and the resulting unsupervised native thread later faulted in heap
-        // memory with no actionable stack. One owned worker gives Close() one
-        // thread to join and avoids competing with Beat Saber and Replay.
-        codec_->thread_count = 1;
-        codec_->thread_type = 0;
-        result = avcodec_open2(codec_, decoder, nullptr);
-        if(result < 0)
+        const auto openCodec = [&](const AVCodec* candidate,
+                                   std::string& openError) -> bool
         {
-            error = "FFmpeg could not start the video decoder: " + FfmpegError(result);
-            Close();
-            return false;
+            avcodec_free_context(&codec_);
+            codec_ = avcodec_alloc_context3(candidate);
+            if(!codec_)
+            {
+                openError = "FFmpeg could not allocate a decoder context";
+                return false;
+            }
+
+            int openResult = avcodec_parameters_to_context(
+                codec_, stream->codecpar);
+            if(openResult < 0)
+            {
+                openError =
+                    "FFmpeg could not apply video stream parameters: " +
+                    FfmpegError(openResult);
+                return false;
+            }
+
+            // Big Screen already decodes on its own worker. Keep libavcodec
+            // single-threaded on Quest: an FFmpeg frame worker previously
+            // survived an exceptional Unity teardown and later faulted in heap
+            // memory. MediaCodec ignores these software threading fields.
+            codec_->thread_count = 1;
+            codec_->thread_type = 0;
+            openResult = avcodec_open2(codec_, candidate, nullptr);
+            if(openResult < 0)
+            {
+                openError = "FFmpeg could not start " +
+                    std::string(candidate && candidate->name
+                        ? candidate->name : "the video decoder") +
+                    ": " + FfmpegError(openResult);
+                return false;
+            }
+            return true;
+        };
+
+        std::string decoderOpenError;
+        if(!openCodec(selectedDecoder, decoderOpenError))
+        {
+            if(!attemptingHardware)
+            {
+                error = std::move(decoderOpenError);
+                Close();
+                return false;
+            }
+
+            hardwareFallbackReason_ = decoderOpenError;
+            if(!softwareFallbackAllowed_ || !softwareDecoder)
+            {
+                error = decoderOpenError + "; " + softwareFallbackBlockedReason_;
+                Close();
+                return false;
+            }
+            decoderOpenError.clear();
+            if(!openCodec(softwareDecoder, decoderOpenError))
+            {
+                error = hardwareFallbackReason_ +
+                    "; software fallback also failed: " + decoderOpenError;
+                Close();
+                return false;
+            }
+            attemptingHardware = false;
         }
+        usingHardwareDecoder_ = attemptingHardware;
 
         decoded_ = av_frame_alloc();
         packet_ = av_packet_alloc();
@@ -143,20 +406,32 @@ namespace BigScreen {
         // selected a higher tier.
         if(codec_->width <= 0 || codec_->height <= 0)
         {
-            error = "The MP4 reports an invalid video size";
+            error = "The video reports an invalid frame size";
             Close();
             return false;
         }
 
-        const int sourceHeight = codec_->height;
         sourceWidth_ = codec_->width;
         sourceHeight_ = codec_->height;
-        height_ = maximumOutputHeight > 0
-            ? std::min(sourceHeight, maximumOutputHeight)
-            : sourceHeight;
-        width_ = static_cast<int>(std::lround(
-            codec_->width * (height_ / static_cast<double>(sourceHeight))));
-        width_ = std::max(width_, 1);
+        const int shortEdge = std::min(sourceWidth_, sourceHeight_);
+        const double scale = maximumOutputHeight > 0 && shortEdge > maximumOutputHeight
+            ? maximumOutputHeight / static_cast<double>(shortEdge)
+            : 1.0;
+        conversionWidth_ = std::max(
+            1, static_cast<int>(std::lround(sourceWidth_ * scale)));
+        conversionHeight_ = std::max(
+            1, static_cast<int>(std::lround(sourceHeight_ * scale)));
+        displayQuarterTurns_ = DisplayQuarterTurns(stream);
+        if(displayQuarterTurns_ % 2 == 0)
+        {
+            width_ = conversionWidth_;
+            height_ = conversionHeight_;
+        }
+        else
+        {
+            width_ = conversionHeight_;
+            height_ = conversionWidth_;
+        }
         streamTimeBase_ = av_q2d(stream->time_base);
 
         const AVRational frameRate = av_guess_frame_rate(format_, stream, nullptr);
@@ -193,6 +468,11 @@ namespace BigScreen {
         if(converter_)
             sws_freeContext(converter_);
         converter_ = nullptr;
+        converterSourceWidth_ = 0;
+        converterSourceHeight_ = 0;
+        converterSourceFormat_ = -1;
+        converterColorSpace_ = -1;
+        converterColorRange_ = -1;
         if(packet_)
             av_packet_free(&packet_);
         if(decoded_)
@@ -207,9 +487,16 @@ namespace BigScreen {
         height_ = 0;
         sourceWidth_ = 0;
         sourceHeight_ = 0;
+        conversionWidth_ = 0;
+        conversionHeight_ = 0;
+        displayQuarterTurns_ = 0;
+        rotationScratch_.clear();
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
+        codecName_ = "unknown";
+        softwareFallbackAllowed_ = true;
+        softwareFallbackBlockedReason_.clear();
         averageDecodeMilliseconds_ = 0.0;
         peakDecodeMilliseconds_ = 0.0;
         bufferAllocations_ = 0;
@@ -275,6 +562,8 @@ namespace BigScreen {
 
     void FrameDecoder::SetWorkerError(std::string message)
     {
+        if(usingHardwareDecoder_)
+            message = "MediaCodec hardware decoder failed: " + message;
         {
             std::scoped_lock lock(errorMutex_);
             if(!workerError_)
@@ -398,6 +687,16 @@ namespace BigScreen {
                     continue;
 
                 VideoFrame output = AcquireOutputFrame();
+                const auto framePixelReason = UnsupportedPixelReason(
+                    static_cast<AVPixelFormat>(decoded_->format),
+                    decoded_->color_trc,
+                    codec_->codec_id,
+                    codec_->profile);
+                if(!framePixelReason.empty())
+                {
+                    SetWorkerError(framePixelReason);
+                    break;
+                }
                 if(!ConvertCurrentFrame(output))
                 {
                     SetWorkerError("FFmpeg could not convert a decoded frame for the video screen.");
@@ -430,7 +729,25 @@ namespace BigScreen {
         {
             int result = avcodec_receive_frame(codec_, decoded_);
             if(result == 0)
+            {
+                // Apply codec crop metadata before swscale sees the picture.
+                // This prevents padded MediaCodec stride/slice dimensions (or
+                // ordinary H.264 coded-edge padding) from appearing as green
+                // or dark bars. FFmpeg's CPU-buffer MediaCodec path already
+                // copies vendor layouts into planar/semi-planar frames; this
+                // final step handles any remaining public AVFrame crop fields.
+                if(usingHardwareDecoder_ &&
+                   (decoded_->crop_top || decoded_->crop_bottom ||
+                    decoded_->crop_left || decoded_->crop_right) &&
+                   av_frame_apply_cropping(
+                       decoded_, AV_FRAME_CROP_UNALIGNED) < 0)
+                {
+                    SetWorkerError(
+                        "FFmpeg could not apply the decoded frame crop metadata.");
+                    return false;
+                }
                 return true;
+            }
             if(result == AVERROR_EOF)
                 return false;
             if(result != AVERROR(EAGAIN))
@@ -533,13 +850,17 @@ namespace BigScreen {
 
     bool FrameDecoder::ConvertCurrentFrame(VideoFrame& destination)
     {
+        const bool converterInputChanged =
+            converterSourceWidth_ != decoded_->width ||
+            converterSourceHeight_ != decoded_->height ||
+            converterSourceFormat_ != decoded_->format;
         converter_ = sws_getCachedContext(
             converter_,
             decoded_->width,
             decoded_->height,
             static_cast<AVPixelFormat>(decoded_->format),
-            width_,
-            height_,
+            conversionWidth_,
+            conversionHeight_,
             AV_PIX_FMT_RGBA,
             SWS_BILINEAR,
             nullptr,
@@ -547,6 +868,47 @@ namespace BigScreen {
             nullptr);
         if(!converter_)
             return false;
+
+        converterSourceWidth_ = decoded_->width;
+        converterSourceHeight_ = decoded_->height;
+        converterSourceFormat_ = decoded_->format;
+
+        // Hardware decoders commonly report NV12 while the software decoder
+        // normally reports YUV420P. sws_getCachedContext above intentionally
+        // uses the actual AVFrame format. Apply the frame's declared matrix
+        // and range as well so BT.709 limited-range HD video is not washed out
+        // when converted into Unity's full-range RGBA texture.
+        if(usingHardwareDecoder_ &&
+           (converterInputChanged ||
+            converterColorSpace_ != decoded_->colorspace ||
+            converterColorRange_ != decoded_->color_range))
+        {
+            int swsColorSpace = SWS_CS_DEFAULT;
+            switch(decoded_->colorspace)
+            {
+                case AVCOL_SPC_BT709: swsColorSpace = SWS_CS_ITU709; break;
+                case AVCOL_SPC_FCC: swsColorSpace = SWS_CS_FCC; break;
+                case AVCOL_SPC_BT470BG:
+                case AVCOL_SPC_SMPTE170M: swsColorSpace = SWS_CS_ITU601; break;
+                case AVCOL_SPC_SMPTE240M: swsColorSpace = SWS_CS_SMPTE240M; break;
+                default: break;
+            }
+            const int* coefficients = sws_getCoefficients(swsColorSpace);
+            if(coefficients &&
+               sws_setColorspaceDetails(
+                   converter_,
+                   coefficients,
+                   decoded_->color_range == AVCOL_RANGE_JPEG ? 1 : 0,
+                   coefficients,
+                   1,
+                   0,
+                   1 << 16,
+                   1 << 16) < 0)
+                return false;
+
+            converterColorSpace_ = decoded_->colorspace;
+            converterColorRange_ = decoded_->color_range;
+        }
 
         destination.width = width_;
         destination.height = height_;
@@ -557,8 +919,16 @@ namespace BigScreen {
             ++bufferAllocations_;
         destination.rgba.resize(requiredBytes);
 
-        std::uint8_t* outputPlanes[4] = { destination.rgba.data(), nullptr, nullptr, nullptr };
-        int outputStrides[4] = { width_ * 4, 0, 0, 0 };
+        std::uint8_t* convertedPixels = destination.rgba.data();
+        if(displayQuarterTurns_ != 0)
+        {
+            rotationScratch_.resize(
+                static_cast<std::size_t>(conversionWidth_) *
+                conversionHeight_ * 4);
+            convertedPixels = rotationScratch_.data();
+        }
+        std::uint8_t* outputPlanes[4] = { convertedPixels, nullptr, nullptr, nullptr };
+        int outputStrides[4] = { conversionWidth_ * 4, 0, 0, 0 };
         const int convertedRows = sws_scale(
             converter_,
             decoded_->data,
@@ -567,7 +937,47 @@ namespace BigScreen {
             decoded_->height,
             outputPlanes,
             outputStrides);
-        return convertedRows == height_;
+        if(convertedRows != conversionHeight_)
+            return false;
+        if(displayQuarterTurns_ == 0)
+            return true;
+
+        // Apply container display-matrix orientation once to the decoded
+        // picture. User Video Rotation remains a separate UV transform on top
+        // of this corrected base, and mapper/Chroma screen geometry remains
+        // free to override the physical canvas as before.
+        for(int y = 0; y < conversionHeight_; ++y)
+        {
+            for(int x = 0; x < conversionWidth_; ++x)
+            {
+                int targetX = x;
+                int targetY = y;
+                if(displayQuarterTurns_ == 1)
+                {
+                    targetX = y;
+                    targetY = conversionWidth_ - 1 - x;
+                }
+                else if(displayQuarterTurns_ == 2)
+                {
+                    targetX = conversionWidth_ - 1 - x;
+                    targetY = conversionHeight_ - 1 - y;
+                }
+                else
+                {
+                    targetX = conversionHeight_ - 1 - y;
+                    targetY = x;
+                }
+                const auto sourceOffset =
+                    (static_cast<std::size_t>(y) * conversionWidth_ + x) * 4;
+                const auto targetOffset =
+                    (static_cast<std::size_t>(targetY) * width_ + targetX) * 4;
+                std::copy_n(
+                    rotationScratch_.data() + sourceOffset,
+                    4,
+                    destination.rgba.data() + targetOffset);
+            }
+        }
+        return true;
     }
 
     void FrameDecoder::Publish(VideoFrame&& frame)

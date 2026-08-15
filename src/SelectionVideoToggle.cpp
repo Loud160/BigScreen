@@ -1,6 +1,7 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -25,6 +26,7 @@
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Color.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Quaternion.hpp"
 #include "UnityEngine/Rect.hpp"
@@ -44,6 +46,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
+#include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/BSML/FloatingScreen/FloatingScreen.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
@@ -482,9 +485,75 @@ namespace BigScreen {
         {
             if(auto* buttonText = downloadButton_
                    ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            {
                 buttonText->set_fontSize(3.0f);
+                buttonText->set_color(UnityEngine::Color::get_white());
+            }
         }
         rowObject->SetActive(false);
+
+        // Song selection keeps Cinema's compact one-button row. Pressing that
+        // button opens this modal so all source tiers can be offered without
+        // widening or restructuring the stock difficulty/action area.
+        resolutionModal_ = BSML::Lite::CreateModal(
+            detailView, {92.0f, 48.0f}, nullptr, true);
+        resolutionModalText_ = BSML::Lite::CreateText(
+            resolutionModal_,
+            "Checking available resolutions...",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 11.0f},
+            {84.0f, 17.0f});
+        resolutionModalText_->set_enableWordWrapping(true);
+        resolutionModalText_->set_enableAutoSizing(true);
+        resolutionModalText_->set_fontSizeMin(2.4f);
+        resolutionModalText_->set_fontSizeMax(3.0f);
+        resolutionModalText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        resolutionModalText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        resolutionButtons_.clear();
+        displayedResolutionHeights_.clear();
+        constexpr std::array<float, 4> ResolutionButtonX{
+            11.5f, 34.5f, 57.5f, 80.5f};
+        for(std::size_t index = 0; index < ResolutionButtonX.size(); ++index)
+        {
+            auto* button = BSML::Lite::CreateUIButton(
+                resolutionModal_->get_transform(),
+                "DOWNLOAD",
+                {ResolutionButtonX[index], -6.0f},
+                {21.5f, 8.0f},
+                [this, index]() { ResolutionButtonPressed(index); });
+            BSML::Lite::SetButtonTextSize(button, 2.45f);
+            if(auto* buttonText = button->get_gameObject()
+                   ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                buttonText->set_color(UnityEngine::Color::get_white());
+            button->get_gameObject()->SetActive(false);
+            resolutionButtons_.push_back(button);
+        }
+        BSML::Lite::CreateUIButton(
+            resolutionModal_->get_transform(),
+            "Cancel",
+            {25.0f, -36.0f},
+            {27.0f, 8.0f},
+            [this]()
+            {
+                const auto snapshot = DownloadManager::Instance().Snapshot();
+                if(snapshot.metadataOnly && snapshot.Active() &&
+                   snapshot.levelId == selectedLevelId_)
+                    DownloadManager::Instance().Cancel();
+                pendingDownloadHeight_ = 0;
+                resolutionModalOpen_ = false;
+                if(resolutionModal_)
+                    resolutionModal_->Hide();
+            });
+        confirmResolutionButton_ = BSML::Lite::CreateUIButton(
+            resolutionModal_->get_transform(),
+            "Download",
+            {63.0f, -36.0f},
+            {34.0f, 8.0f},
+            [this]() { ConfirmPendingResolutionDownload(); });
+        confirmResolutionButton_->get_gameObject()->SetActive(false);
 
         if(!previewUi_ || !inMapUi_)
         {
@@ -552,11 +621,19 @@ namespace BigScreen {
         downloadRow_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
+        resolutionModal_ = nullptr;
+        resolutionModalText_ = nullptr;
+        resolutionButtons_.clear();
+        displayedResolutionHeights_.clear();
+        confirmResolutionButton_ = nullptr;
         selectedLevel_ = nullptr;
         selectedLevelId_.clear();
         selectedDescriptor_ = {};
         selectedLevelHasVideo_ = false;
         ownedDownloadLevelId_.clear();
+        probedDownloadUrl_.clear();
+        pendingDownloadHeight_ = 0;
+        resolutionModalOpen_ = false;
     }
 
     void SelectionVideoToggle::PositionControlsRow()
@@ -672,6 +749,10 @@ namespace BigScreen {
             controlsScreen_->get_gameObject()->SetActive(false);
         resumeWhenSongAudioStarts_ = false;
         resumeWaitReported_ = false;
+        resolutionModalOpen_ = false;
+        pendingDownloadHeight_ = 0;
+        if(resolutionModal_)
+            resolutionModal_->Hide();
         // yt-dlp retains its .part file. Returning to this song offers Resume
         // instead of wasting storage or network data.
         const auto download = DownloadManager::Instance().Snapshot();
@@ -706,6 +787,11 @@ namespace BigScreen {
 
         resumeWhenSongAudioStarts_ = false;
         resumeWaitReported_ = false;
+        resolutionModalOpen_ = false;
+        pendingDownloadHeight_ = 0;
+        probedDownloadUrl_.clear();
+        if(resolutionModal_)
+            resolutionModal_->Hide();
         selectedLevelId_ = levelId;
         selectedLevel_ = level;
         selectedDescriptor_ = level
@@ -843,15 +929,187 @@ namespace BigScreen {
         const auto snapshot = downloader.Snapshot();
         if(snapshot.Active())
         {
-            if(!ownedDownloadLevelId_.empty() &&
-               snapshot.levelId == ownedDownloadLevelId_)
+            if((!ownedDownloadLevelId_.empty() &&
+                snapshot.levelId == ownedDownloadLevelId_) ||
+               (snapshot.metadataOnly &&
+                snapshot.levelId == selectedLevelId_))
                 downloader.Cancel();
             return;
         }
         if(!selectedLevel_) return;
 
+        OpenResolutionDialog();
+    }
+
+    void SelectionVideoToggle::OpenResolutionDialog()
+    {
+        if(!selectedLevel_ || !selectedDescriptor_.downloadUrl ||
+           !resolutionModal_)
+            return;
+
+        pendingDownloadHeight_ = 0;
+        resolutionModalOpen_ = true;
+        displayedResolutionHeights_.clear();
+        for(auto* button : resolutionButtons_)
+            if(button) button->get_gameObject()->SetActive(false);
+        if(confirmResolutionButton_)
+            confirmResolutionButton_->get_gameObject()->SetActive(false);
+        if(resolutionModalText_)
+            resolutionModalText_->set_text(
+                "Checking available resolutions...");
+        resolutionModal_->Show();
+
+        const auto snapshot = DownloadManager::Instance().Snapshot();
+        const auto& url = *selectedDescriptor_.downloadUrl;
+        const bool cached = snapshot.levelId == selectedDescriptor_.levelId &&
+            snapshot.metadataOnly &&
+            snapshot.state == DownloadState::ProbeCompleted &&
+            probedDownloadUrl_ == url;
+        if(!cached)
+        {
+            std::string error;
+            if(!DownloadManager::Instance().StartProbe(
+                   selectedDescriptor_.levelId, url, error))
+            {
+                if(resolutionModalText_)
+                    resolutionModalText_->set_text(error.empty()
+                        ? "Available resolutions could not be checked."
+                        : error);
+                return;
+            }
+            probedDownloadUrl_ = url;
+        }
+        RefreshResolutionDialog();
+    }
+
+    void SelectionVideoToggle::RefreshResolutionDialog()
+    {
+        if(!resolutionModalOpen_ || !resolutionModalText_)
+            return;
+        const auto snapshot = DownloadManager::Instance().Snapshot();
+        if(snapshot.levelId != selectedLevelId_)
+        {
+            resolutionModalText_->set_text(
+                snapshot.Active()
+                    ? "Another downloader task is running. Cancel it or wait for it to finish."
+                    : "Checking available resolutions...");
+            return;
+        }
+        if(snapshot.state == DownloadState::Probing)
+        {
+            resolutionModalText_->set_text(
+                "Checking available resolutions...");
+            return;
+        }
+        if(snapshot.metadataOnly && snapshot.state == DownloadState::Failed)
+        {
+            resolutionModalText_->set_text(snapshot.message.empty()
+                ? "Big Screen could not check the available resolutions. Close this window and try again."
+                : snapshot.message);
+            return;
+        }
+        if(!snapshot.metadataOnly ||
+           snapshot.state != DownloadState::ProbeCompleted)
+            return;
+
+        displayedResolutionHeights_ = snapshot.availableHeights;
+        // A direct URL or an older downloader runtime may complete a probe
+        // without enumerating tiers. Preserve the legacy workflow by offering
+        // its established 1080p request rather than trapping the user here.
+        if(displayedResolutionHeights_.empty())
+            displayedResolutionHeights_.push_back(1080);
+        if(displayedResolutionHeights_.size() > resolutionButtons_.size())
+            displayedResolutionHeights_.resize(resolutionButtons_.size());
+
+        resolutionModalText_->set_text(
+            "Choose the source resolution to download. The playback-resolution setting can downscale this file later, but it never changes these choices.");
+        for(std::size_t index = 0; index < resolutionButtons_.size(); ++index)
+        {
+            auto* button = resolutionButtons_[index];
+            if(!button)
+                continue;
+            const bool visible = index < displayedResolutionHeights_.size();
+            button->get_gameObject()->SetActive(visible);
+            if(visible)
+            {
+                BSML::Lite::SetButtonText(
+                    button,
+                    "DOWNLOAD " +
+                        std::to_string(displayedResolutionHeights_[index]) +
+                        "p");
+                if(auto* buttonText = button->get_gameObject()
+                       ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                    buttonText->set_color(UnityEngine::Color::get_white());
+            }
+        }
+    }
+
+    void SelectionVideoToggle::ResolutionButtonPressed(std::size_t buttonIndex)
+    {
+        if(buttonIndex >= displayedResolutionHeights_.size())
+            return;
+        RequestResolutionDownload(displayedResolutionHeights_[buttonIndex]);
+    }
+
+    void SelectionVideoToggle::RequestResolutionDownload(int height)
+    {
+        if(height < 1 || height > 1440)
+            return;
+        const bool replacing = selectedDescriptor_.CanPlay();
+        if(height != 1440 && !replacing)
+        {
+            resolutionModalOpen_ = false;
+            if(resolutionModal_)
+                resolutionModal_->Hide();
+            StartResolutionDownload(height);
+            return;
+        }
+
+        pendingDownloadHeight_ = height;
+        for(auto* button : resolutionButtons_)
+            if(button) button->get_gameObject()->SetActive(false);
+        if(confirmResolutionButton_)
+        {
+            confirmResolutionButton_->get_gameObject()->SetActive(true);
+            BSML::Lite::SetButtonText(
+                confirmResolutionButton_,
+                "Download " + std::to_string(height) + "p");
+        }
+        std::ostringstream message;
+        message << "<b>Download " << height << "p video";
+        if(replacing)
+            message << " and replace the current assignment";
+        message << "?</b>\n\n";
+        if(height == 1440)
+            message << "1440p requires Hardware Video Decoding. Software decoding is not supported. If hardware decoding fails, Big Screen stops the video while the map continues.";
+        if(replacing)
+        {
+            if(height == 1440)
+                message << "\n\n";
+            message << "The current video remains available until the new download succeeds. Local files are never deleted by replacement.";
+        }
+        if(resolutionModalText_)
+            resolutionModalText_->set_text(message.str());
+    }
+
+    void SelectionVideoToggle::ConfirmPendingResolutionDownload()
+    {
+        const int height = pendingDownloadHeight_;
+        pendingDownloadHeight_ = 0;
+        resolutionModalOpen_ = false;
+        if(resolutionModal_)
+            resolutionModal_->Hide();
+        if(height > 0)
+            StartResolutionDownload(height);
+    }
+
+    void SelectionVideoToggle::StartResolutionDownload(int height)
+    {
+        if(!selectedLevel_ || !selectedDescriptor_.downloadUrl)
+            return;
+
+        auto& downloader = DownloadManager::Instance();
         const auto& descriptor = selectedDescriptor_;
-        if(!descriptor.downloadUrl) return;
         DownloadRequest request;
         request.levelId = descriptor.levelId;
         request.songName = descriptor.songName;
@@ -859,6 +1117,8 @@ namespace BigScreen {
         request.sourceUrl = *descriptor.downloadUrl;
         request.origin = descriptor.downloadOrigin;
         request.explicitContentAllowed = ExplicitContentAllowed();
+        request.requestedHeight = height;
+        request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
         if(descriptor.mapperDefinition)
         {
             request.offsetSeconds = descriptor.mapperDefinition->offsetSeconds;
@@ -889,14 +1149,14 @@ namespace BigScreen {
     void SelectionVideoToggle::ReportDownloadFailure(const std::string& detail)
     {
         const std::string reason = detail.empty()
-            ? "YouTube did not provide a usable H.264 video."
+            ? "YouTube did not provide a usable video at the selected resolution."
             : detail;
         ErrorManager::Instance().ReportUserVisible(
             "Video download failed",
             reason +
             "\n\nOpen Big Screen from the Mods menu and select this song. "
             "You can search YouTube for another video, paste a different link, "
-            "or assign a compatible local H.264 MP4 file.");
+            "or assign a compatible local MP4 or WebM file.");
     }
 
     void SelectionVideoToggle::TickDownloadUi()
@@ -907,6 +1167,7 @@ namespace BigScreen {
             return;
         nextDownloadUiRefreshTime_ = now + 0.1f;
         const auto snapshot = DownloadManager::Instance().Snapshot();
+        RefreshResolutionDialog();
         if(!snapshot.Active() && snapshot.levelId == ownedDownloadLevelId_)
             ownedDownloadLevelId_.clear();
         const bool forSelection = !snapshot.levelId.empty() &&

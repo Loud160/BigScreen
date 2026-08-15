@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 option(QUEST "Build for quest" ON)
 option(BIGSCREEN_UP_DOWN_SHOWCASE
-       "Compile the private Up & Down proof-of-concept choreography" OFF)
+       "Compile the private Up & Down proof-of-concept choreography" ON)
 
 # Globals
 set(CMAKE_CXX_STANDARD 20)

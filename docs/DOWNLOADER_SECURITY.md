@@ -27,6 +27,13 @@ returns at its timeout before the worker joins. C++ terminal failures remove a
 stale progress record before publishing failure, preventing an old active state
 from blocking all future work.
 
+Metadata probing reports only compatible exact resolution tiers. A selected
+tier is pinned into the job rather than delegated to yt-dlp's changing `best`
+policy: H.264/MP4 is required through 1080p and VP9/WebM at 1440p. A replacement
+downloads to a sibling staging file and is atomically promoted only after the
+transfer completes; the prior assignment is restored if publication or the
+manifest commit fails.
+
 The shipped baseline is also reproducible from pinned yt-dlp and yt-dlp-ejs
 source archives. The source-build recipe checks both archives, rebuilds the EJS
 payload using the upstream lockfile, verifies the generated solver hashes, and

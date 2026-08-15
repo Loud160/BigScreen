@@ -111,7 +111,7 @@ namespace BigScreen {
         }
 
         const bool layoutAvailable =
-            videoAvailable && !playback.MapperPresentationActive();
+            videoAvailable && !playback.MapperScreenPresentationActive();
         if(selector_)
         {
             selector_->get_gameObject()->SetActive(layoutAvailable);
