@@ -122,6 +122,31 @@ playback path. A video failure never needs to stop the map.
 7. Open **Screen** to customize and save up to five layouts, then select the song
    normally.
 
+### Build and deploy from source on Windows
+
+After installing the [documented build prerequisites](docs/BUILDING.md#tools),
+connect an authorized Quest over USB and prepare a fresh clone once:
+
+```powershell
+git clone https://github.com/Loud160/BigScreen.git
+cd BigScreen
+qpm restore
+```
+
+Then double-click **[Build-And-Deploy.bat](Build-And-Deploy.bat)** in the repository
+root—or run it from a terminal—to build and install the complete current mod:
+
+```bat
+Build-And-Deploy.bat
+```
+
+The launcher builds both FFmpeg runtimes and the embedded downloader, validates
+the native libraries and mod manifest, removes stale copies from the opposite
+Scotland2 load phase, deploys the complete runtime to the connected Quest, and
+asks Beat Saber to restart. Its console remains open and clearly reports success
+or the failed step. See [Building and packaging](docs/BUILDING.md) for clean
+builds, host tests, QMOD creation, toolchain details, and troubleshooting.
+
 ## Recovery, storage, and privacy
 
 Atomic library writes, two rotating backups, managed-file reconstruction,
