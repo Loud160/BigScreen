@@ -1,4 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/Utility.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
 
@@ -157,22 +165,6 @@ namespace BigScreen {
             });
         }
 
-        bool IsPathInside(
-            const std::filesystem::path& child,
-            const std::filesystem::path& parent)
-        {
-            const auto normalizedChild = std::filesystem::absolute(child).lexically_normal();
-            const auto normalizedParent = std::filesystem::absolute(parent).lexically_normal();
-            auto childPart = normalizedChild.begin();
-            for(auto parentPart = normalizedParent.begin();
-                parentPart != normalizedParent.end(); ++parentPart, ++childPart)
-            {
-                if(childPart == normalizedChild.end() || *childPart != *parentPart)
-                    return false;
-            }
-            return true;
-        }
-
         bool IsUserOwnedFile(const StoredVideo& video)
         {
             return video.mapLocal || video.importFile || video.externalFile;
@@ -222,8 +214,8 @@ namespace BigScreen {
                 const auto root = std::filesystem::path("/sdcard");
                 const auto path = std::filesystem::path(video->externalPath)
                     .lexically_normal();
-                if(!path.is_absolute() || !IsPathInside(path, root) ||
-                   !std::filesystem::is_regular_file(path))
+                if(!path.is_absolute() || !Utility::IsPathInside(path, root) ||
+                   !Utility::IsRegularFile(path))
                     return std::nullopt;
                 return path;
             }
@@ -238,8 +230,8 @@ namespace BigScreen {
             if(parent.empty())
                 return std::nullopt;
             const auto resolved = (parent / relative).lexically_normal();
-            if(!IsPathInside(resolved, parent) ||
-               !std::filesystem::is_regular_file(resolved))
+            if(!Utility::IsPathInside(resolved, parent) ||
+               !Utility::IsRegularFile(resolved))
                 return std::nullopt;
             return resolved;
         }
@@ -744,7 +736,8 @@ namespace BigScreen {
             return false;
         }
 
-        const auto path = std::filesystem::absolute(requestedPath)
+        std::error_code pathError;
+        const auto path = std::filesystem::absolute(requestedPath, pathError)
             .lexically_normal();
         std::filesystem::path sharedRoot;
         std::filesystem::path importDirectory;
@@ -753,8 +746,9 @@ namespace BigScreen {
             sharedRoot = sharedStoragePath_;
             importDirectory = importPath_;
         }
-        if(!path.is_absolute() || !IsPathInside(path, sharedRoot) ||
-           !std::filesystem::is_regular_file(path))
+        if(pathError || !path.is_absolute() ||
+           !Utility::IsPathInside(path, sharedRoot) ||
+           !Utility::IsRegularFile(path))
         {
             error = "The selected video is no longer available in Quest shared storage.";
             return false;
@@ -854,7 +848,8 @@ namespace BigScreen {
         }
         const std::filesystem::path directory(custom->get_customLevelPath());
         const auto path = (directory / relative).lexically_normal();
-        if(!IsPathInside(path, directory) || !std::filesystem::is_regular_file(path))
+        if(!Utility::IsPathInside(path, directory) ||
+           !Utility::IsRegularFile(path))
         {
             error = "The selected MP4 is no longer present in this map folder.";
             return false;
@@ -935,7 +930,8 @@ namespace BigScreen {
             directory = importPath_;
         }
         const auto path = (directory / relative).lexically_normal();
-        if(!IsPathInside(path, directory) || !std::filesystem::is_regular_file(path))
+        if(!Utility::IsPathInside(path, directory) ||
+           !Utility::IsRegularFile(path))
         {
             error = "The selected MP4 is no longer in Big Screen's Video Import folder.";
             return false;
@@ -1252,14 +1248,34 @@ namespace BigScreen {
                 std::filesystem::copy_options::overwrite_existing, error);
             if(!error)
             {
-                std::filesystem::remove(manifestPath_, error);
-                error.clear();
-                std::filesystem::rename(temporary, manifestPath_, error);
+                std::error_code removeError;
+                std::filesystem::remove(manifestPath_, removeError);
+                if(removeError)
+                    error = removeError;
+                else
+                    std::filesystem::rename(temporary, manifestPath_, error);
             }
-            recoveryNotice_ = primaryExists
-                ? "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved."
-                : "Big Screen found that the main video library was missing and restored the most recent known-good backup. Your video assignments were preserved.";
-            PaperLogger.warn("Recovered video library from backup {}", index + 1);
+            if(error)
+            {
+                std::error_code cleanupError;
+                std::filesystem::remove(temporary, cleanupError);
+                const std::string detail =
+                    "Backup " + std::to_string(index + 1) +
+                    " was loaded in memory, but library.json could not be restored: " +
+                    error.message();
+                PaperLogger.error("{}", detail);
+                ErrorManager::Instance().RecordError(
+                    "Restoring the video library backup", detail);
+                recoveryNotice_ =
+                    "Big Screen recovered your video assignments for this session, but could not rewrite the library file. See the error log before restarting Beat Saber.";
+            }
+            else
+            {
+                recoveryNotice_ = primaryExists
+                    ? "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved."
+                    : "Big Screen found that the main video library was missing and restored the most recent known-good backup. Your video assignments were preserved.";
+                PaperLogger.warn("Recovered video library from backup {}", index + 1);
+            }
             return;
         }
 

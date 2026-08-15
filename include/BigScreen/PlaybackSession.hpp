@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <cstdint>
@@ -31,7 +38,9 @@ namespace BigScreen {
         double peakDecodeMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
         int automaticReductions = 0;
-        std::string decoderBackend;
+        /// Hardware/software decode method. The separately selectable FFmpeg
+        /// 4.4/9 implementation is reported by decoderRuntime.
+        std::string decodeMethod;
         std::string decoderRuntime;
         std::string codec;
     };

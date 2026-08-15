@@ -1,4 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
+#include "BigScreen/UiUtility.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -37,18 +46,10 @@
 
 namespace BigScreen {
     namespace {
+        using UiUtility::EnsureLayout;
+
         constexpr float PanelWidth = 124.0f;
         constexpr float BrowserListWidth = PanelWidth - 4.0f;
-
-        UnityEngine::UI::LayoutElement* EnsureLayout(
-            UnityEngine::Component* component)
-        {
-            if(!component) return nullptr;
-            auto object = component->get_gameObject();
-            auto* layout = object->GetComponent<UnityEngine::UI::LayoutElement*>();
-            return layout ? layout
-                : object->AddComponent<UnityEngine::UI::LayoutElement*>();
-        }
 
         void ConfigureLayout(
             UnityEngine::Component* component,
@@ -63,24 +64,6 @@ namespace BigScreen {
             if(preferredHeight >= 0.0f) layout->set_preferredHeight(preferredHeight);
             layout->set_flexibleWidth(flexibleWidth);
             layout->set_flexibleHeight(flexibleHeight);
-        }
-
-        bool IsInside(const std::filesystem::path& child,
-                      const std::filesystem::path& parent)
-        {
-            const auto normalizedChild = std::filesystem::absolute(child)
-                .lexically_normal();
-            const auto normalizedParent = std::filesystem::absolute(parent)
-                .lexically_normal();
-            auto childPart = normalizedChild.begin();
-            for(auto parentPart = normalizedParent.begin();
-                parentPart != normalizedParent.end(); ++parentPart, ++childPart)
-            {
-                if(childPart == normalizedChild.end() ||
-                   *childPart != *parentPart)
-                    return false;
-            }
-            return true;
         }
 
         std::string Lower(std::string value)
@@ -102,13 +85,15 @@ namespace BigScreen {
 
     LocalVideoBrowserMenu::~LocalVideoBrowserMenu()
     {
+        stopScan_ = true;
         if(worker_.joinable()) worker_.join();
     }
 
     void LocalVideoBrowserMenu::ForgetUi()
     {
-        // A scan owns no Unity objects, but it must finish before the vectors
-        // and callbacks it will publish into are reset for a new menu scene.
+        // Stop between directory entries/probes so a folder with many videos
+        // cannot hold menu teardown until every file has been inspected.
+        stopScan_ = true;
         if(worker_.joinable())
             worker_.join();
         controller_ = nullptr;
@@ -135,6 +120,7 @@ namespace BigScreen {
         nextRequest_ = 0;
         renderedVersion_ = 0;
         tickCounter_ = 0;
+        stopScan_ = false;
     }
 
     void LocalVideoBrowserMenu::CreateUi(
@@ -338,10 +324,12 @@ namespace BigScreen {
         }
         if(worker_.joinable()) worker_.join();
 
-        const auto directory = std::filesystem::absolute(requestedDirectory)
-            .lexically_normal();
-        if(!IsInside(directory, rootPath_) ||
-           !std::filesystem::is_directory(directory))
+        std::error_code directoryError;
+        const auto directory = std::filesystem::absolute(
+            requestedDirectory, directoryError).lexically_normal();
+        if(directoryError || !Utility::IsPathInside(directory, rootPath_) ||
+           !std::filesystem::is_directory(directory, directoryError) ||
+           directoryError)
         {
             std::scoped_lock lock(mutex_);
             snapshot_.state = ScanState::Failed;
@@ -363,11 +351,25 @@ namespace BigScreen {
             snapshot_.message = "Scanning this folder...";
             ++snapshot_.version;
         }
-        worker_ = std::thread(
-            [this, directory, request]()
-            {
-                ScanWorker(directory, request);
-            });
+        stopScan_ = false;
+        try
+        {
+            worker_ = std::thread(
+                [this, directory, request]()
+                {
+                    ScanWorker(directory, request);
+                });
+        }
+        catch(const std::exception& exception)
+        {
+            std::scoped_lock lock(mutex_);
+            snapshot_.state = ScanState::Failed;
+            snapshot_.message =
+                "Could not start the folder scan. See the Big Screen log.";
+            ++snapshot_.version;
+            ErrorManager::Instance().RecordError(
+                "Starting the local video folder scanner", exception.what());
+        }
     }
 
     void LocalVideoBrowserMenu::ScanWorker(
@@ -383,6 +385,8 @@ namespace BigScreen {
             for(std::filesystem::directory_iterator iterator(directory, iteratorError), end;
                 !iteratorError && iterator != end; iterator.increment(iteratorError))
             {
+                if(stopScan_)
+                    return;
                 std::error_code typeError;
                 if(iterator->is_directory(typeError) && !typeError)
                 {
@@ -396,9 +400,13 @@ namespace BigScreen {
                     Lower(iterator->path().extension().string());
                 if(extension == ".mp4" || extension == ".webm")
                 {
+                    if(stopScan_)
+                        return;
                     result.videos.push_back(
                         VideoLibrary::Instance().InspectLocalVideo(
                             iterator->path()));
+                    if(stopScan_)
+                        return;
                 }
             }
             if(iteratorError)
@@ -442,6 +450,8 @@ namespace BigScreen {
                 "scanning the local video folder", "Unknown native exception");
         }
 
+        if(stopScan_)
+            return;
         std::scoped_lock lock(mutex_);
         if(request != nextRequest_)
             return;

@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <functional>
@@ -78,10 +85,7 @@ namespace BigScreen {
         void StartResolutionDownload(int height);
         void PasteUrlFromClipboard();
         void SearchSelectedSongOnYouTube();
-        void RefreshLocalVideoFiles();
-        void RebuildLocalVideoRows();
-        void SetLocalVideo(std::size_t index);
-        void ShowLocalVideoHelp(std::size_t index);
+        void RefreshLocalVideoStatus();
         void RemoveOverride();
         bool ApplyFitToSong(bool reportStatus);
         bool SaveTiming();
@@ -118,6 +122,10 @@ namespace BigScreen {
         HMUI::ViewController* editorController_ = nullptr;
         std::function<void(bool)> navigate_;
         std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo_;
+        // Only a task launched by this menu may be cancelled when the menu is
+        // disabled or closed. Updater, showcase, and song-screen jobs share the
+        // downloader singleton but have independent lifetimes.
+        std::string ownedDownloadLevelId_;
         BSML::CustomListTableData* list_ = nullptr;
         HMUI::InputFieldView* searchInput_ = nullptr;
         HMUI::InputFieldView* urlInput_ = nullptr;
@@ -137,9 +145,7 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* detailFreeStorage_ = nullptr;
         TMPro::TextMeshProUGUI* playbackTimeText_ = nullptr;
         TMPro::TextMeshProUGUI* urlInputText_ = nullptr;
-        TMPro::TextMeshProUGUI* pasteUrlButtonText_ = nullptr;
         TMPro::TextMeshProUGUI* downloadButtonText_ = nullptr;
-        TMPro::TextMeshProUGUI* localVideoHelpText_ = nullptr;
         TMPro::TextMeshProUGUI* localVideoStatusText_ = nullptr;
         TMPro::TextMeshProUGUI* removeConfirmationText_ = nullptr;
         TMPro::TextMeshProUGUI* downloadConfirmationText_ = nullptr;
@@ -149,8 +155,6 @@ namespace BigScreen {
         HMUI::ImageView* urlThumbnail_ = nullptr;
         BSML::ModalView* removeConfirmModal_ = nullptr;
         BSML::ModalView* downloadConfirmModal_ = nullptr;
-        BSML::ModalView* localVideoHelpModal_ = nullptr;
-        UnityEngine::GameObject* localVideoListContent_ = nullptr;
         UnityEngine::GameObject* storageSpacer_ = nullptr;
         UnityEngine::GameObject* storagePanel_ = nullptr;
         // Timing rows remain visible but locked when a mapper supplied Cinema
@@ -158,11 +162,6 @@ namespace BigScreen {
         // no useful function without playable media and remain video-only.
         std::vector<UnityEngine::GameObject*> timingRows_;
         std::vector<UnityEngine::GameObject*> videoOnlyRows_;
-        std::vector<UnityEngine::GameObject*> localVideoRowObjects_;
-        std::vector<LocalVideoFile> localVideoFiles_;
-        // Parallel source flags let one uniform filename/action list show both
-        // map-folder and global Video Import files without a modal picker.
-        std::vector<bool> localVideoImported_;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
@@ -184,7 +183,6 @@ namespace BigScreen {
         HMUI::HoverHint* rateTimingHint_ = nullptr;
         HMUI::HoverHint* offsetTimingHint_ = nullptr;
         HMUI::HoverHint* leadInTimingHint_ = nullptr;
-        std::vector<BSML::ClickableText*> alphabetButtons_;
         std::vector<SongLibraryItem> catalog_;
         std::vector<SongLibraryItem*> visible_;
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;

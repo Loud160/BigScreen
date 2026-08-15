@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/FrameDecoder.hpp"
 
 #include "BigScreen/ErrorManager.hpp"
@@ -78,15 +85,18 @@ namespace BigScreen {
             error = "The selected FFmpeg decoder backend is unavailable.";
             return false;
         }
+        // A missing JVM has already been reported above. Pass an effective
+        // software request so the backend does not report the same fallback.
+        const bool attemptHardware = hardwareRequested_ && javaVm_;
         if(backend_->Open(
                videoPath,
                maximumOutputHeight,
-               hardwareRequested_,
+               attemptHardware,
                javaVm_,
                error))
         {
             const auto fallbackReason = backend_->HardwareFallbackReason();
-            if(hardwareRequested_ && !backend_->UsingHardwareDecoder())
+            if(attemptHardware && !backend_->UsingHardwareDecoder())
             {
                 hardwareFallbackAttempted_ = true;
                 const std::string reason = fallbackReason.empty()
@@ -103,22 +113,18 @@ namespace BigScreen {
             {
                 PaperLogger.info(
                     "Opened {} video decoder with FFmpeg {}",
-                    DecoderBackendName(),
+                    DecodeMethodName(),
                     backend_->RuntimeVersion());
             }
             return true;
         }
-        backend_->Close();
-        backend_.reset();
+        CloseAndRetainBackendMetrics();
         return false;
     }
 
     void FrameDecoder::Close()
     {
-        if(!backend_)
-            return;
-        backend_->Close();
-        backend_.reset();
+        CloseAndRetainBackendMetrics();
     }
 
     void FrameDecoder::Request(double mediaSeconds)
@@ -227,6 +233,7 @@ namespace BigScreen {
 
     void FrameDecoder::ResetPeakDecodeMilliseconds()
     {
+        retainedPeakDecodeMilliseconds_ = 0.0;
         if(backend_)
             backend_->ResetPeakDecodeMilliseconds();
     }
@@ -269,8 +276,10 @@ namespace BigScreen {
         return backend_ && backend_->UsingHardwareDecoder();
     }
 
-    const char* FrameDecoder::DecoderBackendName() const
+    const char* FrameDecoder::DecodeMethodName() const
     {
+        if(!backend_)
+            return "none";
         return UsingHardwareDecoder() ? "hardware" : "software";
     }
 
@@ -281,18 +290,28 @@ namespace BigScreen {
             : CreateFrameDecoder44Backend();
     }
 
-    bool FrameDecoder::ReopenWithSoftwareAfterHardwareFailure(
-        const std::string& hardwareError,
-        std::string& recoveryError)
+    void FrameDecoder::CloseAndRetainBackendMetrics()
     {
-        hardwareFallbackAttempted_ = true;
+        if(!backend_)
+            return;
+
+        // Close joins the worker. Its final CPU slice and counters are only
+        // authoritative after that join and must be folded in before reset.
+        backend_->Close();
         retainedPeakDecodeMilliseconds_ = std::max(
             retainedPeakDecodeMilliseconds_,
             backend_->PeakDecodeMilliseconds());
         accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();
         accumulatedBufferAllocations_ += backend_->BufferAllocations();
-        backend_->Close();
         backend_.reset();
+    }
+
+    bool FrameDecoder::ReopenWithSoftwareAfterHardwareFailure(
+        const std::string& hardwareError,
+        std::string& recoveryError)
+    {
+        hardwareFallbackAttempted_ = true;
+        CloseAndRetainBackendMetrics();
 
         PaperLogger.warn(
             "{} Reopening the same file with software decoding at {:.3f}s.",

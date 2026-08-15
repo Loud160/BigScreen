@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <cstdint>
@@ -27,7 +34,7 @@ namespace BigScreen {
     };
 
     /// Scans and removes only Big Screen-owned orphan/cache files. Map-folder
-    /// and Video Import MP4s are user-owned and are never cleanup candidates.
+    /// and Video Import MP4/WebM files are user-owned and never candidates.
     class StorageManager final {
     public:
         static StorageManager& Instance();
@@ -47,6 +54,9 @@ namespace BigScreen {
         void CleanupWorker(std::vector<StorageCleanupItem> approved);
 
         mutable std::mutex mutex_;
+        // Serializes start/join/state replacement without making a completed
+        // worker wait on the state mutex while the caller is joining it.
+        std::mutex startMutex_;
         std::thread worker_;
         StorageSnapshot snapshot_;
     };

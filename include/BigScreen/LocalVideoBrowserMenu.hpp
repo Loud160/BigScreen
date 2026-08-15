@@ -1,6 +1,14 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -81,6 +89,7 @@ namespace BigScreen {
 
         mutable std::mutex mutex_;
         std::thread worker_;
+        std::atomic<bool> stopScan_{false};
         ScanSnapshot snapshot_;
         std::uint64_t nextRequest_ = 0;
         std::uint64_t renderedVersion_ = 0;

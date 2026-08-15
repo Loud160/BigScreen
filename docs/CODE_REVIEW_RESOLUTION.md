@@ -1,11 +1,71 @@
 # External code-review resolution
 
-This document records how the August 14, 2026 external review was evaluated.
-The review was treated as a set of hypotheses, not as an automatic change
-list. Each reported issue was checked against the current source after the UI
-work that preceded the review. Changes below were accepted where they improved
-correctness, recovery, diagnostics, or release reproducibility without
-replacing proven Quest-specific behavior.
+This document records how the August 14 and August 15, 2026 external reviews
+were evaluated. Each review was treated as a set of hypotheses, not as an
+automatic change list, and every accepted item was checked against the current
+source before implementation.
+
+## August 15 second review
+
+The second independent review was evaluated against the `d7efbaf` checkpoint.
+Its concurrency audit found no active race or lock-order cycle, but its decoder
+facade, feature-seam, error-handling, and stale-comment findings reproduced in
+the current tree and were addressed as follows:
+
+- `FrameDecoderFacade` now closes and joins its active backend before retaining
+  the final decoder CPU, peak latency, and RGBA allocation counters. Benchmark
+  results therefore keep the complete final session rather than reporting zero
+  after the backend object is released. Diagnostics now call this value the
+  decode method (hardware/software) so it cannot be confused with the selected
+  FFmpeg 4.4/9 runtime.
+- The automatic-performance history holds every possible reduction from
+  1440p/60 through 480p/15, allowing exact reverse recovery. Host tests cover
+  all five history slots and the supported-codec, HDR/10-bit, and hardware-only
+  source policy.
+- Crop metadata and colorspace/range configuration are applied uniformly to
+  software and MediaCodec output, including a delayed final frame. Seek,
+  conversion, and dynamic high-resolution failures retain their real cause.
+- Beat Saber's scene transition, start, and results paths remain authoritative.
+  Big Screen preparation, environment selection, player-setting copies,
+  persistence, and results UI are individually contained by `ErrorManager`, so
+  a mod-side failure cannot skip the original game call.
+- URL metadata probing preserves a successful resolution list when thumbnail
+  retrieval fails. Probe failures carry stable diagnostics and are described as
+  checks rather than downloads in the song panel. Outside dismissal cancels the
+  owned probe and clears modal state.
+- Video Library teardown cancels only tasks it started. C++ terminal failures
+  ignore any undeletable stale worker status until the next explicit operation,
+  and cancel-marker or worker-start failures are logged instead of silently
+  claiming success.
+- Reset disables the live performance panel before restoring defaults, so its
+  teardown cannot write the old transform over the reset placement.
+- Storage scanning recognizes unassigned MP4 and WebM downloads plus aged
+  replacement backups. Worker joins occur outside the state mutex, and local
+  file scans use cooperative cancellation during UI teardown.
+- Manifest recovery validates its republish operations, benchmark file failures
+  enter the visible/persistent error path, and map/local-file path checks share
+  one nonthrowing component-wise implementation.
+- Dead local-video UI state and unused fields were removed. Soft restart now
+  destroys the retained detail thumbnail and clears row-thumbnail failure
+  caches. Shared downloader codec/tier helpers, byte/path formatting, explicit-
+  content policy, toggle synchronization, and layout-component lookup reduce
+  policy drift. Each menu still owns its intentionally different sizing and
+  arrangement contract.
+- Comments and architecture documentation were corrected for selection-row
+  placement, tab count, deferred-error consumption, one-time showcase capture,
+  downloader initialization, screen grip geometry, showcase buffer reuse, the
+  dual-runtime `-Bsymbolic` requirement, embedded CPython, atomic status files,
+  and storage fingerprinting.
+
+The large-file responsibility split remains deliberately deferred and tracked
+in `FUTURE_WORK.md`; combining that mechanical refactor with this behavioral
+hardening would make on-headset regression isolation substantially harder.
+
+## August 14 first review
+
+Changes below were accepted where they improved correctness, recovery,
+diagnostics, or release reproducibility without replacing proven Quest-specific
+behavior.
 
 ## Implemented
 

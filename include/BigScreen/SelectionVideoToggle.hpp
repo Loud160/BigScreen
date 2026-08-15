@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <cstddef>
@@ -31,8 +38,8 @@ namespace UnityEngine::UI {
 }
 
 namespace BigScreen {
-    /// Owns the persistent Preview Video and Video In Map switches shown on a
-    /// slim floating row directly below Beat Saber's song-selection screen.
+    /// Owns the persistent Preview Video, Video In Map, and Screen Layout
+    /// controls on a floating row above Beat Saber's top title/back screen.
     ///
     /// Its state is global rather than per-song: scrolling the song list never
     /// changes the switch or unexpectedly starts a sequence of new previews.
@@ -99,17 +106,19 @@ namespace BigScreen {
         void RequestResolutionDownload(int height);
         void ConfirmPendingResolutionDownload();
         void StartResolutionDownload(int height);
-        void ReportDownloadFailure(const std::string& detail);
+        void ReportDownloadFailure(
+            const std::string& detail,
+            bool metadataCheck = false);
         void BringHeaderControlsToFront();
-        /// Places the floating controls canvas at the proven-visible top
-        /// strip above the song panel (detail-view local (0, 64)). Runs after
-        /// creation and on every SongSelectionShown, because menu transforms
-        /// are only final once Beat Saber has activated the view hierarchy.
+        /// Anchors the floating canvas just above ScreenSystem's top screen,
+        /// with a detail-view coordinate only as a compatibility fallback.
+        /// Runs again when song selection is shown because the hierarchy's
+        /// final transforms are not guaranteed during construction.
         void PositionControlsRow();
         void RefreshUi();
 
-        // Slim self-raycasting canvas hosting the three global controls below
-        // the song panel. Owned by this class, not by the detail view.
+        // Slim self-raycasting canvas hosting the three global controls above
+        // the stock title bar. Owned by this class, not by the detail view.
         BSML::FloatingScreen* controlsScreen_ = nullptr;
         // Needed to re-derive the floating row's placement whenever song
         // selection is shown. Cleared in ForgetUi with the other pointers.

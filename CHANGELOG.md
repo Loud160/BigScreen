@@ -3,6 +3,18 @@
 - Fixed development deployments leaving an older Big Screen binary in the
   opposite Scotland2 load phase. Loading both copies initialized CPython twice
   and could abort Beat Saber during startup.
+- Completed the August 15 release-hardening review: decoder CPU/peak/allocation
+  totals now survive facade shutdown, all five automatic-performance steps
+  recover in exact reverse order, software and hardware decoding share crop and
+  colorspace handling, and gameplay hooks preserve Beat Saber's original calls
+  when Big Screen preparation or UI work fails.
+- Downloader and storage ownership is stricter: URL thumbnails are best effort,
+  metadata-check failures are labeled correctly, hidden resolution dialogs
+  cancel their probes, menu teardown cancels only its own task, stale status
+  files cannot revive failed jobs, WebM and abandoned replacement backups are
+  cleanable, and local scans can stop without blocking a soft restart.
+- Added behavioral codec-policy coverage for H.264, H.265/HEVC, VP8, VP9,
+  HDR/10-bit rejection, and the hardware-only greater-than-1080p boundary.
 
 ## 0.6.6 — unreleased beta
 

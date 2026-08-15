@@ -1,4 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/SelectionVideoToggle.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +20,7 @@
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
@@ -54,6 +63,8 @@
 
 namespace BigScreen {
     namespace {
+        using UiUtility::SetToggleWithoutNotification;
+
         // The three global controls live on their own slim floating canvas.
         // Children of Beat Saber's main canvas outside its rect still render
         // but never receive VR pointer raycasts (the original top-strip
@@ -246,33 +257,6 @@ namespace BigScreen {
             }
         }
 
-        void SetToggleWithoutNotification(BSML::ToggleSetting* setting, bool value)
-        {
-            if(!setting)
-                return;
-            setting->currentValue = value;
-            if(setting->toggle)
-                setting->toggle->SetIsOnWithoutNotify(value);
-        }
-
-        bool ExplicitContentAllowed()
-        {
-            auto* container = BSML::Helpers::GetDiContainer();
-            auto* model = container
-                ? container->Resolve<GlobalNamespace::PlayerDataModel*>()
-                : nullptr;
-            auto* data = model ? model->get_playerData() : nullptr;
-            return data && data->get_desiredSensitivityFlag().value__ >=
-                GlobalNamespace::PlayerSensitivityFlag::Explicit.value__;
-        }
-
-        std::string Megabytes(std::uint64_t bytes)
-        {
-            std::ostringstream text;
-            text << std::fixed << std::setprecision(1)
-                 << static_cast<double>(bytes) / (1024.0 * 1024.0) << " MB";
-            return text.str();
-        }
     }
 
     SelectionVideoToggle& SelectionVideoToggle::Instance()
@@ -291,7 +275,7 @@ namespace BigScreen {
         inMapEnabled_ = settings.VideoEnabled();
 
         // The canvas is created at a harmless placeholder position, then
-        // moved by PositionControlsRow() — immediately below, and again on
+        // moved by PositionControlsRow() immediately, and again on
         // every SongSelectionShown once Beat Saber has finished laying the
         // menu out. Computing the position lazily avoids trusting rects that
         // are not final during the detail view's construction.
@@ -327,7 +311,7 @@ namespace BigScreen {
 
         // The controls are global preferences rather than properties of the
         // selected song. Create both unconditionally and place their compact
-        // roots side by side on the floating row below the song panel.
+        // roots side by side on the floating row above the title screen.
         previewUi_ = BSML::Lite::CreateToggle(
             controlsParent,
             "Preview Video",
@@ -496,7 +480,18 @@ namespace BigScreen {
         // button opens this modal so all source tiers can be offered without
         // widening or restructuring the stock difficulty/action area.
         resolutionModal_ = BSML::Lite::CreateModal(
-            detailView, {92.0f, 48.0f}, nullptr, true);
+            detailView,
+            {92.0f, 48.0f},
+            [this]()
+            {
+                const auto snapshot = DownloadManager::Instance().Snapshot();
+                if(snapshot.metadataOnly && snapshot.Active() &&
+                   snapshot.levelId == selectedLevelId_)
+                    DownloadManager::Instance().Cancel();
+                pendingDownloadHeight_ = 0;
+                resolutionModalOpen_ = false;
+            },
+            true);
         resolutionModalText_ = BSML::Lite::CreateText(
             resolutionModal_,
             "Checking available resolutions...",
@@ -1116,7 +1111,8 @@ namespace BigScreen {
         request.songAuthor = descriptor.songAuthor;
         request.sourceUrl = *descriptor.downloadUrl;
         request.origin = descriptor.downloadOrigin;
-        request.explicitContentAllowed = ExplicitContentAllowed();
+        request.explicitContentAllowed =
+            UiUtility::ExplicitContentAllowed();
         request.requestedHeight = height;
         request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
         if(descriptor.mapperDefinition)
@@ -1146,13 +1142,17 @@ namespace BigScreen {
         TickDownloadUi();
     }
 
-    void SelectionVideoToggle::ReportDownloadFailure(const std::string& detail)
+    void SelectionVideoToggle::ReportDownloadFailure(
+        const std::string& detail,
+        bool metadataCheck)
     {
         const std::string reason = detail.empty()
-            ? "YouTube did not provide a usable video at the selected resolution."
+            ? (metadataCheck
+                ? "Big Screen could not check the available YouTube video resolutions."
+                : "YouTube did not provide a usable video at the selected resolution.")
             : detail;
         ErrorManager::Instance().ReportUserVisible(
-            "Video download failed",
+            metadataCheck ? "Video check failed" : "Video download failed",
             reason +
             "\n\nOpen Big Screen from the Mods menu and select this song. "
             "You can search YouTube for another video, paste a different link, "
@@ -1204,8 +1204,10 @@ namespace BigScreen {
                 std::ostringstream status;
                 status << "Downloading "
                        << static_cast<int>(std::round(progress * 100.0f))
-                       << "%  |  " << Megabytes(snapshot.downloadedBytes)
-                       << " / " << Megabytes(snapshot.totalBytes);
+                       << "%  |  "
+                       << Utility::FormatMegabytes(snapshot.downloadedBytes)
+                       << " / "
+                       << Utility::FormatMegabytes(snapshot.totalBytes);
                 downloadStatus_->set_text(status.str());
             }
             else
@@ -1217,14 +1219,21 @@ namespace BigScreen {
         }
         else if(forSelection && snapshot.state == DownloadState::Failed)
         {
-            BSML::Lite::SetButtonText(downloadButton_, "Retry Download");
-            downloadStatus_->set_text("Download failed — select Retry");
+            BSML::Lite::SetButtonText(
+                downloadButton_,
+                snapshot.metadataOnly ? "Retry Check" : "Retry Download");
+            downloadStatus_->set_text(
+                snapshot.metadataOnly
+                    ? "Video check failed — select Retry"
+                    : "Download failed — select Retry");
             downloadStatus_->set_color({1.0f, 0.28f, 0.25f, 1.0f});
             const auto failureKey = snapshot.levelId + "\n" + snapshot.message;
             if(reportedDownloadFailure_ != failureKey)
             {
                 reportedDownloadFailure_ = failureKey;
-                ReportDownloadFailure(snapshot.message);
+                ReportDownloadFailure(
+                    snapshot.message,
+                    snapshot.metadataOnly);
             }
         }
         else if(forSelection && snapshot.state == DownloadState::Cancelled)

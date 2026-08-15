@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <algorithm>
@@ -17,6 +24,57 @@
 #include <vector>
 
 namespace BigScreen::CoreLogic {
+    enum class VideoCodecKind { Unknown, H264, Hevc, Vp8, Vp9 };
+
+    inline bool IsSupportedVideoCodec(VideoCodecKind codec) noexcept
+    {
+        return codec != VideoCodecKind::Unknown;
+    }
+
+    inline bool VideoCodecRequiresHardware(VideoCodecKind codec) noexcept
+    {
+        return codec == VideoCodecKind::Hevc;
+    }
+
+    /// Empty means CPU fallback is permitted. HEVC is intentionally omitted
+    /// from Big Screen's software build, while any source above 1080p is kept
+    /// hardware-only to protect Quest gameplay performance.
+    inline std::string SoftwareFallbackBlockedReason(
+        VideoCodecKind codec,
+        int sourceShortEdge)
+    {
+        if(codec == VideoCodecKind::Hevc)
+            return "H.265/HEVC requires Hardware Video Decoding; Big Screen does not ship a software HEVC decoder.";
+        if(sourceShortEdge > 1080)
+            return "This " + std::to_string(sourceShortEdge) +
+                "p video requires hardware decoding. Video playback was stopped because software fallback is not supported above 1080p.";
+        return {};
+    }
+
+    inline std::string UnsupportedVideoSignalReason(
+        VideoCodecKind codec,
+        bool hdrTransfer,
+        bool tenBit,
+        bool alphaChannel,
+        bool chroma420)
+    {
+        if(hdrTransfer)
+            return "HDR video is not supported - re-export the video as 8-bit SDR.";
+        if(tenBit)
+        {
+            if(codec == VideoCodecKind::Hevc)
+                return "H.265/HEVC Main10 video is not supported - re-export the video as 8-bit SDR Main profile.";
+            if(codec == VideoCodecKind::Vp9)
+                return "VP9 profile 2 (10-bit/HDR) is not supported - re-export the video as 8-bit SDR VP9 profile 0.";
+            return "10-bit video is not supported - re-export the video as 8-bit SDR.";
+        }
+        if(alphaChannel)
+            return "Video with an alpha channel is not supported - export ordinary 8-bit 4:2:0 video without transparency.";
+        if(!chroma420)
+            return "Only 8-bit 4:2:0 video is supported - re-export this video using yuv420p.";
+        return {};
+    }
+
     /// Advances a menu-preview clock smoothly between the coarse updates that
     /// Unity exposes through AudioSource.time. Large differences are real
     /// seeks/restarts and re-anchor immediately; ordinary buffer quantization
@@ -851,7 +909,7 @@ namespace BigScreen::CoreLogic {
         }
 
     private:
-        std::array<std::pair<int, int>, 4> tiers_{};
+        std::array<std::pair<int, int>, 5> tiers_{};
         std::size_t size_ = 0;
     };
 

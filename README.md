@@ -10,7 +10,7 @@
   <img alt="Beat Saber" src="https://img.shields.io/badge/Beat%20Saber-1.37.0-orange">
   <img alt="Language" src="https://img.shields.io/badge/language-C%2B%2B20-blue">
   <img alt="Status" src="https://img.shields.io/badge/status-beta-yellow">
-  <img alt="License" src="https://img.shields.io/badge/source%20license-MIT-green">
+  <img alt="License" src="https://img.shields.io/badge/source%20license-GPL--3.0--only-blue">
 </p>
 
 Big Screen plays H.264/H.265 MP4 and VP8/VP9 WebM video on a configurable world-space screen, synchronized to Beat Saber's own song clock. It includes an entirely standalone, in-headset YouTube workflow, local-file support, Cinema/Chroma compatibility, Replay compatibility, performance controls, recovery, and storage maintenance. It contains no advertising, telemetry, account system, or subscription.
@@ -103,6 +103,44 @@ Big Screen is feature-complete for its initial beta but still needs broad public
 
 ## Legal and licenses
 
-Big Screen's original source is available under the [MIT License](LICENSE). The QMOD includes independent third-party software under separate terms. Its private minimal FFmpeg 4.4.8 and 9.0.1 runtimes are dynamically linked under LGPL 2.1-or-later and built without GPL, version-3-only, or nonfree components. Both include software H.264 and Android MediaCodec H.264 decoding, and use distinct library names, ELF symbol namespaces, and decoder backends so the Misc-menu switches can perform actual on-headset A/B comparisons; FFmpeg 4.4.8 with software decoding remains the default. QuickJS-NG is compiled into `libbigscreen.so` under its MIT license. The corresponding licenses, build configurations, source changes, and the CPython, QuickJS-NG, certifi, and yt-dlp terms are installed with the runtime. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+Big Screen first-party source is distributed under
+[GPL-3.0-only](LICENSE), with reasonable attribution and origin/modification
+terms permitted by GPLv3 sections 7(b) and 7(c). A narrow additional permission
+allows the GPL-covered mod to interoperate with Beat Saber, Unity, the Quest
+platform, and separately distributed Quest modding interfaces without claiming
+that those components are GPL-licensed. Read the complete
+[section 7 terms and interoperability permission](LICENSE-ADDITIONAL-TERMS.md).
+
+In plain English, covered Big Screen code may be used, modified, and shared
+under GPLv3, but copied Big Screen-derived material must retain reasonable
+credit to **Loud160 (AKA Whisp)** and must not be falsely represented as having
+originated solely elsewhere. Modified versions must be identified as modified.
+These requirements concern covered code and material, not ideas, algorithms,
+techniques, interoperability facts, or independently developed implementations.
+
+Contributions use an explicit **inbound MIT / outbound GPL-3.0-only plus
+section 7 terms** model. An intentional contribution grants the maintainer a
+separate MIT license to that contribution; the DCO 1.1 sign-off separately
+certifies the contributor's right to submit it. See
+[CONTRIBUTING.md](CONTRIBUTING.md),
+[INBOUND_LICENSE.md](INBOUND_LICENSE.md), and [DCO.txt](DCO.txt).
+
+The QMOD includes independent third-party software under separate terms. Its
+private FFmpeg 4.4.8 and 9.0.1 runtimes are dynamically linked under
+LGPL-2.1-or-later and are machine-checked to exclude GPL, version-3, and
+nonfree components. QuickJS-NG remains MIT-licensed; CPython, yt-dlp, certifi,
+OpenSSL, SQLite, and the Quest dependencies retain their respective terms.
+The package installs Big Screen's license, section 7 terms, attribution notice,
+and the applicable runtime notices. Read
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+
+> [!IMPORTANT]
+> The canonical repository is <https://github.com/Loud160/BigScreen> and may
+> remain private during development. Before any public QMOD release—including
+> listing through ModsBeforeFriday/BSQMods—the complete matching Corresponding
+> Source must be publicly accessible from that repository or an equivalent
+> release location. The QMOD format and MBF installation flow do not conflict
+> with this license, but a binary-only upload without accessible matching source
+> would not satisfy GPLv3.
 
 Big Screen is an independent community project. It is not affiliated with or endorsed by Beat Games, Meta, Google, YouTube, BeatSaver, the Cinema mod, or the Chroma mod. Users are responsible for complying with the rights and terms applicable to maps and videos they download or import.

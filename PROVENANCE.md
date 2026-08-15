@@ -17,8 +17,11 @@ public-domain Quest Mod Template at commit
 
 <https://github.com/Lauriethefish/quest-mod-template>
 
-The template is distributed under the Unlicense. Big Screen's original source
-is distributed under the MIT License in this repository.
+The template is distributed under the Unlicense. That permissive/public-domain
+origin remains documented here and is not represented as having originated
+with Big Screen. Big Screen's first-party source and Big Screen's distribution
+of the combined project are licensed under GPL-3.0-only with the additional
+terms and permission described in `LICENSE-ADDITIONAL-TERMS.md`.
 
 ## Runtime dependencies
 

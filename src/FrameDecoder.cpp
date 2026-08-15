@@ -1,9 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/FrameDecoder.hpp"
+#include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <pthread.h>
 #include <string>
@@ -52,7 +61,7 @@ namespace BigScreen {
             const char* displayName;
             const char* softwareName;
             const char* hardwareName;
-            bool hardwareOnly;
+            CoreLogic::VideoCodecKind kind;
         };
 
         std::optional<CodecPolicy> PolicyForCodec(AVCodecID codec)
@@ -60,13 +69,13 @@ namespace BigScreen {
             switch(codec)
             {
                 case AV_CODEC_ID_H264:
-                    return CodecPolicy{"H.264", "h264", "h264_mediacodec", false};
+                    return CodecPolicy{"H.264", "h264", "h264_mediacodec", CoreLogic::VideoCodecKind::H264};
                 case AV_CODEC_ID_HEVC:
-                    return CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", true};
+                    return CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", CoreLogic::VideoCodecKind::Hevc};
                 case AV_CODEC_ID_VP8:
-                    return CodecPolicy{"VP8", "vp8", "vp8_mediacodec", false};
+                    return CodecPolicy{"VP8", "vp8", "vp8_mediacodec", CoreLogic::VideoCodecKind::Vp8};
                 case AV_CODEC_ID_VP9:
-                    return CodecPolicy{"VP9", "vp9", "vp9_mediacodec", false};
+                    return CodecPolicy{"VP9", "vp9", "vp9_mediacodec", CoreLogic::VideoCodecKind::Vp9};
                 default:
                     return std::nullopt;
             }
@@ -84,8 +93,11 @@ namespace BigScreen {
             AVCodecID codec,
             int profile)
         {
-            if(IsHdrTransfer(transfer))
-                return "HDR video is not supported - re-export the video as 8-bit SDR.";
+            const auto policy = PolicyForCodec(codec);
+            const auto kind = policy
+                ? policy->kind
+                : CoreLogic::VideoCodecKind::Unknown;
+            bool tenBit = false;
             // FFmpeg 9 renamed public profile constants from FF_PROFILE_* to
             // AV_PROFILE_*. Their numeric values are part of the codec spec,
             // so select the matching API name at compile time for each
@@ -95,31 +107,35 @@ namespace BigScreen {
 #else
             if(codec == AV_CODEC_ID_HEVC && profile == FF_PROFILE_HEVC_MAIN_10)
 #endif
-                return "H.265/HEVC Main10 video is not supported - re-export the video as 8-bit SDR Main profile.";
+                tenBit = true;
 #if defined(AV_PROFILE_VP9_2)
             if(codec == AV_CODEC_ID_VP9 && profile == AV_PROFILE_VP9_2)
 #else
             if(codec == AV_CODEC_ID_VP9 && profile == FF_PROFILE_VP9_2)
 #endif
-                return "VP9 profile 2 (10-bit/HDR) is not supported - re-export the video as 8-bit SDR VP9 profile 0.";
+                tenBit = true;
             if(format == AV_PIX_FMT_NONE)
-                return {};
+                return CoreLogic::UnsupportedVideoSignalReason(
+                    kind, IsHdrTransfer(transfer), tenBit, false, true);
             const auto* description = av_pix_fmt_desc_get(format);
             if(!description)
-                return {};
-            if((description->flags & AV_PIX_FMT_FLAG_ALPHA) != 0)
-                return "Video with an alpha channel is not supported - export ordinary 8-bit 4:2:0 video without transparency.";
+                return CoreLogic::UnsupportedVideoSignalReason(
+                    kind, IsHdrTransfer(transfer), tenBit, false, true);
             for(int component = 0; component < description->nb_components; ++component)
             {
                 if(description->comp[component].depth > 8)
-                    return "10-bit video is not supported - re-export the video as 8-bit SDR.";
+                    tenBit = true;
             }
             // Big Screen's color conversion and MediaCodec contract are
             // intentionally limited to 4:2:0. Reject 4:2:2/4:4:4 instead of
             // silently accepting a format that a Quest decoder may reinterpret.
-            if(description->log2_chroma_w != 1 || description->log2_chroma_h != 1)
-                return "Only 8-bit 4:2:0 video is supported - re-export this video using yuv420p.";
-            return {};
+            return CoreLogic::UnsupportedVideoSignalReason(
+                kind,
+                IsHdrTransfer(transfer),
+                tenBit,
+                (description->flags & AV_PIX_FMT_FLAG_ALPHA) != 0,
+                description->log2_chroma_w == 1 &&
+                    description->log2_chroma_h == 1);
         }
 
         int DisplayQuarterTurns(const AVStream* stream)
@@ -135,14 +151,17 @@ namespace BigScreen {
                 ? reinterpret_cast<const int32_t*>(sideData->data)
                 : nullptr;
             const std::size_t sideDataSize = sideData ? sideData->size : 0;
+            if(!matrix || sideDataSize < sizeof(int32_t) * 9)
+                return 0;
 #else
             int sideDataSize = 0;
             const auto* matrix = reinterpret_cast<const int32_t*>(
                 av_stream_get_side_data(
                     stream, AV_PKT_DATA_DISPLAYMATRIX, &sideDataSize));
-#endif
-            if(!matrix || sideDataSize < sizeof(int32_t) * 9)
+            if(!matrix || sideDataSize < 0 ||
+               static_cast<std::size_t>(sideDataSize) < sizeof(int32_t) * 9)
                 return 0;
+#endif
             const double degrees = av_display_rotation_get(matrix);
             if(!std::isfinite(degrees))
                 return 0;
@@ -240,14 +259,10 @@ namespace BigScreen {
         codecName_ = policy->displayName;
         const int sourceShortEdge = std::min(
             stream->codecpar->width, stream->codecpar->height);
-        softwareFallbackAllowed_ = !policy->hardwareOnly &&
-            sourceShortEdge <= 1080;
-        if(policy->hardwareOnly)
-            softwareFallbackBlockedReason_ =
-                "H.265/HEVC requires Hardware Video Decoding; Big Screen does not ship a software HEVC decoder.";
-        else if(sourceShortEdge > 1080)
-            softwareFallbackBlockedReason_ =
-                "This 1440p video requires hardware decoding. Video playback was stopped because software fallback is not supported above 1080p.";
+        softwareFallbackBlockedReason_ =
+            CoreLogic::SoftwareFallbackBlockedReason(
+                policy->kind, sourceShortEdge);
+        softwareFallbackAllowed_ = softwareFallbackBlockedReason_.empty();
 
         const auto pixelReason = UnsupportedPixelReason(
             static_cast<AVPixelFormat>(stream->codecpar->format),
@@ -445,7 +460,17 @@ namespace BigScreen {
 
         stopWorker_ = false;
         open_ = true;
-        worker_ = std::thread(&FrameDecoder::WorkerMain, this);
+        try
+        {
+            worker_ = std::thread(&FrameDecoder::WorkerMain, this);
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the video decoder worker: ") +
+                exception.what();
+            Close();
+            return false;
+        }
         return true;
     }
 
@@ -659,9 +684,12 @@ namespace BigScreen {
                target + nominalFrameSeconds_ < lastDecodedTime ||
                target - lastDecodedTime > 0.75)
             {
-                if(!SeekNear(target))
+                std::string seekError;
+                if(!SeekNear(target, seekError))
                 {
-                    SetWorkerError("FFmpeg could not seek to the requested video position.");
+                    SetWorkerError(
+                        "FFmpeg could not seek to the requested video position: " +
+                        seekError);
                     break;
                 }
                 lastDecodedTime = -std::numeric_limits<double>::infinity();
@@ -697,9 +725,12 @@ namespace BigScreen {
                     SetWorkerError(framePixelReason);
                     break;
                 }
-                if(!ConvertCurrentFrame(output))
+                std::string conversionError;
+                if(!ConvertCurrentFrame(output, conversionError))
                 {
-                    SetWorkerError("FFmpeg could not convert a decoded frame for the video screen.");
+                    SetWorkerError(
+                        "FFmpeg could not convert a decoded frame for the video screen: " +
+                        conversionError);
                     break;
                 }
                 const auto elapsed = std::chrono::duration<double, std::milli>(
@@ -725,29 +756,28 @@ namespace BigScreen {
 
     bool FrameDecoder::ReadDecodedFrame()
     {
+        const auto applyDecodedCrop = [this]() {
+            // Apply codec crop metadata before swscale sees the picture. This
+            // prevents padded MediaCodec stride/slice dimensions (or ordinary
+            // coded-edge padding) from appearing as green or dark bars. The
+            // same rule is required for software frames and the delayed final
+            // frame returned while flushing the decoder.
+            if((decoded_->crop_top || decoded_->crop_bottom ||
+                decoded_->crop_left || decoded_->crop_right) &&
+               av_frame_apply_cropping(
+                   decoded_, AV_FRAME_CROP_UNALIGNED) < 0)
+            {
+                SetWorkerError(
+                    "FFmpeg could not apply the decoded frame crop metadata.");
+                return false;
+            }
+            return true;
+        };
         while(!stopWorker_)
         {
             int result = avcodec_receive_frame(codec_, decoded_);
             if(result == 0)
-            {
-                // Apply codec crop metadata before swscale sees the picture.
-                // This prevents padded MediaCodec stride/slice dimensions (or
-                // ordinary H.264 coded-edge padding) from appearing as green
-                // or dark bars. FFmpeg's CPU-buffer MediaCodec path already
-                // copies vendor layouts into planar/semi-planar frames; this
-                // final step handles any remaining public AVFrame crop fields.
-                if(usingHardwareDecoder_ &&
-                   (decoded_->crop_top || decoded_->crop_bottom ||
-                    decoded_->crop_left || decoded_->crop_right) &&
-                   av_frame_apply_cropping(
-                       decoded_, AV_FRAME_CROP_UNALIGNED) < 0)
-                {
-                    SetWorkerError(
-                        "FFmpeg could not apply the decoded frame crop metadata.");
-                    return false;
-                }
-                return true;
-            }
+                return applyDecodedCrop();
             if(result == AVERROR_EOF)
                 return false;
             if(result != AVERROR(EAGAIN))
@@ -784,7 +814,7 @@ namespace BigScreen {
                 }
                 const int finalResult = avcodec_receive_frame(codec_, decoded_);
                 if(finalResult == 0)
-                    return true;
+                    return applyDecodedCrop();
                 if(finalResult != AVERROR_EOF && finalResult != AVERROR(EAGAIN))
                 {
                     SetWorkerError(
@@ -811,15 +841,21 @@ namespace BigScreen {
         return false;
     }
 
-    bool FrameDecoder::SeekNear(double mediaSeconds)
+    bool FrameDecoder::SeekNear(double mediaSeconds, std::string& error)
     {
         if(!format_ || streamTimeBase_ <= 0.0)
+        {
+            error = "the stream timing data is unavailable";
             return false;
+        }
 
         const auto timestamp = static_cast<std::int64_t>(mediaSeconds / streamTimeBase_);
         const int result = av_seek_frame(format_, videoStream_, timestamp, AVSEEK_FLAG_BACKWARD);
         if(result < 0)
+        {
+            error = FfmpegError(result);
             return false;
+        }
 
         avcodec_flush_buffers(codec_);
         return true;
@@ -848,7 +884,9 @@ namespace BigScreen {
         return nominalFrameSeconds_;
     }
 
-    bool FrameDecoder::ConvertCurrentFrame(VideoFrame& destination)
+    bool FrameDecoder::ConvertCurrentFrame(
+        VideoFrame& destination,
+        std::string& error)
     {
         const bool converterInputChanged =
             converterSourceWidth_ != decoded_->width ||
@@ -867,21 +905,21 @@ namespace BigScreen {
             nullptr,
             nullptr);
         if(!converter_)
+        {
+            error = "libswscale could not create a conversion context";
             return false;
+        }
 
         converterSourceWidth_ = decoded_->width;
         converterSourceHeight_ = decoded_->height;
         converterSourceFormat_ = decoded_->format;
 
-        // Hardware decoders commonly report NV12 while the software decoder
-        // normally reports YUV420P. sws_getCachedContext above intentionally
-        // uses the actual AVFrame format. Apply the frame's declared matrix
-        // and range as well so BT.709 limited-range HD video is not washed out
-        // when converted into Unity's full-range RGBA texture.
-        if(usingHardwareDecoder_ &&
-           (converterInputChanged ||
+        // Hardware commonly reports NV12 and software commonly reports
+        // YUV420P, but both paths need the declared matrix and range. Applying
+        // this uniformly prevents visible color changes after fallback.
+        if(converterInputChanged ||
             converterColorSpace_ != decoded_->colorspace ||
-            converterColorRange_ != decoded_->color_range))
+            converterColorRange_ != decoded_->color_range)
         {
             int swsColorSpace = SWS_CS_DEFAULT;
             switch(decoded_->colorspace)
@@ -894,8 +932,8 @@ namespace BigScreen {
                 default: break;
             }
             const int* coefficients = sws_getCoefficients(swsColorSpace);
-            if(coefficients &&
-               sws_setColorspaceDetails(
+            const int colorspaceResult = coefficients
+                ? sws_setColorspaceDetails(
                    converter_,
                    coefficients,
                    decoded_->color_range == AVCOL_RANGE_JPEG ? 1 : 0,
@@ -903,8 +941,14 @@ namespace BigScreen {
                    1,
                    0,
                    1 << 16,
-                   1 << 16) < 0)
+                   1 << 16)
+                : 0;
+            if(colorspaceResult < 0)
+            {
+                error = "libswscale rejected the video's color matrix or range (" +
+                    std::to_string(colorspaceResult) + ")";
                 return false;
+            }
 
             converterColorSpace_ = decoded_->colorspace;
             converterColorRange_ = decoded_->color_range;
@@ -938,7 +982,11 @@ namespace BigScreen {
             outputPlanes,
             outputStrides);
         if(convertedRows != conversionHeight_)
+        {
+            error = "libswscale returned " + std::to_string(convertedRows) +
+                " rows; " + std::to_string(conversionHeight_) + " were expected";
             return false;
+        }
         if(displayQuarterTurns_ == 0)
             return true;
 

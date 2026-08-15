@@ -7,7 +7,7 @@
     "name": "Big Screen",
     "id": "bigscreen",
     "version": "0.6.6",
-    "url": null,
+    "url": "https://github.com/Loud160/BigScreen",
     "additionalData": {
       "overrideSoName": "libbigscreen.so",
       "cmake": true

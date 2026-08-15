@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <atomic>
@@ -183,10 +190,10 @@ namespace BigScreen {
         void WorkerLoop(std::uint64_t cpuStartedNanoseconds);
         void SetWorkerError(std::string message);
         bool ReadDecodedFrame();
-        bool SeekNear(double mediaSeconds);
+        bool SeekNear(double mediaSeconds, std::string& error);
         double CurrentFrameTime() const;
         double CurrentFrameDuration() const;
-        bool ConvertCurrentFrame(VideoFrame& destination);
+        bool ConvertCurrentFrame(VideoFrame& destination, std::string& error);
         void Publish(VideoFrame&& frame);
         VideoFrame AcquireOutputFrame();
         void RecycleBufferLocked(std::vector<std::uint8_t>&& buffer);
@@ -282,10 +289,13 @@ namespace BigScreen {
         const char* RuntimeVersion() const;
         const char* CodecName() const;
         bool UsingHardwareDecoder() const;
-        const char* DecoderBackendName() const;
+        /// Reports how pictures are decoded (MediaCodec or CPU software). This
+        /// is distinct from RuntimeVersion(), which identifies FFmpeg 4.4/9.
+        const char* DecodeMethodName() const;
 
     private:
         std::unique_ptr<FrameDecoderBackend> CreateSelectedBackend() const;
+        void CloseAndRetainBackendMetrics();
         bool ReopenWithSoftwareAfterHardwareFailure(
             const std::string& hardwareError,
             std::string& recoveryError);

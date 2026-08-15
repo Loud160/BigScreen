@@ -1,4 +1,14 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibraryMenu.hpp"
+#include "BigScreen/UiSettingsUtility.hpp"
+#include "BigScreen/UiUtility.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <algorithm>
 #include <array>
@@ -91,6 +101,9 @@
 
 namespace BigScreen {
     namespace {
+        using UiUtility::EnsureLayout;
+        using UiUtility::SetToggleWithoutNotification;
+
         constexpr std::array<std::string_view, 6> FilterNames{
             "Show All Maps", "Custom Maps", "WIP Maps",
             "OST Maps", "DLC Maps", "Maps With Video"
@@ -339,28 +352,20 @@ namespace BigScreen {
             return encoded;
         }
 
-        std::string Megabytes(std::uint64_t bytes)
-        {
-            std::ostringstream text;
-            text << std::fixed << std::setprecision(1)
-                 << bytes / 1048576.0 << " MB";
-            return text.str();
-        }
-
         std::string DownloadStatus(const DownloadSnapshot& download)
         {
             if(download.state != DownloadState::Downloading)
                 return download.message;
 
             std::ostringstream text;
-            text << "Downloading  " << Megabytes(download.downloadedBytes);
+            text << "Downloading  " << Utility::FormatMegabytes(download.downloadedBytes);
             if(download.totalBytes)
             {
                 const auto percent = static_cast<int>(std::clamp(
                     100.0 * download.downloadedBytes / download.totalBytes,
                     0.0,
                     100.0));
-                text << " / " << Megabytes(download.totalBytes)
+                text << " / " << Utility::FormatMegabytes(download.totalBytes)
                      << "  (" << percent << "%)";
             }
             if(download.speedBytesPerSecond > 0.0)
@@ -373,17 +378,6 @@ namespace BigScreen {
                      << std::setfill('0') << std::setw(2) << seconds % 60
                      << " left";
             }
-            return text.str();
-        }
-
-        std::string StorageSize(std::uint64_t bytes)
-        {
-            std::ostringstream text;
-            text << std::fixed << std::setprecision(1);
-            if(bytes < 1073741824ULL)
-                text << bytes / 1048576.0 << " MB";
-            else
-                text << bytes / 1073741824.0 << " GB";
             return text.str();
         }
 
@@ -425,39 +419,12 @@ namespace BigScreen {
             return songs.size();
         }
 
-        bool ExplicitAllowed()
-        {
-            auto* container = BSML::Helpers::GetDiContainer();
-            auto* model = container
-                ? container->Resolve<GlobalNamespace::PlayerDataModel*>()
-                : nullptr;
-            auto* data = model ? model->get_playerData() : nullptr;
-            return data && data->get_desiredSensitivityFlag().value__ >=
-                GlobalNamespace::PlayerSensitivityFlag::Explicit.value__;
-        }
-
-        bool IsPathUnder(
-            const std::filesystem::path& child,
-            const std::filesystem::path& parent)
-        {
-            const auto normalizedChild = child.lexically_normal();
-            const auto normalizedParent = parent.lexically_normal();
-            auto childPart = normalizedChild.begin();
-            for(auto parentPart = normalizedParent.begin();
-                parentPart != normalizedParent.end(); ++parentPart, ++childPart)
-            {
-                if(childPart == normalizedChild.end() || *childPart != *parentPart)
-                    return false;
-            }
-            return true;
-        }
-
         bool IsWip(SongCore::SongLoader::CustomBeatmapLevel* level)
         {
             if(!level) return false;
             const auto path = std::filesystem::path(level->get_customLevelPath());
             for(const auto& root : SongCore::API::Loading::GetRootCustomWIPLevelPaths())
-                if(IsPathUnder(path, root)) return true;
+                if(Utility::IsPathInside(path, root)) return true;
             return false;
         }
 
@@ -496,14 +463,6 @@ namespace BigScreen {
             }
         }
 
-        UnityEngine::UI::LayoutElement* EnsureLayout(UnityEngine::Component* component)
-        {
-            if(!component) return nullptr;
-            auto object = component->get_gameObject();
-            auto* layout = object->GetComponent<UnityEngine::UI::LayoutElement*>();
-            return layout ? layout : object->AddComponent<UnityEngine::UI::LayoutElement*>();
-        }
-
         void ConfigureLayout(
             UnityEngine::Component* component,
             float preferredWidth,
@@ -517,16 +476,6 @@ namespace BigScreen {
             if(preferredHeight >= 0.0f) layout->set_preferredHeight(preferredHeight);
             layout->set_flexibleWidth(flexibleWidth);
             layout->set_flexibleHeight(flexibleHeight);
-        }
-
-        void SetToggleWithoutNotification(
-            BSML::ToggleSetting* setting,
-            bool value)
-        {
-            if(!setting) return;
-            setting->currentValue = value;
-            if(setting->toggle)
-                setting->toggle->SetIsOnWithoutNotify(value);
         }
 
         void StyleToggleRow(BSML::ToggleSetting* setting)
@@ -622,7 +571,18 @@ namespace BigScreen {
             }
         }
         VideoThumbnailSprites.clear();
+        FailedVideoThumbnailLoads.clear();
+        RowVideoThumbnails.clear();
         VideoThumbnailUseCounter = 0;
+        try
+        {
+            if(UnityW<UnityEngine::Sprite>::isAlive(loadedThumbnailSprite_))
+                UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+        }
+        catch(...)
+        {
+            // The prior menu scene may already own/destroy the sprite.
+        }
         *this = VideoLibraryMenu{};
     }
 
@@ -698,7 +658,6 @@ namespace BigScreen {
         alphabet->set_cellSize({3.5f, 3.35f});
         alphabet->set_spacing({0.15f, 0.15f});
         ConfigureLayout(alphabet, 7.3f, 50.0f, 0.0f, 1.0f);
-        alphabetButtons_.clear();
         for(int row = 0; row < 13; ++row)
         {
             for(const char letter : {static_cast<char>('A' + row), static_cast<char>('N' + row)})
@@ -712,14 +671,12 @@ namespace BigScreen {
                     {3.5f, 3.35f},
                     [this, letter]() { JumpToLetter(letter); });
                 button->set_alignment(TMPro::TextAlignmentOptions::Center);
-                alphabetButtons_.push_back(button);
             }
         }
         auto* numericButton = BSML::Lite::CreateClickableText(
             alphabet, "#", TMPro::FontStyles::Normal, 2.35f,
             {0.0f, 0.0f}, {3.5f, 3.35f}, [this]() { JumpToLetter('#'); });
         numericButton->set_alignment(TMPro::TextAlignmentOptions::Center);
-        alphabetButtons_.push_back(numericButton);
 
         // Construct the list through BSML's standard show-scrollbar path.
         // Unlike CreateScrollableList's detached top/bottom carets, this uses
@@ -866,7 +823,6 @@ namespace BigScreen {
         ConfigureGroup(localRow);
         localRow->set_spacing(0.7f);
         ConfigureLayout(localRow, 54.0f, 8.0f, 1.0f);
-        localVideoListContent_ = localRow->get_gameObject();
         showFileBrowserButton_ = BSML::Lite::CreateUIButton(
             localRow,
             "Show File Browser",
@@ -892,30 +848,6 @@ namespace BigScreen {
             TMPro::TextOverflowModes::Ellipsis);
         localVideoStatusText_->get_gameObject()->SetActive(false);
 
-        localVideoHelpModal_ = BSML::Lite::CreateModal(
-            editorController,
-            {64.0f, 34.0f},
-            nullptr,
-            true);
-        localVideoHelpText_ = BSML::Lite::CreateText(
-            localVideoHelpModal_,
-            "",
-            TMPro::FontStyles::Normal,
-            {0.0f, 4.0f});
-        localVideoHelpText_->set_fontSize(2.8f);
-        localVideoHelpText_->set_alignment(TMPro::TextAlignmentOptions::Center);
-        auto* closeLocalHelp = BSML::Lite::CreateUIButton(
-            localVideoHelpModal_->get_transform(),
-            "Close",
-            {32.0f, -27.0f},
-            {22.0f, 7.0f},
-            [this]()
-            {
-                if(localVideoHelpModal_)
-                    localVideoHelpModal_->Hide();
-            });
-        ConfigureLayout(closeLocalHelp, 22.0f, 7.0f, 0.0f);
-
         auto* urlEntryRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(urlEntryRow);
         urlEntryRow->set_spacing(0.6f);
@@ -930,8 +862,6 @@ namespace BigScreen {
             [this]() { PasteUrlFromClipboard(); });
         ConfigureLayout(pasteUrlButton_, 13.0f, 7.5f, 0.0f);
         SetBrightButtonLabel(pasteUrlButton_, 2.45f);
-        pasteUrlButtonText_ = pasteUrlButton_->get_gameObject()
-            ->GetComponentInChildren<TMPro::TextMeshProUGUI*>();
         urlInput_ = BSML::Lite::CreateStringSetting(
             urlEntryRow, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
@@ -1067,7 +997,10 @@ namespace BigScreen {
             "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
 
         downloadConfirmModal_ = BSML::Lite::CreateModal(
-            editorController, {76.0f, 42.0f}, nullptr, true);
+            editorController,
+            {76.0f, 42.0f},
+            [this]() { pendingDownloadHeight_ = 0; },
+            true);
         downloadConfirmationText_ = BSML::Lite::CreateText(
             downloadConfirmModal_,
             "",
@@ -1839,7 +1772,7 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
-        RefreshLocalVideoFiles();
+        RefreshLocalVideoStatus();
         ShowEditor();
         RequestSelectedAudio();
         // A mapper URL has already been supplied on the user's behalf. Probe
@@ -1936,6 +1869,7 @@ namespace BigScreen {
         }
         else
         {
+            ownedDownloadLevelId_ = std::string(selected_->levelID);
             // Bind the asynchronous probe result to the exact text currently
             // in the field. Clearing or replacing that text invalidates this
             // identity, preventing a completed older probe from restoring a
@@ -2081,7 +2015,8 @@ namespace BigScreen {
             : std::string{};
         request.sourceUrl = url_;
         request.origin = VideoOrigin::User;
-        request.explicitContentAllowed = ExplicitAllowed();
+        request.explicitContentAllowed =
+            UiUtility::ExplicitContentAllowed();
         request.offsetSeconds = offset_;
         request.playbackRate = rate_;
         request.fitToSong = fitToSong_;
@@ -2108,6 +2043,7 @@ namespace BigScreen {
         }
         else
         {
+            ownedDownloadLevelId_ = selectedLevelId;
             transientStatus_.clear();
         }
         RefreshDetails();
@@ -2260,21 +2196,11 @@ namespace BigScreen {
         RefreshDetails();
     }
 
-    void VideoLibraryMenu::RefreshLocalVideoFiles()
+    void VideoLibraryMenu::RefreshLocalVideoStatus()
     {
-        // The center-screen browser owns directory enumeration and probing.
-        // The side editor reads only the active assignment, avoiding repeated
-        // FFmpeg file probes every time its details refresh.
-        localVideoFiles_.clear();
-        localVideoImported_.clear();
-        RebuildLocalVideoRows();
-    }
-
-    void VideoLibraryMenu::RebuildLocalVideoRows()
-    {
-        if(!localVideoListContent_)
-            return;
-
+        // The center-screen browser owns directory enumeration, probing, help,
+        // and assignment. This side-panel row only reflects the active local
+        // assignment and never repeats an FFmpeg scan.
         const auto descriptor = selected_
             ? VideoLibrary::Instance().Describe(selected_)
             : VideoDescriptor{};
@@ -2298,99 +2224,6 @@ namespace BigScreen {
                     {0.20f, 1.0f, 0.36f, 1.0f});
             }
         }
-    }
-
-    void VideoLibraryMenu::SetLocalVideo(std::size_t index)
-    {
-        if(!selected_ || index >= localVideoFiles_.size())
-            return;
-        const auto& file = localVideoFiles_[index];
-        const bool imported = index < localVideoImported_.size() &&
-            localVideoImported_[index];
-        if(!file.compatible)
-        {
-            ShowLocalVideoHelp(index);
-            return;
-        }
-
-        // Close the decoder before replacing a managed YouTube override. The
-        // selected local MP4 itself remains user-owned and is never moved or
-        // deleted by this operation.
-        StopPreviewAudio(true);
-        auto& playback = PlaybackSession::Instance();
-        if(playback.IsLibraryPreviewActive())
-            playback.Stop();
-
-        std::string error;
-        const bool assigned = imported
-            ? VideoLibrary::Instance().SetImportedVideoOverride(
-                selected_, file.fileName, error)
-            : VideoLibrary::Instance().SetLocalVideoOverride(
-                selected_, file.fileName, error);
-        if(!assigned)
-        {
-            transientStatus_ = error.empty()
-                ? "The local video could not be assigned."
-                : error;
-            RefreshLocalVideoFiles();
-            RefreshDetails();
-            return;
-        }
-
-        EvictVideoThumbnail(
-            VideoLibrary::Instance().AllocateThumbnailPath(
-                std::string(selected_->levelID), VideoOrigin::User).string());
-
-        // A newly assigned file starts with neutral timing, exactly like a new
-        // user override. The same controls below can then tune it and persist
-        // those values in library.json without altering the map-folder MP4.
-        offset_ = 0.0;
-        rate_ = 1.0;
-        fitToSong_ = false;
-        blackDuringLeadIn_ = false;
-        suppressTimingCallbacks_ = true;
-        if(offsetSetting_) offsetSetting_->set_Value(0.0f);
-        if(rateSetting_) rateSetting_->set_Value(1.0f);
-        SetToggleWithoutNotification(fitToggle_, false);
-        SetToggleWithoutNotification(blackLeadInToggle_, false);
-        suppressTimingCallbacks_ = false;
-
-        url_.clear();
-        mapperProvidedUrl_ = false;
-        if(urlInput_)
-        {
-            suppressUrlCallback_ = true;
-            urlInput_->SetText("");
-            suppressUrlCallback_ = false;
-            RefreshUrlTextColor();
-        }
-        ClearThumbnail();
-        transientStatus_ = imported
-            ? "Imported video assigned: " + file.fileName
-            : "Local video assigned: " + file.fileName;
-        previewSongTime_ = 0.0;
-        playWhenAudioReady_ = true;
-        RefreshLocalVideoFiles();
-        RequestSelectedAudio();
-        StartSelectedPreview();
-        if(IsAlive(previewAudioClip_))
-            StartPreviewAudio();
-        RefreshDetails();
-    }
-
-    void VideoLibraryMenu::ShowLocalVideoHelp(std::size_t index)
-    {
-        if(index >= localVideoFiles_.size() ||
-           !localVideoHelpModal_ || !localVideoHelpText_)
-            return;
-        const auto& file = localVideoFiles_[index];
-        localVideoHelpText_->set_text(
-            ((index < localVideoImported_.size() && localVideoImported_[index])
-                ? "Video Import: " : "") + file.fileName + "\n\n" +
-            (file.problem.empty()
-                ? "This file is not compatible with Big Screen. Use 8-bit SDR H.264/H.265 MP4 or VP8/VP9 WebM video up to 1440p."
-                : file.problem));
-        localVideoHelpModal_->Show();
     }
 
     void VideoLibraryMenu::LocalVideoAssignmentChanged(
@@ -2435,7 +2268,7 @@ namespace BigScreen {
         transientStatus_ = "Local video assigned: " + fileName;
         previewSongTime_ = 0.0;
         playWhenAudioReady_ = true;
-        RefreshLocalVideoFiles();
+        RefreshLocalVideoStatus();
         RequestSelectedAudio();
         StartSelectedPreview();
         if(IsAlive(previewAudioClip_))
@@ -2556,7 +2389,7 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
-        RefreshLocalVideoFiles();
+        RefreshLocalVideoStatus();
         RefreshDetails();
         StartSelectedPreview();
     }
@@ -2657,7 +2490,7 @@ namespace BigScreen {
             UnityEngine::Sprite* sprite = nullptr;
             if(auto* loaded = FindCachedVideoThumbnail(path))
                 sprite = loaded;
-            else if(std::filesystem::is_regular_file(*metadata->second.path) &&
+            else if(Utility::IsRegularFile(*metadata->second.path) &&
                     !FailedVideoThumbnailLoads.contains(path))
             {
                 try
@@ -2785,10 +2618,10 @@ namespace BigScreen {
         const auto freeBytes = VideoLibrary::Instance().FreeBytes();
         if(detailLibraryStorage_)
             detailLibraryStorage_->set_text(
-                "All Downloads\n" + StorageSize(libraryBytes));
+                "All Downloads\n" + Utility::FormatStorageSize(libraryBytes));
         if(detailFreeStorage_)
             detailFreeStorage_->set_text(
-                "Free Space\n" + StorageSize(freeBytes));
+                "Free Space\n" + Utility::FormatStorageSize(freeBytes));
         if(!selected_ || !detailText_)
         {
             if(detailMapStorage_)
@@ -2824,11 +2657,11 @@ namespace BigScreen {
             downloadedVideoBytes > 0 || hasLocalVideos;
         if(detailMapStorage_)
             detailMapStorage_->set_text(
-                "Downloaded Video\n" + StorageSize(downloadedVideoBytes));
+                "Downloaded Video\n" + Utility::FormatStorageSize(downloadedVideoBytes));
         if(detailLocalStorage_)
         {
             detailLocalStorage_->set_text(
-                "Local Videos\n" + StorageSize(localVideoBytes));
+                "Local Videos\n" + Utility::FormatStorageSize(localVideoBytes));
             detailLocalStorage_->get_gameObject()->SetActive(hasLocalVideos);
         }
         if(storageSpacer_)
@@ -2889,7 +2722,7 @@ namespace BigScreen {
             detailThumbnailIdentity = download.thumbnailPath + "|" + download.title;
         }
         else if(descriptor.thumbnailPath &&
-                std::filesystem::is_regular_file(*descriptor.thumbnailPath))
+                Utility::IsRegularFile(*descriptor.thumbnailPath))
         {
             detailThumbnailPath = descriptor.thumbnailPath->string();
             detailThumbnailIdentity = detailThumbnailPath;
@@ -3099,7 +2932,7 @@ namespace BigScreen {
                 // A completed YouTube download atomically replaces any local
                 // assignment. Refresh the file rows once so the old filename
                 // immediately loses its green active state.
-                RefreshLocalVideoFiles();
+                RefreshLocalVideoStatus();
                 previewSongTime_ = 0.0;
                 playWhenAudioReady_ = true;
                 RequestSelectedAudio();
@@ -3614,6 +3447,11 @@ namespace BigScreen {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
 
+        const auto ownedTask = DownloadManager::Instance().Snapshot();
+        if(!ownedTask.Active() && !ownedDownloadLevelId_.empty() &&
+           ownedTask.levelId == ownedDownloadLevelId_)
+            ownedDownloadLevelId_.clear();
+
         // Quest recording, activity focus changes, and SongPreviewPlayer
         // crossfades can destroy the native AudioClip/AudioSource while the
         // IL2CPP wrapper remains non-null. Never dereference that stale wrapper
@@ -3794,7 +3632,10 @@ namespace BigScreen {
         if(editorVisible_) RefreshDetails();
         if(!Settings::Instance().ModEnabled())
         {
-            DownloadManager::Instance().Cancel();
+            const auto download = DownloadManager::Instance().Snapshot();
+            if(download.Active() && !ownedDownloadLevelId_.empty() &&
+               download.levelId == ownedDownloadLevelId_)
+                DownloadManager::Instance().Cancel();
             StopPreviewAudio(true);
             if(PlaybackSession::Instance().IsLibraryPreviewActive())
                 PlaybackSession::Instance().Stop();
@@ -3828,7 +3669,10 @@ namespace BigScreen {
         {
             PaperLogger.error("Preview audio teardown failed during deactivation: {}", error.what());
         }
-        DownloadManager::Instance().Cancel();
+        const auto download = DownloadManager::Instance().Snapshot();
+        if(download.Active() && !ownedDownloadLevelId_.empty() &&
+           download.levelId == ownedDownloadLevelId_)
+            DownloadManager::Instance().Cancel();
         try
         {
             if(PlaybackSession::Instance().IsLibraryPreviewActive())

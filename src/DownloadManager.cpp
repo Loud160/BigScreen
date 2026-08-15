@@ -1,4 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <Python.h>
 #include <dlfcn.h>
@@ -270,10 +278,10 @@ namespace BigScreen {
 
             bool Promote(std::string& error)
             {
-                if(!std::filesystem::is_regular_file(next_))
+                if(!Utility::IsRegularFile(next_))
                     return true;
                 attempted_ = true;
-                hadActive_ = std::filesystem::is_regular_file(active_);
+                hadActive_ = Utility::IsRegularFile(active_);
                 std::ifstream version(next_.string() + ".version");
                 if(version) std::getline(version, candidateVersion_);
 
@@ -285,7 +293,7 @@ namespace BigScreen {
                     if(!Rename(active_, previous_, error))
                         return false;
                     originalMoved_ = true;
-                    if(std::filesystem::is_regular_file(active_.string() + ".version") &&
+                    if(Utility::IsRegularFile(active_.string() + ".version") &&
                        !Rename(
                            active_.string() + ".version",
                            previous_.string() + ".version",
@@ -295,7 +303,7 @@ namespace BigScreen {
                 if(!Rename(next_, active_, error))
                     return false;
                 candidateActive_ = true;
-                if(std::filesystem::is_regular_file(next_.string() + ".version") &&
+                if(Utility::IsRegularFile(next_.string() + ".version") &&
                    !Rename(
                        next_.string() + ".version",
                        active_.string() + ".version",
@@ -328,7 +336,7 @@ namespace BigScreen {
                     if(!Rename(previous_, active_, error))
                         return false;
                     originalMoved_ = false;
-                    if(std::filesystem::is_regular_file(previous_.string() + ".version") &&
+                    if(Utility::IsRegularFile(previous_.string() + ".version") &&
                        !Rename(
                            previous_.string() + ".version",
                            active_.string() + ".version",
@@ -518,7 +526,7 @@ namespace BigScreen {
 
         bool LoadGlobalLibrary(const std::filesystem::path& path, std::string& error)
         {
-            if(!std::filesystem::is_regular_file(path))
+            if(!Utility::IsRegularFile(path))
             {
                 error = "Missing runtime library: " + path.filename().string();
                 return false;
@@ -719,6 +727,27 @@ namespace BigScreen {
             return true;
         }
 
+        // Shared by the full transfer and metadata probe. Keeping codec/range
+        // policy in one Python fragment prevents one surface from accepting a
+        // tier the other later rejects after yt-dlp format fields change.
+        constexpr std::string_view MediaScriptHelpers = R"PY(
+def clean_error(value):
+    return re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()[-700:]
+
+def is_sdr(candidate):
+    dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
+    note = str(candidate.get('format_note') or '').upper()
+    codec = str(candidate.get('vcodec') or '').lower()
+    return ('HDR' not in dynamic_range and 'HDR' not in note and
+            '.02' not in codec)
+
+def tier(candidate):
+    width = int(candidate.get('width') or 0)
+    height = int(candidate.get('height') or 0)
+    return min(width, height) if width > 0 and height > 0 else 0
+
+)PY";
+
         constexpr const char* DownloaderScript = R"PY(
 import json, os, re, shutil, time, traceback, urllib.parse, urllib.request
 
@@ -729,6 +758,8 @@ cancel_path = job['cancelPath']
 def publish(state, message='', durable=True, **values):
     data = {'state': state, 'message': message}
     data.update(values)
+    # C++ polls this file concurrently. Replace a flushed sibling file so it
+    # can observe either complete status document, never partial JSON.
     temporary = status_path + '.tmp'
     with open(temporary, 'w', encoding='utf-8') as stream:
         json.dump(data, stream, ensure_ascii=False)
@@ -762,10 +793,6 @@ def progress(data):
             totalBytes=data.get('total_bytes') or data.get('total_bytes_estimate') or 0,
             speed=data.get('speed') or 0,
             eta=data.get('eta') or 0)
-
-def clean_error(value):
-    text = re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()
-    return text[-700:]
 
 def classify(value):
     text = clean_error(value)
@@ -905,18 +932,6 @@ try:
     maximum_fps = max(1, int(job.get('maximumSourceFps') or 30))
     if requested_height < 1 or requested_height > 1440:
         raise RuntimeError('Requested format is not available: invalid resolution tier')
-
-    def is_sdr(candidate):
-        dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
-        note = str(candidate.get('format_note') or '').upper()
-        codec = str(candidate.get('vcodec') or '').lower()
-        return ('HDR' not in dynamic_range and 'HDR' not in note and
-                '.02' not in codec and not codec.startswith('vp09.02'))
-
-    def tier(candidate):
-        width = int(candidate.get('width') or 0)
-        height = int(candidate.get('height') or 0)
-        return min(width, height) if width > 0 and height > 0 else 0
 
     formats = []
     for candidate in info.get('formats') or []:
@@ -1069,6 +1084,8 @@ cancel_path = job['cancelPath']
 def publish(state, message='', durable=True, **values):
     data = {'state': state, 'message': message}
     data.update(values)
+    # C++ polls this file concurrently. Replace a flushed sibling file so it
+    # can observe either complete status document, never partial JSON.
     temporary = status_path + '.tmp'
     with open(temporary, 'w', encoding='utf-8') as stream:
         json.dump(data, stream, ensure_ascii=False)
@@ -1288,15 +1305,14 @@ def cancelled():
 def publish(state, message='', **values):
     data = {'state': state, 'message': message}
     data.update(values)
+    # Never expose a half-written status document to the C++ UI. Flush the
+    # sibling temporary file completely, then atomically replace the old file.
     temporary = status_path + '.tmp'
     with open(temporary, 'w', encoding='utf-8') as stream:
         json.dump(data, stream, ensure_ascii=False)
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, status_path)
-
-def clean_error(value):
-    return re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()[-700:]
 
 def classify(value):
     text = clean_error(value)
@@ -1357,18 +1373,6 @@ try:
     if not video_id:
         raise RuntimeError('YouTube did not return a video identifier.')
 
-    def is_sdr(candidate):
-        dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
-        note = str(candidate.get('format_note') or '').upper()
-        codec = str(candidate.get('vcodec') or '').lower()
-        return ('HDR' not in dynamic_range and 'HDR' not in note and
-                '.02' not in codec and not codec.startswith('vp09.02'))
-
-    def tier(candidate):
-        width = int(candidate.get('width') or 0)
-        height = int(candidate.get('height') or 0)
-        return min(width, height) if width > 0 and height > 0 else 0
-
     h264_heights = set()
     vp9_heights = set()
     for candidate in info.get('formats') or []:
@@ -1395,33 +1399,46 @@ try:
     if not available_heights:
         raise RuntimeError('No compatible 8-bit SDR H.264 or VP9 download tier is available.')
 
-    # The standard YouTube thumbnail endpoint is consistently JPEG, which
-    # Unity can decode directly without bundling another image codec.
-    thumbnail_url = 'https://i.ytimg.com/vi/' + video_id + '/hqdefault.jpg'
-    request = urllib.request.Request(
-        thumbnail_url,
-        headers={'User-Agent': 'Big-Screen-Beat-Saber'})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        image = response.read(4 * 1024 * 1024 + 1)
-    cancelled()
-    if len(image) > 4 * 1024 * 1024:
-        raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
+    # Thumbnail artwork is decorative. A CDN/certificate/image failure must
+    # not discard the valid title and compatible resolution tiers above.
+    published_thumbnail = ''
     temporary = job['thumbnailPath'] + '.tmp'
-    with open(temporary, 'wb') as stream:
-        stream.write(image)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, job['thumbnailPath'])
+    try:
+        thumbnail_url = 'https://i.ytimg.com/vi/' + video_id + '/hqdefault.jpg'
+        request = urllib.request.Request(
+            thumbnail_url,
+            headers={'User-Agent': 'Big-Screen-Beat-Saber'})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            image = response.read(4 * 1024 * 1024 + 1)
+        cancelled()
+        if len(image) > 4 * 1024 * 1024:
+            raise RuntimeError('The YouTube thumbnail was unexpectedly large.')
+        with open(temporary, 'wb') as stream:
+            stream.write(image)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, job['thumbnailPath'])
+        published_thumbnail = job['thumbnailPath']
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        try:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        except OSError:
+            pass
     publish(
         'probe_completed',
         'Recognized: ' + title,
         title=title,
-        thumbnailPath=job['thumbnailPath'],
+        thumbnailPath=published_thumbnail,
         availableHeights=available_heights)
 except KeyboardInterrupt:
     publish('cancelled', 'Video URL check cancelled')
 except BaseException as error:
-    publish('failed', classify(error))
+    publish(
+        'failed', classify(error), errorCode='BS-DL-PROBE-001',
+        diagnostic=clean_error(error))
 )PY";
 
         constexpr const char* UpdaterScript = R"PY(
@@ -1432,6 +1449,7 @@ def cancelled():
         raise KeyboardInterrupt('yt-dlp update cancelled')
 def publish(state, message='', **extra):
     value = {'state': state, 'message': message}; value.update(extra)
+    # Atomically publish complete updater status to the polling C++ reader.
     temporary = job['statusPath'] + '.tmp'
     with open(temporary, 'w', encoding='utf-8') as stream:
         json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())
@@ -1592,9 +1610,9 @@ os.replace(temporary, job['destination'])
            !LoadGlobalLibrary(InternalNativeRuntime / "libsqlite3_python.so", error))
             return fail("BS-DL-INIT-102", std::move(error));
 
-        // Validate and publish the certificate path before CPython starts. If
-        // this fails, Initialize() can safely be retried because no interpreter
-        // has been created and DownloaderActivation restores any candidate.
+        // Validate and publish the certificate path before CPython starts. A
+        // failure here receives a stable initialization code; Big Screen never
+        // attempts to create a second interpreter in the same game process.
         const auto certificateBundle = runtime / "certifi" / "cacert.pem";
         std::ifstream certificateStream(certificateBundle, std::ios::binary);
         std::string certificateHeader(4096, '\0');
@@ -1744,7 +1762,7 @@ os.replace(temporary, job['destination'])
                     PyEval_SaveThread();
                     return false;
                 }
-                currentUpdateVersion_ = "2026.07.04";
+                currentUpdateVersion_ = std::string(BundledYtDlpVersion);
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
                     std::getline(restoredVersion, currentUpdateVersion_);
@@ -1770,7 +1788,7 @@ os.replace(temporary, job['destination'])
                 // A package activated by an older Big Screen build can still
                 // be present without a pending `next` transaction. Reject that
                 // stranded update once and retry the immutable shipped copy.
-                if(std::filesystem::is_regular_file(active))
+                if(Utility::IsRegularFile(active))
                 {
                     auto rejectedVersion = currentUpdateVersion_;
                     std::error_code fileError;
@@ -1791,7 +1809,7 @@ os.replace(temporary, job['destination'])
                         runtime / "yt-dlp-rejected.version",
                         std::ios::binary | std::ios::trunc);
                     rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
-                    currentUpdateVersion_ = "2026.07.04";
+                    currentUpdateVersion_ = std::string(BundledYtDlpVersion);
                     smokeTestError = smokeTest();
                     if(smokeTestError.empty())
                     {
@@ -1900,9 +1918,9 @@ os.replace(temporary, job['destination'])
             request.levelId,
             request.origin,
             request.requestedHeight == 1440 ? ".webm" : ".mp4");
-        jobPath_ = library.RuntimePath() / "download-job.json";
         statusPath_ = library.RuntimePath() / "download-status.json";
         cancelPath_ = library.RuntimePath() / "download.cancel";
+        ignoreStatusFile_ = false;
         std::filesystem::remove(cancelPath_);
         std::filesystem::remove(statusPath_);
         snapshot_ = {};
@@ -1915,9 +1933,23 @@ os.replace(temporary, job['destination'])
             "Starting video download for '{}' ({})",
             request.songName,
             request.levelId);
-        worker_ = std::thread([this, request = std::move(request), finalPath]() mutable {
-            Run(std::move(request), finalPath);
-        });
+        try
+        {
+            worker_ = std::thread(
+                [this, request = std::move(request), finalPath]() mutable {
+                    Run(std::move(request), finalPath);
+                });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the video download worker: ") +
+                exception.what();
+            snapshot_.state = DownloadState::Failed;
+            snapshot_.message = error;
+            ErrorManager::Instance().RecordError(
+                "Starting the video download worker", exception.what());
+            return false;
+        }
         return true;
     }
 
@@ -1966,6 +1998,7 @@ os.replace(temporary, job['destination'])
         const auto runtime = VideoLibrary::Instance().RuntimePath();
         statusPath_ = runtime / "showcase-map-status.json";
         cancelPath_ = runtime / "showcase-map.cancel";
+        ignoreStatusFile_ = false;
         std::filesystem::remove(statusPath_);
         std::filesystem::remove(cancelPath_);
         snapshot_ = {};
@@ -1976,9 +2009,22 @@ os.replace(temporary, job['destination'])
             "Starting managed BeatSaver map download for key '{}' revision '{}'",
             request.mapKey,
             request.expectedHash);
-        worker_ = std::thread([this, request = std::move(request)]() mutable {
-            RunMapPackage(std::move(request));
-        });
+        try
+        {
+            worker_ = std::thread([this, request = std::move(request)]() mutable {
+                RunMapPackage(std::move(request));
+            });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the showcase map worker: ") +
+                exception.what();
+            snapshot_.state = DownloadState::Failed;
+            snapshot_.message = error;
+            ErrorManager::Instance().RecordError(
+                "Starting the showcase map worker", exception.what());
+            return false;
+        }
         return true;
     }
 
@@ -2017,6 +2063,7 @@ os.replace(temporary, job['destination'])
         const auto runtime = VideoLibrary::Instance().RuntimePath();
         statusPath_ = runtime / "url-probe-status.json";
         cancelPath_ = runtime / "url-probe.cancel";
+        ignoreStatusFile_ = false;
         std::filesystem::remove(statusPath_);
         std::filesystem::remove(cancelPath_);
         snapshot_ = {};
@@ -2025,13 +2072,26 @@ os.replace(temporary, job['destination'])
         snapshot_.message = "Checking YouTube URL";
         snapshot_.metadataOnly = true;
         PaperLogger.info("Checking a YouTube URL for {}", levelId);
-        worker_ = std::thread([
-            this,
-            levelId = std::move(levelId),
-            sourceUrl = std::move(sourceUrl)]() mutable
+        try
         {
-            RunProbe(std::move(levelId), std::move(sourceUrl));
-        });
+            worker_ = std::thread([
+                this,
+                levelId = std::move(levelId),
+                sourceUrl = std::move(sourceUrl)]() mutable
+            {
+                RunProbe(std::move(levelId), std::move(sourceUrl));
+            });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the video check worker: ") +
+                exception.what();
+            snapshot_.state = DownloadState::Failed;
+            snapshot_.message = error;
+            ErrorManager::Instance().RecordError(
+                "Starting the video check worker", exception.what());
+            return false;
+        }
         return true;
     }
 
@@ -2048,13 +2108,28 @@ os.replace(temporary, job['destination'])
         std::scoped_lock lock(mutex_);
         statusPath_ = VideoLibrary::Instance().RuntimePath() / "update-status.json";
         cancelPath_ = VideoLibrary::Instance().RuntimePath() / "update.cancel";
+        ignoreStatusFile_ = false;
         std::filesystem::remove(statusPath_);
         std::filesystem::remove(cancelPath_);
         snapshot_ = {};
         snapshot_.state = DownloadState::Preparing;
         snapshot_.levelId = "__updater__";
         snapshot_.message = "Checking yt-dlp releases";
-        worker_ = std::thread([this, nightly, install]() { RunUpdater(nightly, install); });
+        try
+        {
+            worker_ = std::thread(
+                [this, nightly, install]() { RunUpdater(nightly, install); });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the downloader update worker: ") +
+                exception.what();
+            snapshot_.state = DownloadState::Failed;
+            snapshot_.message = error;
+            ErrorManager::Instance().RecordError(
+                "Starting the downloader update worker", exception.what());
+            return false;
+        }
         return true;
     }
 
@@ -2079,7 +2154,7 @@ os.replace(temporary, job['destination'])
         std::filesystem::path destination)
     {
         if(!initialized_ || levelId.empty() || sourceUrl.empty() ||
-           destination.empty() || std::filesystem::is_regular_file(destination))
+           destination.empty() || Utility::IsRegularFile(destination))
             return;
 
         const auto key = destination.string();
@@ -2093,7 +2168,22 @@ os.replace(temporary, job['destination'])
             thumbnailQueue_.push_back({
                 std::move(levelId), std::move(sourceUrl), std::move(destination)});
             if(!thumbnailWorker_.joinable())
-                thumbnailWorker_ = std::thread([this]() { RunThumbnailQueue(); });
+            {
+                try
+                {
+                    thumbnailWorker_ =
+                        std::thread([this]() { RunThumbnailQueue(); });
+                }
+                catch(const std::exception& exception)
+                {
+                    thumbnailQueue_.pop_back();
+                    requestedThumbnails_.erase(key);
+                    ErrorManager::Instance().RecordError(
+                        "Starting the video thumbnail worker",
+                        exception.what());
+                    return;
+                }
+            }
         }
         thumbnailWake_.notify_one();
     }
@@ -2102,7 +2192,21 @@ os.replace(temporary, job['destination'])
     {
         std::scoped_lock lock(mutex_);
         if(!snapshot_.Active()) return;
-        std::ofstream(cancelPath_, std::ios::binary | std::ios::trunc) << "cancel";
+        std::ofstream stream(cancelPath_, std::ios::binary | std::ios::trunc);
+        stream << "cancel";
+        stream.flush();
+        if(!stream)
+        {
+            snapshot_.message = "Could not request downloader cancellation.";
+            PaperLogger.error(
+                "Could not write downloader cancellation marker '{}'.",
+                cancelPath_.string());
+            ErrorManager::Instance().RecordError(
+                "Cancelling downloader operation",
+                "The cancellation marker could not be written to " +
+                    cancelPath_.string());
+            return;
+        }
         snapshot_.message = "Stopping download";
         PaperLogger.info("Downloader cancellation requested for {}", snapshot_.levelId);
     }
@@ -2168,11 +2272,15 @@ os.replace(temporary, job['destination'])
                     buffer.GetString(), buffer.GetSize());
                 PythonObject result;
                 if(globals)
+                {
+                    const std::string script =
+                        std::string(MediaScriptHelpers) + DownloaderScript;
                     result.reset(PyRun_String(
-                        DownloaderScript,
+                        script.c_str(),
                         Py_file_input,
                         globals.get(),
                         globals.get()));
+                }
                 if(!globals || !result)
                 {
                     pythonFailure = TakePythonExceptionText();
@@ -2210,7 +2318,7 @@ os.replace(temporary, job['destination'])
                             rejected << (rejectedVersion.empty()
                                 ? "unknown"
                                 : rejectedVersion);
-                            currentUpdateVersion_ = "2026.07.04";
+                            currentUpdateVersion_ = std::string(BundledYtDlpVersion);
                             std::ifstream restoredVersion(
                                 active.string() + ".version", std::ios::binary);
                             if(restoredVersion)
@@ -2334,7 +2442,7 @@ os.replace(temporary, job['destination'])
                 if(thumbnailReplacement)
                     thumbnailReplacement->Commit();
                 snapshot_.thumbnailPath =
-                    std::filesystem::is_regular_file(thumbnailPath)
+                    Utility::IsRegularFile(thumbnailPath)
                         ? thumbnailPath.string()
                         : std::string{};
                 const auto diagnostic = ReadString(status, "diagnostic");
@@ -2493,8 +2601,12 @@ os.replace(temporary, job['destination'])
                     buffer.GetString(), buffer.GetSize());
                 PythonObject result;
                 if(globals)
+                {
+                    const std::string script =
+                        std::string(MediaScriptHelpers) + ProbeScript;
                     result.reset(PyRun_String(
-                        ProbeScript, Py_file_input, globals.get(), globals.get()));
+                        script.c_str(), Py_file_input, globals.get(), globals.get()));
+                }
                 if(!globals || !result)
                 {
                     pythonFailure = TakePythonExceptionText();
@@ -2516,6 +2628,17 @@ os.replace(temporary, job['destination'])
 
             std::scoped_lock lock(mutex_);
             RefreshSnapshotFromDiskLocked();
+            if(snapshot_.state == DownloadState::Failed)
+            {
+                ErrorManager::Instance().RecordError(
+                    "Checking a YouTube URL",
+                    (snapshot_.errorCode.empty()
+                        ? std::string("BS-DL-PROBE-001")
+                        : snapshot_.errorCode) + ": " +
+                    (snapshot_.diagnostic.empty()
+                        ? snapshot_.message
+                        : snapshot_.diagnostic));
+            }
             PaperLogger.info(
                 "URL check finished for {} with state '{}': {}",
                 levelId,
@@ -2668,6 +2791,8 @@ os.replace(temporary, job['destination'])
 
     void DownloadManager::RefreshSnapshotFromDiskLocked()
     {
+        if(ignoreStatusFile_)
+            return;
         std::ifstream stream(statusPath_, std::ios::binary);
         if(!stream) return;
         const std::string json{std::istreambuf_iterator<char>(stream), {}};
@@ -2676,6 +2801,8 @@ os.replace(temporary, job['destination'])
         if(document.HasParseError() || !document.IsObject()) return;
         snapshot_.state = ParseState(ReadString(document, "state"));
         snapshot_.message = ReadString(document, "message");
+        snapshot_.errorCode = ReadString(document, "errorCode");
+        snapshot_.diagnostic = ReadString(document, "diagnostic");
         snapshot_.downloadedBytes = static_cast<std::uint64_t>(ReadNumber(document, "downloadedBytes"));
         snapshot_.totalBytes = static_cast<std::uint64_t>(ReadNumber(document, "totalBytes"));
         snapshot_.speedBytesPerSecond = ReadNumber(document, "speed");
@@ -2695,16 +2822,31 @@ os.replace(temporary, job['destination'])
     void DownloadManager::SetFailure(std::string message)
     {
         std::scoped_lock lock(mutex_);
+        ignoreStatusFile_ = true;
         // The Python status file may still describe the last non-terminal
         // progress update. Remove it before publishing the C++ terminal state
         // so Snapshot() cannot resurrect a wedged Preparing/Downloading job.
         std::error_code removeError;
         std::filesystem::remove(statusPath_, removeError);
         if(removeError)
-            PaperLogger.warn(
-                "Could not remove stale downloader status '{}': {}",
-                statusPath_.string(),
-                removeError.message());
+        {
+            // Retry a transient handle race once. If deletion still fails,
+            // invalidate the JSON so Snapshot() cannot revive an active state.
+            removeError.clear();
+            std::filesystem::remove(statusPath_, removeError);
+            if(removeError)
+            {
+                std::ofstream staleStatus(
+                    statusPath_, std::ios::binary | std::ios::trunc);
+                staleStatus.flush();
+                const std::string cleanupDetail =
+                    "Could not remove stale downloader status '" +
+                    statusPath_.string() + "': " + removeError.message();
+                PaperLogger.warn("{}", cleanupDetail);
+                ErrorManager::Instance().RecordError(
+                    "Cleaning downloader status", cleanupDetail);
+            }
+        }
         snapshot_.state = DownloadState::Failed;
         snapshot_.message = std::move(message);
         PaperLogger.error("{}", snapshot_.message);

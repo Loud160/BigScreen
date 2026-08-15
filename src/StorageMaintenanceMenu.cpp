@@ -1,4 +1,13 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/StorageMaintenanceMenu.hpp"
+#include "BigScreen/UiUtility.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -35,34 +44,13 @@
 
 namespace BigScreen {
     namespace {
+        using UiUtility::EnsureLayout;
+
         // A center ViewController has substantially more horizontal room than
         // either angled side screen. Use most of that canvas so category,
         // size, and real-world filenames remain readable instead of applying
         // the 54-unit side-panel width to a center-screen maintenance table.
         constexpr float PanelWidth = 120.0f;
-
-        std::string Bytes(std::uint64_t value)
-        {
-            constexpr double MiB = 1024.0 * 1024.0;
-            constexpr double GiB = MiB * 1024.0;
-            char buffer[64]{};
-            if(value >= static_cast<std::uint64_t>(GiB))
-                std::snprintf(buffer, sizeof(buffer), "%.2f GB", value / GiB);
-            else
-                std::snprintf(buffer, sizeof(buffer), "%.1f MB", value / MiB);
-            return buffer;
-        }
-
-        UnityEngine::UI::LayoutElement* EnsureLayout(
-            UnityEngine::Component* component)
-        {
-            if(!component) return nullptr;
-            auto object = component->get_gameObject();
-            auto* layout = object->GetComponent<UnityEngine::UI::LayoutElement*>();
-            return layout
-                ? layout
-                : object->AddComponent<UnityEngine::UI::LayoutElement*>();
-        }
 
         void ConfigureLayout(
             UnityEngine::Component* component,
@@ -83,6 +71,10 @@ namespace BigScreen {
 
         std::size_t SnapshotFingerprint(const StorageSnapshot& snapshot)
         {
+            // StorageSnapshot is an immutable copy and survives process/menu
+            // recreation, so it has no reliable shared version counter. Hash
+            // every rendered field instead; even a theoretical collision only
+            // defers one harmless redraw until the next snapshot changes.
             std::size_t value = static_cast<std::size_t>(snapshot.state);
             const auto mix = [&value](std::size_t part)
             {
@@ -249,7 +241,7 @@ namespace BigScreen {
                     confirmationText_->set_text(
                         "<b>Remove " + std::to_string(count) +
                         " selected Big Screen file(s)?</b>\n\n" +
-                        Bytes(bytes) +
+                        Utility::FormatStorageSize(bytes, 1, 2) +
                         " will be removed. Unchecked files and user-owned map-folder or Video Import MP4s will remain untouched.");
                 }
                 confirmationModal_->Show();
@@ -409,7 +401,8 @@ namespace BigScreen {
         {
             const auto key = item.path.lexically_normal().string();
             const std::string label = item.category + "  |  " +
-                Bytes(item.bytes) + "  |  " + item.path.filename().string();
+                Utility::FormatStorageSize(item.bytes, 1, 2) +
+                    "  |  " + item.path.filename().string();
             auto* checkbox = BSML::Lite::CreateToggle(
                 fileListContent_,
                 label,
@@ -464,12 +457,12 @@ namespace BigScreen {
         {
             summary_->set_text(
                 snapshot.message +
-                "\nDownloads: " + Bytes(snapshot.downloadedBytes) +
-                "   |   Imports: " + Bytes(snapshot.importedBytes) +
-                "\nFree: " + Bytes(snapshot.freeBytes) +
-                "   |   Removable: " + Bytes(snapshot.removableBytes) +
+                "\nDownloads: " + Utility::FormatStorageSize(snapshot.downloadedBytes, 1, 2) +
+                "   |   Imports: " + Utility::FormatStorageSize(snapshot.importedBytes, 1, 2) +
+                "\nFree: " + Utility::FormatStorageSize(snapshot.freeBytes, 1, 2) +
+                "   |   Removable: " + Utility::FormatStorageSize(snapshot.removableBytes, 1, 2) +
                 "\nSelected: " + std::to_string(selectedCount) +
-                " file(s)   |   " + Bytes(selectedBytes));
+                " file(s)   |   " + Utility::FormatStorageSize(selectedBytes, 1, 2));
         }
 
         const bool busy = snapshot.state == StorageState::Scanning ||

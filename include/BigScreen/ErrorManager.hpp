@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
 #include <chrono>
@@ -62,8 +69,6 @@ namespace BigScreen {
             return false;
         }
 
-        static constexpr const char* LogFolder =
-            "/sdcard/ModData/com.beatgames.beatsaber/logs";
         static constexpr const char* PersistentErrorLog =
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/error-history.log";
         static constexpr const char* PerformanceLog =

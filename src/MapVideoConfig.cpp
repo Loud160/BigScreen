@@ -1,4 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/MapVideoConfig.hpp"
+#include "BigScreen/Utility.hpp"
 #include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
@@ -12,6 +20,12 @@
 namespace BigScreen {
     namespace {
         using JsonValue = rapidjson::Value;
+
+        bool IsRegularFile(const std::filesystem::path& path)
+        {
+            std::error_code error;
+            return std::filesystem::is_regular_file(path, error) && !error;
+        }
 
         const JsonValue* Member(const JsonValue& object, std::string_view name)
         {
@@ -80,21 +94,6 @@ namespace BigScreen {
             return std::string(value->GetString(), value->GetStringLength());
         }
 
-        bool IsPathInside(const std::filesystem::path& child, const std::filesystem::path& parent)
-        {
-            // Video filenames are map-authored input. Compare normalized path
-            // components instead of using a string prefix, which would mistake
-            // sibling directories such as "Song" and "Song Backup".
-            const auto normalizedChild = std::filesystem::absolute(child).lexically_normal();
-            const auto normalizedParent = std::filesystem::absolute(parent).lexically_normal();
-            auto childPart = normalizedChild.begin();
-            for(auto parentPart = normalizedParent.begin(); parentPart != normalizedParent.end(); ++parentPart, ++childPart)
-            {
-                if(childPart == normalizedChild.end() || *childPart != *parentPart)
-                    return false;
-            }
-            return true;
-        }
     }
 
     std::optional<MapVideoConfig> MapVideoConfig::LoadFromLevel(
@@ -149,7 +148,7 @@ namespace BigScreen {
         for(const auto name : candidates)
         {
             const auto path = levelDirectory / name;
-            if(std::filesystem::is_regular_file(path))
+            if(IsRegularFile(path))
             {
                 metadata = path;
                 break;
@@ -219,7 +218,7 @@ namespace BigScreen {
             }
 
             resolvedVideo = (levelDirectory / relativeVideo).lexically_normal();
-            if(!IsPathInside(resolvedVideo, levelDirectory))
+            if(!Utility::IsPathInside(resolvedVideo, levelDirectory))
             {
                 error = "videoFile resolves outside the custom level directory";
                 return std::nullopt;
@@ -229,7 +228,7 @@ namespace BigScreen {
         MapVideoConfig config;
         config.metadataPath = metadata;
         config.declaredVideoPath = resolvedVideo;
-        if(!resolvedVideo.empty() && std::filesystem::is_regular_file(resolvedVideo))
+        if(!resolvedVideo.empty() && IsRegularFile(resolvedVideo))
             config.videoPath = resolvedVideo;
         config.videoId = videoId;
         config.videoUrl = videoUrl;
@@ -336,7 +335,7 @@ namespace BigScreen {
 
     bool MapVideoConfig::HasLocalVideo() const
     {
-        return !videoPath.empty() && std::filesystem::is_regular_file(videoPath);
+        return !videoPath.empty() && IsRegularFile(videoPath);
     }
 
     double MapVideoConfig::MediaTimeForSong(double songTimeSeconds, double decodedDurationSeconds) const

@@ -1,4 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/StorageManager.hpp"
+#include "BigScreen/Utility.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -29,19 +37,6 @@ namespace BigScreen {
             return total;
         }
 
-        bool IsInside(const std::filesystem::path& child,
-                      const std::filesystem::path& parent)
-        {
-            const auto normalizedChild = std::filesystem::absolute(child).lexically_normal();
-            const auto normalizedParent = std::filesystem::absolute(parent).lexically_normal();
-            auto childPart = normalizedChild.begin();
-            for(auto parentPart = normalizedParent.begin();
-                parentPart != normalizedParent.end(); ++parentPart, ++childPart)
-                if(childPart == normalizedChild.end() || *childPart != *parentPart)
-                    return false;
-            return true;
-        }
-
         bool IsAbandonedTemporary(const std::filesystem::directory_entry& entry)
         {
             const auto extension = entry.path().extension().string();
@@ -50,6 +45,19 @@ namespace BigScreen {
             std::error_code error;
             const auto age = std::filesystem::file_time_type::clock::now() -
                 entry.last_write_time(error);
+            return !error && age > std::chrono::hours(1);
+        }
+
+        bool IsAbandonedReplacementBackup(
+            const std::filesystem::directory_entry& entry)
+        {
+            if(entry.path().extension() != ".replacement-backup")
+                return false;
+            std::error_code error;
+            const auto age = std::filesystem::file_time_type::clock::now() -
+                entry.last_write_time(error);
+            // A replacement can legitimately own this rollback file while its
+            // download is being committed. Only expose old leftovers.
             return !error && age > std::chrono::hours(1);
         }
     }
@@ -67,18 +75,39 @@ namespace BigScreen {
 
     bool StorageManager::StartScan(std::string& error)
     {
-        std::scoped_lock lock(mutex_);
-        if(snapshot_.state == StorageState::Scanning ||
-           snapshot_.state == StorageState::Cleaning)
         {
-            error = "A storage operation is already running.";
-            return false;
+            std::scoped_lock startLock(startMutex_);
+            {
+                std::scoped_lock lock(mutex_);
+                if(snapshot_.state == StorageState::Scanning ||
+                   snapshot_.state == StorageState::Cleaning)
+                {
+                    error = "A storage operation is already running.";
+                    return false;
+                }
+            }
+            // Never join while holding mutex_: a finishing worker publishes its
+            // terminal snapshot under that same lock.
+            if(worker_.joinable()) worker_.join();
+            std::scoped_lock lock(mutex_);
+            snapshot_ = {};
+            snapshot_.state = StorageState::Scanning;
+            snapshot_.message = "Scanning Big Screen storage...";
+            try
+            {
+                worker_ = std::thread([this]() { ScanWorker(); });
+            }
+            catch(const std::exception& exception)
+            {
+                error = std::string("Could not start the storage scanner: ") +
+                    exception.what();
+                snapshot_.state = StorageState::Failed;
+                snapshot_.message = error;
+                ErrorManager::Instance().RecordError(
+                    "Starting the storage scanner", exception.what());
+                return false;
+            }
         }
-        if(worker_.joinable()) worker_.join();
-        snapshot_ = {};
-        snapshot_.state = StorageState::Scanning;
-        snapshot_.message = "Scanning Big Screen storage...";
-        worker_ = std::thread([this]() { ScanWorker(); });
         return true;
     }
 
@@ -86,42 +115,60 @@ namespace BigScreen {
         const std::vector<std::filesystem::path>& selectedPaths,
         std::string& error)
     {
-        std::scoped_lock lock(mutex_);
-        if(snapshot_.state != StorageState::Ready)
-        {
-            error = "Run a storage scan before cleaning.";
-            return false;
-        }
-        if(selectedPaths.empty())
-        {
-            error = "Select at least one listed file before cleaning.";
-            return false;
-        }
-        if(worker_.joinable()) worker_.join();
+        std::scoped_lock startLock(startMutex_);
+        std::vector<StorageCleanupItem> approved;
 
         // The UI submits path identities, but deletion authority still comes
         // exclusively from the manager's most recent scan. Intersecting the
         // request with that immutable result prevents a stale or malformed UI
         // path from expanding cleanup beyond files the scanner approved.
-        std::unordered_set<std::string> selected;
-        selected.reserve(selectedPaths.size());
-        for(const auto& path : selectedPaths)
-            selected.emplace(path.lexically_normal().string());
-        std::vector<StorageCleanupItem> approved;
-        approved.reserve(selected.size());
-        for(const auto& item : snapshot_.items)
-            if(selected.contains(item.path.lexically_normal().string()))
-                approved.push_back(item);
-        if(approved.empty())
         {
-            error = "The selected files are no longer part of the current storage scan. Scan again and retry.";
-            return false;
+            std::scoped_lock lock(mutex_);
+            if(snapshot_.state != StorageState::Ready)
+            {
+                error = "Run a storage scan before cleaning.";
+                return false;
+            }
+            if(selectedPaths.empty())
+            {
+                error = "Select at least one listed file before cleaning.";
+                return false;
+            }
+            std::unordered_set<std::string> selected;
+            selected.reserve(selectedPaths.size());
+            for(const auto& path : selectedPaths)
+                selected.emplace(path.lexically_normal().string());
+            approved.reserve(selected.size());
+            for(const auto& item : snapshot_.items)
+                if(selected.contains(item.path.lexically_normal().string()))
+                    approved.push_back(item);
+            if(approved.empty())
+            {
+                error = "The selected files are no longer part of the current storage scan. Scan again and retry.";
+                return false;
+            }
         }
 
+        if(worker_.joinable()) worker_.join();
+        std::scoped_lock lock(mutex_);
         snapshot_.state = StorageState::Cleaning;
         snapshot_.message = "Removing " + std::to_string(approved.size()) +
             " selected file(s)...";
-        worker_ = std::thread([this, approved]() { CleanupWorker(approved); });
+        try
+        {
+            worker_ = std::thread(
+                [this, approved]() { CleanupWorker(approved); });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the storage cleanup: ") +
+                exception.what();
+            snapshot_.state = StorageState::Failed;
+            snapshot_.message = error;
+            ErrorManager::Instance().RecordError(
+                "Starting storage cleanup", exception.what());
+            return false;
+        }
         return true;
     }
 
@@ -136,7 +183,6 @@ namespace BigScreen {
         try
         {
             const auto& library = VideoLibrary::Instance();
-            const auto root = library.RootPath();
             const auto videos = library.VideoPath();
             const auto thumbnails = library.ThumbnailPath();
             const auto runtime = library.RuntimePath();
@@ -185,9 +231,12 @@ namespace BigScreen {
                 if(!it->is_regular_file(typeError) || typeError) continue;
                 if(IsAbandonedTemporary(*it))
                     add(it->path(), "Abandoned download");
-                else if(it->path().extension() == ".mp4" &&
+                else if((it->path().extension() == ".mp4" ||
+                         it->path().extension() == ".webm") &&
                         !usedVideos.contains(it->path().filename().string()))
                     add(it->path(), "Unassigned Big Screen download");
+                else if(IsAbandonedReplacementBackup(*it))
+                    add(it->path(), "Abandoned replacement backup");
             }
             iteratorError.clear();
             for(std::filesystem::directory_iterator it(thumbnails, iteratorError), end;
@@ -252,8 +301,9 @@ namespace BigScreen {
                 // Revalidate every exact scan result immediately before
                 // deletion. No glob, unresolved environment variable, map
                 // directory, or import directory can reach this operation.
-                if(!IsInside(item.path, root) ||
-                   IsInside(item.path, VideoLibrary::Instance().ImportPath()))
+                if(!Utility::IsPathInside(item.path, root) ||
+                   Utility::IsPathInside(
+                       item.path, VideoLibrary::Instance().ImportPath()))
                     continue;
                 std::error_code error;
                 if(std::filesystem::remove(item.path, error) && !error)

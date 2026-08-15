@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/ScreenPreview.hpp"
 
 #include <algorithm>
@@ -41,9 +48,9 @@ namespace BigScreen {
         // Two editor UI units equal 4 cm in this FloatingScreen transform,
         // leaving the moving preview visible just behind every edit control.
         constexpr float EditorVideoDepthOffsetUi = 2.0f;
-        // The grip is 12 UI units wide. A 5.5-unit inset shifts it half a unit
-        // right and down across the frame borders, producing a deliberate
-        // overlap that makes the control look anchored to the corner.
+        // The helper canvas is 14 UI units and its visible marker is scaled to
+        // 13. A 5.5-unit center inset leaves the marker edges overlapping the
+        // frame, making the control read as attached to the lower-right corner.
         constexpr float ResizeHandleInsetUi = 5.5f;
 
         void CenterRect(UnityEngine::RectTransform* rect)

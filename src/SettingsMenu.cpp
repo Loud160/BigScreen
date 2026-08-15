@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/SettingsMenu.hpp"
 
 #include <algorithm>
@@ -17,6 +24,7 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/ShowcaseLauncher.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "HMUI/HoverHint.hpp"
@@ -51,6 +59,8 @@
 
 namespace BigScreen {
     namespace {
+        using UiUtility::SetToggleWithoutNotification;
+
         std::array<std::string_view, 4> ResolutionChoices{
             "480p",
             "720p",
@@ -112,15 +122,6 @@ namespace BigScreen {
             if(text == "60 FPS")
                 return 60;
             return 30;
-        }
-
-        void SetToggleWithoutNotification(BSML::ToggleSetting* setting, bool value)
-        {
-            if(!setting)
-                return;
-            setting->currentValue = value;
-            if(setting->toggle)
-                setting->toggle->SetIsOnWithoutNotify(value);
         }
 
         void ApplyDisplaySettingsAndRefreshPreview()
@@ -332,7 +333,7 @@ namespace BigScreen {
 
         auto& settings = Settings::Instance();
 
-        // A native segmented control keeps the four categories visible while
+        // A native segmented control keeps the five categories visible while
         // their independent scroll views occupy the same content region.
         // Every page is scrollable from the start so future settings can be
         // added without another structural menu migration.
@@ -2597,6 +2598,10 @@ namespace BigScreen {
     void SettingsMenu::ResetToDefaults()
     {
         auto& settings = Settings::Instance();
+        // Disabling the live panel persists its current transform. Do that
+        // before Reset so the subsequent reset remains the final authority for
+        // the default panel placement instead of being overwritten afterward.
+        PerformancePanel::Instance().SetEnabled(false);
         settings.Reset();
 
         // Environment lives on an inactive tab while the reset button is
@@ -2647,7 +2652,6 @@ namespace BigScreen {
         SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(settings.VideoEnabled());
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
         ScreenPreview::Instance().SetEnabled(settings.ModEnabled());
-        PerformancePanel::Instance().SetEnabled(false);
         ApplyDistractionFreeMenu();
         RefreshControls();
         PaperLogger.info("Reset all Big Screen settings to defaults");
@@ -2659,9 +2663,9 @@ namespace BigScreen {
             ErrorManager::Instance().ReportUserVisible("Video library recovered", *recovery);
         if(auto update = DownloadManager::Instance().TakeUpdateNotice())
             ErrorManager::Instance().ReportUserVisible("Downloader rollback", *update);
-        // Do not consume a queued error before this retained singleton has a
-        // live modal to display it. The global status tick begins before the
-        // user has ever opened Big Screen.
+        // TakePendingDialog clears the queue. Consume only after this menu has
+        // a live modal, otherwise a recoverable creation/order change would
+        // discard the one user-visible explanation before it can be shown.
         if(errorModal_ && errorModalText_)
         {
             if(auto message = ErrorManager::Instance().TakePendingDialog())

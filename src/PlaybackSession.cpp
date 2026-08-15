@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/PlaybackSession.hpp"
 
 #include <algorithm>
@@ -89,7 +96,7 @@ namespace BigScreen {
             decoder_.PeakDecodeMilliseconds(),
             accumulatedDecoderCpuMilliseconds_ + activeDecoderCpu,
             automaticReductions_,
-            decoder_.DecoderBackendName(),
+            decoder_.DecodeMethodName(),
             decoder_.RuntimeVersion(),
             decoder_.CodecName()};
     }
@@ -861,7 +868,7 @@ namespace BigScreen {
                 currentWindowMissed,
                 d.averageDecodeMilliseconds,
                 d.peakDecodeMilliseconds,
-                d.decoderBackend,
+                d.decodeMethod,
                 d.decoderRuntime,
                 d.codec});
             if(completedDiagnosticsWindow)
@@ -1079,7 +1086,9 @@ namespace BigScreen {
         if(!automaticPerformanceHistory_.RecordReduction(
                previousFps, previousResolution))
         {
-            // The supported quality ladder can contain only four reductions.
+            // The complete 1440p/60 ladder contains five reductions. Reaching
+            // this branch indicates a future tier was added without resizing
+            // AutomaticPerformanceHistory.
             // Keep playback running if that invariant is ever changed, but log
             // it because recovery could no longer promise an exact reversal.
             PaperLogger.error(
@@ -1231,7 +1240,7 @@ namespace BigScreen {
              << " ms peak  |  RGBA allocations "
               << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
               << diagnostics.decoderRuntime << "  |  Decoder "
-              << diagnostics.decoderBackend;
+              << diagnostics.decodeMethod;
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
         const auto frameRate = CoreLogic::SummarizeFrameRate(
@@ -1308,7 +1317,7 @@ namespace BigScreen {
                 diagnostics.presentedFrames),
             diagnostics.averageDecodeMilliseconds,
             diagnostics.peakDecodeMilliseconds,
-            diagnostics.decoderBackend,
+            diagnostics.decodeMethod,
             diagnostics.decoderRuntime,
             diagnostics.codec});
         diagnosticsVisible_ = true;

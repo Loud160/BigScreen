@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 """Cross-file release invariants that are easy to regress during upgrades."""
 
 from __future__ import annotations
@@ -86,6 +93,116 @@ screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
 )
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
 qpm_shared = json.loads((root / "qpm.shared.json").read_text(encoding="utf-8"))
+
+# Big Screen's outbound license, section 7 terms, inbound contribution grant,
+# and DCO certification are deliberately separate mechanisms. Keep the release
+# repository and the QMOD notice staging aligned so a documentation edit cannot
+# silently turn a binary release into a source/license compliance failure.
+license_text = (root / "LICENSE").read_text(encoding="utf-8")
+additional_terms = (root / "LICENSE-ADDITIONAL-TERMS.md").read_text(
+    encoding="utf-8")
+notice_text = (root / "NOTICE").read_text(encoding="utf-8")
+contributing = (root / "CONTRIBUTING.md").read_text(encoding="utf-8")
+inbound_license = (root / "INBOUND_LICENSE.md").read_text(encoding="utf-8")
+dco = (root / "DCO.txt").read_text(encoding="utf-8")
+third_party_notices = (root / "THIRD_PARTY_NOTICES.md").read_text(
+    encoding="utf-8")
+readme = (root / "README.md").read_text(encoding="utf-8")
+mod_template = json.loads((root / "mod.template.json").read_text(encoding="utf-8"))
+stage_notices = (root / "scripts/stage-runtime-notices.ps1").read_text(
+    encoding="utf-8")
+create_qmod = (root / "scripts/createqmod.ps1").read_text(encoding="utf-8")
+
+assert "GNU GENERAL PUBLIC LICENSE" in license_text
+assert "Version 3, 29 June 2007" in license_text
+assert "END OF TERMS AND CONDITIONS" in license_text
+assert "MIT License" not in license_text
+for marker in (
+    "GPLv3 section 7(b)",
+    "GPLv3 section 7(c)",
+    "Loud160 (AKA Whisp)",
+    "interoperability permission",
+    "Beat Saber",
+    "Unity",
+):
+    assert marker in additional_terms
+assert "splash screen" in additional_terms
+assert "Loud160 (AKA Whisp)" in notice_text
+assert "canonical repository" in notice_text
+assert "https://github.com/Loud160/BigScreen" in notice_text
+assert "https://github.com/Loud160/BigScreen" in additional_terms
+assert mod_template["author"] == "Loud160 (AKA Whisp)"
+assert qpm["info"]["url"] == "https://github.com/Loud160/BigScreen"
+assert "source%20license-GPL--3.0--only-blue" in readme
+for marker in (
+    "GPL-3.0-only",
+    "inbound MIT",
+    "separate inbound MIT grant",
+    "Signed-off-by:",
+    "Developer Certificate of Origin 1.1",
+    "does **not** create or grant the inbound MIT license",
+):
+    assert marker in contributing
+assert "Copyright (c) the respective contributors to Big Screen" in inbound_license
+assert "Permission is hereby granted, free of charge" in inbound_license
+assert "Developer's Certificate of Origin 1.1" in dco
+assert "changing it is not allowed" in dco
+
+for runtime_notice in (
+    "BIGSCREEN-LICENSE.txt",
+    "BIGSCREEN-ADDITIONAL-TERMS.md",
+    "BIGSCREEN-NOTICE.txt",
+    "OPENSSL-APACHE-2.0.txt",
+    "SQLITE-PUBLIC-DOMAIN.txt",
+):
+    assert runtime_notice in stage_notices
+    assert runtime_notice in create_qmod
+for preserved_third_party_term in (
+    "MIT License",
+    "Apache License 2.0",
+    "Mozilla Public License 2.0",
+    "GNU Lesser General Public License 2.1 or later",
+    "Unlicense",
+    "zlib License",
+):
+    assert preserved_third_party_term in third_party_notices
+
+# Every first-party source/build file receives the base SPDX identifier plus a
+# human-readable pointer to Big Screen's section 7 terms. JSON and Markdown do
+# not permit or need source comments. Vendored and generated dependencies are
+# intentionally outside these roots and must never receive Big Screen headers.
+first_party_patterns = {
+    root / ".github/workflows": ("*.yml", "*.yaml"),
+    root / "cmake": ("*.cmake",),
+    root / "include": ("*.h", "*.hpp"),
+    root / "src": ("*.c", "*.cpp", "*.h", "*.hpp"),
+    root / "python": ("*.py",),
+    root / "scripts": ("*.ps1", "*.sh", "*.py"),
+    root / "tests": ("CMakeLists.txt", "*.c", "*.cpp", "*.h", "*.hpp", "*.py"),
+    root / "tools": ("*.c", "*.cpp", "*.h", "*.hpp", "*.py", "*.ps1", "*.sh"),
+}
+first_party_files: set[pathlib.Path] = {
+    root / "CMakeLists.txt",
+    root / "Build-And-Deploy.bat",
+}
+for directory, patterns in first_party_patterns.items():
+    for pattern in patterns:
+        first_party_files.update(directory.rglob(pattern))
+assert first_party_files
+for source_file in sorted(first_party_files):
+    source_text = source_file.read_text(encoding="utf-8")
+    source_preamble = "\n".join(source_text.splitlines()[:12])
+    assert source_preamble.count("SPDX-License-Identifier: GPL-3.0-only") == 1, source_file
+    assert "LICENSE-ADDITIONAL-TERMS.md" in source_preamble, source_file
+
+for vendored_sample in (
+    root / "extern/quickjs-ng/source/quickjs.c",
+    root / "extern/ffmpeg-lgpl/include/libavcodec/avcodec.h",
+    root / "extern/ffmpeg-lgpl-9.0.1/include/libavcodec/avcodec.h",
+):
+    if vendored_sample.exists():
+        assert "Loud160 (AKA Whisp)" not in vendored_sample.read_text(
+            encoding="utf-8", errors="ignore")
 
 # This file is primarily assert-based by design, so optimized Python must not
 # be able to turn the release audit into a silent pass.
@@ -217,10 +334,10 @@ for function_name in ("FrameDecoder::Close()", "FrameDecoder::SetWorkerError"):
     assert function.index("lock(requestMutex_)") < function.index("stopWorker_ = true")
 assert "AVERROR(EAGAIN)" in frame_decoder_source
 assert "av_strerror" in frame_decoder_source
-assert 'CodecPolicy{"H.264", "h264", "h264_mediacodec", false}' in frame_decoder_source
-assert 'CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", true}' in frame_decoder_source
-assert 'CodecPolicy{"VP8", "vp8", "vp8_mediacodec", false}' in frame_decoder_source
-assert 'CodecPolicy{"VP9", "vp9", "vp9_mediacodec", false}' in frame_decoder_source
+assert 'CodecPolicy{"H.264", "h264", "h264_mediacodec", CoreLogic::VideoCodecKind::H264}' in frame_decoder_source
+assert 'CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", CoreLogic::VideoCodecKind::Hevc}' in frame_decoder_source
+assert 'CodecPolicy{"VP8", "vp8", "vp8_mediacodec", CoreLogic::VideoCodecKind::Vp8}' in frame_decoder_source
+assert 'CodecPolicy{"VP9", "vp9", "vp9_mediacodec", CoreLogic::VideoCodecKind::Vp9}' in frame_decoder_source
 assert "std::once_flag registration" in frame_decoder_source
 assert "RegisterJavaVmForThisRuntime(javaVm)" in frame_decoder_source
 assert "const auto applyUserVideoControls" in playback_source
@@ -238,6 +355,18 @@ assert "return modloader_jvm;" in frame_decoder_facade
 assert 'dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs")' not in frame_decoder_facade
 assert "ReopenWithSoftwareAfterHardwareFailure" in frame_decoder_facade
 assert 'return UsingHardwareDecoder() ? "hardware" : "software";' in frame_decoder_facade
+close_and_retain = frame_decoder_facade.split(
+    "void FrameDecoder::CloseAndRetainBackendMetrics()", 1
+)[1].split("bool FrameDecoder::ReopenWithSoftwareAfterHardwareFailure", 1)[0]
+assert close_and_retain.index("backend_->Close();") < close_and_retain.index(
+    "accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();"
+)
+assert close_and_retain.index(
+    "accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();"
+) < close_and_retain.index("backend_.reset();")
+assert "retainedPeakDecodeMilliseconds_" in close_and_retain
+assert "accumulatedBufferAllocations_ += backend_->BufferAllocations();" in close_and_retain
+assert 'if(!backend_)\n            return "none";' in frame_decoder_facade
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
@@ -250,6 +379,11 @@ set_failure = download_manager_source.split(
 assert "std::filesystem::remove(statusPath_, removeError)" in set_failure
 assert set_failure.index("remove(statusPath_, removeError)") < set_failure.index(
     "snapshot_.state = DownloadState::Failed")
+assert "ignoreStatusFile_ = true;" in set_failure
+refresh_snapshot = download_manager_source.split(
+    "void DownloadManager::RefreshSnapshotFromDiskLocked()", 1
+)[1].split("void DownloadManager::SetFailure", 1)[0]
+assert "if(ignoreStatusFile_)" in refresh_snapshot
 assert "PyErr_Print" not in download_manager_source
 assert "PyEval_GetBuiltins" not in download_manager_source
 assert "PyImport_ImportModule(\"builtins\")" in download_manager_source
@@ -409,7 +543,7 @@ assert '"getIntProperty"' in power_benchmark_source
 assert '"getLongProperty"' in power_benchmark_source
 assert "power-benchmark-summary.csv" in power_benchmark_source
 assert "power-benchmark-samples.csv" in power_benchmark_source
-assert power_benchmark_source.count("decoder_backend") >= 2
+assert power_benchmark_source.count("decode_method") >= 2
 assert "Archived older power benchmark schema" in power_benchmark_source
 benchmark_tick = power_benchmark_source.split(
     "void PowerBenchmark::Tick", 1

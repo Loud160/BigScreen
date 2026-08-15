@@ -1,3 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen. Distributed under GPL-3.0-only with additional terms
+# under GPLv3 section 7(b)/(c) and an interoperability permission under
+# section 7; see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 name: Core tests
 
 on:
@@ -21,7 +27,7 @@ jobs:
       - name: Test
         run: ctest --test-dir build-host-tests -C Release --output-on-failure
       - name: Validate public files
-        run: test -f LICENSE && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md && test -f scripts/build-downloader-from-source.ps1 && test -f scripts/build_downloader_runtime.py
+        run: test -f LICENSE && test -f LICENSE-ADDITIONAL-TERMS.md && test -f NOTICE && test -f INBOUND_LICENSE.md && test -f DCO.txt && test -f CONTRIBUTING.md && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md && test -f scripts/build-downloader-from-source.ps1 && test -f scripts/build_downloader_runtime.py
 
   downloader-source-reproducibility:
     runs-on: ubuntu-latest

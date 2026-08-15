@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 """Syntax and user-facing HTTP error tests for embedded downloader scripts.
 
 The production scripts live inside C++ raw strings so the Quest never depends
@@ -14,7 +21,11 @@ import types
 
 
 def extract(source: str, name: str) -> str:
-    marker = f'constexpr const char* {name} = R"PY('
+    markers = (
+        f'constexpr const char* {name} = R"PY(',
+        f'constexpr std::string_view {name} = R"PY(',
+    )
+    marker = next(candidate for candidate in markers if candidate in source)
     start = source.index(marker) + len(marker)
     end = source.index('\n)PY";', start)
     return source[start:end]
@@ -36,9 +47,10 @@ def definitions(script: str, first_action: str) -> dict:
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 provider_source = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-download_script = extract(source, "DownloaderScript")
+media_helpers = extract(source, "MediaScriptHelpers")
+download_script = media_helpers + extract(source, "DownloaderScript")
 map_package_script = extract(source, "MapPackageScript")
-probe_script = extract(source, "ProbeScript")
+probe_script = media_helpers + extract(source, "ProbeScript")
 updater_script = extract(source, "UpdaterScript")
 
 # A candidate that failed the on-device import test must not be offered every

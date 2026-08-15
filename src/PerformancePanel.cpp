@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/PerformancePanel.hpp"
 #include "main.hpp"
 
@@ -322,7 +329,7 @@ namespace BigScreen {
                     ? std::format("{:.1f}", d.maximumFps)
                     : std::string("--"));
             row(rightRows_[0], "Decoder",
-                live ? (d.decoderBackend == "hardware"
+                live ? (d.decodeMethod == "hardware"
                             ? std::string("Hardware")
                             : std::string("Software"))
                      : std::string("--"));

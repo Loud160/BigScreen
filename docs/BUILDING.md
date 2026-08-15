@@ -147,7 +147,8 @@ an older QMOD. It packages:
 - the immutable shipped yt-dlp baseline containing yt-dlp-ejs, Big Screen
   challenge-provider module, and certifi CA bundle;
 - runtime integrity manifest;
-- Big Screen, QuickJS-NG, and other third-party notices/license texts;
+- Big Screen's GPLv3 text, section 7 terms, attribution notice, and the
+  QuickJS-NG, CPython, OpenSSL, SQLite, certifi, yt-dlp, and FFmpeg notices;
 - both private LGPL FFmpeg sets (eight FFmpeg libraries), two decoder backend
   libraries, and both versions' build/source-change records.
 
@@ -156,6 +157,15 @@ Inspect the archive before release:
 ```powershell
 tar -tf './Big Screen.qmod'
 ```
+
+Before distributing the QMOD publicly, publish the complete matching Big
+Screen Corresponding Source and both FFmpeg source versions/build changes, then
+identify <https://github.com/Loud160/BigScreen> in the repository/release
+metadata and `NOTICE`. The repository may remain private during development,
+but its matching release source must be publicly accessible when the QMOD is
+publicly distributed. The BSQMods repository consumed by ModsBeforeFriday
+accepts QMOD release metadata, but that packaging mechanism does not replace
+GPL/LGPL source availability obligations.
 
 For an ELF dependency audit, use the NDK copy of `llvm-readelf` and verify that
 the direct Python dependency list contains `libpython3.14.so` but not

@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 """yt-dlp JavaScript challenge provider backed by Big Screen's native engine.
 
 Android does not allow Beat Saber to launch a downloaded qjs executable. Big

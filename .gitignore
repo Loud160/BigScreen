@@ -76,6 +76,7 @@ out/
 ndkpath.txt
 *.zip
 *.txt
+!DCO.txt
 !licenses/
 !licenses/*.txt
 *.log

@@ -1,3 +1,9 @@
+@REM SPDX-License-Identifier: GPL-3.0-only
+@REM SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+@REM
+@REM Part of Big Screen. Distributed under GPL-3.0-only with additional terms
+@REM under GPLv3 section 7(b)/(c) and an interoperability permission under
+@REM section 7; see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 @echo off
 setlocal
 

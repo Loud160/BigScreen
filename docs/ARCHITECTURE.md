@@ -121,8 +121,9 @@ wave. Song-time waves remain deterministic through pause, seek, practice, and
 Replay; a separately selectable real-time clock supports deliberate ambient
 motion. Stretch-to-fill preserves the original UVs, while auto-cover crops
 inward to avoid blank or edge-clamped pixels after deformation. The unlit
-material does not need recalculated normals, and all dynamic arrays are
-allocated when the showcase surfaces are created.
+material does not need recalculated normals. The large vertex, UV, and index
+buffers are allocated when showcase surfaces are created and reused while they
+animate; small control/state containers may still change outside the hot loop.
 
 The same showcase-only vertex path includes a deterministic glass-fracture
 system. `CoreLogic` uses a fixed seeded PRNG, radial site placement, rectangular

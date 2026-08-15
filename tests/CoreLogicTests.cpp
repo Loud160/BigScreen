@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -87,14 +94,20 @@ int main()
            "the second FPS quality tier is recorded");
     Expect(performanceHistory.RecordReduction(15, 1080),
            "the first resolution quality tier is recorded");
+    Expect(performanceHistory.RecordReduction(15, 720),
+           "the 720p tier is retained in the five-step 1440p recovery ladder");
+    Expect(performanceHistory.RecordReduction(15, 480),
+           "the fifth 1440p/60 reduction fits in the fixed history");
+    Expect(!performanceHistory.RecordReduction(15, 480),
+           "the fixed history rejects only a sixth impossible reduction");
     auto recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && recovery->first == 15 && recovery->second == 1080,
-           "recovery first restores the most recent resolution tier");
+    Expect(recovery && recovery->first == 15 && recovery->second == 480,
+           "recovery first restores the exact most recent tier");
     Expect(performanceHistory.CommitRecovery(),
            "a successful recovery removes exactly one tier");
     recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && recovery->first == 30 && recovery->second == 1080,
-           "the next recovery reverses the last FPS reduction");
+    Expect(recovery && recovery->first == 15 && recovery->second == 720,
+           "the next recovery restores the preceding resolution tier");
     performanceHistory.Reset();
     Expect(performanceHistory.Empty() && !performanceHistory.RecoveryTarget(),
            "a new playback baseline clears stale recovery tiers");
@@ -102,6 +115,35 @@ int main()
            "the ongoing controller can reduce again after a full recovery");
     Expect(performanceHistory.CommitRecovery() && performanceHistory.Empty(),
            "the repeated recovery returns to the exact new baseline");
+
+    Expect(IsSupportedVideoCodec(VideoCodecKind::H264) &&
+           IsSupportedVideoCodec(VideoCodecKind::Hevc) &&
+           IsSupportedVideoCodec(VideoCodecKind::Vp8) &&
+           IsSupportedVideoCodec(VideoCodecKind::Vp9),
+           "all four advertised codecs are represented in shared policy");
+    Expect(!IsSupportedVideoCodec(VideoCodecKind::Unknown),
+           "unknown codecs are rejected by shared policy");
+    Expect(VideoCodecRequiresHardware(VideoCodecKind::Hevc) &&
+           !VideoCodecRequiresHardware(VideoCodecKind::H264),
+           "HEVC alone is hardware-only regardless of source size");
+    Expect(SoftwareFallbackBlockedReason(VideoCodecKind::H264, 1080).empty(),
+           "1080p H.264 can fall back to software");
+    Expect(!SoftwareFallbackBlockedReason(VideoCodecKind::Vp9, 1440).empty(),
+           "1440p VP9 refuses software fallback");
+    Expect(SoftwareFallbackBlockedReason(VideoCodecKind::H264, 2160)
+               .find("2160p") != std::string::npos,
+           "greater-than-1080p refusal reports the actual source height");
+    Expect(UnsupportedVideoSignalReason(
+               VideoCodecKind::H264, true, false, false, true)
+               .find("HDR") != std::string::npos,
+           "HDR is rejected with an explicit reason");
+    Expect(UnsupportedVideoSignalReason(
+               VideoCodecKind::Vp9, false, true, false, true)
+               .find("profile 2") != std::string::npos,
+           "10-bit VP9 is rejected with codec-specific guidance");
+    Expect(UnsupportedVideoSignalReason(
+               VideoCodecKind::H264, false, false, false, true).empty(),
+           "8-bit SDR 4:2:0 remains compatible");
 
     Expect(!ShouldSampleGameplayFrame(9.9, 120.0, false),
            "gameplay FPS excludes the first ten seconds");

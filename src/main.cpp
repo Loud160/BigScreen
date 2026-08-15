@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "main.hpp"
 
 #include <algorithm>
@@ -124,12 +131,14 @@ namespace {
     std::optional<bool> appliedShowcaseRingVisibility;
     std::vector<ShowcaseRingState> showcaseSidePillarStates;
     std::optional<bool> appliedShowcaseSidePillarVisibility;
+    bool showcaseSidePillarLateCaptureAttempted = false;
     struct ShowcaseRendererState {
         UnityW<UnityEngine::Renderer> renderer = nullptr;
         bool originallyEnabled = true;
     };
     std::vector<ShowcaseRendererState> showcaseBackgroundRenderers;
     std::optional<bool> appliedShowcaseBackgroundVisibility;
+    bool showcaseBackgroundLateCaptureAttempted = false;
 
     void CaptureUniqueShowcaseObject(
         std::vector<ShowcaseRingState>& states,
@@ -201,6 +210,7 @@ namespace {
         }
         showcaseSidePillarStates.clear();
         appliedShowcaseSidePillarVisibility.reset();
+        showcaseSidePillarLateCaptureAttempted = false;
     }
 
     void CaptureShowcaseSidePillars()
@@ -300,6 +310,7 @@ namespace {
         }
         showcaseBackgroundRenderers.clear();
         appliedShowcaseBackgroundVisibility.reset();
+        showcaseBackgroundLateCaptureAttempted = false;
     }
 
     void CaptureShowcaseBackground()
@@ -367,8 +378,11 @@ namespace {
         // discovery exactly once when the authored hide cue begins. This
         // captures late-created geometry without doing scene-wide searches on
         // every gameplay frame or changing any saved environment toggle.
-        if(!visible && appliedShowcaseSidePillarVisibility != false)
+        if(!visible && !showcaseSidePillarLateCaptureAttempted)
+        {
             CaptureShowcaseSidePillars();
+            showcaseSidePillarLateCaptureAttempted = true;
+        }
         if(showcaseSidePillarStates.empty())
             return;
         if(appliedShowcaseSidePillarVisibility == visible)
@@ -384,12 +398,21 @@ namespace {
 
     void UpdateShowcaseBackground(double songTimeSeconds)
     {
-        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive() ||
-           showcaseBackgroundRenderers.empty())
+        if(!BigScreen::PlaybackSession::Instance().ShowcaseActive())
             return;
         const bool visible =
             BigScreen::UpDownShowcase::BackgroundEnvironmentVisible(
                 songTimeSeconds);
+        // Chroma may instantiate renderer roots after StartSong. Retry the
+        // scene-wide capture once at the first hide cue, never every frame.
+        if(!visible && showcaseBackgroundRenderers.empty() &&
+           !showcaseBackgroundLateCaptureAttempted)
+        {
+            CaptureShowcaseBackground();
+            showcaseBackgroundLateCaptureAttempted = true;
+        }
+        if(showcaseBackgroundRenderers.empty())
+            return;
         if(appliedShowcaseBackgroundVisibility == visible)
             return;
         for(auto& state : showcaseBackgroundRenderers)
@@ -506,7 +529,7 @@ namespace {
                 "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
                 "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
                 "<color=#AEBAC8>Decode</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
-                data.video.decoderBackend == "hardware" ? "HARDWARE" : "SOFTWARE",
+                data.video.decodeMethod == "hardware" ? "HARDWARE" : "SOFTWARE",
                 data.video.codec.empty() ? "UNKNOWN" : data.video.codec,
                 data.video.decoderRuntime,
                 data.video.sourceWidth,
@@ -1033,113 +1056,147 @@ namespace {
         // this helper. Preparing here is early enough to influence environment
         // selection but late enough to avoid hooking both overloaded Init APIs.
         auto& playback = BigScreen::PlaybackSession::Instance();
-        auto beatmapKey = self->get_beatmapKey();
-        std::string characteristic;
-        if(beatmapKey.beatmapCharacteristic)
-        {
-            const auto serializedName =
-                beatmapKey.beatmapCharacteristic->get_serializedName();
-            if(serializedName)
-                characteristic = std::string(serializedName);
-        }
-        auto* level = self->get_beatmapLevel();
-        // Prepare the independent benchmark identity even when Video In Map is
-        // off. That makes a baseline run and a video run directly comparable.
-        BigScreen::PowerBenchmark::Instance().Prepare(
-            level && level->levelID ? std::string(level->levelID) : std::string{},
-            level && level->songName ? std::string(level->songName) : "Unknown song",
-            level && level->songAuthorName
-                ? std::string(level->songAuthorName)
-                : "Unknown artist",
-            characteristic,
-            beatmapKey.difficulty.value__);
-        if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
-        {
-            playback.Prepare(level);
-            playback.ConfigureGameplayBeatmap(
-                characteristic,
-                beatmapKey.difficulty.value__);
-            playback.PrewarmGameplay();
-        }
-        else
-            playback.Prepare(nullptr);
+        BigScreen::ErrorManager::Instance().Guard(
+            "preparing video before environment selection", [&]() {
+                auto beatmapKey = self->get_beatmapKey();
+                std::string characteristic;
+                if(beatmapKey.beatmapCharacteristic)
+                {
+                    const auto serializedName =
+                        beatmapKey.beatmapCharacteristic->get_serializedName();
+                    if(serializedName)
+                        characteristic = std::string(serializedName);
+                }
+                auto* level = self->get_beatmapLevel();
+                // Prepare benchmark identity even when Video In Map is off so
+                // baseline and video runs remain directly comparable.
+                BigScreen::PowerBenchmark::Instance().Prepare(
+                    level && level->levelID ? std::string(level->levelID) : std::string{},
+                    level && level->songName ? std::string(level->songName) : "Unknown song",
+                    level && level->songAuthorName
+                        ? std::string(level->songAuthorName)
+                        : "Unknown artist",
+                    characteristic,
+                    beatmapKey.difficulty.value__);
+                if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
+                {
+                    playback.Prepare(level);
+                    playback.ConfigureGameplayBeatmap(
+                        characteristic,
+                        beatmapKey.difficulty.value__);
+                    playback.PrewarmGameplay();
+                }
+                else
+                    playback.Prepare(nullptr);
+            });
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
             self,
             overrideEnvironmentSettings,
             environmentsListModel);
 
-        const auto& settings = BigScreen::Settings::Instance();
-        if(playback.MapperEnvironmentPresentationActive())
-        {
-            // A mapper-requested environment is part of the Cinema scene
-            // contract. If none is supplied, retain the map's normal Chroma-
-            // aware environment instead of forcing Big Mirror.
-            const auto& mapperEnvironment = playback.RequestedEnvironment();
-            if(!mapperEnvironment || !environmentsListModel)
-            {
-                PaperLogger.info(
-                    "Allow Chroma Override retained the map's intended environment");
-                return;
-            }
-            auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(
-                StringW(*mapperEnvironment));
-            if(environment &&
-               std::string(environment->get_serializedName()) == *mapperEnvironment)
-            {
-                self->set_environmentInfo(environment);
-                self->set_usingOverrideEnvironment(true);
-                PaperLogger.info(
-                    "Allow Chroma Override loaded mapper environment '{}'",
-                    *mapperEnvironment);
-            }
-            else
-            {
-                PaperLogger.warn(
-                    "Mapper environment '{}' is unavailable; keeping the map environment",
-                    *mapperEnvironment);
-            }
-            return;
-        }
+        BigScreen::ErrorManager::Instance().Guard(
+            "applying the video environment override", [&]() {
+                const auto& settings = BigScreen::Settings::Instance();
+                if(playback.MapperEnvironmentPresentationActive())
+                {
+                    // A mapper-requested environment is part of the Cinema
+                    // contract. If none is supplied, retain the map's normal
+                    // Chroma-aware environment rather than forcing Big Mirror.
+                    const auto& mapperEnvironment =
+                        playback.RequestedEnvironment();
+                    if(!mapperEnvironment)
+                    {
+                        PaperLogger.info(
+                            "Allow Chroma Override retained the map's intended environment");
+                        return;
+                    }
+                    if(!environmentsListModel)
+                    {
+                        PaperLogger.warn(
+                            "Beat Saber's environment list was unavailable; retaining the map environment");
+                        BigScreen::ErrorManager::Instance().RecordError(
+                            "Applying the mapper environment",
+                            "Beat Saber's environment list was unavailable; the map environment was retained");
+                        return;
+                    }
+                    auto environment = environmentsListModel
+                        ->GetEnvironmentInfoBySerializedNameSafe(
+                            StringW(*mapperEnvironment));
+                    if(environment && std::string(
+                           environment->get_serializedName()) ==
+                           *mapperEnvironment)
+                    {
+                        self->set_environmentInfo(environment);
+                        self->set_usingOverrideEnvironment(true);
+                        PaperLogger.info(
+                            "Allow Chroma Override loaded mapper environment '{}'",
+                            *mapperEnvironment);
+                    }
+                    else
+                    {
+                        PaperLogger.warn(
+                            "Mapper environment '{}' is unavailable; keeping the map environment",
+                            *mapperEnvironment);
+                    }
+                    return;
+                }
 
-        if(!settings.GlassDesertOverrideEnabled() &&
-           !settings.EnvironmentOverrideEnabled())
-        {
-            if(playback.HasPreparedVideo())
-                PaperLogger.info("Environment overrides disabled; using the map's intended environment");
-            return;
-        }
+                if(!settings.GlassDesertOverrideEnabled() &&
+                   !settings.EnvironmentOverrideEnabled())
+                {
+                    if(playback.HasPreparedVideo())
+                    {
+                        PaperLogger.info(
+                            "Environment overrides disabled; using the map's intended environment");
+                    }
+                    return;
+                }
 
-        if(!playback.HasPreparedVideo() || !environmentsListModel)
-            return;
+                if(!playback.HasPreparedVideo())
+                    return;
+                if(!environmentsListModel)
+                {
+                    PaperLogger.warn(
+                        "Beat Saber's environment list was unavailable; retaining the map environment");
+                    BigScreen::ErrorManager::Instance().RecordError(
+                        "Applying the video environment",
+                        "Beat Saber's environment list was unavailable; the map environment was retained");
+                    return;
+                }
 
-        // Glass Desert is an explicit experiment and takes precedence while
-        // enabled. Turning it back off restores the independent Big Mirror
-        // preference without losing that user's normal override choice.
-        constexpr auto bigMirrorName = "BigMirrorEnvironment";
-        constexpr auto glassDesertName = "GlassDesertEnvironment";
-        const auto* requestedName = settings.GlassDesertOverrideEnabled()
-            ? glassDesertName
-            : bigMirrorName;
-        auto environment = environmentsListModel->GetEnvironmentInfoBySerializedNameSafe(
-            StringW(requestedName));
-        if(environment && std::string(environment->get_serializedName()) == requestedName)
-        {
-            self->set_environmentInfo(environment);
-            self->set_usingOverrideEnvironment(true);
-            PaperLogger.info(
-                "Forced {} environment for video gameplay",
-                settings.GlassDesertOverrideEnabled() ? "Glass Desert" : "Big Mirror");
-        }
-        else
-        {
-            PaperLogger.error(
-                "Requested {} environment is unavailable; keeping the map environment",
-                requestedName);
-            BigScreen::ErrorManager::Instance().RecordError(
-                "Applying the requested environment",
-                std::string("Environment '") + requestedName +
-                    "' was unavailable; the map environment was retained");
-        }
+                // Glass Desert is an explicit experiment and takes precedence
+                // while enabled. Turning it off restores the independent Big
+                // Mirror preference without losing the normal override choice.
+                constexpr auto bigMirrorName = "BigMirrorEnvironment";
+                constexpr auto glassDesertName = "GlassDesertEnvironment";
+                const auto* requestedName = settings.GlassDesertOverrideEnabled()
+                    ? glassDesertName
+                    : bigMirrorName;
+                auto environment = environmentsListModel
+                    ->GetEnvironmentInfoBySerializedNameSafe(
+                        StringW(requestedName));
+                if(environment && std::string(
+                       environment->get_serializedName()) == requestedName)
+                {
+                    self->set_environmentInfo(environment);
+                    self->set_usingOverrideEnvironment(true);
+                    PaperLogger.info(
+                        "Forced {} environment for video gameplay",
+                        settings.GlassDesertOverrideEnabled()
+                            ? "Glass Desert"
+                            : "Big Mirror");
+                }
+                else
+                {
+                    PaperLogger.error(
+                        "Requested {} environment is unavailable; keeping the map environment",
+                        requestedName);
+                    BigScreen::ErrorManager::Instance().RecordError(
+                        "Applying the requested environment",
+                        std::string("Environment '") + requestedName +
+                            "' was unavailable; the map environment was retained");
+                }
+            });
     }
 
     MAKE_HOOK_MATCH(
@@ -1162,26 +1219,30 @@ namespace {
         }
 
         auto* effectiveSettings = playerSpecificSettings;
-        if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
-           !BigScreen::PlaybackSession::Instance().MapperEnvironmentPresentationActive() &&
-           !BigScreen::Settings::Instance().MapLightShowEnabled() &&
-           playerSpecificSettings)
-        {
-            // CopyWith preserves every player preference while replacing only
-            // the two difficulty-dependent environment filters. Passing a copy
-            // avoids mutating Beat Saber's saved setting or affecting non-video
-            // songs after this scene transition.
-            using OptionalEffects =
-                System::Nullable_1<GlobalNamespace::EnvironmentEffectsFilterPreset>;
-            const OptionalEffects noEffects{
-                true,
-                GlobalNamespace::EnvironmentEffectsFilterPreset::NoEffects
-            };
-            effectiveSettings = playerSpecificSettings->CopyWith(
-                {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
-                {}, {}, {}, {}, {}, {}, {}, noEffects, noEffects, {});
-            PaperLogger.info("Map light show disabled for this video level");
-        }
+        BigScreen::ErrorManager::Instance().Guard(
+            "preparing video-specific player settings", [&]() {
+                if(BigScreen::PlaybackSession::Instance().HasPreparedVideo() &&
+                   !BigScreen::PlaybackSession::Instance()
+                        .MapperEnvironmentPresentationActive() &&
+                   !BigScreen::Settings::Instance().MapLightShowEnabled() &&
+                   playerSpecificSettings)
+                {
+                    // CopyWith preserves every player preference while
+                    // replacing only the two difficulty-dependent environment
+                    // filters. A copy cannot alter saved settings or later maps.
+                    using OptionalEffects = System::Nullable_1<
+                        GlobalNamespace::EnvironmentEffectsFilterPreset>;
+                    const OptionalEffects noEffects{
+                        true,
+                        GlobalNamespace::EnvironmentEffectsFilterPreset::NoEffects
+                    };
+                    effectiveSettings = playerSpecificSettings->CopyWith(
+                        {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+                        {}, {}, {}, {}, {}, {}, {}, noEffects, noEffects, {});
+                    PaperLogger.info(
+                        "Map light show disabled for this video level");
+                }
+            });
 
         StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes(
             self,
@@ -1242,7 +1303,9 @@ namespace {
         GlobalNamespace::AudioTimeSyncController* self,
         float startTimeOffset)
     {
-        BigScreen::Settings::Instance().Flush();
+        BigScreen::ErrorManager::Instance().Guard("saving settings before gameplay", []() {
+            BigScreen::Settings::Instance().Flush();
+        });
         AudioTimeSyncController_StartSong(self, startTimeOffset);
 
         if(!BigScreen::Settings::Instance().ModEnabled())
@@ -1309,7 +1372,9 @@ namespace {
                     BigScreen::ScreenPreview::Instance()
                         .CancelUndockedEditing();
                 });
-            BigScreen::Settings::Instance().Flush();
+            BigScreen::ErrorManager::Instance().Guard("saving settings after focus loss", []() {
+                BigScreen::Settings::Instance().Flush();
+            });
         }
     }
 
@@ -1321,7 +1386,9 @@ namespace {
     {
         SongPreviewPlayer_Update(self);
 
-        BigScreen::Settings::Instance().TickPersistence();
+        BigScreen::ErrorManager::Instance().Guard("saving deferred settings", []() {
+            BigScreen::Settings::Instance().TickPersistence();
+        });
         // The benchmark toggle may already be enabled from the prior app run.
         // Probe from the first stable main-menu update so battery telemetry is
         // verified before the user spends time on an A/B gameplay pair.
@@ -1379,7 +1446,8 @@ namespace {
         // pause, resume, and crossfade channel changes.
         const int activeChannel = self->__cordl_internal_get__activeChannel();
         auto controllers = self->__cordl_internal_get__audioSourceControllers();
-        if(!controllers || activeChannel < 0 || activeChannel >= controllers.size())
+        if(!controllers || activeChannel < 0 ||
+           static_cast<std::size_t>(activeChannel) >= controllers.size())
             return;
 
         auto* controller = controllers[activeChannel];
@@ -1474,22 +1542,21 @@ namespace {
         if(!firstActivation ||
            !BigScreen::Settings::Instance().PerformanceDiagnosticsEnabled())
             return;
-        const auto& results =
-            BigScreen::PlaybackSession::Instance().LastResultsData();
-        if(!results)
-            return;
-        // Parent the summary to Beat Saber's LevelBar (the song artwork and
-        // title strip) instead of pinning it near the bottom of the results
-        // view. The card is slightly higher than the previous raw text block,
-        // keeping its lower edge clear of the artwork and song title.
-        UnityEngine::Transform* summaryParent = self->get_transform();
-        float summaryCenterY = 40.0f;
-        if(self->____levelBar)
-        {
-            summaryParent = self->____levelBar->get_transform();
-            summaryCenterY = 21.0f;
-        }
-        CreateResultsPerformancePanel(summaryParent, summaryCenterY, *results);
+        BigScreen::ErrorManager::Instance().Guard(
+            "showing results performance information", [&]() {
+                const auto& results =
+                    BigScreen::PlaybackSession::Instance().LastResultsData();
+                if(!results)
+                    return;
+                UnityEngine::Transform* summaryParent = self->get_transform();
+                float summaryCenterY = 40.0f;
+                if(self->____levelBar)
+                {
+                    summaryParent = self->____levelBar->get_transform();
+                    summaryCenterY = 21.0f;
+                }
+                CreateResultsPerformancePanel(summaryParent, summaryCenterY, *results);
+            });
     }
 
     MAKE_HOOK_MATCH(

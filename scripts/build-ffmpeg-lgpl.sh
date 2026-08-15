@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 
 # Build one of the two private FFmpeg runtimes used by Big Screen.
 #
@@ -180,6 +187,11 @@ cd "${build_root}"
     --enable-protocol=file \
     --extra-cflags='-O3 -fPIC' \
     --extra-ldflags='-Wl,-Bsymbolic'
+
+# -Bsymbolic binds calls inside each private FFmpeg DSO to that DSO's own
+# versioned symbols. This is the second isolation layer after unique SONAME and
+# symbol namespaces; it prevents an already-loaded Hollywood FFmpeg runtime
+# from interposing on Big Screen's internal cross-library references.
 
 # Treat the license boundary as a machine-checked build invariant. FFmpeg's
 # generated makefile records disabled configure features with negated entries;

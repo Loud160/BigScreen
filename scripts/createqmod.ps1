@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 Param(
     [Parameter(Mandatory=$false)]
     [String] $qmodName="",
@@ -90,6 +97,8 @@ $runtimeFiles = @(
     "CPYTHON-LICENSE.txt"
     "bigscreen_jsc_provider.py"
     "BIGSCREEN-LICENSE.txt"
+    "BIGSCREEN-ADDITIONAL-TERMS.md"
+    "BIGSCREEN-NOTICE.txt"
     "THIRD-PARTY-NOTICES.md"
     "FFMPEG-LGPL-2.1-OR-LATER.txt"
     "FFMPEG-4.4.8-BUILD-INFO.txt"
@@ -100,6 +109,8 @@ $runtimeFiles = @(
     "MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt"
     "QUICKJS-NG-MIT.txt"
+    "OPENSSL-APACHE-2.0.txt"
+    "SQLITE-PUBLIC-DOMAIN.txt"
 )
 $copies = @()
 $runtimeSourcePaths = @()

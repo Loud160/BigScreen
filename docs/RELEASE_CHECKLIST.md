@@ -7,6 +7,14 @@
 - [ ] `packageVersion` exactly matches the tested Beat Saber APK.
 - [ ] Public description, screenshots/video, and compatibility statement are current.
 - [ ] Third-party artifact versions/hashes and notices were reviewed.
+- [ ] `LICENSE`, `LICENSE-ADDITIONAL-TERMS.md`, `NOTICE`, contribution policy,
+      and packaged runtime notices match the release.
+- [ ] The canonical public source URL is present in project/release metadata
+      and `NOTICE`; the complete matching Big Screen Corresponding Source is
+      available from the same public release path used for the QMOD.
+- [ ] Both exact FFmpeg source versions, build configurations, and patches are
+      available beside the downloadable QMOD as required by the LGPL release
+      process.
 - [ ] Review the tracked large-file refactor in `FUTURE_WORK.md`; either complete
       it after major behavior is stable or explicitly carry it as documented
       technical debt for this release.

@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/ShowcaseMenu.hpp"
 
 #include <string>
@@ -5,6 +12,7 @@
 
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/ShowcaseLauncher.hpp"
+#include "BigScreen/UiUtility.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "HMUI/ViewController.hpp"
 #include "TMPro/FontStyles.hpp"
@@ -29,19 +37,9 @@
 
 namespace BigScreen {
     namespace {
-        constexpr float PanelWidth = 104.0f;
+        using UiUtility::EnsureLayout;
 
-        UnityEngine::UI::LayoutElement* EnsureLayout(
-            UnityEngine::Component* component)
-        {
-            if(!component)
-                return nullptr;
-            auto object = component->get_gameObject();
-            if(auto* layout =
-                   object->GetComponent<UnityEngine::UI::LayoutElement*>())
-                return layout;
-            return object->AddComponent<UnityEngine::UI::LayoutElement*>();
-        }
+        constexpr float PanelWidth = 104.0f;
 
         void ConfigureLayout(
             UnityEngine::Component* component,
@@ -65,6 +63,8 @@ namespace BigScreen {
             TMPro::TextAlignmentOptions alignment)
         {
             auto* label = BSML::Lite::CreateText(parent, text, 3.25f);
+            if(!label)
+                return nullptr;
             ConfigureLayout(label, width, 7.0f);
             label->set_enableWordWrapping(false);
             label->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
@@ -125,10 +125,24 @@ namespace BigScreen {
         HMUI::ViewController* controller,
         std::function<void()> onClose)
     {
+        if(!controller)
+        {
+            ErrorManager::Instance().RecordError(
+                "Creating the showcase menu",
+                "Beat Saber did not provide a center view controller");
+            return;
+        }
         controller_ = controller;
         onClose_ = std::move(onClose);
 
         auto* root = BSML::Lite::CreateVerticalLayoutGroup(controller);
+        if(!root)
+        {
+            ErrorManager::Instance().RecordError(
+                "Creating the showcase menu",
+                "BSML could not create the showcase root layout");
+            return;
+        }
         root->set_spacing(0.8f);
         root->set_childControlWidth(true);
         root->set_childControlHeight(true);
@@ -164,22 +178,29 @@ namespace BigScreen {
                     onClose_();
             });
         ConfigureLayout(close, PanelWidth, 7.0f, 1.0f);
-        BSML::Lite::SetButtonTextSize(close, 3.0f);
+        if(close)
+            BSML::Lite::SetButtonTextSize(close, 3.0f);
 
         auto* title = BSML::Lite::CreateText(
             root, "Big Screen Showcase", 5.0f);
         ConfigureLayout(title, PanelWidth, 7.0f, 1.0f);
-        title->set_fontStyle(TMPro::FontStyles::Bold);
-        title->set_alignment(TMPro::TextAlignmentOptions::Center);
-        title->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+        if(title)
+        {
+            title->set_fontStyle(TMPro::FontStyles::Bold);
+            title->set_alignment(TMPro::TextAlignmentOptions::Center);
+            title->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+        }
 
         auto* instructions = BSML::Lite::CreateText(
             root,
             "Check every requirement below. Missing map and video files are downloaded only when you press their individual buttons.",
             3.2f);
         ConfigureLayout(instructions, PanelWidth - 6.0f, 12.0f, 1.0f);
-        instructions->set_enableWordWrapping(true);
-        instructions->set_alignment(TMPro::TextAlignmentOptions::Center);
+        if(instructions)
+        {
+            instructions->set_enableWordWrapping(true);
+            instructions->set_alignment(TMPro::TextAlignmentOptions::Center);
+        }
 
         const auto makeRow = [root](
             std::string name,
@@ -189,6 +210,8 @@ namespace BigScreen {
             std::function<void()> callback)
         {
             auto* row = BSML::Lite::CreateHorizontalLayoutGroup(root);
+            if(!row)
+                return;
             row->set_spacing(1.2f);
             row->set_childControlWidth(true);
             row->set_childControlHeight(true);
@@ -209,7 +232,8 @@ namespace BigScreen {
                 {28.0f, 7.0f},
                 std::move(callback));
             ConfigureLayout(action, 28.0f, 7.0f);
-            BSML::Lite::SetButtonTextSize(action, 2.65f);
+            if(action)
+                BSML::Lite::SetButtonTextSize(action, 2.65f);
         };
 
         makeRow(
@@ -249,24 +273,30 @@ namespace BigScreen {
             [this]() { DownloadVideo(); });
 
         auto* runtimeRow = BSML::Lite::CreateHorizontalLayoutGroup(root);
-        runtimeRow->set_spacing(1.2f);
-        runtimeRow->set_childControlWidth(true);
-        runtimeRow->set_childControlHeight(true);
-        runtimeRow->set_childForceExpandWidth(false);
-        runtimeRow->set_childForceExpandHeight(false);
-        runtimeRow->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
-        ConfigureLayout(runtimeRow, PanelWidth, 8.0f, 1.0f);
-        CreateRowLabel(
-            runtimeRow, "Downloader Runtime", 31.0f,
-            TMPro::TextAlignmentOptions::MidlineLeft);
-        downloaderStatus_ = CreateRowLabel(
-            runtimeRow, "Checking...", 65.0f,
-            TMPro::TextAlignmentOptions::Center);
+        if(runtimeRow)
+        {
+            runtimeRow->set_spacing(1.2f);
+            runtimeRow->set_childControlWidth(true);
+            runtimeRow->set_childControlHeight(true);
+            runtimeRow->set_childForceExpandWidth(false);
+            runtimeRow->set_childForceExpandHeight(false);
+            runtimeRow->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
+            ConfigureLayout(runtimeRow, PanelWidth, 8.0f, 1.0f);
+            CreateRowLabel(
+                runtimeRow, "Downloader Runtime", 31.0f,
+                TMPro::TextAlignmentOptions::MidlineLeft);
+            downloaderStatus_ = CreateRowLabel(
+                runtimeRow, "Checking...", 65.0f,
+                TMPro::TextAlignmentOptions::Center);
+        }
 
         activityStatus_ = BSML::Lite::CreateText(root, "", 3.15f);
         ConfigureLayout(activityStatus_, PanelWidth - 8.0f, 10.0f, 1.0f);
-        activityStatus_->set_enableWordWrapping(true);
-        activityStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        if(activityStatus_)
+        {
+            activityStatus_->set_enableWordWrapping(true);
+            activityStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        }
 
         playButton_ = BSML::Lite::CreateUIButton(
             root,
@@ -275,38 +305,47 @@ namespace BigScreen {
             {42.0f, 9.0f},
             [this]() { ConfirmPlay(); });
         ConfigureLayout(playButton_, 42.0f, 9.0f);
-        BSML::Lite::SetButtonTextSize(playButton_, 3.2f);
-        BSML::Lite::AddHoverHint(
-            playButton_,
-            "Starts the managed Up & Down Lawless Expert+ showcase after all listed requirements are ready.");
+        if(playButton_)
+        {
+            BSML::Lite::SetButtonTextSize(playButton_, 3.2f);
+            BSML::Lite::AddHoverHint(
+                playButton_,
+                "Starts the managed Up & Down Lawless Expert+ showcase after all listed requirements are ready.");
+        }
 
         warningModal_ = BSML::Lite::CreateModal(
             controller, {76.0f, 42.0f}, nullptr, true);
-        auto* warningText = BSML::Lite::CreateText(
+        auto* warningText = warningModal_ ? BSML::Lite::CreateText(
             warningModal_,
             "<b>Play the Big Screen showcase?</b>\n\nThis demonstration uses intense full-field screen movement and may cause motion sickness.",
             TMPro::FontStyles::Normal,
             3.2f,
             {0.0f, 5.0f},
-            {68.0f, 23.0f});
-        warningText->set_enableWordWrapping(true);
-        warningText->set_alignment(TMPro::TextAlignmentOptions::Center);
-        BSML::Lite::CreateUIButton(
-            warningModal_->get_transform(),
-            "Cancel",
-            {20.0f, -31.0f},
-            {23.0f, 8.0f},
-            [this]()
-            {
-                if(warningModal_)
-                    warningModal_->Hide();
-            });
-        BSML::Lite::CreateUIButton(
-            warningModal_->get_transform(),
-            "Play",
-            {54.0f, -31.0f},
-            {29.0f, 8.0f},
-            [this]() { Play(); });
+            {68.0f, 23.0f}) : nullptr;
+        if(warningText)
+        {
+            warningText->set_enableWordWrapping(true);
+            warningText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        }
+        if(warningModal_)
+        {
+            BSML::Lite::CreateUIButton(
+                warningModal_->get_transform(),
+                "Cancel",
+                {20.0f, -31.0f},
+                {23.0f, 8.0f},
+                [this]()
+                {
+                    if(warningModal_)
+                        warningModal_->Hide();
+                });
+            BSML::Lite::CreateUIButton(
+                warningModal_->get_transform(),
+                "Play",
+                {54.0f, -31.0f},
+                {29.0f, 8.0f},
+                [this]() { Play(); });
+        }
 
         Refresh();
     }

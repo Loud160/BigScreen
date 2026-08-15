@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+//
+// Part of Big Screen.
+// Distributed under GPL-3.0-only with additional terms under GPLv3
+// section 7(b)/(c) and an interoperability permission under section 7;
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/PowerBenchmark.hpp"
 
 #include <algorithm>
@@ -13,6 +20,7 @@
 #include <time.h>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/Settings.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/AndroidJavaClass.hpp"
@@ -104,7 +112,7 @@ namespace BigScreen {
             bool needsHeader = !std::filesystem::exists(path, error) ||
                 std::filesystem::file_size(path, error) == 0;
 
-            // The decoder_backend column changes the CSV schema. Preserve any
+            // The decode_method column changes the CSV schema. Preserve any
             // measurements written by older development builds instead of
             // appending wider rows beneath their shorter header. This runs
             // only during gameplay teardown, under the benchmark's existing
@@ -308,11 +316,18 @@ namespace BigScreen {
             PaperLogger.error(
                 "Could not save the power benchmark: {}",
                 exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Power benchmark was not saved",
+                std::string(exception.what()) +
+                    "\n\nSee Big Screen's error log for details.");
         }
         catch(...)
         {
             PaperLogger.error(
                 "Could not save the power benchmark because of an unknown native exception");
+            ErrorManager::Instance().ReportUserVisible(
+                "Power benchmark was not saved",
+                "An unexpected file error occurred. See Big Screen's error log for details.");
         }
         Cancel();
     }
@@ -481,7 +496,7 @@ namespace BigScreen {
         std::filesystem::create_directories(LogDirectory);
         AppendHeaderIfEmpty(
             SamplesPath,
-            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decoder_backend,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
+            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decode_method,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
         {
             std::ofstream output(SamplesPath, std::ios::app);
             if(!output)
@@ -498,8 +513,8 @@ namespace BigScreen {
                     << sample.songTimeSeconds << ','
                     << (videoActive_ ? 1 : 0) << ','
                     << (showcaseActive_ ? 1 : 0) << ','
-                    << Csv(sample.diagnostics.decoderBackend.empty()
-                           ? "none" : sample.diagnostics.decoderBackend) << ','
+                    << Csv(sample.diagnostics.decodeMethod.empty()
+                           ? "none" : sample.diagnostics.decodeMethod) << ','
                     << Csv(sample.diagnostics.codec.empty()
                            ? "none" : sample.diagnostics.codec) << ','
                     << sample.processCpuMilliseconds << ','
@@ -572,7 +587,7 @@ namespace BigScreen {
             : last.diagnostics;
         AppendHeaderIfEmpty(
             SummaryPath,
-            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decoder_backend,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
+            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decode_method,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
         std::ofstream summary(SummaryPath, std::ios::app);
         if(!summary)
             throw std::runtime_error("Could not append the power summary log");
@@ -586,8 +601,8 @@ namespace BigScreen {
             << difficulty_ << ','
             << (videoActive_ ? 1 : 0) << ','
             << (showcaseActive_ ? 1 : 0) << ','
-            << Csv(finalDiagnostics.decoderBackend.empty()
-                   ? "none" : finalDiagnostics.decoderBackend) << ','
+            << Csv(finalDiagnostics.decodeMethod.empty()
+                   ? "none" : finalDiagnostics.decodeMethod) << ','
             << Csv(finalDiagnostics.codec.empty()
                    ? "none" : finalDiagnostics.codec) << ','
             << wallSeconds << ','
@@ -632,6 +647,11 @@ namespace BigScreen {
         PaperLogger.error(
             "Power benchmark stopped while {}; gameplay will continue",
             operation ? operation : "processing a sample");
+        ErrorManager::Instance().RecordError(
+            "Power benchmark",
+            std::string("Benchmark stopped while ") +
+                (operation ? operation : "processing a sample") +
+                "; gameplay continued");
         active_ = false;
         samples_.clear();
     }

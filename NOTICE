@@ -1,0 +1,14 @@
+Big Screen
+Original project and technical implementation by Loud160 (AKA Whisp)
+https://github.com/Loud160/BigScreen
+
+Big Screen first-party source is distributed under GPL-3.0-only with
+additional terms and a Beat Saber/Quest interoperability permission under
+GPLv3 section 7. See LICENSE and LICENSE-ADDITIONAL-TERMS.md.
+
+This repository may remain private during development. Before any public binary
+distribution, the complete matching Corresponding Source must be made publicly
+available from the canonical repository or an equivalent release location.
+
+Third-party components retain their own copyright and license terms. See
+THIRD_PARTY_NOTICES.md and the license documents distributed with the package.
