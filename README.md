@@ -23,7 +23,10 @@ selection, timing, screen setup, and playback—happens entirely inside the head
 > This branch is an **alpha port for Beat Saber 1.40.8
 > (`1.40.8_7379`)** on Quest 2 and Quest 3. Quest mods are game-version
 > specific; use the separately maintained 1.37 alpha branch for Beat Saber
-> 1.37.x.
+> 1.37.x. The 1.40.8 native build, tests, dependency set, and QMOD package have
+> been validated, but complete 1.40.8 headset regression testing is still in
+> progress. Features described below are implemented; they must not be read as
+> a claim that every integration has already passed that new-version test pass.
 
 ## The screen is part of the experience
 
@@ -126,17 +129,88 @@ playback path. A video failure never needs to stop the map.
 
 ### Build and deploy from source on Windows
 
-After installing the [documented build prerequisites](docs/BUILDING.md#tools),
-connect an authorized Quest over USB and prepare a fresh clone once:
+You do not need prior Beat Saber mod-development experience, but a clean build
+does require more than Visual Studio. Install these tools before cloning:
+
+| Tool | Why Big Screen needs it |
+|---|---|
+| **Git for Windows** | Clones the repository and preserves its versioned build recipes. |
+| **Visual Studio with Desktop development with C++** | Supplies the Windows C++ compiler used by host tests. Include **C++ CMake tools for Windows**, or install CMake 3.20+ and Ninja separately. |
+| **QPM CLI** | Restores the exact Quest headers/libraries recorded in `qpm.shared.json` and downloads the Windows Android NDK. This port was validated with QPM 1.5.11. |
+| **WSL 2 with Ubuntu** | Builds Big Screen's private LGPL FFmpeg libraries in a Linux environment. Inside Ubuntu, install `build-essential`, `curl`, `xz-utils`, and `unzip`. |
+| **Android NDK r27d (`27.3.13750724`)** | Two host-specific copies are used: QPM manages the Windows NDK for the mod, while `scripts/install-pinned-ndk.sh` installs the Linux NDK used by FFmpeg inside WSL. Do not substitute a different revision. |
+| **Android platform-tools/ADB or SideQuest** | Required only to deploy directly to a connected Quest. It is not required to create the QMOD. |
+
+Windows PowerShell 5.1 is already included with supported Windows versions.
+Internet access and several gigabytes of temporary space are needed on the
+first clean build because the pinned NDK, FFmpeg, CPython, QuickJS-NG, yt-dlp,
+certifi, and Quest dependencies are downloaded and hash-checked.
+
+Python 3 is optional but recommended because it enables the downloader and
+repository-invariant host tests. Node.js/pnpm are needed only for the separate
+yt-dlp/yt-dlp-ejs source-reproducibility audit, not for a normal mod build.
+
+#### One-time toolchain setup
+
+Install [QPM CLI](https://github.com/QuestPackageManager/QPM.CLI), then clone
+and restore the project in PowerShell:
 
 ```powershell
 git clone https://github.com/Loud160/BigScreen.git
 cd BigScreen
 qpm restore
+qpm ndk resolve --download
+qpm doctor
 ```
 
-Then double-click **[Build-And-Deploy.bat](Build-And-Deploy.bat)** in the repository
-root—or run it from a terminal—to build and install the complete current mod:
+If the QPM installer did not add `qpm` to `PATH`, run the same commands through
+its standard per-user executable:
+
+```powershell
+$qpm = "$env:LOCALAPPDATA\Programs\QPM\qpm.exe"
+& $qpm restore
+& $qpm ndk resolve --download
+& $qpm doctor
+```
+
+Install WSL 2 from an Administrator PowerShell window if it is not already
+available:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+After Windows finishes the WSL installation, open Ubuntu and run:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl xz-utils unzip
+cd /mnt/c/path/to/BigScreen
+./scripts/install-pinned-ndk.sh
+```
+
+Replace `/mnt/c/path/to/BigScreen` with the clone's actual WSL path. The normal
+Windows build script will invoke WSL automatically whenever either pinned
+FFmpeg runtime has not already been built.
+
+#### Build a QMOD
+
+From PowerShell in the repository root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
+```
+
+The resulting `Big Screen.qmod` can be installed with a compatible Quest Beat
+Saber mod manager. Building a QMOD does not require a connected headset.
+
+#### Build and deploy directly to a Quest
+
+Enable Quest developer mode, connect the headset over USB, put it on, and
+accept the USB debugging authorization prompt. Then double-click
+**[Build-And-Deploy.bat](Build-And-Deploy.bat)** in the repository root—or run
+it from a terminal—to build and install the complete current mod:
 
 ```bat
 Build-And-Deploy.bat
@@ -240,9 +314,12 @@ licenses/               Redistributable third-party license texts
 
 ## Development status
 
-Big Screen is an unreleased beta that still needs broad headset and map coverage.
-The release gate requires host tests, a clean Quest build, QMOD validation, and
-hands-on regression testing on the supported game version.
+Big Screen is an unreleased alpha. Its capabilities are implemented and the
+1.40.8 branch passes host tests, a clean ARM64 Quest build, dependency/ELF
+checks, and QMOD validation. It is not release-verified until the remaining
+hands-on Quest 2/Quest 3, map, UI, Chroma/Noodle, Replay, downloader, decoder,
+and recovery checks in the [release checklist](docs/RELEASE_CHECKLIST.md) have
+been completed on Beat Saber 1.40.8.
 
 ## License
 

@@ -6,13 +6,57 @@ The tracked package targets Beat Saber `1.40.8_7379`, ARM64 Quest, and C++20. De
 
 ## Tools
 
-- Git
-- Windows PowerShell 5.1 on Windows or PowerShell 7 (`pwsh`) on Linux
-- CMake and Ninja
-- QPM-RS and the Android NDK expected by the Quest modding toolchain
-- Linux or WSL with `make`, `curl`, and Android NDK r27d (27.3.13750724) for the private FFmpeg build
-- Python 3 only for the optional host test that extracts and tests the embedded downloader scripts
-- ADB for deployment/log/tombstone helper scripts
+### Required for a clean Windows build
+
+- **Git for Windows**.
+- **Windows PowerShell 5.1** (included with Windows) or PowerShell 7.
+- **Visual Studio with the Desktop development with C++ workload**, including
+  C++ CMake tools for Windows. Standalone CMake 3.20+ and Ninja may be used
+  instead; the scripts first search `PATH`, then the latest Visual Studio
+  installation.
+- **QPM CLI** to restore the pinned Quest dependencies and resolve the Windows
+  Android NDK. Big Screen's 1.40.8 port was validated with QPM 1.5.11.
+- **WSL 2 with Ubuntu** (or a native Linux environment) with `make`, `curl`,
+  `tar`/XZ support, `unzip`, `sed`, `grep`, `diff`, and the standard core
+  utilities. On Ubuntu, `build-essential curl xz-utils unzip` supplies the
+  non-base tools used by the scripts.
+- **Android NDK r27d (`27.3.13750724`) for both host environments**. QPM owns
+  the Windows copy used for the mod build. The Linux/WSL copy used for FFmpeg
+  is installed at `~/.cache/bigscreen-toolchains/android-ndk-r27d` by
+  `scripts/install-pinned-ndk.sh`, or can be selected with
+  `ANDROID_NDK_ROOT`. These are different host binaries even though they use
+  the same NDK revision.
+- Internet access for the first clean dependency/runtime build.
+
+### Optional tools
+
+- **Android platform-tools/ADB or SideQuest** for direct deployment, logging,
+  and tombstone helpers. Neither is required to compile or create a QMOD.
+- **Python 3** to enable downloader-script and repository-invariant host tests.
+  The normal Quest build embeds its own Android CPython and does not use the
+  host Python installation.
+- **Node.js 24 and pnpm 11.16.0** only for independently rebuilding the pinned
+  yt-dlp/yt-dlp-ejs payload from source. A normal build uses the verified
+  official payload and does not require Node.js.
+
+### One-time Windows/WSL setup
+
+```powershell
+qpm restore
+qpm ndk resolve --download
+qpm doctor
+```
+
+When QPM is installed in its standard location but is not on `PATH`, invoke
+`$env:LOCALAPPDATA\Programs\QPM\qpm.exe` directly.
+
+Inside Ubuntu/WSL, from the repository clone:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential curl xz-utils unzip
+./scripts/install-pinned-ndk.sh
+```
 
 ## Fresh build
 
