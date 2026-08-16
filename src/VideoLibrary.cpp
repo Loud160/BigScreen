@@ -19,6 +19,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <chrono>
+#include <unordered_set>
 
 #include "main.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
@@ -472,6 +473,7 @@ namespace BigScreen {
                 obsoleteNoticeError.message());
 
         LoadLocked();
+        persistedRecords_ = records_;
         PaperLogger.info(
             "Video library ready at '{}' with {} saved level entries",
             rootPath_.string(),
@@ -700,8 +702,11 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || found->second.localThumbnail.empty())
             return false;
+        const auto thumbnail = LocalThumbnailPath(levelId);
+        found->second.localThumbnail.clear();
+        SaveLocked();
         std::error_code removeError;
-        std::filesystem::remove(LocalThumbnailPath(levelId), removeError);
+        std::filesystem::remove(thumbnail, removeError);
         if(removeError)
         {
             // Still forget the reference: Storage Maintenance then reports
@@ -712,8 +717,6 @@ namespace BigScreen {
                 levelId,
                 removeError.message());
         }
-        found->second.localThumbnail.clear();
-        SaveLocked();
         PaperLogger.info("Removed picked thumbnail for '{}'", levelId);
         return true;
     }
@@ -1058,12 +1061,13 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.user)
             return false;
-        if(deleteFile && !IsUserOwnedFile(*found->second.user))
-            RemoveManagedFile(videoPath_, found->second.user->fileName);
-        std::filesystem::remove(
-            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
+        const auto removed = *found->second.user;
         found->second.user.reset();
         SaveLocked();
+        if(deleteFile && !IsUserOwnedFile(removed))
+            RemoveManagedFile(videoPath_, removed.fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         return true;
     }
 
@@ -1095,12 +1099,13 @@ namespace BigScreen {
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.mapper)
             return false;
-        if(deleteFile)
-            RemoveManagedFile(videoPath_, found->second.mapper->fileName);
-        std::filesystem::remove(
-            thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
+        const auto removed = *found->second.mapper;
         found->second.mapper.reset();
         SaveLocked();
+        if(deleteFile)
+            RemoveManagedFile(videoPath_, removed.fileName);
+        std::filesystem::remove(
+            thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
         return true;
     }
 
@@ -1438,8 +1443,16 @@ namespace BigScreen {
             "The primary library and both known-good backups were invalid");
     }
 
-    void VideoLibrary::SaveLocked() const
+    void VideoLibrary::SaveLocked()
     {
+        const auto temporary = std::filesystem::path(
+            manifestPath_.string() + ".tmp");
+        try
+        {
+        // Copy before touching disk. If memory pressure prevents preserving
+        // the candidate, rollback happens before the primary can be replaced;
+        // the final swap below is noexcept after a successful replacement.
+        auto durableCandidate = records_;
         // All record mutations flow through SaveLocked. Invalidate derived UI
         // state here once so no setter can accidentally forget either cache.
         descriptorCache_.clear();
@@ -1515,7 +1528,6 @@ namespace BigScreen {
         if(validation.HasParseError())
             throw std::runtime_error("Generated video library JSON was invalid");
 
-        const auto temporary = manifestPath_.string() + ".tmp";
         {
             std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
             stream.write(buffer.GetString(), static_cast<std::streamsize>(buffer.GetSize()));
@@ -1561,6 +1573,47 @@ namespace BigScreen {
         if(error)
             throw std::runtime_error(
                 "Could not replace video library manifest: " + error.message());
+        persistedRecords_.swap(durableCandidate);
+        }
+        catch(...)
+        {
+            // Keep the in-memory model identical to the most recent durable
+            // manifest. The UI caller may report the exception, but subsequent
+            // playback cannot observe a mutation that never reached storage.
+            records_ = persistedRecords_;
+            descriptorCache_.clear();
+            libraryBytesCacheTime_ = {};
+            freeBytesCacheTime_ = {};
+            std::error_code cleanupError;
+            std::filesystem::remove(temporary, cleanupError);
+            throw;
+        }
+    }
+
+    std::vector<std::string> VideoLibrary::ReferencedThumbnailFileNames() const
+    {
+        std::scoped_lock lock(mutex_);
+        std::unordered_set<std::string> names;
+        for(const auto& [levelId, record] : records_)
+        {
+            if(record.user && !record.user->fileName.empty() &&
+               !IsUserOwnedFile(*record.user))
+                names.emplace(StableKey(levelId) + "-user.jpg");
+            if(record.mapper && !record.mapper->fileName.empty() &&
+               !IsUserOwnedFile(*record.mapper))
+                names.emplace(StableKey(levelId) + "-mapper.jpg");
+            if(!record.localThumbnail.empty())
+                names.emplace(record.localThumbnail);
+        }
+        // Mapper probe art can be active without a persistent record. Protect
+        // every descriptor-resolved thumbnail from an in-session cleanup.
+        for(const auto& [levelId, descriptor] : descriptorCache_)
+        {
+            (void)levelId;
+            if(descriptor.thumbnailPath)
+                names.emplace(descriptor.thumbnailPath->filename().string());
+        }
+        return {names.begin(), names.end()};
     }
 
     std::optional<std::string> VideoLibrary::TakeRecoveryNotice()
@@ -1625,6 +1678,11 @@ namespace BigScreen {
             };
             record.user = recoverOne("-user");
             record.mapper = recoverOne("-mapper");
+            const auto localThumbnail = thumbnailPath_ / (key + "-local.png");
+            std::error_code thumbnailError;
+            if(std::filesystem::is_regular_file(localThumbnail, thumbnailError) &&
+               !thumbnailError)
+                record.localThumbnail = localThumbnail.filename().string();
             if(!record.user && !record.mapper)
                 continue;
             records_.emplace_back(levelId, std::move(record));

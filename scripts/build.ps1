@@ -161,7 +161,12 @@ if ($LASTEXITCODE -ne 0) {
 # CMake's default: an existing cache can otherwise preserve OFF across every
 # later build and silently replace the showcase with ordinary single-screen
 # playback.
-& $cmakeExe -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
+# Android NDK r27d's own toolchain files still declare compatibility with old
+# CMake policy versions. CMake 4 warns about that upstream metadata on every
+# configure even though Big Screen already requires CMake 3.22. Hide only
+# dependency deprecation warnings; project errors and compiler diagnostics are
+# unchanged.
+& $cmakeExe -Wno-deprecated -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
     -DBIGSCREEN_UP_DOWN_SHOWCASE=ON -B build
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

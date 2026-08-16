@@ -189,7 +189,11 @@ namespace BigScreen {
         void WorkerMain() noexcept;
         void WorkerLoop(std::uint64_t cpuStartedNanoseconds);
         void SetWorkerError(std::string message);
-        bool ReadDecodedFrame();
+        /// Reads one decoded picture and distinguishes ordinary end-of-stream
+        /// from a codec/demux failure. The worker uses the EOF signal to park
+        /// beyond the final frame instead of repeatedly seeking and decoding
+        /// the final GOP for every later song-time request.
+        bool ReadDecodedFrame(bool& reachedEndOfStream);
         bool SeekNear(double mediaSeconds, std::string& error);
         double CurrentFrameTime() const;
         double CurrentFrameDuration() const;

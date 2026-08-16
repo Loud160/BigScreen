@@ -510,6 +510,11 @@ namespace BigScreen {
         durationSeconds_ = decoder_.DurationSeconds();
         const auto sourceFps = decoder_.SourceFramesPerSecond();
         nominalFrameSeconds_ = sourceFps > 1.0 ? 1.0 / sourceFps : 1.0 / 30.0;
+        // The instruction overlay intentionally remains visible until the
+        // first seek. Enable both step controls as soon as the decoder opens
+        // so either button can perform that first seek and dismiss it.
+        if(previousFrameButton_) previousFrameButton_->set_interactable(true);
+        if(nextFrameButton_) nextFrameButton_->set_interactable(true);
         SetStatus("Loading the first frame...", false);
         decoder_.Request(0.0);
     }

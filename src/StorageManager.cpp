@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/StorageManager.hpp"
 #include "BigScreen/Utility.hpp"
+#include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -59,6 +60,19 @@ namespace BigScreen {
             // A replacement can legitimately own this rollback file while its
             // download is being committed. Only expose old leftovers.
             return !error && age > std::chrono::hours(1);
+        }
+
+        bool IsActiveDownloadStaging(
+            const std::filesystem::path& path,
+            const DownloadSnapshot& snapshot)
+        {
+            if(!snapshot.Active() || snapshot.levelId.empty() ||
+               snapshot.levelId == "__updater__")
+                return false;
+            const auto name = path.filename().string();
+            const auto key = CoreLogic::StableVideoKey(snapshot.levelId);
+            return name.starts_with(key + "-") &&
+                name.find(".incoming") != std::string::npos;
         }
     }
 
@@ -188,6 +202,10 @@ namespace BigScreen {
             const auto runtime = library.RuntimePath();
             std::unordered_set<std::string> usedVideos;
             std::unordered_set<std::string> usedThumbnails;
+            const auto referencedThumbnails =
+                library.ReferencedThumbnailFileNames();
+            usedThumbnails.insert(
+                referencedThumbnails.begin(), referencedThumbnails.end());
             for(const auto& [levelId, record] : library.Records())
             {
                 const auto collect = [&](const std::optional<StoredVideo>& video,
@@ -230,12 +248,18 @@ namespace BigScreen {
                 result.removableBytes += bytes;
             };
 
+            // Snapshot downloader ownership before inspecting either Videos
+            // or Thumbnails. Its active `.incoming` siblings are incomplete
+            // transaction state, never abandoned cleanup candidates.
+            const auto downloaderSnapshot = DownloadManager::Instance().Snapshot();
             std::error_code iteratorError;
             for(std::filesystem::directory_iterator it(videos, iteratorError), end;
                 !iteratorError && it != end; it.increment(iteratorError))
             {
                 std::error_code typeError;
                 if(!it->is_regular_file(typeError) || typeError) continue;
+                if(IsActiveDownloadStaging(it->path(), downloaderSnapshot))
+                    continue;
                 if(IsAbandonedTemporary(*it))
                     add(it->path(), "Abandoned download");
                 else if((it->path().extension() == ".mp4" ||
@@ -251,12 +275,13 @@ namespace BigScreen {
             {
                 std::error_code typeError;
                 if(!it->is_regular_file(typeError) || typeError) continue;
+                if(IsActiveDownloadStaging(it->path(), downloaderSnapshot))
+                    continue;
                 if(IsAbandonedTemporary(*it) ||
                    !usedThumbnails.contains(it->path().filename().string()))
                     add(it->path(), "Unused thumbnail");
             }
             iteratorError.clear();
-            const auto downloaderSnapshot = DownloadManager::Instance().Snapshot();
             const bool updaterActive = downloaderSnapshot.levelId == "__updater__" &&
                 downloaderSnapshot.Active();
             for(std::filesystem::directory_iterator it(runtime, iteratorError), end;
@@ -305,6 +330,11 @@ namespace BigScreen {
             std::unordered_set<std::string> removedPaths;
             for(const auto& item : approved)
             {
+                // Close the scan/clean race: a new replacement may begin after
+                // the list was rendered but before the user confirms cleanup.
+                if(IsActiveDownloadStaging(
+                       item.path, DownloadManager::Instance().Snapshot()))
+                    continue;
                 // Revalidate every exact scan result immediately before
                 // deletion. No glob, unresolved environment variable, map
                 // directory, or import directory can reach this operation.

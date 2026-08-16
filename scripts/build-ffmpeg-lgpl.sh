@@ -69,7 +69,12 @@ else
     install_root="${repository_root}/extern/ffmpeg-lgpl-${ffmpeg_version}"
 fi
 archive_path="${cache_root}/${ffmpeg_archive}"
+archive_download_path="${archive_path}.download.$$"
 stamp_path="${install_root}/bigscreen-ffmpeg-${ffmpeg_version}.ready"
+
+# Interrupted downloads must never become the persistent cache entry. The
+# process-specific temporary is removed on every exit, including Ctrl+C.
+trap 'rm -f "${archive_download_path}"' EXIT INT TERM
 
 # The local Windows development setup keeps a Linux NDK in WSL.  CI and other
 # developers can set ANDROID_NDK_ROOT explicitly to use any equivalent Linux
@@ -108,17 +113,36 @@ fi
 
 mkdir -p "${cache_root}"
 
+archive_is_valid() {
+    [[ -f "${archive_path}" ]] &&
+        printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_path}" |
+            sha256sum --check --status
+}
+
+if [[ -f "${archive_path}" ]] && ! archive_is_valid; then
+    printf 'Discarding an incomplete or invalid cached FFmpeg archive: %s\n' \
+        "${archive_path}" >&2
+    rm -f "${archive_path}"
+fi
+
 if [[ ! -f "${archive_path}" ]]; then
     printf 'Downloading FFmpeg %s source from %s\n' "${ffmpeg_version}" "${ffmpeg_url}"
     printf 'The archive will be verified against its pinned SHA-256 before extraction.\n'
-    curl --fail --location --retry 3 --output "${archive_path}" "${ffmpeg_url}"
+    rm -f "${archive_download_path}"
+    curl --fail --location --retry 3 --output "${archive_download_path}" "${ffmpeg_url}"
+    printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_download_path}" |
+        sha256sum --check --status || {
+            printf 'Downloaded FFmpeg source failed SHA-256 verification.\n' >&2
+            exit 1
+        }
+    mv -f "${archive_download_path}" "${archive_path}"
 else
     printf 'Using cached FFmpeg %s source archive.\n' "${ffmpeg_version}"
 fi
 
 # A release URL alone is not immutable.  Refuse to build if the archive does
 # not match the selected FFmpeg source that was reviewed for this runtime.
-printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_path}" | sha256sum --check --status || {
+archive_is_valid || {
     printf 'FFmpeg source archive failed SHA-256 verification: %s\n' "${archive_path}" >&2
     exit 1
 }

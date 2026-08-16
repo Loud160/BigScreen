@@ -480,6 +480,7 @@ namespace BigScreen {
                     // right-side library state intact.
                     VideoLibraryMenu::Instance().StopActivePreview();
                     StorageMaintenanceMenu::Instance().Show();
+                    restoreCenterOnActivation = true;
                     ReplaceTopViewController(
                         storageViewController,
                         nullptr,
@@ -494,6 +495,7 @@ namespace BigScreen {
                     // to understand.
                     VideoLibraryMenu::Instance().StopActivePreview();
                     ShowcaseMenu::Instance().Show();
+                    restoreCenterOnActivation = true;
                     ReplaceTopViewController(
                         showcaseViewController,
                         nullptr,
@@ -516,6 +518,7 @@ namespace BigScreen {
                 {
                     VideoLibraryMenu::Instance().StopActivePreview();
                     LocalVideoBrowserMenu::Instance().Show(level);
+                    restoreCenterOnActivation = true;
                     ReplaceTopViewController(
                         localVideoBrowserViewController,
                         nullptr,
@@ -529,6 +532,7 @@ namespace BigScreen {
                     // and audio first, exactly like the file-browser path.
                     VideoLibraryMenu::Instance().StopActivePreview();
                     ThumbnailPickerMenu::Instance().Show(level);
+                    restoreCenterOnActivation = true;
                     ReplaceTopViewController(
                         thumbnailPickerViewController,
                         nullptr,
@@ -539,6 +543,7 @@ namespace BigScreen {
                 storageViewController,
                 [this]()
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -549,6 +554,7 @@ namespace BigScreen {
                 showcaseViewController,
                 [this]()
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -559,6 +565,7 @@ namespace BigScreen {
                 localVideoBrowserViewController,
                 [this]()
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -567,6 +574,7 @@ namespace BigScreen {
                 },
                 [this](const std::string& fileName)
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -579,6 +587,7 @@ namespace BigScreen {
                 thumbnailPickerViewController,
                 [this]()
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -587,6 +596,7 @@ namespace BigScreen {
                 },
                 [this](const std::string& thumbnailPath)
                 {
+                    restoreCenterOnActivation = false;
                     ReplaceTopViewController(
                         centerViewController,
                         nullptr,
@@ -607,6 +617,7 @@ namespace BigScreen {
                     : nullptr,
                 nullptr,
                 nullptr);
+            restoreCenterOnActivation = false;
             // ProvideInitialViewControllers is the only safe way to choose
             // panels during first activation. Calling ReplaceTopViewController
             // here previously queried a top controller before HMUI had
@@ -621,8 +632,9 @@ namespace BigScreen {
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
         VideoLibraryMenu::Instance().Refresh();
-        // HMUI retains the main-view stack that was established by
-        // ProvideInitialViewControllers, so there is nothing to restore here.
+        // HMUI retains the main-view stack, including a picker/browser that
+        // was active when the complete flow was dismissed. Restore only when
+        // our explicit navigation state says a transient page was retained.
         // In particular, never pass the center controller to
         // SetTopScreenViewController: despite its similar name, that method
         // owns the separate physical panel above the player and does not
@@ -632,6 +644,17 @@ namespace BigScreen {
         // Also do not query get_topViewController during activation. Beat Saber
         // can temporarily clear that property after gameplay, and the generated
         // getter throws instead of returning null in that state.
+        if(restoreCenterOnActivation)
+        {
+            ThumbnailPickerMenu::Instance().Hide();
+            LocalVideoBrowserMenu::Instance().CancelScan();
+            ReplaceTopViewController(
+                centerViewController,
+                nullptr,
+                HMUI::ViewController::AnimationType::None,
+                HMUI::ViewController::AnimationDirection::Horizontal);
+            restoreCenterOnActivation = false;
+        }
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
         ScreenPreview::Instance().ActivateCurrentState();
         PerformancePanel::Instance().ActivateMenu();
@@ -657,7 +680,21 @@ namespace BigScreen {
         // needed to recover from a disabled mod. Remove its right panel until
         // the master switch is turned back on. Do not touch the center stack
         // here: its current page is managed only by the explicit storage and
-        // local-file-browser navigation callbacks above.
+        // local-file-browser navigation callbacks above. Disabling is the one
+        // exception: no mod-owned decoder or scanner may remain behind an
+        // inaccessible subpage.
+        if(!enabled && restoreCenterOnActivation)
+        {
+            ThumbnailPickerMenu::Instance().Hide();
+            LocalVideoBrowserMenu::Instance().CancelScan();
+            ShowcaseMenu::Instance().DismissTransientUi();
+            ReplaceTopViewController(
+                centerViewController,
+                nullptr,
+                HMUI::ViewController::AnimationType::None,
+                HMUI::ViewController::AnimationDirection::Horizontal);
+            restoreCenterOnActivation = false;
+        }
         SetRightScreenViewController(
             enabled ? libraryBrowserViewController : nullptr,
             HMUI::ViewController::AnimationType::None);
@@ -684,6 +721,7 @@ namespace BigScreen {
         // Closes the picker's private decoder if the whole menu is dismissed
         // while a frame was still being chosen; nothing was saved yet.
         ThumbnailPickerMenu::Instance().Hide();
+        LocalVideoBrowserMenu::Instance().CancelScan();
         ShowcaseMenu::Instance().DismissTransientUi();
         MenuEnvironmentVisibility::Instance().Restore();
         MenuPlacementGuide::Instance().Suspend();

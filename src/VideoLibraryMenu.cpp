@@ -1463,6 +1463,8 @@ namespace BigScreen {
             {
                 if(removeConfirmModal_)
                     removeConfirmModal_->Hide();
+                pendingLocalDeleteLevelId_.clear();
+                pendingLocalDeletePath_.clear();
             });
         ConfigureLayout(cancelRemoveButton, 18.0f, 8.0f, 0.0f);
         unlinkVideoButton_ = BSML::Lite::CreateUIButton(
@@ -1502,6 +1504,11 @@ namespace BigScreen {
                      descriptor.hasMapperLocalFile);
                 if(activeLocalFile && deleteLocalConfirmModal_)
                 {
+                    pendingLocalDeleteLevelId_ = selected_ && selected_->levelID
+                        ? std::string(selected_->levelID) : std::string{};
+                    pendingLocalDeletePath_ = descriptor.playableConfig
+                        ? descriptor.playableConfig->videoPath.lexically_normal()
+                        : std::filesystem::path{};
                     if(deleteLocalConfirmText_)
                         deleteLocalConfirmText_->set_text(
                             "Permanently delete this video file from your Quest?\n\n" +
@@ -1549,6 +1556,8 @@ namespace BigScreen {
             {
                 if(deleteLocalConfirmModal_)
                     deleteLocalConfirmModal_->Hide();
+                pendingLocalDeleteLevelId_.clear();
+                pendingLocalDeletePath_.clear();
             });
         ConfigureLayout(keepLocalFileButton, 21.0f, 8.0f, 0.0f);
         BSML::Lite::SetButtonTextSize(keepLocalFileButton, 2.3f);
@@ -1561,6 +1570,23 @@ namespace BigScreen {
             {
                 if(deleteLocalConfirmModal_)
                     deleteLocalConfirmModal_->Hide();
+                const auto current = selected_
+                    ? VideoLibrary::Instance().Describe(selected_)
+                    : VideoDescriptor{};
+                const bool sameAssignment = selected_ && selected_->levelID &&
+                    std::string(selected_->levelID) == pendingLocalDeleteLevelId_ &&
+                    current.playableConfig &&
+                    current.playableConfig->videoPath.lexically_normal() ==
+                        pendingLocalDeletePath_;
+                pendingLocalDeleteLevelId_.clear();
+                pendingLocalDeletePath_.clear();
+                if(!sameAssignment)
+                {
+                    transientStatus_ =
+                        "The assigned video changed while confirmation was open. Nothing was deleted.";
+                    RefreshDetails();
+                    return;
+                }
                 RemoveOverride(true);
             });
         ConfigureLayout(confirmDeleteLocalButton, 21.0f, 8.0f, 0.0f);
@@ -2422,6 +2448,8 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
         if(!selected_) return;
+        try
+        {
 
         const auto removedDescriptor = VideoLibrary::Instance().Describe(selected_);
         const bool hasUserOverride = removedDescriptor.hasUserOverride;
@@ -2451,33 +2479,18 @@ namespace BigScreen {
         const auto mapperThumbnailPath = library.AllocateThumbnailPath(
             levelId, VideoOrigin::Mapper).string();
 
-        // A local file is never deleted as a side effect of unregistering it.
-        // Delete File reaches this path only through the explicit red action in
-        // the confirmation modal, and the library revalidates /sdcard plus the
-        // supported media extension before touching the filesystem.
+        std::optional<std::filesystem::path> localPathToDelete;
         if(deleteFile && activeLocalFile)
         {
-            std::string error;
-            if(!removedDescriptor.playableConfig ||
-               !library.DeleteLocalVideoFile(
-                   removedDescriptor.playableConfig->videoPath, error))
+            if(!removedDescriptor.playableConfig)
             {
-                transientStatus_ = error.empty()
-                    ? "The local video could not be deleted. Its assignment was kept."
-                    : error + " The assignment was kept.";
-                ErrorManager::Instance().RecordError(
-                    "Deleting a local video", transientStatus_);
+                transientStatus_ =
+                    "The assigned local video changed. Nothing was deleted.";
                 RefreshDetails();
                 return;
             }
-            // The picked thumbnail's video no longer exists, so the artwork
-            // goes with it. Unlink deliberately does NOT reach this line:
-            // an unlinked map keeps its one picked thumbnail so relinking
-            // the same video restores the artwork without re-picking.
-            const auto localThumbnailPath =
-                library.LocalThumbnailPath(levelId).string();
-            if(library.RemoveLocalThumbnail(levelId))
-                EvictVideoThumbnail(localThumbnailPath);
+            localPathToDelete =
+                removedDescriptor.playableConfig->videoPath.lexically_normal();
         }
 
         bool removed = false;
@@ -2502,6 +2515,46 @@ namespace BigScreen {
             transientStatus_ = "No removable video was available for this song.";
             RefreshDetails();
             return;
+        }
+
+        // Persist every unlink before touching a user-owned file. A full or
+        // unavailable manifest can therefore abort safely without deleting
+        // the only copy of the video. If filesystem deletion later fails,
+        // restore the still-existing file assignment when possible.
+        if(localPathToDelete)
+        {
+            std::string deleteError;
+            if(!library.DeleteLocalVideoFile(*localPathToDelete, deleteError))
+            {
+                std::string restoreError;
+                const bool restored = library.SetVideoFileOverride(
+                    selected_, *localPathToDelete, restoreError);
+                transientStatus_ = restored
+                    ? (deleteError.empty()
+                        ? "The local file could not be deleted. Its assignment was restored."
+                        : deleteError + " Its assignment was restored.")
+                    : "The local file could not be deleted and remains on the Quest, but its assignment could not be restored. Select it again with Show File Browser.";
+                ErrorManager::Instance().RecordError(
+                    "Deleting a local video", transientStatus_);
+                RefreshDetails();
+                return;
+            }
+
+            // The picked thumbnail came from the now-deleted local file.
+            // Thumbnail cleanup is non-critical after the durable unlink and
+            // must not turn a successful deletion into an uncaught UI error.
+            const auto localThumbnailPath =
+                library.LocalThumbnailPath(levelId).string();
+            try
+            {
+                if(library.RemoveLocalThumbnail(levelId))
+                    EvictVideoThumbnail(localThumbnailPath);
+            }
+            catch(const std::exception& exception)
+            {
+                ErrorManager::Instance().RecordError(
+                    "removing a deleted video's thumbnail", exception.what());
+            }
         }
 
         // Row sprites outlive the files from which they were decoded. Evict
@@ -2562,6 +2615,27 @@ namespace BigScreen {
         RefreshLocalVideoStatus();
         RefreshDetails();
         StartSelectedPreview();
+        }
+        catch(const std::exception& exception)
+        {
+            transientStatus_ =
+                "The video assignment could not be saved. The previous library state was restored.";
+            ErrorManager::Instance().ReportInternal(
+                "removing a video assignment", exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Video change was not saved", transientStatus_);
+            RefreshDetails();
+        }
+        catch(...)
+        {
+            transientStatus_ =
+                "The video assignment could not be saved. The previous library state was restored.";
+            ErrorManager::Instance().ReportInternal(
+                "removing a video assignment", "Unknown native exception");
+            ErrorManager::Instance().ReportUserVisible(
+                "Video change was not saved", transientStatus_);
+            RefreshDetails();
+        }
     }
 
     void VideoLibraryMenu::ClearThumbnail()
@@ -2702,13 +2776,59 @@ namespace BigScreen {
     {
         if(!selected_ || !selected_->levelID)
             return false;
-        return VideoLibrary::Instance().UpdateTiming(
-            std::string(selected_->levelID),
-            SelectedVideoOrigin(),
-            offset_,
-            rate_,
-            fitToSong_,
-            blackDuringLeadIn_);
+        const auto restorePersistedTiming = [this]()
+        {
+            const auto descriptor =
+                VideoLibrary::Instance().Describe(selected_);
+            const auto* timing = EditorTimingConfig(descriptor);
+            offset_ = timing ? timing->offsetSeconds : 0.0;
+            rate_ = timing ? timing->playbackRate : 1.0;
+            fitToSong_ = timing ? timing->fitToSong : false;
+            blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
+            suppressTimingCallbacks_ = true;
+            if(offsetSetting_)
+                offsetSetting_->set_Value(static_cast<float>(offset_));
+            if(rateSetting_)
+                rateSetting_->set_Value(static_cast<float>(rate_));
+            SetToggleWithoutNotification(fitToggle_, fitToSong_);
+            SetToggleWithoutNotification(
+                blackLeadInToggle_, blackDuringLeadIn_);
+            suppressTimingCallbacks_ = false;
+        };
+        try
+        {
+            return VideoLibrary::Instance().UpdateTiming(
+                std::string(selected_->levelID),
+                SelectedVideoOrigin(),
+                offset_,
+                rate_,
+                fitToSong_,
+                blackDuringLeadIn_);
+        }
+        catch(const std::exception& exception)
+        {
+            transientStatus_ =
+                "Timing could not be saved. The previous values remain active.";
+            ErrorManager::Instance().ReportInternal(
+                "saving video timing", exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Video timing was not saved", transientStatus_);
+            restorePersistedTiming();
+            RefreshDetails();
+            return false;
+        }
+        catch(...)
+        {
+            transientStatus_ =
+                "Timing could not be saved. The previous values remain active.";
+            ErrorManager::Instance().ReportInternal(
+                "saving video timing", "Unknown native exception");
+            ErrorManager::Instance().ReportUserVisible(
+                "Video timing was not saved", transientStatus_);
+            restorePersistedTiming();
+            RefreshDetails();
+            return false;
+        }
     }
 
     bool VideoLibraryMenu::ApplyFitToSong(bool reportStatus)

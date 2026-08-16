@@ -662,6 +662,12 @@ namespace BigScreen {
 
     void ShowcaseLauncher::OnGameplayFinished() noexcept
     {
+        // Normal songs share the same level-finish hook. They must not cancel
+        // an in-progress showcase download/refresh merely because the user
+        // finished unrelated gameplay while the readiness page was retained.
+        if(!showcaseGameplayActive_)
+            return;
+
         // The showcase launcher owns only the transition into gameplay. Once
         // the map ends or is quit, Beat Saber owns navigation again. Clearing
         // both fields here prevents a later visit to the readiness page from

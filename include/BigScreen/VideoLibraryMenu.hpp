@@ -169,6 +169,11 @@ namespace BigScreen {
         // they can be fetched again; a user's own MP4 cannot.
         BSML::ModalView* deleteLocalConfirmModal_ = nullptr;
         TMPro::TextMeshProUGUI* deleteLocalConfirmText_ = nullptr;
+        // The second destructive confirmation is intentionally bound to the
+        // exact assignment displayed when it opened. Revalidate both values
+        // before deletion so a background refresh cannot delete a replacement.
+        std::string pendingLocalDeleteLevelId_;
+        std::filesystem::path pendingLocalDeletePath_;
         BSML::ModalView* downloadConfirmModal_ = nullptr;
         UnityEngine::GameObject* storageSpacer_ = nullptr;
         UnityEngine::GameObject* storagePanel_ = nullptr;

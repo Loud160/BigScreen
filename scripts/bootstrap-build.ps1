@@ -187,7 +187,10 @@ WSL 2 was not found. Install WSL with Ubuntu, then install the Linux build tools
         "tar", "unzip", "xz")
     $toolProbe = 'for tool in "$@"; do command -v "$tool" >/dev/null 2>&1 || printf "%s\n" "$tool"; done'
     $missingLinuxTools = @(
-        & $wslCommand.Source -- bash -c $toolProbe bootstrap-probe @requiredLinuxTools
+        # `wsl -- bash ...` can be parsed as a distribution selector by newer
+        # WSL builds and silently return success without running bash. `-e`
+        # explicitly executes the probe inside the default distribution.
+        & $wslCommand.Source -e bash -c $toolProbe bootstrap-probe @requiredLinuxTools
     ) | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ }
     if ($LASTEXITCODE -ne 0) {
         throw "WSL could not run the Linux prerequisite check. Open the distribution once, finish its setup, and retry."

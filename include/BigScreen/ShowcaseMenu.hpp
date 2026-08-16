@@ -10,6 +10,8 @@
 #include <functional>
 #include <string>
 
+#include "beatsaber-hook/shared/utils/typedefs.h"
+
 namespace BSML { class ModalView; }
 namespace HMUI { class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
@@ -56,7 +58,10 @@ namespace BigScreen {
         UnityEngine::UI::Button* mapButton_ = nullptr;
         UnityEngine::UI::Button* videoButton_ = nullptr;
         UnityEngine::UI::Button* playButton_ = nullptr;
-        BSML::ModalView* warningModal_ = nullptr;
+        // UnityW becomes null when the retained modal is destroyed. A raw
+        // pointer here previously survived coordinator teardown and could be
+        // dereferenced during the next menu visit.
+        UnityW<BSML::ModalView> warningModal_ = nullptr;
         std::function<void()> onClose_;
         int tickCounter_ = 0;
     };

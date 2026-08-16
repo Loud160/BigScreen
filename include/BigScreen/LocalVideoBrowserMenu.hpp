@@ -42,6 +42,9 @@ namespace BigScreen {
         void ForgetUi();
         void Show(GlobalNamespace::BeatmapLevel* level);
         void Tick();
+        /// Stops and joins an in-flight directory probe before its retained
+        /// page is hidden or the mod is disabled.
+        void CancelScan();
 
     private:
         enum class ScanState { Idle, Scanning, Ready, Failed };

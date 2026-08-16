@@ -85,17 +85,29 @@ namespace BigScreen {
 
     LocalVideoBrowserMenu::~LocalVideoBrowserMenu()
     {
+        CancelScan();
+    }
+
+    void LocalVideoBrowserMenu::CancelScan()
+    {
         stopScan_ = true;
-        if(worker_.joinable()) worker_.join();
+        if(worker_.joinable())
+            worker_.join();
+        std::scoped_lock lock(mutex_);
+        pendingDirectory_.reset();
+        if(snapshot_.state == ScanState::Scanning)
+        {
+            snapshot_.state = ScanState::Idle;
+            snapshot_.message.clear();
+            ++snapshot_.version;
+        }
     }
 
     void LocalVideoBrowserMenu::ForgetUi()
     {
         // Stop between directory entries/probes so a folder with many videos
         // cannot hold menu teardown until every file has been inspected.
-        stopScan_ = true;
-        if(worker_.joinable())
-            worker_.join();
+        CancelScan();
         controller_ = nullptr;
         selectedLevel_ = nullptr;
         onCancel_ = {};
@@ -712,19 +724,37 @@ namespace BigScreen {
         if(!selectedLevel_ || selectedPath_.empty())
             return;
         std::string error;
-        if(!VideoLibrary::Instance().SetVideoFileOverride(
-               selectedLevel_, selectedPath_, error))
+        try
         {
-            ErrorManager::Instance().ReportUserVisible(
-                "Local video could not be assigned",
-                error.empty() ? "The selected video could not be assigned." : error);
-            if(statusText_)
-                statusText_->set_text(
-                    error.empty() ? "The selected video could not be assigned." : error);
-            return;
+            if(VideoLibrary::Instance().SetVideoFileOverride(
+                   selectedLevel_, selectedPath_, error))
+            {
+                const auto fileName = selectedPath_.filename().string();
+                if(onAssigned_) onAssigned_(fileName);
+                return;
+            }
         }
-        const auto fileName = selectedPath_.filename().string();
-        if(onAssigned_) onAssigned_(fileName);
+        catch(const std::exception& exception)
+        {
+            error = "The video assignment could not be saved. Your previous "
+                "assignment is still active.";
+            ErrorManager::Instance().ReportInternal(
+                "saving a local video assignment", exception.what());
+        }
+        catch(...)
+        {
+            error = "The video assignment could not be saved. Your previous "
+                "assignment is still active.";
+            ErrorManager::Instance().ReportInternal(
+                "saving a local video assignment", "Unknown native exception");
+        }
+
+        if(error.empty())
+            error = "The selected video could not be assigned.";
+        ErrorManager::Instance().ReportUserVisible(
+            "Local video could not be assigned", error);
+        if(statusText_)
+            statusText_->set_text(error);
     }
 
     void LocalVideoBrowserMenu::ShowHelp(const LocalVideoFile& file)
@@ -742,6 +772,7 @@ namespace BigScreen {
 
     void LocalVideoBrowserMenu::Cancel()
     {
+        CancelScan();
         selectedPath_.clear();
         if(onCancel_) onCancel_();
     }

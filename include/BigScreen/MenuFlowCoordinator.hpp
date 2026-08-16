@@ -33,6 +33,13 @@ namespace BigScreen {
 
 /// Places Big Screen's settings and navigation on Beat Saber's left panel and
 /// keeps an empty center view so the full-size world preview is unobstructed.
+#if defined(__clang__)
+#pragma clang diagnostic push
+// CustomTypes' declaration macros create a local metadata counter that some
+// expansions do not consume. Suppress only that generated-macro diagnostic;
+// ordinary unused variables in Big Screen remain covered by -Wall/-Wextra.
+#pragma clang diagnostic ignored "-Wunused-variable"
+#endif
 DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, centerViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, settingsViewController);
@@ -42,6 +49,10 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, showcaseViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, thumbnailPickerViewController);
+    // HMUI retains whichever center subpage was on top when the whole flow was
+    // dismissed. Track that state explicitly rather than querying a transient
+    // top controller during activation, where Beat Saber may throw.
+    DECLARE_INSTANCE_FIELD(bool, restoreCenterOnActivation);
 
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
 
@@ -64,3 +75,6 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
         &HMUI::FlowCoordinator::BackButtonWasPressed,
         HMUI::ViewController* topViewController);
 };
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif

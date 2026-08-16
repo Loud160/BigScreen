@@ -319,6 +319,10 @@ for cache_disclosure in (
     assert cache_disclosure in runtime_fetch
 assert "Using cached QuickJS-NG" in quickjs_fetch
 assert "Using cached FFmpeg" in ffmpeg_build
+assert "archive_download_path=" in ffmpeg_build
+assert "archive_is_valid" in ffmpeg_build
+assert 'mv -f "${archive_download_path}" "${archive_path}"' in ffmpeg_build
+assert "& $wslCommand.Source -e bash -c $toolProbe" in bootstrap_build
 for path_safe_ffmpeg_marker in (
     'native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"',
     '--prefix="${native_install_root}"',
@@ -543,6 +547,16 @@ for function_name in ("FrameDecoder::Close()", "FrameDecoder::SetWorkerError"):
     assert "std::scoped_lock lock(requestMutex_)" in function
     assert function.index("lock(requestMutex_)") < function.index("stopWorker_ = true")
 assert "AVERROR(EAGAIN)" in frame_decoder_source
+assert "std::optional<double> endOfStreamTime" in frame_decoder_source
+assert "std::optional<double> firstAvailableFrameTime" in frame_decoder_source
+assert "ReadDecodedFrame(bool& reachedEndOfStream)" in frame_decoder_source
+open_body = frame_decoder_source.split("bool FrameDecoder::Open(", 1)[1].split(
+    "void FrameDecoder::Close()", 1)[0]
+close_body = frame_decoder_source.split("void FrameDecoder::Close()", 1)[1].split(
+    "void FrameDecoder::Request", 1)[0]
+for retained_counter in ("peakDecodeMilliseconds_ = 0.0", "bufferAllocations_ = 0"):
+    assert retained_counter in open_body
+    assert retained_counter not in close_body
 assert "av_strerror" in frame_decoder_source
 assert 'CodecPolicy{"H.264", "h264", "h264_mediacodec", CoreLogic::VideoCodecKind::H264}' in frame_decoder_source
 assert 'CodecPolicy{"H.265/HEVC", nullptr, "hevc_mediacodec", CoreLogic::VideoCodecKind::Hevc}' in frame_decoder_source
@@ -577,6 +591,14 @@ assert close_and_retain.index(
 assert "retainedPeakDecodeMilliseconds_" in close_and_retain
 assert "accumulatedBufferAllocations_ += backend_->BufferAllocations();" in close_and_retain
 assert 'if(!backend_)\n            return "none";' in frame_decoder_facade
+
+# Circuit-breaker recovery performs Unity teardown from an otherwise bare
+# update hook. It must guard its own cleanup rather than allowing a second
+# exception to escape into il2cpp.
+tick_main_thread = error_manager_source.split(
+    "void ErrorManager::TickMainThread()", 1)[1].split(
+    "void ErrorManager::SetGameplayActive", 1)[0]
+assert 'Guard("disabling Big Screen after repeated errors"' in tick_main_thread
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
@@ -685,6 +707,10 @@ assert ".DownloadMap(" not in showcase_show
 assert ".DownloadVideo(" not in showcase_show
 assert "DismissTransientUi()" in showcase_show
 assert "warningModal_->Hide()" in showcase_menu_source
+showcase_menu_header = (root / "include/BigScreen/ShowcaseMenu.hpp").read_text(
+    encoding="utf-8")
+assert "UnityW<BSML::ModalView> warningModal_" in showcase_menu_header
+assert "UnityW<BSML::ModalView>::isAlive" in showcase_menu_source
 assert "object->SetActive(false)" in showcase_menu_source
 assert "transitionFrames_ < 12" in showcase_source
 assert '"Return to Big Screen"' not in main_source
@@ -864,6 +890,11 @@ assert "std::filesystem::rename(temporaryPath, finalPath" in (
     thumbnail_picker_source)
 assert "ThumbnailPickerMenu::Instance().Tick();" in main_source
 assert "ThumbnailPickerMenu::Instance().Hide();" in menu_flow_source
+assert "previousFrameButton_->set_interactable(true)" in thumbnail_picker_source
+assert "nextFrameButton_->set_interactable(true)" in thumbnail_picker_source
+assert "restoreCenterOnActivation" in menu_flow_source
+assert "LocalVideoBrowserMenu::Instance().CancelScan();" in menu_flow_source
+assert "void CancelScan();" in local_browser_header
 assert "LocalThumbnailChanged" in menu_flow_source
 
 # Deleting a LOCAL file is the menu's only unrecoverable action, so it alone
@@ -873,6 +904,10 @@ assert '"Permanently delete this video file from your Quest?' in (
     library_menu_source)
 assert "if(activeLocalFile && deleteLocalConfirmModal_)" in library_menu_source
 assert '"<color=#FF3838>Delete Forever</color>"' in library_menu_source
+assert "pendingLocalDeleteLevelId_" in library_menu_header
+assert "pendingLocalDeletePath_" in library_menu_header
+assert "The assigned video changed while confirmation was open" in (
+    library_menu_source)
 
 # The one-to-four exact-resolution download choices share the whole action row
 # at one uniform flexible size instead of the old fixed cramped grouping.
@@ -888,6 +923,41 @@ assert "DeleteLocalVideoFile" in video_library_source
 assert 'extension != ".mp4" && extension != ".webm"' in video_library_source
 assert 'sourceType == "externalFile"' in video_library_source
 assert "!IsUserOwnedFile(*previous)" in video_library_source
+assert "persistedRecords_" in video_library_header
+assert "records_ = persistedRecords_" in video_library_source
+assert "persistedRecords_.swap(durableCandidate)" in video_library_source
+assert "ReferencedThumbnailFileNames" in video_library_source
+assert 'key + "-local.png"' in video_library_source
+assert "IsActiveDownloadStaging" in storage_manager_source
+assert "DownloadManager::Instance().Snapshot()" in storage_manager_source
+
+# A configured post-roll has no frame to upload but must still release the
+# synchronized audio gate.
+assert "mediaPastConfiguredEnd" in core_logic
+assert "mediaPastConfiguredEnd" in playback_source
+
+# Per-layout and master reset paths must redraw hidden BSML switch graphics,
+# and curve controls retain the requested Curved -> Curve -> Aspect order.
+assert "RefreshToggleVisualWithoutNotification" in settings_menu_source
+screen_controls = settings_menu_source.split(
+    '"Curved Screen"', 1)[1].split('"Video Opacity"', 1)[0]
+assert screen_controls.index('"Screen Curve"') < screen_controls.index(
+    '"Maintain Aspect Ratio"')
+assert "showMenuEnvironmentToggle_, settings.ShowMenuEnvironment()" in (
+    settings_menu_source)
+assert "performanceDiagnosticsToggle_" in settings_menu_source
+
+# Normal level completion must not cancel a retained showcase preparation.
+on_gameplay_finished = showcase_source.split(
+    "void ShowcaseLauncher::OnGameplayFinished()", 1)[1].split(
+    "void ShowcaseLauncher::Fail", 1)[0]
+assert "if(!showcaseGameplayActive_)" in on_gameplay_finished
+
+# Strict warnings apply to Big Screen while generated dependency headers are
+# registered as system includes so their diagnostics do not bury our output.
+assert "${EXTERN_DIR}/includes/bs-cordl/include" in cmake
+assert "target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE" in cmake
+assert '& $cmakeExe -Wno-deprecated -G "Ninja"' in build_script
 
 # A missing primary manifest after an interrupted replace is a recovery case
 # when a rotating backup exists, not a first-run empty library. Managed deletes

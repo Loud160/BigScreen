@@ -27,6 +27,24 @@ namespace BigScreen::UiUtility {
             setting->toggle->SetIsOnWithoutNotify(value);
     }
 
+    /// Forces a retained BSML switch graphic to redraw without firing its
+    /// settings callback. When a hidden tab is reset, ToggleSetting and the
+    /// underlying Unity Toggle can already contain the new bool while the
+    /// animated visual still shows the old state. Passing through the inverse
+    /// value guarantees Unity rebuilds the graphic before the desired value is
+    /// restored.
+    inline void RefreshToggleVisualWithoutNotification(
+        BSML::ToggleSetting* setting,
+        bool value)
+    {
+        if(!setting)
+            return;
+        setting->currentValue = !value;
+        if(setting->toggle)
+            setting->toggle->SetIsOnWithoutNotify(!value);
+        SetToggleWithoutNotification(setting, value);
+    }
+
     /// Uses Beat Saber's own parental-content preference for download checks,
     /// keeping every Big Screen download surface on the same policy.
     inline bool ExplicitContentAllowed()

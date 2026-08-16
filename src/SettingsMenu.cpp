@@ -63,6 +63,7 @@
 namespace BigScreen {
     namespace {
         using UiUtility::SetToggleWithoutNotification;
+        using UiUtility::RefreshToggleVisualWithoutNotification;
 
         std::array<std::string_view, 4> ResolutionChoices{
             "480p",
@@ -1024,51 +1025,29 @@ namespace BigScreen {
             {
                 Settings::Instance().ResetActiveScreenLayout();
 
-                // Beat Saber's animated switch graphic listens to the native
-                // Toggle change event. SetToggleWithoutNotification updates
-                // the stored/native bool but deliberately suppresses that
-                // event, leaving a reset switch visibly On even though its
-                // dependent controls already reflect Off. A per-layout reset
-                // is a discrete user action, so drive every affected switch
-                // through ToggleSetting's normal visual/callback pipeline.
-                const auto applyLayoutToggle = [](
-                    BSML::ToggleSetting* control, bool value)
-                {
-                    if(control)
-                        control->set_Value(value);
-                };
                 const auto& defaults = Settings::Instance();
-                // Apply ordinary presentation toggles before the two controls
-                // whose Off callbacks perform a full RefreshControls pass.
-                // Otherwise that early pass writes the remaining native bools
-                // without notification and consumes their visual transition.
-                applyLayoutToggle(
+                // Hidden-tab reset can leave BSML's animated switch graphic
+                // stale even when both stored bools are already correct. Force
+                // a callback-free redraw, then apply the renderer once from
+                // the authoritative layout state below.
+                RefreshToggleVisualWithoutNotification(
                     curvedScreenToggle_,
                     defaults.CurvedScreenEnabled());
-                applyLayoutToggle(
+                RefreshToggleVisualWithoutNotification(
                     maintainCurveAspectToggle_,
                     defaults.MaintainCurveAspectRatio());
-                applyLayoutToggle(
+                RefreshToggleVisualWithoutNotification(
                     transparencyToggle_,
                     defaults.LetterboxTransparencyEnabled());
-                applyLayoutToggle(
+                RefreshToggleVisualWithoutNotification(
                     stretchVideoToggle_,
                     defaults.StretchVideoToFit());
-
-                // The settings model is already authoritative after Reset.
-                // Suppress only Big Screen's expensive/re-entrant callbacks;
-                // ToggleSetting still emits the native event that updates the
-                // animated switch graphic.
-                suppressAdvancedCallback_ = true;
-                applyLayoutToggle(
+                RefreshToggleVisualWithoutNotification(
                     advancedOptionsToggle_,
                     defaults.AdvancedOptionsEnabled());
-                suppressAdvancedCallback_ = false;
-                suppressUndockCallback_ = true;
-                applyLayoutToggle(
+                RefreshToggleVisualWithoutNotification(
                     undockScreenToggle_,
                     defaults.UndockedScreenEnabled());
-                suppressUndockCallback_ = false;
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
                 PaperLogger.info(
@@ -1343,19 +1322,6 @@ namespace BigScreen {
             curvedScreenToggle_,
             "Switches between a flat screen and a curved screen. Turning this on reveals the curve controls below; both modes support screen multipliers up to 8.0.");
 
-        maintainCurveAspectToggle_ = BSML::Lite::CreateToggle(
-            screenContainer,
-            "Maintain Aspect Ratio",
-            settings.MaintainCurveAspectRatio(),
-            [](bool enabled)
-            {
-                Settings::Instance().SetMaintainCurveAspectRatio(enabled);
-                ApplyDisplaySettingsAndRefreshPreview();
-            });
-        BSML::Lite::AddHoverHint(
-            maintainCurveAspectToggle_,
-            "Keeps the video's original width-to-height ratio as the screen curves. Turn this off to let stronger curves widen and stretch the screen like the original behavior.");
-
         // Both curve-specific rows stay directly below Curved Screen so the
         // vertical layout collapses cleanly when a flat screen is selected.
         // showButtons enables BSML's native clickable arrows; the slider keeps
@@ -1378,6 +1344,19 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             curvatureSlider_,
             "Positive values wrap the edges toward you; negative values bend them away. The available range is -7 through +7.");
+
+        maintainCurveAspectToggle_ = BSML::Lite::CreateToggle(
+            screenContainer,
+            "Maintain Aspect Ratio",
+            settings.MaintainCurveAspectRatio(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetMaintainCurveAspectRatio(enabled);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            maintainCurveAspectToggle_,
+            "Keeps the video's original width-to-height ratio as the screen curves. Turn this off to let stronger curves widen and stretch the screen like the original behavior.");
 
         // VIDEO OPACITY MAINTENANCE NOTE:
         // This is a normal native BSML slider and is intentionally outside the
@@ -2830,6 +2809,24 @@ namespace BigScreen {
         // the default panel placement instead of being overwritten afterward.
         PerformancePanel::Instance().SetEnabled(false);
         settings.Reset();
+
+        // Reset runs from General while most controls are inactive. Force the
+        // retained BSML graphics through a real visual transition so their On/
+        // Off position matches the newly reconstructed Settings object.
+        const auto refreshResetToggle = [](
+            BSML::ToggleSetting* control, bool value)
+        {
+            RefreshToggleVisualWithoutNotification(control, value);
+        };
+        refreshResetToggle(
+            showMenuEnvironmentToggle_, settings.ShowMenuEnvironment());
+        refreshResetToggle(
+            performanceDiagnosticsToggle_,
+            settings.PerformanceDiagnosticsEnabled());
+        refreshResetToggle(
+            curvedScreenToggle_, settings.CurvedScreenEnabled());
+        refreshResetToggle(
+            maintainCurveAspectToggle_, settings.MaintainCurveAspectRatio());
 
         // Environment lives on an inactive tab while the reset button is
         // pressed from General. Updating only Toggle/currentValue bypasses

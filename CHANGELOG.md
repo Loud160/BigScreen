@@ -2,6 +2,21 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Completed the third pre-release hardening review. Non-looping videos now
+  park the decoder at both stream boundaries instead of repeatedly decoding an
+  opening/final GOP; decoder metrics survive backend swaps; circuit-breaker,
+  manifest-write, retained-modal, transient-page, local-scan, and storage-
+  cleanup failure paths are contained. Storage Maintenance now protects active
+  download staging and every live thumbnail reference, while corrupt cached
+  FFmpeg archives are discarded and fetched transactionally.
+- Reset Screen and Reset to Defaults now force retained BSML switch graphics to
+  match their authoritative settings, including Curved Screen, Show Menu
+  Environment, and Show Performance Information. Screen Curve now appears
+  immediately below Curved Screen, followed by Maintain Aspect Ratio.
+- Kept strict compiler warnings for Big Screen's own code while marking QPM's
+  generated dependency headers as system includes so third-party diagnostics
+  no longer overwhelm normal build output.
+
 - Fixed clean first-time deployment through `Build-And-Deploy.bat`: direct ADB
   deployment and QMOD packaging now share one generated runtime manifest, so
   the embedded CPython, yt-dlp, QuickJS provider, certificates, native Python

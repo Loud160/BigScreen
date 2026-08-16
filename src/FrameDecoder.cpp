@@ -206,6 +206,8 @@ namespace BigScreen {
         // can read it after join. A new Open begins a distinct decoder
         // lifetime and therefore resets the counter here.
         workerCpuNanoseconds_ = 0;
+        peakDecodeMilliseconds_ = 0.0;
+        bufferAllocations_ = 0;
         usingHardwareDecoder_ = false;
         hardwareFallbackReason_.clear();
         softwareFallbackAllowed_ = true;
@@ -523,8 +525,6 @@ namespace BigScreen {
         softwareFallbackAllowed_ = true;
         softwareFallbackBlockedReason_.clear();
         averageDecodeMilliseconds_ = 0.0;
-        peakDecodeMilliseconds_ = 0.0;
-        bufferAllocations_ = 0;
 
         {
             std::scoped_lock requestLock(requestMutex_);
@@ -642,6 +642,8 @@ namespace BigScreen {
         std::uint64_t handledVersion = 0;
         double lastDecodedTime = -std::numeric_limits<double>::infinity();
         double lastDecodedDuration = nominalFrameSeconds_;
+        std::optional<double> firstAvailableFrameTime;
+        std::optional<double> endOfStreamTime;
         const auto updateCpuTotal = [this, cpuStartedNanoseconds]
         {
             const std::uint64_t now = CurrentThreadCpuNanoseconds();
@@ -677,6 +679,32 @@ namespace BigScreen {
                 continue;
             }
 
+            // Once FFmpeg has drained the stream, later non-looping song time
+            // has no new picture to produce. Mark each request handled without
+            // seeking back to the final keyframe. A backward request clears the
+            // latch and follows the ordinary seek path for replay/practice.
+            if(endOfStreamTime)
+            {
+                if(target >= *endOfStreamTime)
+                {
+                    handledVersion = targetVersion;
+                    updateCpuTotal();
+                    continue;
+                }
+                endOfStreamTime.reset();
+            }
+
+            // Some files begin with a positive video PTS. The first request
+            // publishes that earliest picture, after which earlier song times
+            // should retain it rather than seeking to zero and decoding the
+            // same opening GOP on every presentation tick.
+            if(firstAvailableFrameTime && target < *firstAvailableFrameTime)
+            {
+                handledVersion = targetVersion;
+                updateCpuTotal();
+                continue;
+            }
+
             // Restarts, replay scrubbing, loop wraparound, and large practice
             // jumps should seek to the preceding keyframe. Small forward steps
             // decode sequentially, which is substantially cheaper on Quest.
@@ -703,14 +731,25 @@ namespace BigScreen {
             const auto requestWorkStarted = std::chrono::steady_clock::now();
             while(!stopWorker_)
             {
-                if(!ReadDecodedFrame())
+                bool reachedEndOfStream = false;
+                if(!ReadDecodedFrame(reachedEndOfStream))
                 {
+                    if(reachedEndOfStream)
+                    {
+                        endOfStreamTime = std::isfinite(lastDecodedTime)
+                            ? lastDecodedTime + std::max(
+                                  lastDecodedDuration,
+                                  nominalFrameSeconds_ * 0.25)
+                            : std::max(0.0, target);
+                    }
                     handledVersion = targetVersion;
                     break;
                 }
 
                 lastDecodedTime = CurrentFrameTime();
                 lastDecodedDuration = CurrentFrameDuration();
+                if(!firstAvailableFrameTime)
+                    firstAvailableFrameTime = lastDecodedTime;
                 if(lastDecodedTime + lastDecodedDuration < target)
                     continue;
 
@@ -754,8 +793,9 @@ namespace BigScreen {
         }
     }
 
-    bool FrameDecoder::ReadDecodedFrame()
+    bool FrameDecoder::ReadDecodedFrame(bool& reachedEndOfStream)
     {
+        reachedEndOfStream = false;
         const auto applyDecodedCrop = [this]() {
             // Apply codec crop metadata before swscale sees the picture. This
             // prevents padded MediaCodec stride/slice dimensions (or ordinary
@@ -779,7 +819,10 @@ namespace BigScreen {
             if(result == 0)
                 return applyDecodedCrop();
             if(result == AVERROR_EOF)
+            {
+                reachedEndOfStream = true;
                 return false;
+            }
             if(result != AVERROR(EAGAIN))
             {
                 SetWorkerError(
@@ -821,6 +864,8 @@ namespace BigScreen {
                         "FFmpeg could not receive the final video frame: " +
                         FfmpegError(finalResult));
                 }
+                reachedEndOfStream =
+                    finalResult == AVERROR_EOF || finalResult == AVERROR(EAGAIN);
                 return false;
             }
 

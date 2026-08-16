@@ -266,12 +266,14 @@ int main()
     Expect(VideoLayerOffset(100.0f, 40.0f) == -0.2f,
            "large canvases receive proportionally stable layer separation");
 
-    Expect(SynchronizedPreviewReady(-1.214, false),
+    Expect(SynchronizedPreviewReady(-1.214, false, false),
            "an intentional negative lead-in may start synchronized audio without a frame");
-    Expect(!SynchronizedPreviewReady(0.0, false),
+    Expect(!SynchronizedPreviewReady(0.0, false, false),
            "visible media time still waits for the decoder's first uploaded frame");
-    Expect(SynchronizedPreviewReady(0.0, true),
+    Expect(SynchronizedPreviewReady(0.0, false, true),
            "visible media time becomes ready after its first picture reaches Unity");
+    Expect(SynchronizedPreviewReady(120.0, true, false),
+           "configured post-roll advances without an impossible decoded picture");
 
     CornerWarpSettings warp;
     warp.corners[0] = {-2.0f, -1.0f, 0.0f};

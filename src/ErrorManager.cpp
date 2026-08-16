@@ -257,13 +257,19 @@ namespace BigScreen {
         }
         if(disable)
         {
-            Settings::Instance().SetModEnabled(false);
-            // The circuit breaker must perform the same immediate teardown as
-            // the menu's master switch. Merely persisting false would leave a
-            // decoder, preview, or undocked editor raycaster alive because the
-            // Update hook stops dispatching mod work as soon as it sees false.
-            SelectionVideoToggle::Instance().ModEnabledChanged(false);
-            ScreenPreview::Instance().SetEnabled(false);
+            // Circuit-breaker cleanup is itself recovery code. Guard every
+            // teardown operation so a damaged Unity object cannot turn the
+            // original handled failure into an uncaught exception on the main
+            // hook and take down Beat Saber's complete mod UI.
+            Guard("disabling Big Screen after repeated errors", []()
+            {
+                Settings::Instance().SetModEnabled(false);
+                // The circuit breaker must perform the same immediate teardown
+                // as the menu's master switch. Merely persisting false would
+                // leave a decoder, preview, or editor raycaster alive.
+                SelectionVideoToggle::Instance().ModEnabledChanged(false);
+                ScreenPreview::Instance().SetEnabled(false);
+            });
         }
 
         if(requestMenuExit && IsBigScreenMenuActive())

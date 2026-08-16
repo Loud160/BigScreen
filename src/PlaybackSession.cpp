@@ -598,8 +598,11 @@ namespace BigScreen {
         const double mediaTime = config_->MediaTimeForSong(
             songTimeSeconds,
             decoder_.DurationSeconds());
+        const bool mediaPastConfiguredEnd = config_->stopAtVideoSecond &&
+            mediaTime >= *config_->stopAtVideoSecond;
         return CoreLogic::SynchronizedPreviewReady(
             mediaTime,
+            mediaPastConfiguredEnd,
             firstFrameUploaded_);
     }
 

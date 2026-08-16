@@ -178,7 +178,16 @@ if(BIGSCREEN_UP_DOWN_SHOWCASE)
         target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
                 BIGSCREEN_UP_DOWN_SHOWCASE=1)
 endif()
-target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${SHARED_DIR})
+# QPM's generated extern.cmake adds its umbrella dependency directories with
+# ordinary `-I`, which makes Clang report warnings from generated Beat Saber,
+# BSML, SongCore, and hook headers whenever strict first-party warnings are
+# enabled. Register the same roots as system includes before the deferred QPM
+# setup. CMake then emits `-isystem` for dependency code while preserving
+# -Wall/-Wextra/-Wpedantic on Big Screen's own include/src trees.
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
+        ${SHARED_DIR}
+        ${EXTERN_DIR}/includes
+        ${EXTERN_DIR}/includes/bs-cordl/include)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE

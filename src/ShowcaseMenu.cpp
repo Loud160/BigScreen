@@ -104,7 +104,7 @@ namespace BigScreen {
     {
         try
         {
-            if(!warningModal_)
+            if(!UnityW<BSML::ModalView>::isAlive(warningModal_.unsafePtr()))
                 return;
             warningModal_->Hide();
             // ModalView's blocker can survive a retained FlowCoordinator

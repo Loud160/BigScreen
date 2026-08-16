@@ -213,6 +213,9 @@ namespace BigScreen {
         std::uint64_t ManagedBytesForLevel(const std::string& levelId) const;
         std::uint64_t LibraryBytes() const;
         std::uint64_t FreeBytes() const;
+        /// Returns every thumbnail currently referenced either by persistent
+        /// records or by a resolved mapper/local descriptor in this session.
+        std::vector<std::string> ReferencedThumbnailFileNames() const;
         /// Returns and clears a one-time startup recovery message for the UI.
         std::optional<std::string> TakeRecoveryNotice();
         /// Rebuilds manifest entries for managed MP4s after all backups failed.
@@ -233,7 +236,7 @@ namespace BigScreen {
         VideoLibrary() = default;
 
         void LoadLocked();
-        void SaveLocked() const;
+        void SaveLocked();
         bool TryLoadManifestLocked(
             const std::filesystem::path& path,
             std::vector<std::pair<std::string, LevelVideoRecords>>& output) const;
@@ -248,6 +251,10 @@ namespace BigScreen {
         std::filesystem::path sharedStoragePath_;
         std::filesystem::path manifestPath_;
         std::vector<std::pair<std::string, LevelVideoRecords>> records_;
+        // Last records proven durable in library.json. SaveLocked restores
+        // this snapshot if serialization or replacement fails so UI state can
+        // never get ahead of the manifest on disk.
+        std::vector<std::pair<std::string, LevelVideoRecords>> persistedRecords_;
         // Describe() is used by several menu controls. Map metadata and saved
         // assignments do not change between those calls, so cache the fully
         // resolved result and invalidate it whenever this class commits a

@@ -791,16 +791,16 @@ namespace BigScreen::CoreLogic {
 
     /// A Library preview normally holds Beat Saber's audio until FFmpeg has
     /// uploaded the picture for the requested song position. Negative media
-    /// time is different: it is an intentional lead-in where no decoded frame
-    /// is supposed to exist yet. Treat that interval as presentation-ready so
-    /// audio can advance the song clock to video frame zero. Requiring a frame
-    /// there creates a deadlock because the stationary negative clock never
-    /// asks the decoder for one.
+    /// time and a configured post-roll are different: neither interval is
+    /// supposed to produce a decoded frame. Treat both as presentation-ready
+    /// so audio can advance instead of waiting forever for an impossible frame.
     inline constexpr bool SynchronizedPreviewReady(
         double mediaTimeSeconds,
+        bool mediaPastConfiguredEnd,
         bool firstFrameUploaded)
     {
-        return mediaTimeSeconds < 0.0 || firstFrameUploaded;
+        return mediaTimeSeconds < 0.0 || mediaPastConfiguredEnd ||
+            firstFrameUploaded;
     }
 
     /// Deterministic filesystem key. FNV-1a is not used for security; the full

@@ -20,6 +20,12 @@
 /// HoverHint otherwise replaces the glyph's more specific tooltip. This small
 /// bridge temporarily gives the parent the glyph's text while the pointer is
 /// over the nested button, then restores the parent's normal explanation.
+#if defined(__clang__)
+#pragma clang diagnostic push
+// CustomTypes' declaration macros synthesize an unused metadata counter in
+// this header. Keep the suppression local to the generated declarations.
+#pragma clang diagnostic ignored "-Wunused-variable"
+#endif
 DECLARE_CLASS_CODEGEN_INTERFACES(
     BigScreen,
     NestedHoverHintOverride,
@@ -48,3 +54,6 @@ DECLARE_CLASS_CODEGEN_INTERFACES(
         &UnityEngine::EventSystems::IPointerExitHandler::OnPointerExit,
         UnityEngine::EventSystems::PointerEventData* eventData);
 };
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
