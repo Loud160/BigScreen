@@ -8,7 +8,9 @@
   now discloses all possible first-run network downloads and asks permission;
   individual fetchers report cache reuse or the exact component/source being
   downloaded. Added a complete dependency and manual-build inventory under
-  `docs/DEPENDENCIES.md`.
+  `docs/DEPENDENCIES.md`. FFmpeg now builds and installs within a path-safe WSL
+  cache before staging into the repository, so extracted checkout names with
+  spaces or parentheses no longer break FFmpeg 4's generated shell scripts.
 
 - Added Set Thumbnail to the map video editor for maps with a local video: a
   center-screen frame picker with a scrubber, single-frame stepping, and a

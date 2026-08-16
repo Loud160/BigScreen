@@ -316,6 +316,12 @@ for cache_disclosure in (
     assert cache_disclosure in runtime_fetch
 assert "Using cached QuickJS-NG" in quickjs_fetch
 assert "Using cached FFmpeg" in ffmpeg_build
+for path_safe_ffmpeg_marker in (
+    'native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"',
+    '--prefix="${native_install_root}"',
+    'cp -a "${native_install_root}/." "${install_root}/"',
+):
+    assert path_safe_ffmpeg_marker in ffmpeg_build
 assert "Using cached Android NDK r27d Linux archive" in ndk_install
 for documented_dependency in (
     "Tools you install yourself",

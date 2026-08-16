@@ -56,6 +56,13 @@ cache_root="${BIGSCREEN_FFMPEG_CACHE:-${HOME}/.cache/bigscreen-ffmpeg}"
 source_root="${cache_root}/ffmpeg-${ffmpeg_version}"
 pristine_root="${cache_root}/ffmpeg-${ffmpeg_version}-pristine"
 build_root="${cache_root}/build-${ffmpeg_version}-android-arm64"
+# FFmpeg writes --prefix into generated shell fragments without consistently
+# quoting it. A Windows checkout such as "BigScreen-main (1)" therefore makes
+# FFmpeg 4's pkg-config generator parse the parentheses as shell syntax. Keep
+# the configure/install prefix entirely in WSL's native, path-safe cache and
+# copy the completed installation into the repository only after `make
+# install` succeeds.
+native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"
 if [[ "${ffmpeg_version}" == "4.4.8" ]]; then
     install_root="${repository_root}/extern/ffmpeg-lgpl"
 else
@@ -116,7 +123,8 @@ printf '%s  %s\n' "${ffmpeg_sha256}" "${archive_path}" | sha256sum --check --sta
     exit 1
 }
 
-rm -rf "${source_root}" "${pristine_root}" "${build_root}" "${install_root}"
+rm -rf "${source_root}" "${pristine_root}" "${build_root}" \
+    "${native_install_root}" "${install_root}"
 tar -xf "${archive_path}" -C "${cache_root}"
 cp -a "${source_root}" "${pristine_root}"
 
@@ -143,7 +151,7 @@ cd "${build_root}"
 # components remain LGPL and the explicit allowlist below is the license and
 # footprint boundary.
 "${source_root}/configure" \
-    --prefix="${install_root}" \
+    --prefix="${native_install_root}" \
     --target-os=android \
     --arch=aarch64 \
     --cpu=armv8-a \
@@ -245,6 +253,13 @@ fi
 
 make -j"$(nproc)"
 make install
+
+# The native install tree is complete at this point, so crossing WSL's /mnt/c
+# bridge is now one bounded staging operation rather than part of FFmpeg's
+# generated build rules. This also ensures an interrupted compile cannot leave
+# a ready-looking partial runtime in the repository.
+mkdir -p "${install_root}"
+cp -a "${native_install_root}/." "${install_root}/"
 
 # Preserve the exact build inputs needed for LGPL corresponding-source
 # releases.  The generated diff describes every change made to upstream

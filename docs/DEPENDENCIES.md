@@ -170,3 +170,12 @@ do not mean that Big Screen is calling a deprecated Beat Saber API:
 These warnings are still visible rather than filtered out. A warning from a
 future dependency update therefore cannot be silently mistaken for one of the
 known messages above, and any build error still stops packaging and deployment.
+
+## Checkout path compatibility
+
+The repository may be cloned or extracted beneath a Windows path containing
+spaces and parentheses, including GitHub's common `BigScreen-main (1)` download
+name. FFmpeg is configured and installed first under a path-safe native WSL
+cache because FFmpeg 4 writes its installation prefix into generated shell
+fragments without consistently quoting it. Only the completed runtime is then
+copied into the checkout's ignored `extern/` staging directory.
