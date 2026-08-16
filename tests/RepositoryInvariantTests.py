@@ -739,11 +739,54 @@ assert '"<color=#FF4040>"' in local_browser_source
 assert "BrowserListWidth" in local_browser_source
 assert "0.0f, 0.0f, 0.0f, 0.76f" in local_browser_source
 assert '"Show File Browser"' in library_menu_source
+
+# Thumbnail picker: a map owns at most ONE picked thumbnail at a deterministic
+# per-map path. Saving replaces the PNG atomically; unlinking a video keeps the
+# pick (relink restores it); permanently deleting the local file deletes it;
+# Storage Maintenance treats a still-referenced pick as used, never orphaned.
+thumbnail_picker_source = (root / "src/ThumbnailPickerMenu.cpp").read_text(
+    encoding="utf-8")
+storage_manager_source = (root / "src/StorageManager.cpp").read_text(
+    encoding="utf-8")
+assert '"Set Thumbnail"' in library_menu_source
+assert '"-local.png"' in video_library_source
+assert video_library_source.count('"localThumbnail"') >= 2  # parse + serialize
+assert "bool CommitLocalThumbnail" in video_library_header
+assert "bool RemoveLocalThumbnail" in video_library_header
+remove_user_override_body = video_library_source.split(
+    "bool VideoLibrary::RemoveUserOverride", 1)[1].split("\n    }", 1)[0]
+assert "localThumbnail" not in remove_user_override_body  # unlink keeps pick
+assert "library.RemoveLocalThumbnail(levelId)" in library_menu_source
+assert "record.localThumbnail" in storage_manager_source
+assert "EncodeToPNG" in thumbnail_picker_source
+assert "decoder_.Open(videoPath_, 720" in thumbnail_picker_source
+# Decoder rows are top-down while Unity textures are bottom-up; one flip keeps
+# the preview and the encoded PNG in the same correct orientation.
+assert "frame.height - 1 - row" in thumbnail_picker_source
+assert "std::filesystem::rename(temporaryPath, finalPath" in (
+    thumbnail_picker_source)
+assert "ThumbnailPickerMenu::Instance().Tick();" in main_source
+assert "ThumbnailPickerMenu::Instance().Hide();" in menu_flow_source
+assert "LocalThumbnailChanged" in menu_flow_source
+
+# Deleting a LOCAL file is the menu's only unrecoverable action, so it alone
+# gets a second, file-naming confirmation; re-downloadable videos stay
+# single-step through the original modal.
+assert '"Permanently delete this video file from your Quest?' in (
+    library_menu_source)
+assert "if(activeLocalFile && deleteLocalConfirmModal_)" in library_menu_source
+assert '"<color=#FF3838>Delete Forever</color>"' in library_menu_source
+
+# The one-to-four exact-resolution download choices share the whole action row
+# at one uniform flexible size instead of the old fixed cramped grouping.
+assert "ConfigureLayout(button, 19.0f, 7.5f, 1.0f);" in library_menu_source
+assert "buttonLayout->set_minWidth(19.0f);" in library_menu_source
+
 assert "bool externalFile = false;" in video_library_header
 assert "bool mapperLocalSuppressed = false;" in video_library_header
 assert 'member->value, "mapperLocalSuppressed", false' in video_library_source
 assert 'level.AddMember("mapperLocalSuppressed", true, allocator)' in video_library_source
-assert 'document.AddMember("version", 4, allocator)' in video_library_source
+assert 'document.AddMember("version", 5, allocator)' in video_library_source
 assert "DeleteLocalVideoFile" in video_library_source
 assert 'extension != ".mp4" && extension != ".webm"' in video_library_source
 assert 'sourceType == "externalFile"' in video_library_source
@@ -781,7 +824,7 @@ assert "TickMenuReentryGuard();" in main_source
 # and no menu singleton may be refreshed when that UnityW-backed flow is gone.
 for menu_name in (
     "SettingsMenu", "VideoLibraryMenu", "StorageMaintenanceMenu",
-    "LocalVideoBrowserMenu",
+    "LocalVideoBrowserMenu", "ThumbnailPickerMenu",
 ):
     assert f"{menu_name}::Instance().ForgetUi();" in menu_flow_source
 assert "UnityW<MenuFlowCoordinator> activeMenuFlow" in menu_flow_source

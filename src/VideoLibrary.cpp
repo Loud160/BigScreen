@@ -571,7 +571,14 @@ namespace BigScreen {
                 descriptor.downloadUrl = record.sourceUrl;
             descriptor.downloadOrigin = VideoOrigin::User;
             if(IsUserOwnedFile(record))
+            {
                 descriptor.activeMapFileName = record.fileName;
+                // User-owned local files have no downloaded artwork; the only
+                // thumbnail they can ever show is the map's picked frame.
+                if(!saved->localThumbnail.empty())
+                    descriptor.thumbnailPath =
+                        LocalThumbnailPath(descriptor.levelId);
+            }
             else
                 descriptor.thumbnailPath = AllocateThumbnailPath(
                     descriptor.levelId, VideoOrigin::User);
@@ -586,8 +593,13 @@ namespace BigScreen {
                 effective.fitToSong = saved->mapperTiming->fitToSong;
                 effective.blackDuringLeadIn = saved->mapperTiming->blackDuringLeadIn;
             }
-            descriptor.thumbnailPath = AllocateThumbnailPath(
-                descriptor.levelId, VideoOrigin::Mapper);
+            // A mapper-local file is still a local file: a picked frame is
+            // the preferred identity and the mapper-URL probe art the backup.
+            descriptor.thumbnailPath =
+                saved && !saved->localThumbnail.empty()
+                    ? LocalThumbnailPath(descriptor.levelId)
+                    : AllocateThumbnailPath(
+                          descriptor.levelId, VideoOrigin::Mapper);
             descriptor.activeMapFileName = effective.videoPath.filename().string();
             descriptor.playableConfig = effective;
         }
@@ -651,6 +663,59 @@ namespace BigScreen {
             ? "-user.jpg"
             : "-mapper.jpg";
         return thumbnailPath_ / (StableKey(levelId) + suffix);
+    }
+
+    std::filesystem::path VideoLibrary::LocalThumbnailPath(
+        const std::string& levelId) const
+    {
+        // Deliberately origin-free: a map has exactly one picked thumbnail
+        // regardless of which local video was assigned when it was picked.
+        // Like AllocateThumbnailPath, this reads only startup-immutable paths
+        // and stays callable while Describe already holds mutex_.
+        return thumbnailPath_ / (StableKey(levelId) + "-local.png");
+    }
+
+    bool VideoLibrary::CommitLocalThumbnail(const std::string& levelId)
+    {
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
+        found->second.localThumbnail =
+            LocalThumbnailPath(levelId).filename().string();
+        SaveLocked();
+        PaperLogger.info(
+            "Recorded picked thumbnail '{}' for '{}'",
+            found->second.localThumbnail,
+            levelId);
+        return true;
+    }
+
+    bool VideoLibrary::RemoveLocalThumbnail(const std::string& levelId)
+    {
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end() || found->second.localThumbnail.empty())
+            return false;
+        std::error_code removeError;
+        std::filesystem::remove(LocalThumbnailPath(levelId), removeError);
+        if(removeError)
+        {
+            // Still forget the reference: Storage Maintenance then reports
+            // the leftover PNG as an unused thumbnail instead of it silently
+            // surviving as this map's artwork after its video was deleted.
+            PaperLogger.warn(
+                "Could not delete picked thumbnail for '{}': {}",
+                levelId,
+                removeError.message());
+        }
+        found->second.localThumbnail.clear();
+        SaveLocked();
+        PaperLogger.info("Removed picked thumbnail for '{}'", levelId);
+        return true;
     }
 
     void VideoLibrary::CommitDownload(
@@ -1260,6 +1325,7 @@ namespace BigScreen {
                 level.mapperTiming = ParseStoredTiming(*timing);
             level.mapperLocalSuppressed = BoolOr(
                 member->value, "mapperLocalSuppressed", false);
+            level.localThumbnail = StringOr(member->value, "localThumbnail");
             output.emplace_back(
                 std::string(member->name.GetString(), member->name.GetStringLength()),
                 std::move(level));
@@ -1381,9 +1447,9 @@ namespace BigScreen {
         freeBytesCacheTime_ = {};
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
-        // Schema 4 adds the durable mapperLocalSuppressed opt-out. Older
+        // Schema 5 adds the per-map picked-thumbnail filename. Older
         // libraries remain readable because every added field is optional.
-        document.AddMember("version", 4, allocator);
+        document.AddMember("version", 5, allocator);
         rapidjson::Value levels(rapidjson::kObjectType);
         for(const auto& [levelId, record] : records_)
         {
@@ -1398,6 +1464,12 @@ namespace BigScreen {
                 allocator);
             if(record.mapperLocalSuppressed)
                 level.AddMember("mapperLocalSuppressed", true, allocator);
+            if(!record.localThumbnail.empty())
+                level.AddMember(
+                    "localThumbnail",
+                    rapidjson::Value(
+                        record.localThumbnail.c_str(), allocator).Move(),
+                    allocator);
             if(record.mapper)
             {
                 rapidjson::Value mapper(rapidjson::kObjectType);

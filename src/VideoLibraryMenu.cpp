@@ -590,13 +590,15 @@ namespace BigScreen {
         HMUI::ViewController* browserController,
         HMUI::ViewController* editorController,
         std::function<void(bool showEditor)> navigate,
-        std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo)
+        std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
+        std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker)
     {
         if(!browserController || !editorController) return;
         browserController_ = browserController;
         editorController_ = editorController;
         navigate_ = std::move(navigate);
         browseLocalVideo_ = std::move(browseLocalVideo);
+        openThumbnailPicker_ = std::move(openThumbnailPicker);
         timingRows_.clear();
         videoOnlyRows_.clear();
 
@@ -838,6 +840,21 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             showFileBrowserButton_,
             "Opens the Quest file browser at this map's folder. Built-in songs start in Big Screen's Video Import folder. You can navigate anywhere in shared storage and assign an 8-bit SDR H.264/H.265 MP4 or VP8/VP9 WebM video up to 1440p.");
+        setThumbnailButton_ = BSML::Lite::CreateUIButton(
+            localRow,
+            "Set Thumbnail",
+            {0.0f, 0.0f},
+            {18.0f, 7.5f},
+            [this]()
+            {
+                if(selected_ && openThumbnailPicker_)
+                    openThumbnailPicker_(selected_);
+            });
+        ConfigureLayout(setThumbnailButton_, 18.0f, 7.5f, 0.0f);
+        SetBrightButtonLabel(setThumbnailButton_, 2.25f);
+        BSML::Lite::AddHoverHint(
+            setThumbnailButton_,
+            "Opens a frame picker for this map's local video. Scrub to any moment, step frame by frame, and save that exact frame as the map's thumbnail. It can be re-picked at any time.");
         localVideoStatusText_ = BSML::Lite::CreateText(
             localRow, "", 2.45f);
         ConfigureLayout(localVideoStatusText_, 0.0f, 7.5f, 1.0f);
@@ -942,7 +959,7 @@ namespace BigScreen {
         // backgrounds and single-line labels remain readable on Quest.
         auto* downloadChoices = BSML::Lite::CreateHorizontalLayoutGroup(urlPreviewRow);
         ConfigureGroup(downloadChoices);
-        downloadChoices->set_spacing(0.35f);
+        downloadChoices->set_spacing(0.8f);
         downloadChoices->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
         ConfigureLayout(downloadChoices, 0.0f, 9.2f, 1.0f);
         downloadTierButtons_.clear();
@@ -953,15 +970,28 @@ namespace BigScreen {
                 downloadChoices,
                 "DOWNLOAD 480p",
                 {0.0f, 0.0f},
-                {17.0f, 7.5f},
+                {19.0f, 7.5f},
                 [this, index]() { DownloadResolutionPressed(index); });
-            ConfigureLayout(button, 17.0f, 7.5f, 0.0f);
+            // Every visible choice is equally flexible, so one to four
+            // buttons always share the whole row at one uniform size: the
+            // widest label ("DOWNLOAD 1440p") sets the floor, and any
+            // remaining row width is distributed evenly instead of leaving
+            // the group cramped against the thumbnail with clipped text.
+            ConfigureLayout(button, 19.0f, 7.5f, 1.0f);
+            if(auto* buttonLayout = EnsureLayout(button))
+                buttonLayout->set_minWidth(19.0f);
             SetBrightButtonLabel(button, 2.9f);
             if(auto* tierText = button->get_gameObject()
                    ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             {
                 tierText->set_enableWordWrapping(false);
                 tierText->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+                // Never render a truncated price-list of resolutions: if a
+                // label would still overflow its equal share, shrink the font
+                // slightly instead of cutting off the trailing "p".
+                tierText->set_enableAutoSizing(true);
+                tierText->set_fontSizeMin(2.1f);
+                tierText->set_fontSizeMax(2.9f);
             }
             BSML::Lite::AddHoverHint(
                 button,
@@ -1457,6 +1487,30 @@ namespace BigScreen {
             {
                 if(removeConfirmModal_)
                     removeConfirmModal_->Hide();
+                // A download can simply be fetched again, so it keeps the
+                // established single confirmation. A local file is the user's
+                // own irreplaceable MP4/WebM: interpose one explicit warning
+                // naming the file before anything touches the filesystem.
+                const auto descriptor = selected_
+                    ? VideoLibrary::Instance().Describe(selected_)
+                    : VideoDescriptor{};
+                const bool activeLocalFile =
+                    descriptor.userOverrideIsMapLocal ||
+                    descriptor.userOverrideIsImported ||
+                    descriptor.userOverrideIsExternal ||
+                    (!descriptor.hasUserOverride &&
+                     descriptor.hasMapperLocalFile);
+                if(activeLocalFile && deleteLocalConfirmModal_)
+                {
+                    if(deleteLocalConfirmText_)
+                        deleteLocalConfirmText_->set_text(
+                            "Permanently delete this video file from your Quest?\n\n" +
+                            descriptor.activeMapFileName.value_or(
+                                "The assigned local video") +
+                            "\n\nThe file will be gone for good - Big Screen cannot restore it and it is not re-downloadable.");
+                    deleteLocalConfirmModal_->Show();
+                    return;
+                }
                 RemoveOverride(true);
             });
         ConfigureLayout(deleteVideoButton_, 18.0f, 8.0f, 0.0f);
@@ -1464,6 +1518,56 @@ namespace BigScreen {
         if(auto* confirmText = deleteVideoButton_->get_gameObject()
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             confirmText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
+
+        // Final safeguard for the only unrecoverable choice in this menu.
+        deleteLocalConfirmModal_ = BSML::Lite::CreateModal(
+            editorController,
+            {72.0f, 38.0f},
+            nullptr,
+            true);
+        deleteLocalConfirmText_ = BSML::Lite::CreateText(
+            deleteLocalConfirmModal_,
+            "Permanently delete this video file from your Quest?",
+            TMPro::FontStyles::Normal,
+            3.3f,
+            {0.0f, 4.0f},
+            {64.0f, 22.0f});
+        deleteLocalConfirmText_->set_enableWordWrapping(true);
+        deleteLocalConfirmText_->set_enableAutoSizing(true);
+        deleteLocalConfirmText_->set_fontSizeMin(2.7f);
+        deleteLocalConfirmText_->set_fontSizeMax(3.3f);
+        deleteLocalConfirmText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        deleteLocalConfirmText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        auto* keepLocalFileButton = BSML::Lite::CreateUIButton(
+            deleteLocalConfirmModal_->get_transform(),
+            "Keep the File",
+            {14.0f, -31.0f},
+            {21.0f, 8.0f},
+            [this]()
+            {
+                if(deleteLocalConfirmModal_)
+                    deleteLocalConfirmModal_->Hide();
+            });
+        ConfigureLayout(keepLocalFileButton, 21.0f, 8.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(keepLocalFileButton, 2.3f);
+        auto* confirmDeleteLocalButton = BSML::Lite::CreateUIButton(
+            deleteLocalConfirmModal_->get_transform(),
+            "<color=#FF3838>Delete Forever</color>",
+            {44.0f, -31.0f},
+            {21.0f, 8.0f},
+            [this]()
+            {
+                if(deleteLocalConfirmModal_)
+                    deleteLocalConfirmModal_->Hide();
+                RemoveOverride(true);
+            });
+        ConfigureLayout(confirmDeleteLocalButton, 21.0f, 8.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(confirmDeleteLocalButton, 2.3f);
+        if(auto* deleteForeverText = confirmDeleteLocalButton->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            deleteForeverText->set_color(UnityEngine::Color::get_white());
 
         auto* storageSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
         ConfigureLayout(storageSpacer, -1.0f, 2.0f, 1.0f);
@@ -2228,6 +2332,12 @@ namespace BigScreen {
             (!descriptor.hasUserOverride && descriptor.hasMapperLocalFile);
         if(showFileBrowserButton_)
             showFileBrowserButton_->set_interactable(selected_ != nullptr);
+        // Thumbnail picking follows the local video itself: any map with an
+        // active local file can pick a frame, and can re-pick a different one
+        // at any time. Downloads keep their own YouTube artwork instead.
+        if(setThumbnailButton_)
+            setThumbnailButton_->set_interactable(
+                activeLocal && descriptor.playableConfig.has_value());
         if(localVideoStatusText_)
         {
             localVideoStatusText_->get_gameObject()->SetActive(activeLocal);
@@ -2292,6 +2402,23 @@ namespace BigScreen {
         RefreshDetails();
     }
 
+    void VideoLibraryMenu::LocalThumbnailChanged(const std::string& thumbnailPath)
+    {
+        // The picker replaced the PNG at its deterministic path. Every cached
+        // decode of that path is stale: evict the row-list sprite and force
+        // the editor's large thumbnail to reload on the next RefreshDetails.
+        EvictVideoThumbnail(thumbnailPath);
+        if(loadedThumbnailPath_ == thumbnailPath && loadedThumbnailSprite_)
+        {
+            UnityEngine::Object::Destroy(loadedThumbnailSprite_);
+            loadedThumbnailSprite_ = nullptr;
+            loadedThumbnailPath_.clear();
+        }
+        transientStatus_ = "Thumbnail updated from the picked video frame.";
+        RefreshDetails();
+        RebuildVisibleRows(true);
+    }
+
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
         if(!selected_) return;
@@ -2343,6 +2470,14 @@ namespace BigScreen {
                 RefreshDetails();
                 return;
             }
+            // The picked thumbnail's video no longer exists, so the artwork
+            // goes with it. Unlink deliberately does NOT reach this line:
+            // an unlinked map keeps its one picked thumbnail so relinking
+            // the same video restores the artwork without re-picking.
+            const auto localThumbnailPath =
+                library.LocalThumbnailPath(levelId).string();
+            if(library.RemoveLocalThumbnail(levelId))
+                EvictVideoThumbnail(localThumbnailPath);
         }
 
         bool removed = false;

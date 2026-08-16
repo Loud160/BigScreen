@@ -2,6 +2,21 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Added Set Thumbnail to the map video editor for maps with a local video: a
+  center-screen frame picker with a scrubber, single-frame stepping, and a
+  time/frame readout saves any exact frame as the map's thumbnail PNG. Picking
+  is read-only decoding — the video file is never modified. A map keeps one
+  picked thumbnail: re-picking replaces it in place, unlinking the video keeps
+  it so relinking restores the artwork, permanently deleting the local file
+  deletes it, and Storage Maintenance only offers a picked PNG for cleanup
+  after no map manifest entry references it.
+- Deleting a LOCAL video file now asks for one more explicit confirmation that
+  names the file and states it cannot be restored. Unlink remains one step, and
+  re-downloadable YouTube videos keep the original single confirmation.
+- The exact-resolution DOWNLOAD 480p/720p/1080p/1440p buttons now share the
+  whole action row at one uniform size with even spacing and auto-fitting
+  labels, instead of the cramped fixed-width group with clipped text.
+
 - Retargeted the Quest package to Beat Saber 1.40.8 (`1.40.8_7379`) with
   bs-cordl 4008 bindings and the matching current Quest core dependencies.
 - Migrated from Paper 3 to Paper2 Scotland2, updated CustomTypes declarations

@@ -75,6 +75,12 @@ namespace BigScreen {
         // video library, so their user-adjusted timing needs a small separate
         // manifest record of its own.
         std::optional<StoredTiming> mapperTiming;
+        // Filename of the frame this map's owner picked in the thumbnail
+        // picker, empty when none was ever picked. A map holds at most one
+        // picked thumbnail; it survives unlinking (so relinking the video
+        // restores the artwork) and is deleted only with the video file or
+        // through Storage Maintenance after this reference is gone.
+        std::string localThumbnail;
     };
 
     struct VideoDescriptor {
@@ -140,6 +146,17 @@ namespace BigScreen {
         std::filesystem::path AllocateThumbnailPath(
             const std::string& levelId,
             VideoOrigin origin) const;
+        /// Deterministic location of the map's picker-chosen thumbnail PNG.
+        /// One path per map is the mechanism behind the one-thumbnail rule:
+        /// saving a new pick atomically replaces the old file in place.
+        std::filesystem::path LocalThumbnailPath(
+            const std::string& levelId) const;
+        /// Records that LocalThumbnailPath now holds this map's picked
+        /// artwork. The caller has already written the PNG bytes.
+        bool CommitLocalThumbnail(const std::string& levelId);
+        /// Deletes the picked thumbnail file and forgets it. Used when the
+        /// user permanently deletes the local video the artwork came from.
+        bool RemoveLocalThumbnail(const std::string& levelId);
         void CommitDownload(
             const std::string& levelId,
             const std::string& songName,

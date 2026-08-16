@@ -206,6 +206,13 @@ namespace BigScreen {
                 };
                 collect(record.user, "user");
                 collect(record.mapper, "mapper");
+                // A picked thumbnail stays referenced while its manifest
+                // entry exists, including after Unlink (relinking the video
+                // restores it). Only a PNG no manifest record still names --
+                // for example after its video was permanently deleted on a
+                // build that failed to remove it -- is offered for cleanup.
+                if(!record.localThumbnail.empty())
+                    usedThumbnails.emplace(record.localThumbnail);
             }
 
             StorageSnapshot result;

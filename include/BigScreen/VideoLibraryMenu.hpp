@@ -53,7 +53,8 @@ namespace BigScreen {
             HMUI::ViewController* browserController,
             HMUI::ViewController* editorController,
             std::function<void(bool showEditor)> navigate,
-            std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo);
+            std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
+            std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker);
         /// Releases every scene-owned UI/media reference before MenuCore
         /// replaces the menu hierarchy.
         void ForgetUi();
@@ -65,6 +66,10 @@ namespace BigScreen {
         /// Synchronizes the existing child editor after the center-screen file
         /// browser has committed a new user-owned video assignment.
         void LocalVideoAssignmentChanged(const std::string& fileName);
+        /// Reloads thumbnail surfaces after the center-screen picker replaced
+        /// the map's PNG in place. The sprite cache is keyed by path, so the
+        /// stale decode must be evicted before the same path is shown again.
+        void LocalThumbnailChanged(const std::string& thumbnailPath);
 
     private:
         VideoLibraryMenu() = default;
@@ -126,6 +131,7 @@ namespace BigScreen {
         HMUI::ViewController* editorController_ = nullptr;
         std::function<void(bool)> navigate_;
         std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo_;
+        std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker_;
         // Only a task launched by this menu may be cancelled when the menu is
         // disabled or closed. Updater, showcase, and song-screen jobs share the
         // downloader singleton but have independent lifetimes.
@@ -158,6 +164,11 @@ namespace BigScreen {
         HMUI::ImageView* playbackScrubberFill_ = nullptr;
         HMUI::ImageView* urlThumbnail_ = nullptr;
         BSML::ModalView* removeConfirmModal_ = nullptr;
+        // Second, deliberately separate confirmation shown only before a
+        // LOCAL file is permanently deleted. Downloads stay one-step because
+        // they can be fetched again; a user's own MP4 cannot.
+        BSML::ModalView* deleteLocalConfirmModal_ = nullptr;
+        TMPro::TextMeshProUGUI* deleteLocalConfirmText_ = nullptr;
         BSML::ModalView* downloadConfirmModal_ = nullptr;
         UnityEngine::GameObject* storageSpacer_ = nullptr;
         UnityEngine::GameObject* storagePanel_ = nullptr;
@@ -173,6 +184,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* checkUrlButton_ = nullptr;
         UnityEngine::UI::Button* showFileBrowserButton_ = nullptr;
+        UnityEngine::UI::Button* setThumbnailButton_ = nullptr;
         UnityEngine::UI::Button* downloadButton_ = nullptr;
         UnityEngine::GameObject* downloadButtonPlaceholder_ = nullptr;
         // Four slots cover the normal 480/720/1080/1440 probe result. When a

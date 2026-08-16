@@ -41,6 +41,7 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, storageViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, showcaseViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, thumbnailPickerViewController);
 
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
 

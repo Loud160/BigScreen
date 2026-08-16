@@ -17,6 +17,7 @@
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/ShowcaseMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
+#include "BigScreen/ThumbnailPickerMenu.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "GlobalNamespace/MainFlowCoordinator.hpp"
 #include "GlobalNamespace/MainMenuViewController.hpp"
@@ -447,6 +448,7 @@ namespace BigScreen {
             StorageMaintenanceMenu::Instance().ForgetUi();
             ShowcaseMenu::Instance().ForgetUi();
             LocalVideoBrowserMenu::Instance().ForgetUi();
+            ThumbnailPickerMenu::Instance().ForgetUi();
             centerViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             settingsViewController =
@@ -460,6 +462,8 @@ namespace BigScreen {
             showcaseViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
             localVideoBrowserViewController =
+                BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+            thumbnailPickerViewController =
                 BSML::Helpers::CreateViewController<HMUI::ViewController*>();
 
             SettingsMenu::Instance().CreateUi(
@@ -517,6 +521,19 @@ namespace BigScreen {
                         nullptr,
                         HMUI::ViewController::AnimationType::In,
                         HMUI::ViewController::AnimationDirection::Horizontal);
+                },
+                [this](GlobalNamespace::BeatmapLevel* level)
+                {
+                    // The picker opens its own read-only decoder on the same
+                    // file, so the library preview must release its decoder
+                    // and audio first, exactly like the file-browser path.
+                    VideoLibraryMenu::Instance().StopActivePreview();
+                    ThumbnailPickerMenu::Instance().Show(level);
+                    ReplaceTopViewController(
+                        thumbnailPickerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::In,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
                 });
             StorageMaintenanceMenu::Instance().CreateUi(
                 storageViewController,
@@ -557,6 +574,26 @@ namespace BigScreen {
                         HMUI::ViewController::AnimationDirection::Horizontal);
                     VideoLibraryMenu::Instance().LocalVideoAssignmentChanged(
                         fileName);
+                });
+            ThumbnailPickerMenu::Instance().CreateUi(
+                thumbnailPickerViewController,
+                [this]()
+                {
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                },
+                [this](const std::string& thumbnailPath)
+                {
+                    ReplaceTopViewController(
+                        centerViewController,
+                        nullptr,
+                        HMUI::ViewController::AnimationType::Out,
+                        HMUI::ViewController::AnimationDirection::Horizontal);
+                    VideoLibraryMenu::Instance().LocalThumbnailChanged(
+                        thumbnailPath);
                 });
 
             // Main, left, right, bottom, and top are supplied in that order.
@@ -644,6 +681,9 @@ namespace BigScreen {
         // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();
         VideoLibraryMenu::Instance().Deactivate();
+        // Closes the picker's private decoder if the whole menu is dismissed
+        // while a frame was still being chosen; nothing was saved yet.
+        ThumbnailPickerMenu::Instance().Hide();
         ShowcaseMenu::Instance().DismissTransientUi();
         MenuEnvironmentVisibility::Instance().Restore();
         MenuPlacementGuide::Instance().Suspend();

@@ -29,6 +29,7 @@
 #include "BigScreen/ShowcaseMenu.hpp"
 #include "BigScreen/StorageMaintenanceMenu.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
+#include "BigScreen/ThumbnailPickerMenu.hpp"
 #include "BigScreen/UpDownShowcaseTimeline.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
@@ -1479,6 +1480,7 @@ namespace {
                 BigScreen::StorageMaintenanceMenu::Instance().Tick();
                 BigScreen::ShowcaseMenu::Instance().Tick();
                 BigScreen::LocalVideoBrowserMenu::Instance().Tick();
+                BigScreen::ThumbnailPickerMenu::Instance().Tick();
                 BigScreen::ScreenPreview::Instance().TickUndockedEditor();
                 BigScreen::PerformancePanel::Instance().TickInteraction();
             }

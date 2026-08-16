@@ -14,6 +14,15 @@
   <img alt="License" src="https://img.shields.io/badge/source%20license-GPL--3.0--only-blue">
 </p>
 
+<p align="center">
+  <img
+    src="docs/assets/cracking-glass-effect.gif"
+    alt="Big Screen playing video across a screen that cracks and shatters during Beat Saber gameplay"
+    width="800">
+</p>
+
+<p align="center"><em>A playing video screen cracks, shatters, and falls apart in real time.</em></p>
+
 Big Screen is a Quest-native video system for Beat Saber. It can add synchronized
 video to **OST, DLC, custom, and WIP songs**, whether the mapper included one or
 the player chose their own. Normal use—including YouTube downloads, local-file
