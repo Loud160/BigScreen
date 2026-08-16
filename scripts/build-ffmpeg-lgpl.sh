@@ -102,7 +102,11 @@ fi
 mkdir -p "${cache_root}"
 
 if [[ ! -f "${archive_path}" ]]; then
+    printf 'Downloading FFmpeg %s source from %s\n' "${ffmpeg_version}" "${ffmpeg_url}"
+    printf 'The archive will be verified against its pinned SHA-256 before extraction.\n'
     curl --fail --location --retry 3 --output "${archive_path}" "${ffmpeg_url}"
+else
+    printf 'Using cached FFmpeg %s source archive.\n' "${ffmpeg_version}"
 fi
 
 # A release URL alone is not immutable.  Refuse to build if the archive does

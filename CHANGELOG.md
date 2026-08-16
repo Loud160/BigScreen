@@ -2,6 +2,14 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Made `Build-And-Deploy.bat` work from a fresh clone or downloaded source
+  archive by restoring QPM packages, resolving the pinned Windows NDK, and
+  verifying/installing the separate pinned WSL NDK before CMake runs. The BAT
+  now discloses all possible first-run network downloads and asks permission;
+  individual fetchers report cache reuse or the exact component/source being
+  downloaded. Added a complete dependency and manual-build inventory under
+  `docs/DEPENDENCIES.md`.
+
 - Added Set Thumbnail to the map video editor for maps with a local video: a
   center-screen frame picker with a scrubber, single-frame stepping, and a
   time/frame readout saves any exact frame as the map's thumbnail PNG. Picking

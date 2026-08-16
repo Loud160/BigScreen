@@ -37,7 +37,12 @@ function Assert-Sha256([string] $Path, [string] $Expected) {
 }
 
 if ($Force -or -not (Test-Path -LiteralPath $archive)) {
+    Write-Output "Downloading QuickJS-NG $quickJsVersion source from the official GitHub release."
+    Write-Output "Source: $archiveUrl"
+    Write-Output "The archive will be verified against its pinned SHA-256 before extraction."
     Invoke-WebRequest -Uri $archiveUrl -OutFile $archive
+} else {
+    Write-Output "Using cached QuickJS-NG $quickJsVersion archive."
 }
 Assert-Sha256 $archive $archiveSha256
 

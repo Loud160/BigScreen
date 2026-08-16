@@ -136,14 +136,26 @@ if ($psVersion -ge 6) {
     # Pin the schema revision so upstream branch changes cannot silently alter
     # release validation semantics.
     $schemaRevision = "eadb8d8d21caa1f8586b61da3c950a2953ebd399"
+    $schemaSha256 = "2de429724eae87554700b9eee31380fdd38a27afe135db0c2a124d5268e4c2ec"
     $schemaUrl = "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/$schemaRevision/QuestPatcher.QMod/Resources/qmod.schema.json"
-    Invoke-WebRequest $schemaUrl -OutFile ./mod.schema.json
+    $schemaCache = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")) ".cache"
+    $schema = Join-Path $schemaCache "qmod-schema-$schemaRevision.json"
+    if (-not (Test-Path -LiteralPath $schema)) {
+        New-Item -ItemType Directory -Force -Path $schemaCache | Out-Null
+        Write-Output "Downloading the pinned QMOD validation schema from GitHub."
+        Write-Output "Source: $schemaUrl"
+        Invoke-WebRequest $schemaUrl -OutFile $schema
+    }
+    else {
+        Write-Output "Using cached QMOD validation schema at revision $schemaRevision."
+    }
+    $actualSchemaSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $schema).Hash.ToLowerInvariant()
+    if ($actualSchemaSha256 -ne $schemaSha256) {
+        throw "SHA-256 mismatch for cached QMOD schema. Expected $schemaSha256, received $actualSchemaSha256."
+    }
 
-    $schema = "./mod.schema.json"
     $modJsonRaw = Get-Content $mod -Raw
     $modSchemaRaw = Get-Content $schema -Raw
-
-    Remove-Item $schema
 
     Write-Output "Validating mod.json..."
     if (-not ($modJsonRaw | Test-Json -Schema $modSchemaRaw)) {

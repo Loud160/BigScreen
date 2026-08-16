@@ -6,12 +6,15 @@ The tracked package targets Beat Saber `1.40.8_7379`, ARM64 Quest, and C++20. De
 
 ## Tools
 
+The concise checklist is below. The authoritative version/source/cache table
+is [Build dependencies and network downloads](DEPENDENCIES.md).
+
 ### Required for a clean Windows build
 
 - **Git for Windows**.
 - **Windows PowerShell 5.1** (included with Windows) or PowerShell 7.
 - **Visual Studio with the Desktop development with C++ workload**, including
-  C++ CMake tools for Windows. Standalone CMake 3.20+ and Ninja may be used
+  C++ CMake tools for Windows. Standalone CMake 3.22+ and Ninja may be used
   instead; the scripts first search `PATH`, then the latest Visual Studio
   installation.
 - **QPM CLI** to restore the pinned Quest dependencies and resolve the Windows
@@ -41,6 +44,10 @@ The tracked package targets Beat Saber `1.40.8_7379`, ARM64 Quest, and C++20. De
 
 ### One-time Windows/WSL setup
 
+`Build-And-Deploy.bat` runs the QPM and pinned-NDK preparation automatically
+after disclosing its possible network downloads and receiving confirmation.
+For a manual build, run the equivalent setup commands below.
+
 ```powershell
 qpm restore
 qpm ndk resolve --download
@@ -63,7 +70,7 @@ sudo apt install -y build-essential curl xz-utils unzip
 ```powershell
 git clone <repository-url>
 cd BigScreen
-qpm restore
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/bootstrap-build.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
@@ -83,6 +90,12 @@ Those inputs and outputs are generated beneath ignored cache, `extern`,
 upstream sources and binaries from pinned URLs and reject content that does not
 match the committed SHA-256 values. Consequently, copying a local generated
 library into Git is neither required nor a substitute for a reproducible build.
+
+The root BAT is intentionally transparent about this boundary. It lists the
+possible downloads and waits for approval, while each fetch script reports
+whether it reused a cache or downloaded a named artifact from a named source.
+See [DEPENDENCIES.md](DEPENDENCIES.md) for the exact inventory and commands to
+perform every step without the BAT.
 
 Before committing, use `git status --short` and `git diff --cached --name-status`
 to verify that only intentional source files are staged. Do not use a forced

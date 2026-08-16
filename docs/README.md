@@ -18,6 +18,7 @@ This index separates ordinary player instructions from mapper and developer mate
 
 - [Architecture](ARCHITECTURE.md) — lifecycle, main-thread ownership, decoder/downloader workers, persistence, and failure containment.
 - [Downloader security](DOWNLOADER_SECURITY.md) — pinned runtime, checksum verification, update activation, rejection, and rollback.
+- [Build dependencies and network downloads](DEPENDENCIES.md) — required host tools, exact automatic downloads, cache behavior, integrity checks, and equivalent manual commands.
 - [Building and packaging](BUILDING.md) — toolchain, host tests, Quest build, QMOD contents, and CI.
 - [Release checklist](RELEASE_CHECKLIST.md) — the minimum checks before publishing a build.
 - [External code-review resolution](CODE_REVIEW_RESOLUTION.md) — accepted fixes, rejected findings, and explicitly deferred follow-up from the August 2026 audit.

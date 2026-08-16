@@ -15,14 +15,18 @@ toolchain_root="${BIGSCREEN_TOOLCHAIN_ROOT:-${HOME}/.cache/bigscreen-toolchains}
 archive_path="${toolchain_root}/android-ndk-r27d-linux.zip"
 install_path="${toolchain_root}/android-ndk-r27d"
 archive_url="https://dl.google.com/android/repository/android-ndk-r27d-linux.zip"
-archive_sha1="22105e410cf29afcf163760cc95522b9fb981121"
+archive_sha256="601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9"
 
 mkdir -p "${toolchain_root}"
 if [[ ! -f "${archive_path}" ]]; then
+    printf 'Downloading Android NDK r27d for Linux/WSL from %s\n' "${archive_url}"
+    printf 'The archive will be checked against the pinned Google repository checksum.\n'
     curl --fail --location --retry 3 --output "${archive_path}" "${archive_url}"
+else
+    printf 'Using cached Android NDK r27d Linux archive.\n'
 fi
-printf '%s  %s\n' "${archive_sha1}" "${archive_path}" |
-    sha1sum --check --strict
+printf '%s  %s\n' "${archive_sha256}" "${archive_path}" |
+    sha256sum --check --strict
 if [[ ! -f "${install_path}/source.properties" ]]; then
     unzip -q "${archive_path}" -d "${toolchain_root}"
 fi

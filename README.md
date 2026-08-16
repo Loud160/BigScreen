@@ -149,7 +149,7 @@ does require more than Visual Studio. Install these tools before cloning:
 | Tool | Why Big Screen needs it |
 |---|---|
 | **Git for Windows** | Clones the repository and preserves its versioned build recipes. |
-| **Visual Studio with Desktop development with C++** | Supplies the Windows C++ compiler used by host tests. Include **C++ CMake tools for Windows**, or install CMake 3.20+ and Ninja separately. |
+| **Visual Studio with Desktop development with C++** | Supplies the Windows C++ compiler used by host tests. Include **C++ CMake tools for Windows**, or install CMake 3.22+ and Ninja separately. |
 | **QPM CLI** | Restores the exact Quest headers/libraries recorded in `qpm.shared.json` and downloads the Windows Android NDK. This port was validated with QPM 1.5.11. |
 | **WSL 2 with Ubuntu** | Builds Big Screen's private LGPL FFmpeg libraries in a Linux environment. Inside Ubuntu, install `build-essential`, `curl`, `xz-utils`, and `unzip`. |
 | **Android NDK r27d (`27.3.13750724`)** | Two host-specific copies are used: QPM manages the Windows NDK for the mod, while `scripts/install-pinned-ndk.sh` installs the Linux NDK used by FFmpeg inside WSL. Do not substitute a different revision. |
@@ -160,6 +160,11 @@ Internet access and several gigabytes of temporary space are needed on the
 first clean build because the pinned NDK, FFmpeg, CPython, QuickJS-NG, yt-dlp,
 certifi, and Quest dependencies are downloaded and hash-checked.
 
+See **[Build dependencies and network downloads](docs/DEPENDENCIES.md)** for
+the complete versioned inventory, official sources, cache locations, integrity
+checks, packaged/build-only distinction, and manual commands. Big Screen does
+not upload source or telemetry during a build.
+
 Python 3 is optional but recommended because it enables the downloader and
 repository-invariant host tests. Node.js/pnpm are needed only for the separate
 yt-dlp/yt-dlp-ejs source-reproducibility audit, not for a normal mod build.
@@ -167,7 +172,9 @@ yt-dlp/yt-dlp-ejs source-reproducibility audit, not for a normal mod build.
 #### One-time toolchain setup
 
 Install [QPM CLI](https://github.com/QuestPackageManager/QPM.CLI), then clone
-and restore the project in PowerShell:
+the project. `Build-And-Deploy.bat` performs the QPM/NDK restore automatically
+after showing its download disclosure and receiving permission. To prepare the
+same inputs manually in PowerShell, run:
 
 ```powershell
 git clone https://github.com/Loud160/BigScreen.git
@@ -233,9 +240,13 @@ Build-And-Deploy.bat
 The launcher builds both FFmpeg runtimes and the embedded downloader, validates
 the native libraries and mod manifest, removes stale copies from the opposite
 Scotland2 load phase, deploys the complete runtime to the connected Quest, and
-asks Beat Saber to restart. Its console remains open and clearly reports success
-or the failed step. See [Building and packaging](docs/BUILDING.md) for clean
-builds, host tests, QMOD creation, toolchain details, and troubleshooting.
+asks Beat Saber to restart. Before any dependency restore, it lists every class
+of network download, explains that cached inputs are reused, and asks whether
+to continue. It then restores missing QPM packages, resolves both pinned NDK
+installations, and prints the name/source of every direct artifact it actually
+downloads. Its console remains open and clearly reports success or the failed
+step. See [Building and packaging](docs/BUILDING.md) for clean builds, host
+tests, QMOD creation, toolchain details, and troubleshooting.
 
 ## Recovery, storage, and privacy
 

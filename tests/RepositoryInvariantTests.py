@@ -22,10 +22,17 @@ import sys
 root = pathlib.Path(sys.argv[1]).resolve()
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
+bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
+    encoding="utf-8")
+build_launcher = (root / "Build-And-Deploy.bat").read_text(encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
+ndk_install = (root / "scripts/install-pinned-ndk.sh").read_text(
+    encoding="utf-8")
 ffmpeg_elf_audit = (root / "scripts/validate-ffmpeg-elf.ps1").read_text(
     encoding="utf-8")
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
+quickjs_fetch = (root / "scripts/fetch-quickjs-ng.ps1").read_text(
+    encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
 download_manager_header = (
     root / "include/BigScreen/DownloadManager.hpp"
@@ -117,6 +124,7 @@ dco = (root / "DCO.txt").read_text(encoding="utf-8")
 third_party_notices = (root / "THIRD_PARTY_NOTICES.md").read_text(
     encoding="utf-8")
 readme = (root / "README.md").read_text(encoding="utf-8")
+dependency_guide = (root / "docs/DEPENDENCIES.md").read_text(encoding="utf-8")
 mod_template = json.loads((root / "mod.template.json").read_text(encoding="utf-8"))
 stage_notices = (root / "scripts/stage-runtime-notices.ps1").read_text(
     encoding="utf-8")
@@ -165,9 +173,13 @@ for packaging_guard in (
     '"packageVersion"',
     "mod.json dependencies do not match qpm.shared.json",
     "Run 'qpm qmod manifest'",
+    "qmod-schema-$schemaRevision.json",
+    "schemaSha256",
+    "Using cached QMOD validation schema",
 ):
     assert packaging_guard in validate_mod_json
 assert "source%20license-GPL--3.0--only-blue" in readme
+assert "docs/DEPENDENCIES.md" in readme
 for marker in (
     "GPL-3.0-only",
     "inbound MIT",
@@ -263,6 +275,66 @@ assert qpm_shared["config"]["workspace"]["ndk"] == f"^{ndk_revision}"
 workflow = (root / ".github/workflows/build-ndk.yml").read_text(encoding="utf-8")
 assert ndk_revision in workflow
 assert "android-ndk-r27d" in ffmpeg_build
+
+# A double-click build from a fresh source archive must prepare the generated
+# QPM/NDK inputs before CMake runs. It must also disclose network activity and
+# wait for the developer's approval instead of silently fetching gigabytes.
+assert build_launcher.index(
+    '-File "%~dp0scripts\\bootstrap-build.ps1"'
+) < build_launcher.index('-File "%~dp0scripts\\copy.ps1"')
+for launcher_disclosure in (
+    "FIRST-RUN NETWORK DOWNLOADS",
+    "choice /C YN",
+    "Quest mod headers and libraries through QPM",
+    "Android NDK r27d for Linux/WSL",
+    "FFmpeg 4.4.8 and 9.0.1",
+    "CPython 3.14.7",
+    "QuickJS-NG 0.16.1",
+    "yt-dlp 2026.07.04",
+    "certifi 2026.7.22",
+):
+    assert launcher_disclosure in build_launcher
+for bootstrap_contract in (
+    "Programs/QPM/qpm.exe",
+    "restore",
+    "ndk resolve --download",
+    "ndkpath.txt",
+    "source.properties",
+    ndk_revision,
+    "install-pinned-ndk.sh",
+    "requiredLinuxTools",
+    "qpm-restore.sha256",
+    "Using QPM dependencies already restored for the current lockfile",
+    "Using installed Windows Android NDK r27d",
+):
+    assert bootstrap_contract in bootstrap_build
+for cache_disclosure in (
+    "Using cached CPython",
+    "Using cached yt-dlp",
+    "Using cached certifi",
+):
+    assert cache_disclosure in runtime_fetch
+assert "Using cached QuickJS-NG" in quickjs_fetch
+assert "Using cached FFmpeg" in ffmpeg_build
+assert "Using cached Android NDK r27d Linux archive" in ndk_install
+for documented_dependency in (
+    "Tools you install yourself",
+    "Automatically restored Quest packages",
+    "Automatically downloaded toolchains and runtime inputs",
+    "Building without the BAT launcher",
+    "beatsaber-hook",
+    "bs-cordl",
+    "FFmpeg | 4.4.8",
+    "FFmpeg | 9.0.1",
+    "CPython Android runtime | 3.14.7",
+    "QuickJS-NG amalgamation | 0.16.1",
+    "yt-dlp | 2026.07.04",
+    "certifi | 2026.7.22",
+):
+    assert documented_dependency in dependency_guide
+assert "archive_sha256=" in ndk_install
+assert "sha256sum --check --strict" in ndk_install
+assert "archive_sha1=" not in ndk_install
 
 # The release configuration must remain LGPL-only and keep both benchmarked
 # versions reproducible until on-device evidence selects the replacement.

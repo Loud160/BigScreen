@@ -51,9 +51,13 @@ function Assert-Sha256([string] $Path, [string] $Expected) {
 }
 
 if ($Force -or -not (Test-Path -LiteralPath $pythonArchive)) {
+    Write-Output "Downloading CPython $pythonVersion for Android ARM64 from python.org."
+    Write-Output "The archive will be verified against its pinned SHA-256 before extraction."
     Invoke-WebRequest `
         -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-aarch64-linux-android.tar.gz" `
         -OutFile $pythonArchive
+} else {
+    Write-Output "Using cached CPython $pythonVersion Android archive."
 }
 Assert-Sha256 $pythonArchive $pythonSha256
 
@@ -97,9 +101,13 @@ if (-not $pythonExtractionComplete) {
 }
 
 if ($Force -or -not (Test-Path -LiteralPath $ytDlpPackage)) {
+    Write-Output "Downloading yt-dlp $ytDlpVersion with bundled yt-dlp-ejs $ytDlpEjsVersion from the official GitHub release."
+    Write-Output "The package will be verified against its pinned SHA-256 before use."
     Invoke-WebRequest `
         -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/$ytDlpVersion/yt-dlp" `
         -OutFile $ytDlpPackage
+} else {
+    Write-Output "Using cached yt-dlp $ytDlpVersion package."
 }
 Assert-Sha256 $ytDlpPackage $ytDlpSha256
 
@@ -164,9 +172,13 @@ finally {
 }
 
 if ($Force -or -not (Test-Path -LiteralPath $certifiPackage)) {
+    Write-Output "Downloading certifi $certifiVersion from Python Package Index."
+    Write-Output "The wheel will be verified against its pinned SHA-256 before use."
     Invoke-WebRequest `
         -Uri "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-$certifiVersion-py3-none-any.whl" `
         -OutFile $certifiPackage
+} else {
+    Write-Output "Using cached certifi $certifiVersion wheel."
 }
 Assert-Sha256 $certifiPackage $certifiSha256
 
