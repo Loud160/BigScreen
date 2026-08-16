@@ -1017,7 +1017,7 @@ namespace BigScreen {
             displayedResolutionHeights_.resize(resolutionButtons_.size());
 
         resolutionModalText_->set_text(
-            "Choose the source resolution to download. The playback-resolution setting can downscale this file later, but it never changes these choices.");
+            "Choose the resolution to download. Big Screen plays the selected file at its native resolution.");
         for(std::size_t index = 0; index < resolutionButtons_.size(); ++index)
         {
             auto* button = resolutionButtons_[index];

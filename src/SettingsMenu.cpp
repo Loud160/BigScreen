@@ -65,13 +65,6 @@ namespace BigScreen {
         using UiUtility::SetToggleWithoutNotification;
         using UiUtility::RefreshToggleVisualWithoutNotification;
 
-        std::array<std::string_view, 4> ResolutionChoices{
-            "480p",
-            "720p",
-            "1080p",
-            "1440p"
-        };
-
         std::array<std::string_view, 3> PlaybackFpsChoices{
             "15 FPS",
             "30 FPS",
@@ -100,23 +93,6 @@ namespace BigScreen {
         constexpr float ZoomSliderToVideoOffset(float sliderValue)
         {
             return (sliderValue - 1.75f) / 1.25f;
-        }
-
-        std::string ResolutionLabel(int height)
-        {
-            return std::to_string(height) + "p";
-        }
-
-        int ResolutionValue(StringW label)
-        {
-            const std::string text(label);
-            if(text == "480p")
-                return 480;
-            if(text == "1080p")
-                return 1080;
-            if(text == "1440p")
-                return 1440;
-            return 720;
         }
 
         std::string PlaybackFpsLabel(int fps)
@@ -251,7 +227,6 @@ namespace BigScreen {
         hideSpectrogramBarsToggle_ = nullptr;
         hideSpectrogramBarsHint_ = nullptr;
         playbackFpsDropdown_ = nullptr;
-        resolutionDropdown_ = nullptr;
         ffmpeg9Toggle_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
@@ -613,25 +588,6 @@ namespace BigScreen {
             playbackFpsDropdown_,
             "Limits how many video frames Big Screen displays each second. Lower limits can improve performance. Videos already below the limit keep their original frame rate.");
 
-        resolutionDropdown_ = BSML::Lite::CreateDropdown(
-            generalContainer,
-            "Video Resolution",
-            ResolutionLabel(settings.ResolutionHeight()),
-            ResolutionChoices,
-            [](StringW value)
-            {
-                Settings::Instance().SetResolutionHeight(ResolutionValue(value));
-                // Resolution is fixed when FrameDecoder opens and cannot be
-                // changed on an existing RGBA texture. Recreate any active
-                // library preview immediately so the dropdown's new tier is
-                // visible without making the player leave/reselect the song.
-                // VideoLibraryMenu retains and reapplies the preview time.
-                ApplyDisplaySettingsAndRefreshPreview();
-            });
-        BSML::Lite::AddHoverHint(
-            resolutionDropdown_,
-            "Sets the highest resolution used during playback. It never changes which download choices are offered or replaces the saved video. Lower-resolution videos are not enlarged. 720p is recommended; 1080p and 1440p may reduce performance and battery life. 1440p requires hardware decoding.");
-
         ffmpeg9Toggle_ = BSML::Lite::CreateToggle(
             performanceParent,
             "Use FFmpeg 9",
@@ -693,7 +649,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceToggle_,
-            "Experimental: continuously adjusts video quality while a map is playing. Sustained frame loss lowers frame rate and then resolution one step at a time; sustained recovery restores those exact steps in reverse order. It never exceeds your saved quality choices.");
+            "Experimental: continuously adjusts the video frame-rate limit while a map is playing. Sustained frame loss lowers the limit in 5 FPS steps; sustained recovery restores those exact steps in reverse order. Video resolution is never changed.");
         automaticPerformanceThresholdSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
             "Frame Rate Loss Trigger",
@@ -1750,7 +1706,7 @@ namespace BigScreen {
             viewController, {72.0f, 38.0f}, nullptr, false);
         auto* automaticPerformanceWarningText = BSML::Lite::CreateText(
             automaticPerformanceWarningModal_,
-            "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore video frame rate and resolution during a map when sustained frame loss is detected. Results may vary by video, map, and headset.",
+            "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore the video frame-rate limit in 5 FPS steps when sustained frame loss is detected. It never changes video resolution. Results may vary by video, map, and headset.",
             TMPro::FontStyles::Normal,
             3.0f,
             {0.0f, 6.0f},
@@ -2327,17 +2283,6 @@ namespace BigScreen {
                 playbackFpsDropdown_->dropdown->SelectCellWithIdx(index);
             playbackFpsDropdown_->UpdateState();
         }
-        if(resolutionDropdown_)
-        {
-            const int index = settings.ResolutionHeight() == 480
-                ? 0
-                : settings.ResolutionHeight() == 1080 ? 2
-                : settings.ResolutionHeight() == 1440 ? 3 : 1;
-            resolutionDropdown_->index = index;
-            if(resolutionDropdown_->dropdown)
-                resolutionDropdown_->dropdown->SelectCellWithIdx(index);
-            resolutionDropdown_->UpdateState();
-        }
         if(automaticPerformanceThresholdSlider_)
             automaticPerformanceThresholdSlider_->set_Value(
                 static_cast<float>(settings.AutomaticPerformanceThreshold()));
@@ -2536,8 +2481,6 @@ namespace BigScreen {
             hideSpectrogramBarsToggle_->set_interactable(lightingChildrenEnabled);
         if(playbackFpsDropdown_)
             playbackFpsDropdown_->set_interactable(enabled);
-        if(resolutionDropdown_)
-            resolutionDropdown_->set_interactable(enabled);
         if(ffmpeg9Toggle_)
             ffmpeg9Toggle_->set_interactable(enabled);
         if(hardwareDecodingToggle_)

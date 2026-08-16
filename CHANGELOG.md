@@ -2,6 +2,24 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Removed the playback-only resolution cap. Gameplay, song previews, and Video
+  Library previews now present the selected local/downloaded file at its native
+  presentation-oriented resolution; the thumbnail picker retains its explicit
+  720p utility bound. Older `resolutionHeight` settings are silently removed on
+  the next save, while download resolution buttons and codec safety policy are
+  unchanged.
+- Changed Automatic Performance to FPS-only adaptation. It now lowers the
+  session presentation limit in 5 FPS steps to a 15 FPS floor, starts below the
+  video's useful cadence including Fit to Song speed, and restores every exact
+  reduction in reverse. It no longer reopens FFmpeg, recreates textures, changes
+  resolution, or risks interrupting playback during a quality transition.
+- Simplified the live and results diagnostics to show actual video resolution,
+  source FPS, and the active FPS limit. Power benchmark CSVs use the same native
+  resolution schema and preserve older headers in timestamped legacy files.
+- Added `docs/BUFFERED_DECODER_DESIGN.md` for a future bounded, timestamped
+  ready-frame queue intended to absorb brief decoder stalls. The design records
+  memory budgets, MediaCodec constraints, synchronization hazards, FPS-limiter
+  interaction, diagnostics, and the required host/on-device test plan.
 - Completed the third pre-release hardening review. Non-looping videos now
   park the decoder at both stream boundaries instead of repeatedly decoding an
   opening/final GOP; decoder metrics survive backend swaps; circuit-breaker,

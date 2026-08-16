@@ -126,7 +126,6 @@ namespace BigScreen {
         bool HideSideBars() const { return hideSideBars_; }
         bool HideSpectrogramBars() const { return hideSpectrogramBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
-        int ResolutionHeight() const { return resolutionHeight_; }
         bool UseFfmpeg9() const { return useFfmpeg9_; }
         bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
@@ -186,7 +185,6 @@ namespace BigScreen {
         void SetHideSideBars(bool value);
         void SetHideSpectrogramBars(bool value);
         void SetPlaybackFpsLimit(int value);
-        void SetResolutionHeight(int value);
         void SetUseFfmpeg9(bool value);
         void SetHardwareDecodingEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
@@ -246,7 +244,6 @@ namespace BigScreen {
         bool hideSideBars_ = true;
         bool hideSpectrogramBars_ = true;
         int playbackFpsLimit_ = 30;
-        int resolutionHeight_ = 720;
         // New installations use the current bundled runtime. FFmpeg 4.4.8
         // remains available from the menu as a compatibility/A-B option.
         bool useFfmpeg9_ = true;

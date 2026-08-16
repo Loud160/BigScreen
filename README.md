@@ -102,10 +102,10 @@ removes only the map assignment and leaves the original file untouched.
 
 ## Built for standalone Quest use
 
-Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. Its configurable
-output limits cover 480p, 720p, 1080p, and hardware-only 1440p, with 15, 30, and
-60 FPS caps. A source below the selected limit is not enlarged or treated as
-missing frames.
+Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. YouTube downloads
+offer the compatible 480p, 720p, 1080p, and hardware-only 1440p files that the
+source actually provides. Playback preserves the selected file's native
+resolution, with configurable 15, 30, and 60 FPS presentation ceilings.
 
 For comparison and performance tuning, the mod includes:
 
@@ -113,10 +113,10 @@ For comparison and performance tuning, the mod includes:
   where the selected format and resolution permit it
 - FFmpeg 9.0.1 by default, with an isolated FFmpeg 4.4.8 compatibility runtime
   selectable in-game for A/B testing
-- Automatic Performance steps that lower FPS before resolution and restore each
-  step in reverse when playback recovers
+- Automatic Performance steps that lower the FPS limit by 5 and restore each
+  step in reverse when playback recovers, without reopening the decoder
 - A movable live performance panel and results summary
-- Decoder latency, source/output resolution, delivered frames, video frame loss,
+- Decoder latency, actual video resolution, delivered frames, video frame loss,
   and Beat Saber gameplay FPS diagnostics
 - Repeatable CPU and battery benchmark CSV logging
 - Safe software fallback where the codec and resolution permit it

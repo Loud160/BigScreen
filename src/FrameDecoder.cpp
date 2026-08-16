@@ -417,10 +417,10 @@ namespace BigScreen {
             return false;
         }
 
-        // Decoding must still read the encoded source, but scaling before the
-        // RGBA mailbox substantially reduces CPU memory traffic and Unity GPU
-        // upload cost. Never upscale a smaller file merely because the user
-        // selected a higher tier.
+        // Ordinary playback supplies UncappedOutputHeight and therefore keeps
+        // the selected file's native dimensions. Positive bounds remain part
+        // of the decoder API for deliberately lightweight utility previews.
+        // Never enlarge a smaller source to satisfy such a bound.
         if(codec_->width <= 0 || codec_->height <= 0)
         {
             error = "The video reports an invalid frame size";

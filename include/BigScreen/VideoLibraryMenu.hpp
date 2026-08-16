@@ -83,7 +83,7 @@ namespace BigScreen {
         void StartOrCancelDownload();
         /// Handles one of the exact resolution buttons populated by the URL
         /// probe. The height is captured from the latest probe result rather
-        /// than inferred from the global playback-resolution setting.
+        /// rather than inferred from any separate playback conversion tier.
         void DownloadResolutionPressed(std::size_t buttonIndex);
         void RequestResolutionDownload(int height);
         void ConfirmPendingResolutionDownload();

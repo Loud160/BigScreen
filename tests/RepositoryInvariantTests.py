@@ -68,6 +68,12 @@ core_logic = (root / "include/BigScreen/CoreLogic.hpp").read_text(encoding="utf-
 performance_panel_source = (root / "src/PerformancePanel.cpp").read_text(
     encoding="utf-8"
 )
+performance_panel_header = (
+    root / "include/BigScreen/PerformancePanel.hpp"
+).read_text(encoding="utf-8")
+thumbnail_picker_source = (root / "src/ThumbnailPickerMenu.cpp").read_text(
+    encoding="utf-8"
+)
 main_source = (root / "src/main.cpp").read_text(encoding="utf-8")
 menu_flow_source = (root / "src/MenuFlowCoordinator.cpp").read_text(
     encoding="utf-8"
@@ -776,6 +782,12 @@ assert "*this = Settings{};" in settings_source
 assert "std::array<ScreenLayoutProfile, 5>" in settings_header
 assert "int automaticPerformanceThreshold_ = 5;" in settings_header
 assert "float automaticPerformanceResponseSeconds_ = 5.0f;" in settings_header
+assert "ResolutionHeight" not in settings_header
+assert "resolutionHeight_" not in settings_header
+assert 'document.RemoveMember("resolutionHeight")' in settings_source
+assert "SetResolutionHeight" not in settings_source
+assert '"Video Resolution"' not in settings_menu_source
+assert "resolutionDropdown_" not in settings_menu_source
 assert "bool disableEnvironmentMotion_ = true;" in settings_header
 assert '!ReadBool(document, "environmentMotionEnabled", false)' in settings_source
 assert "bool powerBenchmarkEnabled_ = false;" in settings_header
@@ -806,6 +818,16 @@ assert '"automaticPerformanceResponseSeconds"' in settings_source
 assert '"Frame Rate Loss Trigger"' in settings_menu_source
 assert '"Scaling Response Time"' in settings_menu_source
 assert "Settings::Instance().AutomaticPerformanceResponseSeconds()" in playback_source
+assert "NextPerformanceFpsLimit" in core_logic
+assert "constexpr int StepFps = 5;" in core_logic
+assert "constexpr int MinimumFps = 15;" in core_logic
+assert "sourceFramesPerSecond * playbackRate" in core_logic
+assert "std::array<int, 9> tiers_" in core_logic
+assert "UncappedOutputHeight" in frame_decoder_header
+assert "UncappedOutputHeight" in playback_source
+assert "effectiveResolutionHeight_" not in playback_header
+assert "ApplyAutomaticPerformanceTier" not in playback_source
+assert "decoder_.Open(videoPath_, 720, error)" in thumbnail_picker_source
 assert "context_ == PlaybackContext::LibraryPreview" in playback_source
 assert "bool FirstFrameUploaded() const" in playback_header
 assert "BeginLibraryPreviewMeasurement" in playback_header
@@ -872,8 +894,6 @@ assert '"Show File Browser"' in library_menu_source
 # per-map path. Saving replaces the PNG atomically; unlinking a video keeps the
 # pick (relink restores it); permanently deleting the local file deletes it;
 # Storage Maintenance treats a still-referenced pick as used, never orphaned.
-thumbnail_picker_source = (root / "src/ThumbnailPickerMenu.cpp").read_text(
-    encoding="utf-8")
 storage_manager_source = (root / "src/StorageManager.cpp").read_text(
     encoding="utf-8")
 assert '"Set Thumbnail"' in library_menu_source
@@ -1106,9 +1126,16 @@ assert "std::setprecision(2) << missedPercent" in playback_source
 assert "PeakDecodeMilliseconds" in frame_decoder_header
 assert "ResetPeakDecodeMilliseconds" in playback_source
 assert "AutomaticPerformanceHistory automaticPerformanceHistory_" in playback_header
-assert "ApplyAutomaticPerformanceRecovery(mediaTime)" in playback_source
+assert "ApplyAutomaticPerformanceRecovery()" in playback_source
 assert "automaticPerformanceHistory_.RecordReduction" in playback_source
 assert "automaticPerformanceHistory_.CommitRecovery" in playback_source
+assert "rightRows_[7]" not in performance_panel_source
+assert "std::array<TMPro::TextMeshProUGUI*, 7> rightRows_" in performance_panel_header
+assert 'row(rightRows_[1], "Video"' in performance_panel_source
+assert 'row(rightRows_[2], "Frames Skipped"' in performance_panel_source
+assert '"Output"' not in performance_panel_source
+assert "video_width,video_height,source_fps,fps_limit" in power_benchmark_source
+assert "source_width,source_height,output_width,output_height" not in power_benchmark_source
 # Rows are individual TMP elements fed through one shared label/value
 # template; the labels themselves are plain strings passed to that template.
 assert '"Missed Frames"' not in performance_panel_source
@@ -1155,7 +1182,7 @@ assert "set_childForceExpandHeight(false)" in performance_panel_source
 assert "titleBorders_" in performance_panel_source
 assert "instructionBorders_" in performance_panel_source
 assert "BodyRowHeight = 7.0f" in performance_panel_source
-assert "BodyRowCount = 8.0f" in performance_panel_source
+assert "BodyRowCount = 7.0f" in performance_panel_source
 assert 'row(rightRows_[0], "Decoder"' in performance_panel_source
 assert "HeaderHeight + BodyHeight + FooterHeight" in performance_panel_source
 

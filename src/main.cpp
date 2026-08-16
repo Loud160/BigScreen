@@ -555,8 +555,8 @@ namespace {
             parent,
             std::format(
                 "<color=#75DFFF><b>VIDEO · {} · {} · FFMPEG {}</b></color>\n"
-                "<color=#AEBAC8>Source</color> <b>{}x{} @ {:.1f}</b>   "
-                "<color=#AEBAC8>Output</color> <b>{}x{} @ {} cap</b>\n"
+                "<color=#AEBAC8>Video</color> <b>{}x{} @ {:.1f}</b>   "
+                "<color=#AEBAC8>FPS Limit</color> <b>{}</b>\n"
                 "<color=#AEBAC8>Frames Skipped</color> <b>{}</b>   "
                 "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
                 "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
@@ -564,11 +564,9 @@ namespace {
                 data.video.decodeMethod == "hardware" ? "HARDWARE" : "SOFTWARE",
                 data.video.codec.empty() ? "UNKNOWN" : data.video.codec,
                 data.video.decoderRuntime,
-                data.video.sourceWidth,
-                data.video.sourceHeight,
+                data.video.videoWidth,
+                data.video.videoHeight,
                 data.video.sourceFps,
-                data.video.outputWidth,
-                data.video.outputHeight,
                 data.video.outputFpsLimit,
                 data.missedVideoFrames,
                 data.missedVideoFramePercent,

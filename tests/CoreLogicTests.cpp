@@ -77,41 +77,52 @@ int main()
     Expect(!SafeSingleFilename("folder/video.mp4"), "nested path is rejected");
     Expect(!SafeSingleFilename("C:\\video.mp4"), "drive path is rejected");
 
-    auto [changed60, tier60] = NextPerformanceTier(60, 1080);
-    Expect(changed60 && tier60.first == 30 && tier60.second == 1080,
-           "performance fallback lowers FPS before resolution");
-    auto [changed15, tier15] = NextPerformanceTier(15, 1080);
-    Expect(changed15 && tier15.first == 15 && tier15.second == 720,
-           "resolution falls after reaching 15 FPS");
-    auto [changedMin, tierMin] = NextPerformanceTier(15, 480);
-    Expect(!changedMin && tierMin.second == 480, "minimum tier is stable");
+    auto [changed60, fps60] = NextPerformanceFpsLimit(60, 60.0, 1.0);
+    Expect(changed60 && fps60 == 55,
+           "automatic performance lowers a 60 FPS source in five-FPS steps");
+    auto [changed30, fps30] = NextPerformanceFpsLimit(60, 30.0, 1.0);
+    Expect(changed30 && fps30 == 25,
+           "the first reduction starts below a 30 FPS source cadence");
+    auto [changed24, fps24] = NextPerformanceFpsLimit(60, 24.0, 1.0);
+    Expect(changed24 && fps24 == 20,
+           "a 24 FPS source rounds down to the useful 20 FPS tier");
+    auto [changedFit, fpsFit] = NextPerformanceFpsLimit(60, 24.0, 1.25);
+    Expect(changedFit && fpsFit == 25,
+           "Fit-to-Song playback rate participates in the effective cadence");
+    auto [changed17, fps17] = NextPerformanceFpsLimit(60, 17.0, 1.0);
+    Expect(changed17 && fps17 == 15,
+           "an effective cadence between 15 and 20 reaches the 15 FPS floor");
+    auto [changedBelowFloor, fpsBelowFloor] =
+        NextPerformanceFpsLimit(60, 24.0, 0.5);
+    Expect(!changedBelowFloor && fpsBelowFloor == 60,
+           "a source already below the 15 FPS floor does not record a no-op reduction");
+    auto [changedMin, fpsMin] = NextPerformanceFpsLimit(15, 60.0, 1.0);
+    Expect(!changedMin && fpsMin == 15, "the 15 FPS floor is stable");
 
     AutomaticPerformanceHistory performanceHistory;
     Expect(performanceHistory.Empty(), "automatic quality history starts empty");
-    Expect(performanceHistory.RecordReduction(60, 1080),
-           "the initial FPS quality tier is recorded");
-    Expect(performanceHistory.RecordReduction(30, 1080),
-           "the second FPS quality tier is recorded");
-    Expect(performanceHistory.RecordReduction(15, 1080),
-           "the first resolution quality tier is recorded");
-    Expect(performanceHistory.RecordReduction(15, 720),
-           "the 720p tier is retained in the five-step 1440p recovery ladder");
-    Expect(performanceHistory.RecordReduction(15, 480),
-           "the fifth 1440p/60 reduction fits in the fixed history");
-    Expect(!performanceHistory.RecordReduction(15, 480),
-           "the fixed history rejects only a sixth impossible reduction");
+    for(const int priorLimit : {60, 55, 50, 45, 40, 35, 30, 25, 20})
+        Expect(performanceHistory.RecordReduction(priorLimit),
+               "the complete 60-to-15 FPS ladder fits in fixed history");
+    Expect(performanceHistory.Size() == 9,
+           "the fixed history contains every possible five-FPS reduction");
+    Expect(!performanceHistory.RecordReduction(15),
+           "the fixed history rejects a tenth impossible reduction");
     auto recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && recovery->first == 15 && recovery->second == 480,
+    Expect(recovery && *recovery == 20,
            "recovery first restores the exact most recent tier");
     Expect(performanceHistory.CommitRecovery(),
            "a successful recovery removes exactly one tier");
     recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && recovery->first == 15 && recovery->second == 720,
-           "the next recovery restores the preceding resolution tier");
+    Expect(recovery && *recovery == 25,
+           "the next recovery restores the preceding FPS tier");
+    while(performanceHistory.CommitRecovery()) {}
+    Expect(performanceHistory.Empty(),
+           "all nine reductions recover in exact reverse order");
     performanceHistory.Reset();
     Expect(performanceHistory.Empty() && !performanceHistory.RecoveryTarget(),
            "a new playback baseline clears stale recovery tiers");
-    Expect(performanceHistory.RecordReduction(60, 1080),
+    Expect(performanceHistory.RecordReduction(60),
            "the ongoing controller can reduce again after a full recovery");
     Expect(performanceHistory.CommitRecovery() && performanceHistory.Empty(),
            "the repeated recovery returns to the exact new baseline");

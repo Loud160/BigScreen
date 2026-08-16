@@ -79,9 +79,10 @@ behavior.
   error and enter the existing one-shot playback-failure path.
 - A playback failure closes the decoder immediately instead of retaining its
   worker and frame buffers until the map ends.
-- Automatic resolution changes rebuild both the primary surface and optional
-  showcase surfaces so no material retains a destroyed texture. A failed tier
-  change is latched once and stops that playback session safely.
+- Automatic Performance no longer changes resolution or rebuilds the decoder,
+  primary surface, or optional showcase surfaces. It changes only the
+  presentation limit in 5 FPS steps, eliminating the destroyed-texture and
+  decoder-reopen failure class described by the earlier review.
 - Screen opacity application now reports failure to its caller instead of
   silently retrying a failed presentation change every frame.
 

@@ -24,10 +24,9 @@ namespace GlobalNamespace {
 
 namespace BigScreen {
     struct PlaybackDiagnostics {
-        int sourceWidth = 0;
-        int sourceHeight = 0;
-        int outputWidth = 0;
-        int outputHeight = 0;
+        /// Presentation-oriented native dimensions after container rotation.
+        int videoWidth = 0;
+        int videoHeight = 0;
         double sourceFps = 0.0;
         int outputFpsLimit = 0;
         std::uint64_t requestedFrames = 0;
@@ -169,13 +168,9 @@ namespace BigScreen {
         void RebuildEffectiveConfig(
             PlaybackContext intendedContext = PlaybackContext::None);
         bool OpenDecoder(std::string& error);
-        bool ApplyAutomaticPerformanceReduction(double mediaTimeSeconds);
-        bool ApplyAutomaticPerformanceRecovery(double mediaTimeSeconds);
-        bool ApplyAutomaticPerformanceTier(
-            int nextFps,
-            int nextResolution,
-            double mediaTimeSeconds,
-            const char* failureOperation);
+        bool ApplyAutomaticPerformanceReduction();
+        bool ApplyAutomaticPerformanceRecovery();
+        void ApplyAutomaticPerformanceFpsLimit(int nextFps);
         void CaptureDiagnosticsSummary();
 
         std::filesystem::path levelDirectory_;
@@ -218,7 +213,6 @@ namespace BigScreen {
         std::optional<std::int64_t> lastPresentationSlot_;
         double lastTickSongTime_ = 0.0;
         int effectiveFpsLimit_ = 30;
-        int effectiveResolutionHeight_ = 720;
         std::uint64_t requestedFrames_ = 0;
         // Presentation statistics are derived only from timestamps of images
         // that successfully reached Unity. Thread scheduling latency is not a
@@ -243,16 +237,14 @@ namespace BigScreen {
         double lastFpsSongTime_ = 0.0;
         std::uint64_t sampledFrames_ = 0;
         int automaticReductions_ = 0;
-        // Automatic Performance may reopen the decoder when the output
-        // resolution changes. Preserve completed worker CPU time across those
-        // decoder instances so one map still has one meaningful total.
-        double accumulatedDecoderCpuMilliseconds_ = 0.0;
+        // The facade retains worker CPU time across hardware-to-software
+        // recovery. This baseline excludes pre-map/pre-audio warmup work.
         double decoderCpuBaselineMilliseconds_ = 0.0;
         // Each successful reduction stores the exact tier it replaced. A
         // healthy user-selected response window pops one entry, which
-        // guarantees that resolution/FPS are restored in the reverse order
-        // they were lowered. The controller continues evaluating throughout
-        // the map, so later pressure can lower quality again.
+        // guarantees that FPS limits are restored in the reverse order they
+        // were lowered. The controller continues evaluating throughout the
+        // map, so later pressure can lower and recover repeatedly.
         CoreLogic::AutomaticPerformanceHistory automaticPerformanceHistory_;
         int diagnosticsFrameCounter_ = 0;
         bool diagnosticsVisible_ = false;

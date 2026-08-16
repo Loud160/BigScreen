@@ -48,8 +48,8 @@ namespace BigScreen {
         double playbackRate = 1.0;
         bool fitToSong = false;
         bool blackDuringLeadIn = false;
-        // Exact source tier selected by the player. This is independent from
-        // the playback output limiter, which may downscale the stored file.
+        // Exact source tier selected by the player. Big Screen retains and
+        // presents this file at its native resolution.
         int requestedHeight = 1080;
         // When YouTube exposes multiple frame rates at one tier, retain the
         // best source no faster than the user's saved presentation ceiling.

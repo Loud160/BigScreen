@@ -25,6 +25,12 @@ struct AVPacket;
 struct SwsContext;
 
 namespace BigScreen {
+    /// Decoder output-height convention shared by both private FFmpeg
+    /// backends. Zero (and any negative value supplied by a test/tool) means
+    /// preserve the source resolution; positive values remain available for
+    /// deliberately bounded utility previews such as the thumbnail picker.
+    inline constexpr int UncappedOutputHeight = 0;
+
 
     /// A decoded image ready for Unity's RGBA32 Texture2D upload path.
     struct VideoFrame {
@@ -118,7 +124,8 @@ namespace BigScreen {
         FrameDecoder& operator=(const FrameDecoder&) = delete;
 
         /// Opens the source and converts decoded frames to no more than the
-        /// requested output height. Sources below that tier are never upscaled.
+        /// requested output height. A non-positive height preserves the native
+        /// source dimensions; sources below a positive bound are never enlarged.
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,

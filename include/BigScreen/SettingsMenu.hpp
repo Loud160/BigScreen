@@ -129,7 +129,6 @@ namespace BigScreen {
         BSML::ToggleSetting* hideSpectrogramBarsToggle_ = nullptr;
         HMUI::HoverHint* hideSpectrogramBarsHint_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
-        BSML::DropdownListSetting* resolutionDropdown_ = nullptr;
         BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;

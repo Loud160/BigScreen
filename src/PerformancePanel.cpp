@@ -54,10 +54,10 @@ namespace BigScreen {
         constexpr float HeaderHeight = 8.0f;
         constexpr float FooterHeight = 7.0f;
         // The body holds a column-caption row ("Quest" / "Video") plus the
-        // tallest column's 8 statistics rows. Each row gets a fixed share;
+        // tallest column's 7 statistics rows. Each row gets a fixed share;
         // text auto-sizes down to fit rather than growing the row.
         constexpr float ColumnHeaderHeight = 7.0f;
-        constexpr float BodyRowCount = 8.0f;
+        constexpr float BodyRowCount = 7.0f;
         constexpr float BodyRowHeight = 7.0f;
         constexpr float BodyHeight =
             ColumnHeaderHeight + BodyRowCount * BodyRowHeight;
@@ -333,30 +333,26 @@ namespace BigScreen {
                             ? std::string("Hardware")
                             : std::string("Software"))
                      : std::string("--"));
-            row(rightRows_[1], "Source",
+            row(rightRows_[1], "Video",
                 live ? std::format(
-                           "{}x{} @ {:.1f} {}",
-                           d.sourceWidth, d.sourceHeight, d.sourceFps,
+                           "{}x{} @ {:.1f} · {} FPS limit · {}",
+                           d.videoWidth, d.videoHeight, d.sourceFps,
+                           d.outputFpsLimit,
                            d.codec.empty() ? "Unknown" : d.codec)
                      : std::string("--"));
-            row(rightRows_[2], "Output",
-                live ? std::format(
-                           "{}x{} @ {} cap",
-                           d.outputWidth, d.outputHeight, d.outputFpsLimit)
-                     : std::string("--"));
-            row(rightRows_[3], "Frames Skipped",
+            row(rightRows_[2], "Frames Skipped",
                 live ? std::format("{}", d.totalMissedVideoFrames)
                      : std::string("--"));
-            row(rightRows_[4], "Video FPS Average",
+            row(rightRows_[3], "Video FPS Average",
                 live ? std::format("{:.1f}", d.averageVideoFramesPerSecond)
                      : std::string("--"));
-            row(rightRows_[5], "Frame Rate Loss",
+            row(rightRows_[4], "Frame Rate Loss",
                 live ? std::format("{:.1f}%", d.missedVideoFramePercent)
                      : std::string("--"));
-            row(rightRows_[6], "Decode Average",
+            row(rightRows_[5], "Decode Average",
                 live ? std::format("{:.2f} ms", d.averageDecodeMilliseconds)
                      : std::string("--"));
-            row(rightRows_[7], "Decode Peak",
+            row(rightRows_[6], "Decode Peak",
                 live ? std::format("{:.2f} ms", d.peakDecodeMilliseconds)
                      : std::string("--"));
         }

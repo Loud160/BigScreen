@@ -876,39 +876,67 @@ namespace BigScreen::CoreLogic {
         });
     }
 
-    /// Returns the next temporary FPS/resolution tier. The boolean is false
-    /// when the session is already at the lowest supported output.
-    inline std::pair<bool, std::pair<int, int>> NextPerformanceTier(
-        int fps, int resolution)
+    /// Returns the next temporary presentation limit for Automatic
+    /// Performance. The saved menu value is a ceiling, so the first reduction
+    /// begins below the video's effective source cadence rather than walking
+    /// through limits that would not alter presentation. Mapper Fit-to-Song
+    /// speed is part of that cadence. Exact multiples still move down one full
+    /// five-FPS step: 30 -> 25, while a 24 FPS source begins at 20.
+    inline std::pair<bool, int> NextPerformanceFpsLimit(
+        int currentLimit,
+        double sourceFramesPerSecond,
+        double playbackRate)
     {
-        if(fps > 30) return {true, {30, resolution}};
-        if(fps > 15) return {true, {15, resolution}};
-        if(resolution > 1080) return {true, {fps, 1080}};
-        if(resolution > 720) return {true, {fps, 720}};
-        if(resolution > 480) return {true, {fps, 480}};
-        return {false, {fps, resolution}};
+        constexpr int MinimumFps = 15;
+        constexpr int StepFps = 5;
+        if(currentLimit <= MinimumFps)
+            return {false, currentLimit};
+
+        double effectiveCadence = static_cast<double>(currentLimit);
+        if(std::isfinite(sourceFramesPerSecond) &&
+           std::isfinite(playbackRate) &&
+           sourceFramesPerSecond > 0.0 && playbackRate > 0.0)
+        {
+            effectiveCadence = std::min(
+                effectiveCadence,
+                sourceFramesPerSecond * playbackRate);
+        }
+        if(effectiveCadence <= static_cast<double>(MinimumFps))
+            return {false, currentLimit};
+
+        // Subtract a tiny epsilon before flooring so an exact 30.0 cadence
+        // becomes 25 rather than returning a no-op 30 tier. Non-multiples such
+        // as 24 naturally floor to 20.
+        const int nextLimit = std::max(
+            MinimumFps,
+            static_cast<int>(std::floor(
+                (effectiveCadence - 0.000001) / StepFps)) * StepFps);
+        if(nextLimit >= currentLimit)
+            return {false, currentLimit};
+        return {true, nextLimit};
     }
 
     /// Records the exact path Automatic Performance used while lowering
     /// quality. Recovery reads this small stack backwards instead of trying to
-    /// infer the user's previous setting from the current tier. The supported
-    /// 60/30/15 FPS and 1440/1080/720/480p ladder has at most five reductions, so a
-    /// fixed array avoids allocating memory in Beat Saber's gameplay loop.
+    /// infer the user's previous setting from the current tier. A 60 FPS cap
+    /// can reach the 15 FPS floor in nine five-FPS reductions, so a fixed array
+    /// covers the complete ladder without allocating in Beat Saber's gameplay
+    /// loop.
     class AutomaticPerformanceHistory final {
     public:
         void Reset() noexcept { size_ = 0; }
         bool Empty() const noexcept { return size_ == 0; }
         std::size_t Size() const noexcept { return size_; }
 
-        bool RecordReduction(int previousFps, int previousResolution) noexcept
+        bool RecordReduction(int previousFps) noexcept
         {
             if(size_ >= tiers_.size())
                 return false;
-            tiers_[size_++] = {previousFps, previousResolution};
+            tiers_[size_++] = previousFps;
             return true;
         }
 
-        std::optional<std::pair<int, int>> RecoveryTarget() const noexcept
+        std::optional<int> RecoveryTarget() const noexcept
         {
             if(Empty())
                 return std::nullopt;
@@ -924,7 +952,7 @@ namespace BigScreen::CoreLogic {
         }
 
     private:
-        std::array<std::pair<int, int>, 5> tiers_{};
+        std::array<int, 9> tiers_{};
         std::size_t size_ = 0;
     };
 

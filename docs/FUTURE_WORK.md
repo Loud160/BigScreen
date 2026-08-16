@@ -34,10 +34,11 @@ tests and the Quest ARM64 build after each move, and update `ARCHITECTURE.md`,
 behavior changes. Do not combine the entire split with unrelated feature work;
 that would make regressions unnecessarily difficult to isolate.
 
-- Consider a separate download-quality preference only if testing shows that
-  retaining one source-quality download and downscaling during playback causes
-  unacceptable gameplay cost. Avoid automatically accumulating multiple copies
-  of the same video at different resolutions.
+- Evaluate the bounded timestamped decoder queue described in
+  `BUFFERED_DECODER_DESIGN.md` only after native-resolution/FPS-only playback
+  has been measured on-device. Keep it opportunistic and memory-bounded so a
+  short decoder stall can consume prepared frames without adding persistent
+  latency or converting frames that the FPS limiter would never present.
 - Re-evaluate the hidden Glass Desert environment override if a future Beat
   Saber environment makes it useful; implementation support remains in source
   but the user-facing switch is intentionally omitted.

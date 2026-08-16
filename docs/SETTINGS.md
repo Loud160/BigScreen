@@ -8,10 +8,6 @@ Big Screen has five tabs: General, Screen, Environment, Update, and Misc. Settin
 
 Sets the maximum number of frames Big Screen presents per second: 15, 30, or 60. It does not speed up or slow down the video. A 24/30 FPS source remains at its native cadence under a 60 FPS cap; a 60 FPS source drops presentation frames evenly under a 30/15 FPS cap while synchronization still follows song time. Lower values reduce decoding, memory-copy, and texture-upload pressure.
 
-### Video Resolution — default: 720p
-
-Sets the maximum output tier: 480p, 720p, 1080p, or 1440p. Big Screen keeps the selected source file unchanged and downsizes decoded output in memory; switching this option does not download another file. Sources below the selected limit are not enlarged. This playback-only setting never filters the resolution buttons offered by a YouTube probe. 720p is the recommended Quest balance. 1080p costs more; 1440p is hardware-only and is intended for careful testing.
-
 ### Big Screen Enabled — default: On
 
 Master switch. Off stops previews, downloads, screens, and environment changes while leaving the Big Screen Mods entry available. Related controls are disabled so a partially disabled configuration cannot continue interacting with Beat Saber.
@@ -220,7 +216,7 @@ On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever
 
 #### Automatic Performance — default: Off
 
-Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1440→1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the source video, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
+Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers the presentation limit by 5 FPS, down to a 15 FPS floor. The first useful reduction begins below the video's effective cadence, including Fit to Song playback speed: a 30 FPS video under a 60 FPS preference moves directly to 25 rather than walking through ineffective 55/50/45/40/35 limits, while a 24 FPS video begins at 20. A complete healthy window restores one exact prior limit in reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. It never changes video resolution, reopens the decoder, modifies the source file, exceeds the saved FPS preference, or overwrites that preference. The next playback session starts from the saved limit.
 
 Turning this on opens a confirmation explaining that Automatic Performance is experimental and still under development. Nothing is enabled or saved until the player confirms.
 
@@ -230,15 +226,15 @@ Available when Automatic Performance is on. This 1–15% slider selects the vide
 
 #### Scaling Response Time — default: 5.0 seconds
 
-Available when Automatic Performance is on. This 0.5–10.0 second slider defaults to 5.0 seconds and controls how long either condition must continue before one quality step is taken. The same duration is used for downscaling and recovery. It operates during gameplay and Video Library preview playback. Short times react quickly but may change tiers more often; longer times require more sustained evidence before changing quality.
+Available when Automatic Performance is on. This 0.5–10.0 second slider defaults to 5.0 seconds and controls how long either condition must continue before one 5 FPS step is taken. The same duration is used for reduction and recovery. It operates during gameplay and Video Library preview playback. Short times react quickly but may change limits more often; longer times require more sustained evidence before changing the limit.
 
 #### Show Performance Information — default: Off
 
-Displays the active hardware/software backend, source/output resolution and FPS, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. Hold the trigger anywhere on the panel to move and angle it. Big Screen saves that transform when the switch is turned off or the menu/gameplay context closes, and the same placement is reused in the Video Library and during video maps. The circular reset button immediately to the left of this switch returns the panel to its safe default position and angle. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning quality, or reporting performance problems.
+Displays the active hardware/software backend, presentation-oriented native video resolution, source FPS, current FPS limit, expected versus presented source frames, missed percentage, full decode-request delay, and automatic reductions during gameplay. Hold the trigger anywhere on the panel to move and angle it. Big Screen saves that transform when the switch is turned off or the menu/gameplay context closes, and the same placement is reused in the Video Library and during video maps. The circular reset button immediately to the left of this switch returns the panel to its safe default position and angle. The results/failure summary also identifies the loaded FFmpeg runtime and reusable RGBA allocation count. Enable this when comparing decoder builds, tuning frame rate, or reporting performance problems.
 
 #### Record Power Benchmark — default: Off
 
-Records one sample per second for every played map, including maps played with **Video In Map** off. Each sample contains the Quest battery charge counter, instantaneous and Android-averaged battery current when the headset exposes them, battery percentage/charging state, whole Beat Saber process CPU time, Big Screen decoder-worker CPU time, active output tier, and playback statistics. Data stays in memory during gameplay and is appended to CSV files only after the map ends or is exited.
+Records one sample per second for every played map, including maps played with **Video In Map** off. Each sample contains the Quest battery charge counter, instantaneous and Android-averaged battery current when the headset exposes them, battery percentage/charging state, whole Beat Saber process CPU time, Big Screen decoder-worker CPU time, actual video resolution, active FPS limit, and playback statistics. Data stays in memory during gameplay and is appended to CSV files only after the map ends or is exited. When this release first writes the simplified native-resolution schema, an older CSV is preserved with a timestamped `-legacy-` filename.
 
 Use this for controlled A/B tests, not as a permanent gameplay option. Unplug USB/external power, hold brightness, refresh rate, map, difficulty, modifiers, graphics, and headset temperature constant, then play the same map once with video off and once with video on. A blank battery field means the Quest firmware reported that individual Android property as unsupported; it is not treated as zero.
 

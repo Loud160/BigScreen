@@ -22,11 +22,9 @@ namespace BigScreen {
         double averageFps = 0.0;
         double maximumFps = 0.0;
         std::uint64_t sampledFrames = 0;
-        int sourceWidth = 0;
-        int sourceHeight = 0;
+        int videoWidth = 0;
+        int videoHeight = 0;
         double sourceFps = 0.0;
-        int outputWidth = 0;
-        int outputHeight = 0;
         int outputFpsLimit = 0;
         std::uint64_t skippedVideoFrames = 0;
         std::uint64_t expectedVideoFrames = 0;
@@ -106,7 +104,7 @@ namespace BigScreen {
         // One TMP element per statistics row, each height-locked by a
         // LayoutElement so the columns are laid out to the fixed body box.
         std::array<TMPro::TextMeshProUGUI*, 2> leftRows_{};
-        std::array<TMPro::TextMeshProUGUI*, 8> rightRows_{};
+        std::array<TMPro::TextMeshProUGUI*, 7> rightRows_{};
         // TMPro/handle failures can occur every frame while Unity tears down a
         // scene. Record each category once per panel lifetime instead of
         // flooding persistent storage with identical diagnostics.

@@ -496,7 +496,7 @@ namespace BigScreen {
         std::filesystem::create_directories(LogDirectory);
         AppendHeaderIfEmpty(
             SamplesPath,
-            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decode_method,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
+            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decode_method,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
         {
             std::ofstream output(SamplesPath, std::ios::app);
             if(!output)
@@ -526,10 +526,8 @@ namespace BigScreen {
                     << OptionalNumber(sample.battery.capacityPercent) << ','
                     << OptionalNumber(sample.battery.status) << ','
                     << OptionalBool(sample.battery.charging) << ','
-                    << sample.diagnostics.sourceWidth << ','
-                    << sample.diagnostics.sourceHeight << ','
-                    << sample.diagnostics.outputWidth << ','
-                    << sample.diagnostics.outputHeight << ','
+                    << sample.diagnostics.videoWidth << ','
+                    << sample.diagnostics.videoHeight << ','
                     << sample.diagnostics.sourceFps << ','
                     << sample.diagnostics.outputFpsLimit << ','
                     << sample.diagnostics.expectedFrames << ','
@@ -587,7 +585,7 @@ namespace BigScreen {
             : last.diagnostics;
         AppendHeaderIfEmpty(
             SummaryPath,
-            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decode_method,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,source_width,source_height,output_width,output_height,source_fps,output_fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
+            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decode_method,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
         std::ofstream summary(SummaryPath, std::ios::app);
         if(!summary)
             throw std::runtime_error("Could not append the power summary log");
@@ -623,10 +621,8 @@ namespace BigScreen {
             << OptionalNumber(last.battery.capacityPercent) << ','
             << OptionalBool(first.battery.charging) << ','
             << OptionalBool(last.battery.charging) << ','
-            << finalDiagnostics.sourceWidth << ','
-            << finalDiagnostics.sourceHeight << ','
-            << finalDiagnostics.outputWidth << ','
-            << finalDiagnostics.outputHeight << ','
+            << finalDiagnostics.videoWidth << ','
+            << finalDiagnostics.videoHeight << ','
             << finalDiagnostics.sourceFps << ','
             << finalDiagnostics.outputFpsLimit << ','
             << finalDiagnostics.expectedFrames << ','

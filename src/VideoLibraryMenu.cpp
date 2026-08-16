@@ -995,7 +995,7 @@ namespace BigScreen {
             }
             BSML::Lite::AddHoverHint(
                 button,
-                "Downloads this exact source resolution and assigns it to the selected song. The separate playback-resolution setting may downscale it later.");
+                "Downloads this exact resolution and assigns it to the selected song. Big Screen plays the selected file at its native resolution.");
             button->get_gameObject()->SetActive(false);
             downloadTierButtons_.push_back(button);
         }

@@ -86,15 +86,6 @@ namespace BigScreen {
             document.AddMember(key.Move(), value, document.GetAllocator());
         }
 
-        int NormalizeResolution(int value)
-        {
-            // The menu exposes exactly these four predictable performance
-            // tiers. A hand-edited invalid value falls back to the balanced
-            // Quest default instead of silently selecting an arbitrary size.
-            return value == 480 || value == 720 || value == 1080 ||
-                value == 1440 ? value : 720;
-        }
-
         int NormalizePlaybackFps(int value)
         {
             // These are presentation ceilings, not forced rates. A 24 FPS
@@ -324,8 +315,6 @@ namespace BigScreen {
         hideSpectrogramBars_ = ReadBool(document, "hideSpectrogramBars", true);
         playbackFpsLimit_ = NormalizePlaybackFps(
             ReadInt(document, "playbackFpsLimit", 30));
-        resolutionHeight_ = NormalizeResolution(
-            ReadInt(document, "resolutionHeight", 720));
         useFfmpeg9_ = ReadBool(document, "useFfmpeg9", true);
         hardwareDecodingEnabled_ = ReadBool(
             document, "hardwareDecodingEnabled", true);
@@ -683,12 +672,6 @@ namespace BigScreen {
         Save();
     }
 
-    void Settings::SetResolutionHeight(int value)
-    {
-        resolutionHeight_ = NormalizeResolution(value);
-        Save();
-    }
-
     void Settings::SetUseFfmpeg9(bool value)
     {
         useFfmpeg9_ = value;
@@ -927,7 +910,10 @@ namespace BigScreen {
         Replace(document, "hideSideBars", hideSideBars_);
         Replace(document, "hideSpectrogramBars", hideSpectrogramBars_);
         Replace(document, "playbackFpsLimit", playbackFpsLimit_);
-        Replace(document, "resolutionHeight", resolutionHeight_);
+        // Playback now always presents the selected file at its native
+        // resolution. Silently discard the retired playback-only cap when an
+        // older configuration is loaded and written by this version.
+        document.RemoveMember("resolutionHeight");
         Replace(document, "useFfmpeg9", useFfmpeg9_);
         Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);

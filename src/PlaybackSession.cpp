@@ -85,7 +85,6 @@ namespace BigScreen {
             0.0,
             decoder_.WorkerCpuMilliseconds() - decoderCpuBaselineMilliseconds_);
         return {
-            decoder_.SourceWidth(), decoder_.SourceHeight(),
             decoder_.Width(), decoder_.Height(),
             decoder_.SourceFramesPerSecond(), effectiveFpsLimit_,
             requestedFrames_,
@@ -94,7 +93,7 @@ namespace BigScreen {
             decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(),
             decoder_.PeakDecodeMilliseconds(),
-            accumulatedDecoderCpuMilliseconds_ + activeDecoderCpu,
+            activeDecoderCpu,
             automaticReductions_,
             decoder_.DecodeMethodName(),
             decoder_.RuntimeVersion(),
@@ -497,7 +496,6 @@ namespace BigScreen {
         sampledFrames_ = 0;
         gameplayFrameSamplingFinished_ = false;
         automaticReductions_ = 0;
-        accumulatedDecoderCpuMilliseconds_ = 0.0;
         // Gameplay prewarming deliberately runs before Beat Saber's song
         // clock. Exclude that setup work from the map benchmark so video-on
         // and video-off runs cover the same measured interval.
@@ -582,7 +580,6 @@ namespace BigScreen {
         lastFpsSongTime_ = songTimeSeconds;
         sampledFrames_ = 0;
         automaticReductions_ = 0;
-        accumulatedDecoderCpuMilliseconds_ = 0.0;
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
         automaticPerformanceHistory_.Reset();
         diagnosticsFrameCounter_ = 0;
@@ -609,10 +606,9 @@ namespace BigScreen {
     bool PlaybackSession::OpenDecoder(std::string& error)
     {
         effectiveFpsLimit_ = Settings::Instance().PlaybackFpsLimit();
-        effectiveResolutionHeight_ = Settings::Instance().ResolutionHeight();
         return decoder_.Open(
             config_->videoPath,
-            effectiveResolutionHeight_,
+            UncappedOutputHeight,
             error);
     }
 
@@ -856,11 +852,9 @@ namespace BigScreen {
                 frameRate.averageFps,
                 frameRate.maximumFps,
                 frameRate.sampledFrames,
-                d.sourceWidth,
-                d.sourceHeight,
+                d.videoWidth,
+                d.videoHeight,
                 d.sourceFps,
-                d.outputWidth,
-                d.outputHeight,
                 d.outputFpsLimit,
                 currentWindowExpected > currentWindowDelivered
                     ? currentWindowExpected - currentWindowDelivered
@@ -901,9 +895,9 @@ namespace BigScreen {
                         windowMissedPresentedFrames_,
                     windowDeliveredPresentedFrames_);
                 if(missedPercent >= Settings::Instance().AutomaticPerformanceThreshold())
-                    ApplyAutomaticPerformanceReduction(mediaTime);
+                    ApplyAutomaticPerformanceReduction();
                 else
-                    ApplyAutomaticPerformanceRecovery(mediaTime);
+                    ApplyAutomaticPerformanceRecovery();
                 windowDeliveredPresentedFrames_ = 0;
                 windowMissedPresentedFrames_ = 0;
                 performanceWindowStartSongTime_ = songTimeSeconds;
@@ -1037,11 +1031,10 @@ namespace BigScreen {
         // post-map power benchmark.
         if(gameplaySession && lastResultsData_)
         {
-            lastResultsData_->video.decoderCpuMilliseconds =
-                accumulatedDecoderCpuMilliseconds_ + std::max(
-                    0.0,
-                    decoder_.WorkerCpuMilliseconds() -
-                        decoderCpuBaselineMilliseconds_);
+            lastResultsData_->video.decoderCpuMilliseconds = std::max(
+                0.0,
+                decoder_.WorkerCpuMilliseconds() -
+                    decoderCpuBaselineMilliseconds_);
         }
         gameplayDecoderPrewarmed_ = false;
         gameplayPrewarmFailed_ = false;
@@ -1069,142 +1062,63 @@ namespace BigScreen {
             songTimeSeconds);
     }
 
-    bool PlaybackSession::ApplyAutomaticPerformanceReduction(double mediaTimeSeconds)
+    bool PlaybackSession::ApplyAutomaticPerformanceReduction()
     {
-        const auto [changed, tier] = CoreLogic::NextPerformanceTier(
-            effectiveFpsLimit_, effectiveResolutionHeight_);
+        const auto [changed, nextFps] = CoreLogic::NextPerformanceFpsLimit(
+            effectiveFpsLimit_,
+            decoder_.SourceFramesPerSecond(),
+            config_ ? config_->playbackRate : 1.0);
         if(!changed)
             return false;
-        const auto [nextFps, nextResolution] = tier;
 
         const int previousFps = effectiveFpsLimit_;
-        const int previousResolution = effectiveResolutionHeight_;
-        if(!ApplyAutomaticPerformanceTier(
-               nextFps,
-               nextResolution,
-               mediaTimeSeconds,
-               "applying automatic performance reduction"))
-            return false;
-
-        if(!automaticPerformanceHistory_.RecordReduction(
-               previousFps, previousResolution))
+        if(!automaticPerformanceHistory_.RecordReduction(previousFps))
         {
-            // The complete 1440p/60 ladder contains five reductions. Reaching
-            // this branch indicates a future tier was added without resizing
-            // AutomaticPerformanceHistory.
-            // Keep playback running if that invariant is ever changed, but log
-            // it because recovery could no longer promise an exact reversal.
+            // A 60-to-15 ladder contains exactly nine reductions. Refuse an
+            // unrecorded tenth step if a future policy changes that invariant;
+            // exact reverse recovery is more important than one extra drop.
             PaperLogger.error(
-                "Automatic Performance reduction history is full at {}p / {} FPS",
-                effectiveResolutionHeight_, effectiveFpsLimit_);
+                "Automatic Performance reduction history is full at {} FPS",
+                effectiveFpsLimit_);
+            return false;
         }
+        ApplyAutomaticPerformanceFpsLimit(nextFps);
         ++automaticReductions_;
         PaperLogger.warn(
-            "Automatic Performance reduced video output to {}p / {} FPS",
-            effectiveResolutionHeight_, effectiveFpsLimit_);
+            "Automatic Performance reduced the video frame-rate limit to {} FPS",
+            effectiveFpsLimit_);
         return true;
     }
 
-    bool PlaybackSession::ApplyAutomaticPerformanceRecovery(double mediaTimeSeconds)
+    bool PlaybackSession::ApplyAutomaticPerformanceRecovery()
     {
         const auto target = automaticPerformanceHistory_.RecoveryTarget();
         if(!target)
             return false;
-        const auto [nextFps, nextResolution] = *target;
-        if(!ApplyAutomaticPerformanceTier(
-               nextFps,
-               nextResolution,
-               mediaTimeSeconds,
-               "restoring automatic performance quality"))
-            return false;
 
+        ApplyAutomaticPerformanceFpsLimit(*target);
         automaticPerformanceHistory_.CommitRecovery();
         PaperLogger.info(
-            "Automatic Performance restored video output to {}p / {} FPS after {:.1f} seconds below the missed-frame threshold",
-            effectiveResolutionHeight_,
+            "Automatic Performance restored the video frame-rate limit to {} FPS after {:.1f} seconds below the missed-frame threshold",
             effectiveFpsLimit_,
             Settings::Instance().AutomaticPerformanceResponseSeconds());
         return true;
     }
 
-    bool PlaybackSession::ApplyAutomaticPerformanceTier(
-        int nextFps,
-        int nextResolution,
-        double mediaTimeSeconds,
-        const char* failureOperation)
+    void PlaybackSession::ApplyAutomaticPerformanceFpsLimit(int nextFps)
     {
-
-        if(nextResolution != effectiveResolutionHeight_)
-        {
-            // A texture cannot change dimensions in place. Reopen only Big
-            // Screen's decoder/surface at the current audio-derived timestamp;
-            // Beat Saber's map clock and gameplay scene continue uninterrupted.
-            // Showcase materials reference the primary surface's Texture2D.
-            // Release them before destroying that owner, then recreate the
-            // optional group against the replacement texture below.
-            const bool recreateShowcase = showcase_.IsCreated();
-            showcase_.Destroy();
-            surface_.Destroy();
-            decoder_.Close();
-            accumulatedDecoderCpuMilliseconds_ += std::max(
-                0.0,
-                decoder_.WorkerCpuMilliseconds() -
-                    decoderCpuBaselineMilliseconds_);
-            std::string error;
-            if(!decoder_.Open(config_->videoPath, nextResolution, error) ||
-               !surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
-            {
-                // A partial reopen must become one terminal video failure. If
-                // left as a live session, the adaptive controller would retry
-                // this same tier every response window and repeatedly report
-                // the error while the map is still running.
-                surface_.Destroy();
-                decoder_.Close();
-                playbackFailed_ = true;
-                firstFrameUploaded_ = false;
-                ErrorManager::Instance().ReportInternal(
-                    failureOperation,
-                    error.empty() ? "Could not recreate the video screen at the requested quality" : error);
-                return false;
-            }
-            if(recreateShowcase &&
-               !showcase_.Create(
-                   *config_,
-                   decoder_.Width(),
-                   decoder_.Height(),
-                   surface_.Texture()))
-            {
-                // Showcase choreography is optional. Failure falls back to the
-                // primary screen instead of sacrificing otherwise healthy
-                // playback during an automatic quality transition.
-                PaperLogger.error(
-                    "Could not reconnect showcase panels after an automatic quality change; continuing with the primary screen");
-            }
-            decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
-            decoder_.Request(mediaTimeSeconds);
-            ++requestedFrames_;
-            firstFrameUploaded_ = false;
-            effectiveResolutionHeight_ = nextResolution;
-            // Recreating the decoder starts a new short-term sample but must
-            // not erase Total Missed for the current map playback.
-            diagnosticsWindowDeliveredPresentedFrames_ = 0;
-            diagnosticsWindowMissedPresentedFrames_ = 0;
-            windowDeliveredPresentedFrames_ = 0;
-            windowMissedPresentedFrames_ = 0;
-            lastUploadedPresentationSeconds_.reset();
-            lastUploadedDurationSeconds_ = 0.0;
-        }
-        effectiveFpsLimit_ = nextFps;
+        effectiveFpsLimit_ = std::max(15, nextFps);
         lastPresentationSlot_.reset();
-        // A quality boundary starts a clean short-term diagnostic sample. This
-        // keeps a live percentage from mixing pictures produced at two FPS or
-        // resolution tiers while the session-wide totals remain monotonic.
+        // A cap boundary starts clean controller and live diagnostic samples.
+        // Session-wide delivered/missed totals remain monotonic, while the
+        // next response window evaluates only the new presentation cadence.
+        windowDeliveredPresentedFrames_ = 0;
+        windowMissedPresentedFrames_ = 0;
         diagnosticsWindowDeliveredPresentedFrames_ = 0;
         diagnosticsWindowMissedPresentedFrames_ = 0;
         diagnosticsWindowStartSongTime_ = lastTickSongTime_;
         lastUploadedPresentationSeconds_.reset();
         lastUploadedDurationSeconds_ = 0.0;
-        return true;
     }
 
     void PlaybackSession::CaptureDiagnosticsSummary()
@@ -1226,12 +1140,11 @@ namespace BigScreen {
                 static_cast<double>(diagnostics.expectedFrames)
             : 0.0;
         std::ostringstream text;
-        text << diagnostics.sourceWidth << 'x' << diagnostics.sourceHeight
+        text << diagnostics.videoWidth << 'x' << diagnostics.videoHeight
              << " @ " << std::fixed << std::setprecision(1)
-             << diagnostics.sourceFps << " FPS source  |  "
+             << diagnostics.sourceFps << " FPS video  |  "
              << "Codec " << diagnostics.codec << "  |  "
-             << diagnostics.outputWidth << 'x' << diagnostics.outputHeight
-             << " @ " << diagnostics.outputFpsLimit << " FPS output\n"
+             << "Presentation limit " << diagnostics.outputFpsLimit << " FPS\n"
              << "Delivered " << diagnostics.presentedFrames << " / "
              << diagnostics.expectedFrames << " expected pictures  |  "
              << "Missed Frames " << missedFrames << " ("
@@ -1301,11 +1214,9 @@ namespace BigScreen {
             frameRate.averageFps,
             frameRate.maximumFps,
             frameRate.sampledFrames,
-            diagnostics.sourceWidth,
-            diagnostics.sourceHeight,
+            diagnostics.videoWidth,
+            diagnostics.videoHeight,
             diagnostics.sourceFps,
-            diagnostics.outputWidth,
-            diagnostics.outputHeight,
             diagnostics.outputFpsLimit,
             diagnostics.expectedFrames > diagnostics.presentedFrames
                 ? diagnostics.expectedFrames - diagnostics.presentedFrames
