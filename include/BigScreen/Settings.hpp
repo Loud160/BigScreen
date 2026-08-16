@@ -238,7 +238,10 @@ namespace BigScreen {
         bool hideSideLaserLights_ = true;
         bool environmentOverrideEnabled_ = true;
         bool glassDesertOverrideEnabled_ = false;
-        bool disableEnvironmentMotion_ = false;
+        // A fresh install suppresses rotating/moving environment geometry by
+        // default so the video remains readable. The UI presents this as a
+        // disable-style toggle, therefore true is the visible ON state.
+        bool disableEnvironmentMotion_ = true;
         bool hideTrackRings_ = true;
         bool hideSideBars_ = true;
         bool hideSpectrogramBars_ = true;

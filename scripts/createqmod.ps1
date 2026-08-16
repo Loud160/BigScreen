@@ -76,11 +76,11 @@ $requiredLibraries = @(
 
 $ErrorActionPreference = "Stop"
 $modJson.libraryFiles = $requiredLibraries
+$modJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $mod -Encoding UTF8
 
 # QMOD fileCopies install pure Python and native extension modules into the
-# mod-owned durable runtime folder. Construct the list from the staged files so
-# every official extension ships without maintaining a fragile hand-written
-# manifest list.
+# mod-owned durable runtime folder. The shared synchronizer is also used by
+# direct ADB deployment so the two installation paths cannot drift apart.
 $runtimeStage = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..")).Path "build/downloader"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 # Install redistributable notices beside the embedded runtime. Users and mod
@@ -89,58 +89,15 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $?) {
     exit 1
 }
-$runtimeFiles = @(
-    "python314.zip",
-    "yt-dlp-shipped",
-    "certifi.whl",
-    "runtime-manifest.json",
-    "CPYTHON-LICENSE.txt"
-    "bigscreen_jsc_provider.py"
-    "BIGSCREEN-LICENSE.txt"
-    "BIGSCREEN-ADDITIONAL-TERMS.md"
-    "BIGSCREEN-NOTICE.txt"
-    "THIRD-PARTY-NOTICES.md"
-    "FFMPEG-LGPL-2.1-OR-LATER.txt"
-    "FFMPEG-4.4.8-BUILD-INFO.txt"
-    "FFMPEG-4.4.8-CHANGES.diff"
-    "FFMPEG-9.0.1-BUILD-INFO.txt"
-    "FFMPEG-9.0.1-CHANGES.diff"
-    "CERTIFI-MPL-2.0.txt"
-    "MPL-2.0.txt"
-    "YT-DLP-UNLICENSE.txt"
-    "QUICKJS-NG-MIT.txt"
-    "OPENSSL-APACHE-2.0.txt"
-    "SQLITE-PUBLIC-DOMAIN.txt"
-)
-$copies = @()
-$runtimeSourcePaths = @()
-foreach ($name in $runtimeFiles) {
-    $copies += [PSCustomObject]@{
-        name = $name
-        destination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/$name"
-    }
-    $runtimeSourcePaths += Join-Path $runtimeStage $name
+. (Join-Path $PSScriptRoot "sync-runtime-manifest.ps1")
+$runtimeSourcePaths = @(Sync-BigScreenRuntimeManifest `
+    -ModJsonPath (Resolve-Path $mod).Path `
+    -RuntimeStage $runtimeStage)
+$modJson = Get-Content -LiteralPath $mod -Raw | ConvertFrom-Json -ErrorAction Stop
+& $PSScriptRoot/validate-modjson.ps1
+if (-not $?) {
+    exit 1
 }
-Get-ChildItem -LiteralPath (Join-Path $runtimeStage "certifi") -File |
-    Sort-Object Name |
-    ForEach-Object {
-        $copies += [PSCustomObject]@{
-            name = $_.Name
-            destination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/certifi/$($_.Name)"
-        }
-        $runtimeSourcePaths += $_.FullName
-    }
-Get-ChildItem -LiteralPath (Join-Path $runtimeStage "lib-dynload") -File -Filter "*.so" |
-    Sort-Object Name |
-    ForEach-Object {
-        $copies += [PSCustomObject]@{
-            name = $_.Name
-            destination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/lib-dynload/$($_.Name)"
-        }
-        $runtimeSourcePaths += $_.FullName
-    }
-$modJson.fileCopies = $copies
-$modJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $mod -Encoding UTF8
 
 if ($qmodName -eq "") {
     $qmodName = $modJson.name

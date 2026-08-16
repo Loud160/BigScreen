@@ -93,6 +93,24 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
+
+# qpm qmod manifest intentionally starts from the tracked template, whose
+# fileCopies list is empty. Populate it from the staged downloader before
+# reading mod.json so a completely clean ADB deployment installs the same
+# runtime as a QMOD instead of depending on files from an older installation.
+$runtimeStage = Join-Path (Join-Path $PSScriptRoot "..") "build/downloader"
+& $PSScriptRoot/stage-runtime-notices.ps1
+if (-not $?) {
+    exit 1
+}
+. (Join-Path $PSScriptRoot "sync-runtime-manifest.ps1")
+[void](Sync-BigScreenRuntimeManifest `
+    -ModJsonPath (Join-Path (Get-Location) "mod.json") `
+    -RuntimeStage $runtimeStage)
+& $PSScriptRoot/validate-modjson.ps1
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
 $modJson = Get-Content "./mod.json" -Raw | ConvertFrom-Json
 
 $modFiles = $modJson.modFiles
@@ -165,14 +183,6 @@ foreach ($fileName in $modJson.libraryFiles) {
 # runtime destination preserves nested certifi/lib-dynload paths without a
 # second hand-maintained manifest.
 $runtimeDestination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/"
-$runtimeStage = Join-Path (Join-Path $PSScriptRoot "..") "build/downloader"
-# createqmod.ps1 used to be the only path that staged redistributable notices.
-# Direct development deployment must do the same after a clean build because
-# mod.json correctly lists those notices as runtime file copies.
-& $PSScriptRoot/stage-runtime-notices.ps1
-if (-not $?) {
-    exit 1
-}
 foreach ($copy in $modJson.fileCopies) {
     $destination = [string]$copy.destination
     if (-not $destination.StartsWith(

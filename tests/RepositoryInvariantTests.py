@@ -34,6 +34,9 @@ runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encodi
 quickjs_fetch = (root / "scripts/fetch-quickjs-ng.ps1").read_text(
     encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
+runtime_manifest_sync = (
+    root / "scripts/sync-runtime-manifest.ps1"
+).read_text(encoding="utf-8")
 download_manager_header = (
     root / "include/BigScreen/DownloadManager.hpp"
 ).read_text(encoding="utf-8")
@@ -202,7 +205,7 @@ for runtime_notice in (
     "SQLITE-PUBLIC-DOMAIN.txt",
 ):
     assert runtime_notice in stage_notices
-    assert runtime_notice in create_qmod
+    assert runtime_notice in runtime_manifest_sync
 for preserved_third_party_term in (
     "MIT License",
     "Apache License 2.0",
@@ -500,6 +503,20 @@ for python_library in (
     assert python_library in cmake
 assert "No authoritative source was found for required runtime library" in copy_script
 assert '$packagedDependency = Join-Path "extern/libs" $fileName' in copy_script
+for installer in (copy_script, create_qmod):
+    assert "sync-runtime-manifest.ps1" in installer
+    assert "Sync-BigScreenRuntimeManifest" in installer
+for clean_install_runtime in (
+    "python314.zip",
+    "yt-dlp-shipped",
+    "runtime-manifest.json",
+    "bigscreen_jsc_provider.py",
+    "lib-dynload",
+    "fileCopies",
+):
+    assert clean_install_runtime in runtime_manifest_sync
+assert copy_script.index("Sync-BigScreenRuntimeManifest") < copy_script.index(
+    '$modJson = Get-Content "./mod.json"')
 assert '$buildLibraryStage = Join-Path $repositoryRoot "build"' in runtime_fetch
 assert "-Destination $buildLibraryStage" in runtime_fetch
 for required_file in (
@@ -728,6 +745,8 @@ assert "*this = Settings{};" in settings_source
 assert "std::array<ScreenLayoutProfile, 5>" in settings_header
 assert "int automaticPerformanceThreshold_ = 5;" in settings_header
 assert "float automaticPerformanceResponseSeconds_ = 5.0f;" in settings_header
+assert "bool disableEnvironmentMotion_ = true;" in settings_header
+assert '!ReadBool(document, "environmentMotionEnabled", false)' in settings_source
 assert "bool powerBenchmarkEnabled_ = false;" in settings_header
 assert 'document, "powerBenchmarkEnabled", false' in settings_source
 assert 'Replace(document, "powerBenchmarkEnabled", powerBenchmarkEnabled_)' in settings_source

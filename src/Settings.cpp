@@ -313,7 +313,9 @@ namespace BigScreen {
         disableEnvironmentMotion_ = ReadBool(
             document,
             "disableEnvironmentMotion",
-            !ReadBool(document, "environmentMotionEnabled", true));
+            // If the old positive-state key exists, invert it. If neither key
+            // exists (a first install), false inverts to the new ON default.
+            !ReadBool(document, "environmentMotionEnabled", false));
         hideTrackRings_ = ReadBool(document, "hideTrackRings", true);
         hideSideBars_ = ReadBool(
             document,

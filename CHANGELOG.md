@@ -2,6 +2,14 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Fixed clean first-time deployment through `Build-And-Deploy.bat`: direct ADB
+  deployment and QMOD packaging now share one generated runtime manifest, so
+  the embedded CPython, yt-dlp, QuickJS provider, certificates, native Python
+  extensions, and legal notices are installed even when no earlier Big Screen
+  runtime exists on the headset. This resolves `BS-DL-INIT-101` after a clean
+  install. Fresh settings now also default **Disable Rotation and Motion** to
+  ON while preserving inversion of the legacy positive-state setting.
+
 - Made `Build-And-Deploy.bat` work from a fresh clone or downloaded source
   archive by restoring QPM packages, resolving the pinned Windows NDK, and
   verifying/installing the separate pinned WSL NDK before CMake runs. The BAT
