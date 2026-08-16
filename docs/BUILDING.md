@@ -155,6 +155,17 @@ them in QPM's recursively linked input directory.
 
 `scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV and Matroska/WebM demuxing; the local-file protocol; and `libswscale`. It explicitly omits GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container.
 
+The FFmpeg build suppresses compiler warnings originating in its pinned
+third-party C sources. FFmpeg 4 predates the current Android NDK by several
+years and otherwise emits a large set of diagnostics for valid legacy code,
+including deprecated internal APIs, qualifier differences, macro-generated
+locals, and constant conversions. Configure failures, missing-feature checks,
+compiler errors, link failures, hash verification, and ELF validation all
+remain active. The `-w` flag applies only while compiling FFmpeg; Big Screen
+continues to compile with its strict `-Wall`, `-Wextra`, and `-Wpedantic`
+policy. The staged configuration records the flag, and `scripts/build.ps1`
+automatically rebuilds older cached runtimes that do not contain it.
+
 The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA buffers without an extra frame copy.
 
 For LGPL corresponding-source redistribution, publish both unmodified archives identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and `FFMPEG-9.0.1-BUILD-INFO.txt` records alongside the QMOD. The QMOD includes both exact build records and generated source diffs. Both upstream archive SHA-256 values and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.

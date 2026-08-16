@@ -71,9 +71,11 @@ foreach ($runtime in @(
     $ffmpegRoot = Join-Path $repositoryRoot $runtime.Directory
     $ffmpegStamp = Join-Path $ffmpegRoot "bigscreen-ffmpeg-$($runtime.Version).ready"
     $ffmpegSums = Join-Path $ffmpegRoot "SHA256SUMS"
+    $ffmpegInvalidReason = "the ready stamp or SHA-256 manifest is missing"
     $ffmpegValid = (Test-Path -LiteralPath $ffmpegStamp) -and
         (Test-Path -LiteralPath $ffmpegSums)
     if ($ffmpegValid) {
+        $ffmpegInvalidReason = "a staged library is missing or failed SHA-256 validation"
         $expectedHashes = @{}
         foreach ($line in Get-Content -LiteralPath $ffmpegSums) {
             if ($line -match '^([0-9a-fA-F]{64})\s+(.+)$') {
@@ -98,6 +100,7 @@ foreach ($runtime in @(
         $configMak = Join-Path $ffmpegRoot "bigscreen-ffmpeg-config.mak"
         if (-not (Test-Path -LiteralPath $configMak)) {
             $ffmpegValid = $false
+            $ffmpegInvalidReason = "the recorded FFmpeg configuration is missing"
         } else {
             $configText = Get-Content -LiteralPath $configMak -Raw
             foreach ($required in @(
@@ -111,15 +114,31 @@ foreach ($runtime in @(
                 "CONFIG_MATROSKA_DEMUXER=yes")) {
                 if (-not $configText.Contains($required)) {
                     $ffmpegValid = $false
+                    $ffmpegInvalidReason = "the recorded configuration is missing $required"
                     break
                 }
             }
-            if ($configText.Contains("CONFIG_HEVC_DECODER=yes")) {
+            # Pinned FFmpeg 4 emits many diagnostics under a modern Clang,
+            # including deprecated internal APIs and qualifier/constant
+            # conversions in code Big Screen does not own. Require FFmpeg's
+            # recorded CFLAGS to contain the standalone -w switch so an older
+            # noisy staged runtime is rebuilt. Compiler errors and FFmpeg's
+            # configure/feature checks remain active.
+            if ($configText -notmatch '(?m)^CFLAGS=.*(?:^|\s)-w(?:\s|$)') {
                 $ffmpegValid = $false
+                $ffmpegInvalidReason = "the recorded CFLAGS do not contain the third-party warning policy"
+            }
+            # Match the exact software-decoder key. Contains() also matched
+            # CONFIG_HEVC_MEDIACODEC_DECODER=yes and therefore rebuilt the
+            # valid FFmpeg 9 runtime on every invocation.
+            if ($configText -match '(?m)^CONFIG_HEVC_DECODER=yes$') {
+                $ffmpegValid = $false
+                $ffmpegInvalidReason = "the forbidden software HEVC decoder is enabled"
             }
         }
     }
     if (-not $ffmpegValid) {
+        Write-Output "Rebuilding FFmpeg $($runtime.Version): $ffmpegInvalidReason."
         if (-not $wslCommand) {
             throw "FFmpeg $($runtime.Version) is not staged and WSL was not found. Run scripts/build-ffmpeg-lgpl.sh in Linux for both supported versions."
         }
@@ -139,7 +158,7 @@ foreach ($runtime in @(
             throw "WSL could not translate the FFmpeg build-script path $windowsScript"
         }
         & $wslCommand.Source -- env `
-            "BIGSCREEN_FFMPEG_VERSION=$($runtime.Version)" bash $linuxScript
+            "BIGSCREEN_FFMPEG_VERSION=$($runtime.Version)" bash $linuxScript --force
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }

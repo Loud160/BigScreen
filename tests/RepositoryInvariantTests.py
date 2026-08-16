@@ -322,6 +322,12 @@ assert "Using cached FFmpeg" in ffmpeg_build
 assert "archive_download_path=" in ffmpeg_build
 assert "archive_is_valid" in ffmpeg_build
 assert 'mv -f "${archive_download_path}" "${archive_path}"' in ffmpeg_build
+assert "--extra-cflags='-O3 -fPIC -w'" in ffmpeg_build
+assert "CFLAGS=.*(?:^|\\s)-w(?:\\s|$)" in build_script
+assert 'bash $linuxScript --force' in build_script
+assert 'config_record_path=' in ffmpeg_build
+assert "(?m)^CONFIG_HEVC_DECODER=yes$" in build_script
+assert '.Contains("CONFIG_HEVC_DECODER=yes")' not in build_script
 assert "& $wslCommand.Source -e bash -c $toolProbe" in bootstrap_build
 for path_safe_ffmpeg_marker in (
     'native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"',
@@ -448,7 +454,6 @@ assert "renderer->set_enabled(false);" in menu_environment_visibility_source
 assert "renderer->set_enabled(true);" in menu_environment_visibility_source
 assert "DisableEnabledLights<UnityEngine::Light>" in menu_environment_visibility_source
 assert "environment->SetActive(false)" not in menu_environment_visibility_source
-assert "control->set_Value(value);" in settings_menu_source
 assert "parentHint->set_text(nestedText);" in nested_hover_hint_source
 assert "parentHint->set_text(parentText);" in nested_hover_hint_source
 assert settings_menu_source.count("AddComponent<NestedHoverHintOverride*>()") == 2
@@ -939,6 +944,47 @@ assert "mediaPastConfiguredEnd" in playback_source
 # Per-layout and master reset paths must redraw hidden BSML switch graphics,
 # and curve controls retain the requested Curved -> Curve -> Aspect order.
 assert "RefreshToggleVisualWithoutNotification" in settings_menu_source
+assert "GetComponent<HMUI::AnimatedSwitchView*>()" in (
+    root / "include/BigScreen/UiSettingsUtility.hpp"
+).read_text(encoding="utf-8")
+assert "switchView->HandleOnValueChanged(value)" in (
+    root / "include/BigScreen/UiSettingsUtility.hpp"
+).read_text(encoding="utf-8")
+# Every toggle created by SettingsMenu must participate in RefreshValues.
+# Master reset finishes by calling RefreshControls, so this invariant prevents
+# a newly added switch from keeping a stale visual state after reset.
+created_toggle_fields = set(re.findall(
+    r"(\w+Toggle_)\s*=\s*BSML::Lite::CreateToggle\(",
+    settings_menu_source,
+))
+refresh_values_block = settings_menu_source.split(
+    "void SettingsMenu::RefreshValues()", 1
+)[1].split("void SettingsMenu::RefreshEnabledState()", 1)[0]
+refreshed_toggle_fields = set(re.findall(
+    r"SetToggleWithoutNotification\(\s*(\w+Toggle_)",
+    refresh_values_block,
+))
+assert created_toggle_fields == refreshed_toggle_fields, (
+    "SettingsMenu toggle refresh coverage differs: "
+    f"missing={sorted(created_toggle_fields - refreshed_toggle_fields)}, "
+    f"extra={sorted(refreshed_toggle_fields - created_toggle_fields)}"
+)
+
+# Screen-layout reset changes exactly these per-layout switch preferences.
+# Keep their explicit visual refreshes alongside the authoritative settings
+# reset so the currently visible Screen tab updates before any later redraw.
+screen_reset_block = settings_menu_source.split(
+    "Settings::Instance().ResetActiveScreenLayout();", 1
+)[1].split("PaperLogger.info(", 1)[0]
+for screen_layout_toggle in (
+    "curvedScreenToggle_",
+    "maintainCurveAspectToggle_",
+    "transparencyToggle_",
+    "stretchVideoToggle_",
+    "advancedOptionsToggle_",
+    "undockScreenToggle_",
+):
+    assert screen_layout_toggle in screen_reset_block
 screen_controls = settings_menu_source.split(
     '"Curved Screen"', 1)[1].split('"Video Opacity"', 1)[0]
 assert screen_controls.index('"Screen Curve"') < screen_controls.index(

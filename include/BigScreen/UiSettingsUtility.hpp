@@ -10,12 +10,16 @@
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
+#include "HMUI/AnimatedSwitchView.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 
 namespace BigScreen::UiUtility {
     /// Mirrors a stored preference into a BSML toggle without invoking its
-    /// change callback and writing the same setting a second time.
+    /// change callback and writing the same setting a second time. Unity's
+    /// SetIsOnWithoutNotify deliberately skips AnimatedSwitchView's listener,
+    /// so refresh the retained switch component directly after changing the
+    /// bool. This keeps every visible knob synchronized on inactive tabs too.
     inline void SetToggleWithoutNotification(
         BSML::ToggleSetting* setting,
         bool value)
@@ -24,24 +28,21 @@ namespace BigScreen::UiUtility {
             return;
         setting->currentValue = value;
         if(setting->toggle)
+        {
             setting->toggle->SetIsOnWithoutNotify(value);
+            if(auto* switchView = setting->toggle->get_gameObject()
+                   ->GetComponent<HMUI::AnimatedSwitchView*>())
+                switchView->HandleOnValueChanged(value);
+        }
     }
 
-    /// Forces a retained BSML switch graphic to redraw without firing its
-    /// settings callback. When a hidden tab is reset, ToggleSetting and the
-    /// underlying Unity Toggle can already contain the new bool while the
-    /// animated visual still shows the old state. Passing through the inverse
-    /// value guarantees Unity rebuilds the graphic before the desired value is
-    /// restored.
+    /// Explicit reset-path spelling for the same callback-free synchronization
+    /// contract. AnimatedSwitchView receives the final bool directly; an
+    /// artificial inverse transition is neither necessary nor safe.
     inline void RefreshToggleVisualWithoutNotification(
         BSML::ToggleSetting* setting,
         bool value)
     {
-        if(!setting)
-            return;
-        setting->currentValue = !value;
-        if(setting->toggle)
-            setting->toggle->SetIsOnWithoutNotify(!value);
         SetToggleWithoutNotification(setting, value);
     }
 

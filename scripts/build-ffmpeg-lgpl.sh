@@ -71,6 +71,7 @@ fi
 archive_path="${cache_root}/${ffmpeg_archive}"
 archive_download_path="${archive_path}.download.$$"
 stamp_path="${install_root}/bigscreen-ffmpeg-${ffmpeg_version}.ready"
+config_record_path="${install_root}/bigscreen-ffmpeg-config.mak"
 
 # Interrupted downloads must never become the persistent cache entry. The
 # process-specific temporary is removed on every exit, including Ctrl+C.
@@ -94,6 +95,9 @@ required_outputs=(
 is_complete_install() {
     [[ -f "${stamp_path}" ]] || return 1
     [[ -d "${install_root}/include" ]] || return 1
+    [[ -f "${config_record_path}" ]] || return 1
+    grep -Eq '^CFLAGS=.*(^|[[:space:]])-w([[:space:]]|$)' \
+        "${config_record_path}" || return 1
     local library
     for library in "${required_outputs[@]}"; do
         [[ -f "${install_root}/lib/${library}" ]] || return 1
@@ -221,7 +225,7 @@ cd "${build_root}"
     --enable-parser=vp8 \
     --enable-parser=vp9 \
     --enable-protocol=file \
-    --extra-cflags='-O3 -fPIC' \
+    --extra-cflags='-O3 -fPIC -w' \
     --extra-ldflags='-Wl,-Bsymbolic'
 
 # -Bsymbolic binds calls inside each private FFmpeg DSO to that DSO's own
@@ -296,7 +300,7 @@ cp -a "${native_install_root}/." "${install_root}/"
     diff -u "${pristine_root}/libswscale/libswscale.v" "${source_root}/libswscale/libswscale.v" || true
 } > "${install_root}/bigscreen-ffmpeg-changes.diff"
 cp "${build_root}/config.h" "${install_root}/bigscreen-ffmpeg-config.h"
-cp "${build_root}/ffbuild/config.mak" "${install_root}/bigscreen-ffmpeg-config.mak"
+cp "${build_root}/ffbuild/config.mak" "${config_record_path}"
 cp "${source_root}/COPYING.LGPLv2.1" "${install_root}/COPYING.LGPLv2.1"
 
 # Fail the build if a future FFmpeg/configure change silently reintroduces a
@@ -327,6 +331,7 @@ Android ABI: arm64-v8a
 Minimum Android API: ${android_api}
 NDK: $(basename "${android_ndk_root}")
 License configuration: LGPL-2.1-or-later; GPL and nonfree components disabled
+Third-party warning policy: compiler warnings suppressed for pinned FFmpeg sources; configure checks and compiler errors remain active
 Build script: scripts/build-ffmpeg-lgpl.sh
 EOF
 

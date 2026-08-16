@@ -13,9 +13,21 @@
   match their authoritative settings, including Curved Screen, Show Menu
   Environment, and Show Performance Information. Screen Curve now appears
   immediately below Curved Screen, followed by Maintain Aspect Ratio.
+- Reset and normal control refresh now update every retained BSML
+  AnimatedSwitchView through its native value listener after changing its bool
+  without notifying the settings delegate.
+  This keeps all General, Screen, Environment, Update, and Misc switch knobs
+  visually synchronized without firing duplicate settings callbacks.
 - Kept strict compiler warnings for Big Screen's own code while marking QPM's
   generated dependency headers as system includes so third-party diagnostics
   no longer overwhelm normal build output.
+- Suppressed compiler warnings emitted by pinned FFmpeg C sources under the
+  newer Android NDK. The suppression is scoped to FFmpeg, retains compiler and
+  build errors, is recorded in reproducibility metadata, and invalidates older
+  staged runtimes without weakening Big Screen's own warning policy.
+- Fixed the staged-runtime validator's software-HEVC check so the valid
+  `CONFIG_HEVC_MEDIACODEC_DECODER` entry no longer forces FFmpeg 9 to rebuild
+  on every otherwise incremental build.
 
 - Fixed clean first-time deployment through `Build-And-Deploy.bat`: direct ADB
   deployment and QMOD packaging now share one generated runtime manifest, so

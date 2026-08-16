@@ -2810,68 +2810,15 @@ namespace BigScreen {
         PerformancePanel::Instance().SetEnabled(false);
         settings.Reset();
 
-        // Reset runs from General while most controls are inactive. Force the
-        // retained BSML graphics through a real visual transition so their On/
-        // Off position matches the newly reconstructed Settings object.
-        const auto refreshResetToggle = [](
-            BSML::ToggleSetting* control, bool value)
-        {
-            RefreshToggleVisualWithoutNotification(control, value);
-        };
-        refreshResetToggle(
-            showMenuEnvironmentToggle_, settings.ShowMenuEnvironment());
-        refreshResetToggle(
-            performanceDiagnosticsToggle_,
-            settings.PerformanceDiagnosticsEnabled());
-        refreshResetToggle(
-            curvedScreenToggle_, settings.CurvedScreenEnabled());
-        refreshResetToggle(
-            maintainCurveAspectToggle_, settings.MaintainCurveAspectRatio());
-
-        // Environment lives on an inactive tab while the reset button is
-        // pressed from General. Updating only Toggle/currentValue bypasses
-        // BSML's normal setting pipeline and can leave the hidden switches,
-        // their dependent interactable states, and their graphics showing the
-        // old values even though bigscreen.json was correctly reset. Apply
-        // these defaults through ToggleSetting so each control and callback is
-        // synchronized exactly as if the player had selected the value.
-        const auto applyEnvironmentToggle = [](BSML::ToggleSetting* control,
-                                               bool value)
-        {
-            if(control)
-                control->set_Value(value);
-        };
-        applyEnvironmentToggle(
-            transparencyToggle_, settings.LetterboxTransparencyEnabled());
-        applyEnvironmentToggle(
-            hideBackWallLightsToggle_, settings.HideBackWallLights());
-        applyEnvironmentToggle(
-            hideRingLightsToggle_, settings.HideRingLights());
-        applyEnvironmentToggle(
-            hideSideLaserLightsToggle_, settings.HideSideLaserLights());
-        applyEnvironmentToggle(
-            environmentOverrideToggle_, settings.EnvironmentOverrideEnabled());
-        applyEnvironmentToggle(
-            disableEnvironmentMotionToggle_, settings.DisableEnvironmentMotion());
-        applyEnvironmentToggle(
-            hideTrackRingsToggle_, settings.HideTrackRings());
-        applyEnvironmentToggle(
-            hideSideBarsToggle_, settings.HideSideBars());
-        applyEnvironmentToggle(
-            hideSpectrogramBarsToggle_, settings.HideSpectrogramBars());
-        // Apply the master last because its callback refreshes the dependent
-        // child states. At this point those children already hold their new
-        // values, so that refresh cannot overwrite their transition.
-        applyEnvironmentToggle(
-            lightShowToggle_, settings.MapLightShowEnabled());
-
         // Rebuild the selected song config before recreating the world screen.
         // This is the missing live-effect step that left the displayed screen
         // at its previous size even though the control correctly showed 1.0.
         PlaybackSession::Instance().RefreshDisplaySettings();
 
-        // Reset changes persistent values first, then mirrors those values into
-        // the already-open controls without generating a chain of fake clicks.
+        // Reset changes persistent values first, then RefreshControls mirrors
+        // every toggle through UiUtility's callback-free AnimatedSwitchView
+        // refresh. This covers General, Screen, Environment, Update, and Misc
+        // rather than maintaining a fragile reset-only list of switch fields.
         SelectionVideoToggle::Instance().ModEnabledChanged(settings.ModEnabled());
         SelectionVideoToggle::Instance().ApplyGlobalVideoEnabled(settings.VideoEnabled());
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
