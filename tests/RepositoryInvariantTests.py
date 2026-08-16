@@ -62,6 +62,15 @@ main_source = (root / "src/main.cpp").read_text(encoding="utf-8")
 menu_flow_source = (root / "src/MenuFlowCoordinator.cpp").read_text(
     encoding="utf-8"
 )
+menu_placement_guide_source = (
+    root / "src/MenuPlacementGuide.cpp"
+).read_text(encoding="utf-8")
+menu_environment_visibility_source = (
+    root / "src/MenuEnvironmentVisibility.cpp"
+).read_text(encoding="utf-8")
+nested_hover_hint_source = (
+    root / "src/NestedHoverHintOverride.cpp"
+).read_text(encoding="utf-8")
 selection_toggle_source = (root / "src/SelectionVideoToggle.cpp").read_text(
     encoding="utf-8"
 )
@@ -306,13 +315,80 @@ assert "CreateFrameDecoder44Backend" in frame_decoder_facade
 assert "CreateFrameDecoder9Backend" in frame_decoder_facade
 assert "Settings::Instance().UseFfmpeg9()" in frame_decoder_facade
 assert "BIGSCREEN_FFMPEG_BACKEND_EXPORT" in frame_decoder_header
-assert 'ReadBool(document, "useFfmpeg9", false)' in settings_source
+assert 'ReadBool(document, "useFfmpeg9", true)' in settings_source
 assert 'Replace(document, "useFfmpeg9", useFfmpeg9_)' in settings_source
 assert '"Use FFmpeg 9"' in settings_menu_source
-assert 'ReadBool(\n            document, "hardwareDecodingEnabled", false)' in settings_source
+assert 'ReadBool(\n            document, "hardwareDecodingEnabled", true)' in settings_source
 assert 'Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_)' in settings_source
 assert '"Hardware Video Decoding"' in settings_menu_source
-assert '"Experimental: uses the Quest' in settings_menu_source
+assert '"Uses the Quest\'s dedicated MediaCodec decoders by default' in settings_menu_source
+assert 'automaticPerformanceWarningModal_->Show()' in settings_menu_source
+assert '"Enable Automatic Performance?\\n\\nAutomatic Performance is an experimental feature' in settings_menu_source
+assert 'Settings::Instance().SetAutomaticPerformanceEnabled(true)' in settings_menu_source
+assert "bool showMenuEnvironment_ = true;" in settings_header
+assert '"showMenuEnvironment",\n            true' in settings_source
+assert 'Replace(document, "showMenuEnvironment", showMenuEnvironment_)' in settings_source
+assert 'document.RemoveMember("showMenuFloor")' in settings_source
+assert 'document.RemoveMember("menuPlacementGuideEnabled")' in settings_source
+assert '"Show Menu Environment"' in settings_menu_source
+assert '"Show Menu Floor"' not in settings_menu_source
+assert "bool ShowMenuFloor() const { return showMenuEnvironment_; }" in settings_header
+assert "bool showLaneGuidesEnabled_ = false;" in settings_header
+assert '"showLaneGuidesEnabled",\n            legacyOpenFloorPlacement' in settings_source
+assert 'Replace(document, "showLaneGuidesEnabled", showLaneGuidesEnabled_)' in settings_source
+assert '"Show Lane Guides"' in settings_menu_source
+assert "Settings::Instance().SetShowLaneGuidesEnabled(enabled);" in settings_menu_source
+assert "MenuPlacementGuide::Instance().Apply();" in settings_menu_source
+assert "MenuPlacementGuide::Instance().Apply();" in menu_flow_source
+assert menu_flow_source.count("MenuPlacementGuide::Instance().Suspend();") >= 3
+assert "MenuEnvironmentVisibility::Instance().Apply();" in settings_menu_source
+assert "MenuEnvironmentVisibility::Instance().Apply();" in menu_flow_source
+assert menu_flow_source.count("MenuEnvironmentVisibility::Instance().Restore();") >= 3
+assert "LooksLikeHorizontalFloor" in menu_placement_guide_source
+assert "renderer->set_enabled(false);" in menu_placement_guide_source
+assert "renderer->set_enabled(true);" in menu_placement_guide_source
+assert '"Big Screen Menu Placement Guide"' in menu_placement_guide_source
+assert "laneBoundaries" in menu_placement_guide_source
+assert "AppendFloorStrip" in menu_placement_guide_source
+assert "AddComponent<UnityEngine::MeshFilter*>()" in menu_placement_guide_source
+assert "AddComponent<UnityEngine::MeshRenderer*>()" in menu_placement_guide_source
+assert '#include "UnityEngine/LineRenderer.hpp"' not in menu_placement_guide_source
+assert "AddComponent<UnityEngine::LineRenderer*>()" not in menu_placement_guide_source
+assert 'UnityEngine::GameObject::Find("/Environment")' in menu_environment_visibility_source
+assert '"BasicMenuGround"' in menu_environment_visibility_source
+assert "ResolveMenuEnvironmentRoot" in menu_environment_visibility_source
+assert "HasBigScreenAncestor" in menu_environment_visibility_source
+assert "HasPointerOrControllerAncestor" in menu_environment_visibility_source
+assert "renderer->set_enabled(false);" in menu_environment_visibility_source
+assert "renderer->set_enabled(true);" in menu_environment_visibility_source
+assert "DisableEnabledLights<UnityEngine::Light>" in menu_environment_visibility_source
+assert "environment->SetActive(false)" not in menu_environment_visibility_source
+assert "control->set_Value(value);" in settings_menu_source
+assert "parentHint->set_text(nestedText);" in nested_hover_hint_source
+assert "parentHint->set_text(parentText);" in nested_hover_hint_source
+assert settings_menu_source.count("AddComponent<NestedHoverHintOverride*>()") == 2
+assert "ScreenLayoutResetHint" in settings_menu_source
+assert "PerformanceResetHint" in settings_menu_source
+assert "CurvedScreenMaximumScale = 8.0f" in core_logic
+assert "FlatScreenMaximumScale = 8.0f" in core_logic
+for setter in (
+    "distanceOffset",
+    "horizontalOffset",
+    "verticalOffset",
+    "tiltOffset",
+):
+    setter_block = settings_source.split(
+        f"screenLayouts_[activeScreenLayout_].{setter}", 1
+    )[1][:150]
+    assert "-180.0f, 180.0f" in setter_block
+for label in (
+    "Screen Distance Offset",
+    "Screen X Offset",
+    "Screen Y Offset",
+    "Screen Tilt Offset",
+):
+    control = settings_menu_source.split(f'"{label}"', 1)[1][:260]
+    assert "-180.0f" in control and "180.0f" in control
 for panel_transform_key in (
     "performancePanelPositionX",
     "performancePanelPositionY",
@@ -490,6 +566,13 @@ assert "LevelSelectionFlowCoordinator_State::New_ctor(\n                noCatego
 assert "HandleLevelCollectionViewControllerDidSelectLevel" in showcase_source
 assert "collection->SelectLevel(level)" not in showcase_source
 assert "solo->StartLevel(nullptr, false)" in showcase_source
+assert "GameplayModifiers::New_ctor(" in showcase_source
+assert "originalModifiers->get_energyType(),\n            true,\n            false,\n            false," in showcase_source
+assert "modifierPanel->__cordl_internal_set__gameplayModifiers(\n            showcaseModifiers)" in showcase_source
+assert "modifierPanel->__cordl_internal_set__gameplayModifiers(\n            originalModifiers)" in showcase_source
+assert showcase_source.index("showcaseModifiers);") < \
+    showcase_source.index("solo->StartLevel(nullptr, false)") < \
+    showcase_source.rindex("originalModifiers);")
 assert '"Play Big Screen Showcase"' in settings_menu_source
 assert "ShowcaseReadiness ShowcaseLauncher::Readiness() const" in showcase_source
 assert "bool ShowcaseLauncher::DownloadMap" in showcase_source
@@ -617,9 +700,14 @@ assert preview_audio_start.index("if(!playback.SynchronizedAudioReady(previewSon
 assert preview_audio_start.index("BeginLibraryPreviewMeasurement") < \
     preview_audio_start.index("CrossfadeTo(")
 assert "StartSelectedPreview();" not in preview_audio_start.split("CrossfadeTo(", 1)[1]
-assert "shouldDeleteMapperDownload" in library_menu_source
-assert "library.DeleteMapperDownload(levelId)" in library_menu_source
-assert "descriptor.hasUserOverride || descriptor.hasMapperDownload" in library_menu_source
+assert "RemoveOverride(false);" in library_menu_source
+assert "RemoveOverride(true);" in library_menu_source
+assert '"Unlink"' in library_menu_source
+assert '"<color=#FF3838>Delete File</color>"' in library_menu_source
+assert "library.RemoveMapperDownload(" in library_menu_source
+assert "library.SuppressMapperLocalVideo(levelId)" in library_menu_source
+assert "library.DeleteLocalVideoFile(" in library_menu_source
+assert "descriptor.hasMapperLocalFile" in library_menu_source
 assert "const MapVideoConfig* EditorTimingConfig(" in library_menu_source
 assert "if(descriptor.mapperDefinition)" in library_menu_source
 assert library_menu_source.count("const auto* timing = EditorTimingConfig(descriptor);") >= 2
@@ -652,6 +740,12 @@ assert "BrowserListWidth" in local_browser_source
 assert "0.0f, 0.0f, 0.0f, 0.76f" in local_browser_source
 assert '"Show File Browser"' in library_menu_source
 assert "bool externalFile = false;" in video_library_header
+assert "bool mapperLocalSuppressed = false;" in video_library_header
+assert 'member->value, "mapperLocalSuppressed", false' in video_library_source
+assert 'level.AddMember("mapperLocalSuppressed", true, allocator)' in video_library_source
+assert 'document.AddMember("version", 4, allocator)' in video_library_source
+assert "DeleteLocalVideoFile" in video_library_source
+assert 'extension != ".mp4" && extension != ".webm"' in video_library_source
 assert 'sourceType == "externalFile"' in video_library_source
 assert "!IsUserOwnedFile(*previous)" in video_library_source
 

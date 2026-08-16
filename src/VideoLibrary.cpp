@@ -532,6 +532,11 @@ namespace BigScreen {
         std::scoped_lock lock(mutex_);
         const auto found = FindRecord(records_, descriptor.levelId);
         const LevelVideoRecords* saved = found == records_.end() ? nullptr : &found->second;
+        // A player can explicitly unlink a mapper-declared local video. Keep
+        // the definition available for metadata/timing display, but do not
+        // resolve its file as active playback while that durable opt-out is set.
+        if(saved && saved->mapperLocalSuppressed)
+            descriptor.hasMapperLocalFile = false;
         const auto userPath = saved
             ? ResolveStoredFile(videoPath_, importPath_, levelDirectory, saved->user)
             : std::nullopt;
@@ -997,17 +1002,91 @@ namespace BigScreen {
         return true;
     }
 
-    bool VideoLibrary::DeleteMapperDownload(const std::string& levelId)
+    bool VideoLibrary::SuppressMapperLocalVideo(const std::string& levelId)
+    {
+        std::scoped_lock lock(mutex_);
+        auto found = FindRecord(records_, levelId);
+        if(found == records_.end())
+        {
+            records_.emplace_back(levelId, LevelVideoRecords{});
+            found = std::prev(records_.end());
+        }
+        if(found->second.mapperLocalSuppressed)
+            return false;
+
+        // This is deliberately a metadata-only operation. The file belongs to
+        // the map/user and may be relinked later through Show File Browser.
+        found->second.mapperLocalSuppressed = true;
+        SaveLocked();
+        PaperLogger.info("Unlinked mapper-local video for '{}'", levelId);
+        return true;
+    }
+
+    bool VideoLibrary::RemoveMapperDownload(
+        const std::string& levelId,
+        bool deleteFile)
     {
         std::scoped_lock lock(mutex_);
         auto found = FindRecord(records_, levelId);
         if(found == records_.end() || !found->second.mapper)
             return false;
-        RemoveManagedFile(videoPath_, found->second.mapper->fileName);
+        if(deleteFile)
+            RemoveManagedFile(videoPath_, found->second.mapper->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
         found->second.mapper.reset();
         SaveLocked();
+        return true;
+    }
+
+    bool VideoLibrary::DeleteMapperDownload(const std::string& levelId)
+    {
+        return RemoveMapperDownload(levelId, true);
+    }
+
+    bool VideoLibrary::DeleteLocalVideoFile(
+        const std::filesystem::path& requestedPath,
+        std::string& error) const
+    {
+        error.clear();
+        std::error_code pathError;
+        const auto path = std::filesystem::absolute(requestedPath, pathError)
+            .lexically_normal();
+        std::filesystem::path sharedRoot;
+        {
+            std::scoped_lock lock(mutex_);
+            sharedRoot = sharedStoragePath_;
+        }
+        if(pathError || !path.is_absolute() ||
+           !Utility::IsPathInside(path, sharedRoot) ||
+           !Utility::IsRegularFile(path))
+        {
+            error = "The selected local video is no longer available in Quest shared storage.";
+            return false;
+        }
+
+        auto extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char value)
+            {
+                return static_cast<char>(std::tolower(value));
+            });
+        if(extension != ".mp4" && extension != ".webm")
+        {
+            error = "Big Screen refused to delete a file that is not an MP4 or WebM video.";
+            return false;
+        }
+
+        std::error_code removeError;
+        const bool removed = std::filesystem::remove(path, removeError);
+        if(removeError || !removed)
+        {
+            error = removeError
+                ? "Quest could not delete the local video: " + removeError.message()
+                : "Quest did not delete the local video.";
+            return false;
+        }
+        PaperLogger.info("Deleted user-selected local video '{}'", path.string());
         return true;
     }
 
@@ -1179,6 +1258,8 @@ namespace BigScreen {
             if(const auto* timing = Member(member->value, "mapperTiming");
                timing && timing->IsObject())
                 level.mapperTiming = ParseStoredTiming(*timing);
+            level.mapperLocalSuppressed = BoolOr(
+                member->value, "mapperLocalSuppressed", false);
             output.emplace_back(
                 std::string(member->name.GetString(), member->name.GetStringLength()),
                 std::move(level));
@@ -1300,10 +1381,9 @@ namespace BigScreen {
         freeBytesCacheTime_ = {};
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
-        // Schema 3 adds externalFile/externalPath records for videos selected
-        // through the Quest file browser. Older version-2 libraries remain
-        // readable because all new fields are optional.
-        document.AddMember("version", 3, allocator);
+        // Schema 4 adds the durable mapperLocalSuppressed opt-out. Older
+        // libraries remain readable because every added field is optional.
+        document.AddMember("version", 4, allocator);
         rapidjson::Value levels(rapidjson::kObjectType);
         for(const auto& [levelId, record] : records_)
         {
@@ -1316,6 +1396,8 @@ namespace BigScreen {
                 "songAuthor",
                 rapidjson::Value(record.songAuthor.c_str(), allocator).Move(),
                 allocator);
+            if(record.mapperLocalSuppressed)
+                level.AddMember("mapperLocalSuppressed", true, allocator);
             if(record.mapper)
             {
                 rapidjson::Value mapper(rapidjson::kObjectType);

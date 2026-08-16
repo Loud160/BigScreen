@@ -80,6 +80,8 @@ namespace BigScreen {
         int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* distractionFreeMenuToggle_ = nullptr;
+        BSML::ToggleSetting* showMenuEnvironmentToggle_ = nullptr;
+        BSML::ToggleSetting* showLaneGuidesToggle_ = nullptr;
         BSML::ToggleSetting* advancedOptionsToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;
         BSML::ToggleSetting* previewToggle_ = nullptr;
@@ -131,6 +133,7 @@ namespace BigScreen {
         BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
+        BSML::ModalView* automaticPerformanceWarningModal_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
         BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;
         UnityEngine::UI::Button* performancePanelResetButton_ = nullptr;
@@ -153,6 +156,7 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;
         UnityEngine::UI::Button* resetButton_ = nullptr;
         bool suppressNightlyCallback_ = false;
+        bool suppressAutomaticPerformanceCallback_ = false;
         bool suppressAdvancedCallback_ = false;
         bool suppressUndockCallback_ = false;
         std::function<void()> pendingScreenNavigation_;

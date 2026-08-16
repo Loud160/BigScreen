@@ -229,14 +229,14 @@ int main()
     Expect(DownloadProgressFraction(125, 100) == 1.0f,
            "download progress is clamped when an estimate changes");
 
-    Expect(ScreenScaleMaximum(false) == 4.0f,
-           "flat screens allow the expanded 4x size");
-    Expect(ScreenScaleMaximum(true) == 2.5f,
-           "curved screens retain the safe 2.5x size cap");
-    Expect(NormalizeScreenScale(4.0f, true) == 2.5f,
-           "enabling curvature clamps an oversized flat screen");
-    Expect(NormalizeScreenScale(2.5f, false) == 2.5f,
-           "returning to flat mode preserves the current size");
+    Expect(ScreenScaleMaximum(false) == 8.0f,
+           "flat screens allow the expanded 8x size");
+    Expect(ScreenScaleMaximum(true) == 8.0f,
+           "curved screens allow the expanded 8x size");
+    Expect(NormalizeScreenScale(8.5f, true) == 8.0f,
+           "curved screens clamp values above the shared ceiling");
+    Expect(NormalizeScreenScale(7.5f, false) == 7.5f,
+           "flat screens preserve values within the expanded range");
 
     const auto wideInSquare = FitVideoContent(4.0f, 4.0f, 16.0f / 9.0f, false, 1.0f);
     Expect(wideInSquare.width == 4.0f && wideInSquare.height == 2.25f,
@@ -257,6 +257,14 @@ int main()
            "opaque letterboxes retain the black background renderer");
     Expect(ScreenBackgroundVisible(true, true),
            "a requested black lead-in overrides transparent letterboxing");
+    Expect(!ScreenBackgroundVisible(false, false, true),
+           "a full-frame picture removes an unnecessary opaque backing mesh");
+    Expect(ScreenBackgroundVisible(false, false, false),
+           "an uncovered opaque frame retains its black letterbox backing");
+    Expect(VideoLayerOffset(4.0f, 3.0f) == -0.015f,
+           "ordinary canvases retain the established minimum layer offset");
+    Expect(VideoLayerOffset(100.0f, 40.0f) == -0.2f,
+           "large canvases receive proportionally stable layer separation");
 
     Expect(SynchronizedPreviewReady(-1.214, false),
            "an intentional negative lead-in may start synchronized audio without a frame");

@@ -25,6 +25,9 @@
 #include "GlobalNamespace/BeatmapDifficulty.hpp"
 #include "GlobalNamespace/BeatmapKey.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
+#include "GlobalNamespace/GameplayModifiers.hpp"
+#include "GlobalNamespace/GameplayModifiersPanelController.hpp"
+#include "GlobalNamespace/GameplaySetupViewController.hpp"
 #include "GlobalNamespace/LevelCollectionNavigationController.hpp"
 #include "GlobalNamespace/LevelSelectionFlowCoordinator.hpp"
 #include "GlobalNamespace/LevelSelectionNavigationController.hpp"
@@ -586,14 +589,75 @@ namespace BigScreen {
             GlobalNamespace::BeatmapDifficulty::ExpertPlus);
         detailView->set_beatmapKey(key);
         PaperLogger.info(
-            "Starting managed Up & Down showcase on Lawless Expert+");
+            "Starting managed Up & Down showcase on Lawless Expert+ with session-only No Fail");
+
+        auto* gameplaySetup = solo
+            ->__cordl_internal_get__gameplaySetupViewController().ptr();
+        auto* modifierPanel = gameplaySetup
+            ? gameplaySetup
+                ->__cordl_internal_get__gameplayModifiersPanelController().ptr()
+            : nullptr;
+        auto* originalModifiers = modifierPanel
+            ? modifierPanel->get_gameplayModifiers()
+            : nullptr;
+        if(!modifierPanel || !originalModifiers)
+        {
+            Fail(
+                "Could not start showcase",
+                "Beat Saber's gameplay modifier controller was unavailable, so Big Screen could not safely apply showcase-only No Fail.");
+            return;
+        }
+
+        // Never mutate the player's saved/current modifier object. StartLevel
+        // synchronously captures the panel's GameplayModifiers reference into
+        // the new gameplay setup, so supply a separate short-lived clone with
+        // No Fail enabled and incompatible instant-failure modes disabled.
+        // Restoring the panel reference immediately afterwards means opening
+        // this same map normally sees exactly the player's original settings.
+        auto* showcaseModifiers = GlobalNamespace::GameplayModifiers::New_ctor(
+            originalModifiers->get_energyType(),
+            true,
+            false,
+            false,
+            originalModifiers->get_enabledObstacleType(),
+            originalModifiers->get_noBombs(),
+            originalModifiers->get_fastNotes(),
+            originalModifiers->get_strictAngles(),
+            originalModifiers->get_disappearingArrows(),
+            originalModifiers->get_songSpeed(),
+            originalModifiers->get_noArrows(),
+            originalModifiers->get_ghostNotes(),
+            originalModifiers->get_proMode(),
+            originalModifiers->get_zenMode(),
+            originalModifiers->get_smallCubes());
+        if(!showcaseModifiers)
+        {
+            Fail(
+                "Could not start showcase",
+                "Beat Saber could not create the temporary showcase No Fail settings.");
+            return;
+        }
 
         // Return to idle before changing scenes. If StartLevel throws, the
         // guarded caller records the exception and the button is available for
         // a retry instead of remaining permanently stuck in an active state.
         showcaseGameplayActive_ = true;
         SetState(ShowcaseLaunchState::Idle, {});
-        solo->StartLevel(nullptr, false);
+        modifierPanel->__cordl_internal_set__gameplayModifiers(
+            showcaseModifiers);
+        try
+        {
+            solo->StartLevel(nullptr, false);
+        }
+        catch(...)
+        {
+            modifierPanel->__cordl_internal_set__gameplayModifiers(
+                originalModifiers);
+            showcaseGameplayActive_ = false;
+            throw;
+        }
+        modifierPanel->__cordl_internal_set__gameplayModifiers(
+            originalModifiers);
     }
 
     void ShowcaseLauncher::OnGameplayFinished() noexcept

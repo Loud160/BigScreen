@@ -181,6 +181,10 @@ namespace BigScreen {
         int textureHeight_ = 0;
         bool ownsTexture_ = false;
         bool letterboxTransparent_ = false;
+        // True only when the current, untransformed video polygon covers the
+        // complete frame. In that case drawing the black backing mesh is both
+        // unnecessary and capable of depth-fighting on very large canvases.
+        bool videoCoversFrame_ = false;
         float opacity_ = 1.0f;
         bool visible_ = false;
         bool leadInActive_ = false;

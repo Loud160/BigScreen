@@ -61,7 +61,8 @@
 - [ ] The Misc FFmpeg selector restarts an active library preview at its
       retained position, affects the next gameplay decoder, and the overlay /
       results identify the runtime actually used.
-- [ ] Repeated identical-map runs compare FFmpeg 4.4.8 and 9.0.1 on Quest 2 and Quest 3 before changing the release default.
+- [ ] Repeated identical-map runs compare the default FFmpeg 9.0.1 runtime with
+      FFmpeg 4.4.8 on Quest 2 and Quest 3.
 - [ ] Hardware Video Decoding off reports Software and matches prior playback.
 - [ ] Hardware Video Decoding on reports Hardware for compatible H.264 on both
       FFmpeg runtimes; colors, crop edges, pause, seek, practice speed, Replay,
@@ -78,7 +79,8 @@
 - [ ] A YouTube URL requiring an EJS challenge reports `Big Screen QuickJS-NG` in the log and downloads without a missing-runtime warning.
 - [ ] Misc > Showcase opens a center readiness page without starting network work; missing/inactive Chroma or Noodle Extensions are reported and the missing map/video each have a working adjacent action.
 - [ ] Showcase map/video progress remains on the readiness page, Cancel/Close never becomes trapped behind the left panel, and Play stays disabled until all requirements are ready.
-- [ ] The first ready launch starts Lawless Expert+ directly without manually opening Solo; Replay, Continue, and post-song navigation remain stock; reopening Misc > Showcase afterward shows an idle, reusable Play button rather than stale launch status.
+- [ ] The first ready launch starts Lawless Expert+ directly without manually opening Solo and uses No Fail only for that launcher-started session; starting the same map normally retains the player's saved modifiers. Replay, Continue, and post-song navigation remain stock; reopening Misc > Showcase afterward shows an idle, reusable Play button rather than stale launch status.
+- [ ] Show Menu Environment defaults on and controls scenery, lighting, and floor together; Show Lane Guides defaults off and remains independent. Verify both combinations of environment/guides. Master disable, Close, gameplay launch, Meta-button focus loss/return, and internal-error dismissal must restore every captured renderer/light and leave no guide objects behind.
 - [ ] A malformed, oversized, path-traversing, wrong-host, or wrong-revision showcase package is rejected without changing user custom-map folders.
 - [ ] Two simulated internal errors trigger one disable dialog without popup spam; gameplay failures never interrupt the map.
 

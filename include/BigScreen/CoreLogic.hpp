@@ -142,12 +142,12 @@ namespace BigScreen::CoreLogic {
                (wallSeconds / 3600.0);
     }
     inline constexpr float MinimumScreenScale = 0.5f;
-    inline constexpr float CurvedScreenMaximumScale = 2.5f;
-    inline constexpr float FlatScreenMaximumScale = 4.0f;
+    inline constexpr float CurvedScreenMaximumScale = 8.0f;
+    inline constexpr float FlatScreenMaximumScale = 8.0f;
 
-    /// Curved geometry generates many more vertices and grows much wider as
-    /// scale increases, so it retains the tested 2.5x ceiling. A flat quad can
-    /// safely use the larger 4x presentation requested by the player.
+    /// Both canvas modes share the same presentation ceiling. Curvature changes
+    /// vertex positions but not segment count, so increasing physical size does
+    /// not create additional geometry or decoder work.
     inline constexpr float ScreenScaleMaximum(bool curved)
     {
         return curved ? CurvedScreenMaximumScale : FlatScreenMaximumScale;
@@ -763,15 +763,30 @@ namespace BigScreen::CoreLogic {
         return {width * zoom, height * zoom};
     }
 
-    /// The full-frame background supplies black letterboxing only for opaque
-    /// layouts. Transparent layouts remove that renderer altogether so shader
-    /// fallback behavior cannot leave black bars around a smaller picture.
-    /// A requested black lead-in is the sole deliberate exception.
+    /// Keeps the decoded-picture mesh far enough in front of its backing mesh
+    /// for the headset depth buffer to distinguish them. A fixed separation
+    /// worked for the original screen sizes, but large/distant canvases lost
+    /// depth precision and exposed rapidly flickering pieces of the black
+    /// backing surface. Scaling by physical canvas size preserves the same
+    /// small proportional separation for every supported layout.
+    inline float VideoLayerOffset(float frameWidth, float frameHeight)
+    {
+        const float largestDimension = std::max(
+            std::abs(frameWidth), std::abs(frameHeight));
+        return -std::max(0.015f, largestDimension * 0.002f);
+    }
+
+    /// The full-frame background supplies black letterboxing only where it is
+    /// actually visible. Transparent layouts remove it altogether, and an
+    /// untransformed picture that covers the complete canvas does not need a
+    /// second coplanar surface behind it. A requested black lead-in is the sole
+    /// deliberate exception and always covers the complete frame.
     inline constexpr bool ScreenBackgroundVisible(
         bool transparent,
-        bool blackLeadInActive)
+        bool blackLeadInActive,
+        bool videoCoversFrame = false)
     {
-        return !transparent || blackLeadInActive;
+        return blackLeadInActive || (!transparent && !videoCoversFrame);
     }
 
     /// A Library preview normally holds Beat Saber's audio until FFmpeg has

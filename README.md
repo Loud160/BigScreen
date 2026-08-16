@@ -36,7 +36,7 @@ video part of the map's visual presentation instead of a passive background.
 
 | Screen capability | What you can do |
 |---|---|
-| **Go big** | Scale a flat screen into a wall-sized display or create an immersive curved screen around the play space. |
+| **Go big** | Scale flat or curved screens up to 8x for wall-sized displays and immersive wraparound layouts. |
 | **Place it precisely** | Adjust distance, horizontal and vertical position, tilt, rotation, size, and curvature with sliders and fine-adjustment arrows. |
 | **Undock it** | Grab, move, angle, and freely resize an advanced screen in 3D space, then save its placement. |
 | **Frame the picture** | Rotate, zoom, pan, perspective-tilt, stretch, letterbox, or crop the video without changing the screen canvas. |
@@ -76,8 +76,9 @@ the copyrighted song is not bundled in the QMOD.
 
 Only one downloaded source is assigned to a song at a time. Replacing it keeps
 the old assignment intact until the new download commits successfully. Files
-chosen through the browser remain user-owned: **Remove Video** unregisters them
-and never deletes the original file.
+chosen through the browser remain user-owned unless the player explicitly
+chooses **Delete File**. **Remove Video** opens a confirmation where **Unlink**
+removes only the map assignment and leaves the original file untouched.
 
 ## Synchronized where it matters
 
@@ -101,8 +102,10 @@ missing frames.
 
 For comparison and performance tuning, the mod includes:
 
-- Software decoding and experimental Android MediaCodec hardware decoding
-- Isolated FFmpeg 4.4.8 and FFmpeg 9.0.1 runtimes selectable in-game
+- Android MediaCodec hardware decoding by default, with safe software fallback
+  where the selected format and resolution permit it
+- FFmpeg 9.0.1 by default, with an isolated FFmpeg 4.4.8 compatibility runtime
+  selectable in-game for A/B testing
 - Automatic Performance steps that lower FPS before resolution and restore each
   step in reverse when playback recovers
 - A movable live performance panel and results summary
@@ -126,6 +129,10 @@ playback path. A video failure never needs to stop the map.
    **Fit to Song** if needed.
 7. Open **Screen** to customize and save up to five layouts, then select the song
    normally.
+
+For layouts that extend below Beat Saber's menu floor, turn on **General > Open
+Floor Placement**. The menu temporarily replaces the obstructing floor with a
+thin four-lane/player-position guide; gameplay and other menus remain unchanged.
 
 ### Build and deploy from source on Windows
 

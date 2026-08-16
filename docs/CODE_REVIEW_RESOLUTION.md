@@ -198,10 +198,10 @@ behavior.
   `FUTURE_WORK.md`. It should be done after the major behavior is stable because
   a mechanical split currently carries more regression risk than runtime value.
 - FFmpeg 4.4.8 and 9.0.1 now ship together under isolated SONAMEs, symbol
-  namespaces, and decoder backend libraries. The Misc selector permits true
-  in-game A/B testing, while 4.4.8 remains the default until repeated Quest 2
-  and Quest 3 testing establishes equal or better latency, stability, power,
-  and compatibility for 9.0.1.
+  namespaces, and decoder backend libraries. This review initially retained
+  4.4.8 as the conservative default. Subsequent on-device testing promoted
+  FFmpeg 9.0.1 and MediaCodec to the defaults while preserving both menu
+  switches for compatibility checks and true A/B comparisons.
 - Upstream artifact signatures can complement the existing pinned SHA-256 and
   reproducible-source checks later. They do not replace compatibility testing,
   and they are not required for this hardening batch.

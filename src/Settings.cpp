@@ -154,6 +154,21 @@ namespace BigScreen {
             document,
             "distractionFreeMenu",
             true);
+        showMenuEnvironment_ = ReadBool(
+            document,
+            "showMenuEnvironment",
+            true);
+        // v0.7 originally stored lane-guide state under this development key.
+        // It remains only as a one-time fallback for that independent option;
+        // Show Menu Environment is now the sole scenery/floor preference.
+        const bool legacyOpenFloorPlacement = ReadBool(
+            document,
+            "menuPlacementGuideEnabled",
+            false);
+        showLaneGuidesEnabled_ = ReadBool(
+            document,
+            "showLaneGuidesEnabled",
+            legacyOpenFloorPlacement);
         // v0.6 promotes the former per-selection default to one persistent,
         // game-wide Video switch. Read the old key as a migration fallback so
         // an upgrade preserves the user's existing choice.
@@ -194,25 +209,25 @@ namespace BigScreen {
                 1.0f), 0.0f, 1.0f);
             layout.distanceOffset = std::clamp(ReadFloat(
                 document, (prefix + "Distance").c_str(),
-                legacy ? ReadFloat(document, "screenDistanceOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+                legacy ? ReadFloat(document, "screenDistanceOffset", 0.0f) : 0.0f), -180.0f, 180.0f);
             layout.horizontalOffset = std::clamp(ReadFloat(
                 document, (prefix + "Horizontal").c_str(),
-                legacy ? ReadFloat(document, "screenHorizontalOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+                legacy ? ReadFloat(document, "screenHorizontalOffset", 0.0f) : 0.0f), -180.0f, 180.0f);
             layout.verticalOffset = std::clamp(ReadFloat(
                 document, (prefix + "Vertical").c_str(),
-                legacy ? ReadFloat(document, "screenVerticalOffset", 0.0f) : 0.0f), -40.0f, 40.0f);
+                legacy ? ReadFloat(document, "screenVerticalOffset", 0.0f) : 0.0f), -180.0f, 180.0f);
             layout.tiltOffset = std::clamp(ReadFloat(
                 document, (prefix + "Tilt").c_str(),
-                legacy ? ReadFloat(document, "screenTiltOffset", 0.0f) : 0.0f), -30.0f, 30.0f);
+                legacy ? ReadFloat(document, "screenTiltOffset", 0.0f) : 0.0f), -180.0f, 180.0f);
             const float configuredScale = ReadFloat(
                 document, (prefix + "Scale").c_str(),
                 legacy ? ReadFloat(document, "screenScale", 1.0f) : 1.0f);
             layout.curved = ReadBool(
                 document, (prefix + "Curved").c_str(),
                 legacy ? ReadBool(document, "curvedScreenEnabled", false) : false);
-            // Read the geometry mode before normalizing scale. Flat profiles
-            // may persist up to 4x, while a hand-edited or older curved
-            // profile must be reduced to the tested 2.5x ceiling at startup.
+            // Read the geometry mode before normalizing scale. Both modes now
+            // permit 6x, while this shared normalization still protects
+            // against hand-edited values outside the supported range.
             layout.scale = CoreLogic::NormalizeScreenScale(
                 configuredScale,
                 layout.curved);
@@ -309,9 +324,9 @@ namespace BigScreen {
             ReadInt(document, "playbackFpsLimit", 30));
         resolutionHeight_ = NormalizeResolution(
             ReadInt(document, "resolutionHeight", 720));
-        useFfmpeg9_ = ReadBool(document, "useFfmpeg9", false);
+        useFfmpeg9_ = ReadBool(document, "useFfmpeg9", true);
         hardwareDecodingEnabled_ = ReadBool(
-            document, "hardwareDecodingEnabled", false);
+            document, "hardwareDecodingEnabled", true);
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
@@ -388,6 +403,18 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetShowMenuEnvironment(bool value)
+    {
+        showMenuEnvironment_ = value;
+        Save();
+    }
+
+    void Settings::SetShowLaneGuidesEnabled(bool value)
+    {
+        showLaneGuidesEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetVideoEnabled(bool value)
     {
         videoEnabled_ = value;
@@ -418,25 +445,32 @@ namespace BigScreen {
 
     void Settings::SetScreenDistanceOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].distanceOffset = std::clamp(value, -40.0f, 40.0f);
+        screenLayouts_[activeScreenLayout_].distanceOffset = std::clamp(
+            value, -180.0f, 180.0f);
         Save();
     }
 
     void Settings::SetScreenHorizontalOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].horizontalOffset = std::clamp(value, -40.0f, 40.0f);
+        screenLayouts_[activeScreenLayout_].horizontalOffset = std::clamp(
+            value, -180.0f, 180.0f);
         Save();
     }
 
     void Settings::SetScreenVerticalOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].verticalOffset = std::clamp(value, -40.0f, 40.0f);
+        // Large canvases need substantially more travel than the original
+        // +/-40 control provided. Use the same symmetric range as X and depth
+        // so every docked placement axis behaves predictably.
+        screenLayouts_[activeScreenLayout_].verticalOffset = std::clamp(
+            value, -180.0f, 180.0f);
         Save();
     }
 
     void Settings::SetScreenTiltOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].tiltOffset = std::clamp(value, -30.0f, 30.0f);
+        screenLayouts_[activeScreenLayout_].tiltOffset = std::clamp(
+            value, -180.0f, 180.0f);
         Save();
     }
 
@@ -451,10 +485,9 @@ namespace BigScreen {
     {
         auto& layout = screenLayouts_[activeScreenLayout_];
         layout.curved = value;
-        // Switching a 2.6x-4.0x flat layout to curved mode immediately makes
-        // the persisted value, menu preview, and next gameplay surface agree.
-        // Switching back to flat does not inflate the screen; it only restores
-        // permission for the player to increase it toward 4x.
+        // Normalize through the mode-aware helper even though flat and curved
+        // currently share an 8x ceiling. Keeping one path prevents stale or
+        // hand-edited values from bypassing the supported range.
         layout.scale = CoreLogic::NormalizeScreenScale(layout.scale, value);
         Save();
     }
@@ -819,6 +852,12 @@ namespace BigScreen {
 
         Replace(document, "modEnabled", modEnabled_);
         Replace(document, "distractionFreeMenu", distractionFreeMenu_);
+        Replace(document, "showMenuEnvironment", showMenuEnvironment_);
+        // Development builds briefly exposed a second floor switch. The
+        // environment switch now owns scenery, lighting, and floor together.
+        document.RemoveMember("showMenuFloor");
+        document.RemoveMember("menuPlacementGuideEnabled");
+        Replace(document, "showLaneGuidesEnabled", showLaneGuidesEnabled_);
         // Remove superseded keys after migration so the configuration has one
         // unambiguous source of truth on all later launches.
         document.RemoveMember("videoEnabledByDefault");

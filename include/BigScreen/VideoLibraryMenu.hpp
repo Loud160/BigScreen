@@ -86,7 +86,11 @@ namespace BigScreen {
         void PasteUrlFromClipboard();
         void SearchSelectedSongOnYouTube();
         void RefreshLocalVideoStatus();
-        void RemoveOverride();
+        /// Handles the two explicit confirmation choices. Unlinking always
+        /// removes the assignment only; deletion additionally removes the
+        /// active physical file after VideoLibrary validates its ownership
+        /// boundary.
+        void RemoveOverride(bool deleteFile);
         bool ApplyFitToSong(bool reportStatus);
         bool SaveTiming();
         /// Keeps mapper-authored addresses visually distinct from addresses
@@ -179,6 +183,8 @@ namespace BigScreen {
         UnityEngine::UI::Button* confirmDownloadButton_ = nullptr;
         UnityEngine::UI::Button* playPauseButton_ = nullptr;
         UnityEngine::UI::Button* removeButton_ = nullptr;
+        UnityEngine::UI::Button* unlinkVideoButton_ = nullptr;
+        UnityEngine::UI::Button* deleteVideoButton_ = nullptr;
         HMUI::HoverHint* fitTimingHint_ = nullptr;
         HMUI::HoverHint* rateTimingHint_ = nullptr;
         HMUI::HoverHint* offsetTimingHint_ = nullptr;

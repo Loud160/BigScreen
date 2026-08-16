@@ -92,7 +92,9 @@ directory snapshots on the center screen, while a worker thread enumerates the
 folder and opens compatible MP4/MOV or Matroska/WebM containers through FFmpeg. Custom/WIP songs start at their
 map folder; other songs start at the automatically created Video Import folder.
 Navigation is confined to `/sdcard`. A selected file is referenced in place as
-user-owned media, so assignment replacement and Remove Video never delete it.
+user-owned media. Replacing or unlinking an assignment never deletes it; the
+separate red **Delete File** confirmation action may remove it intentionally
+after the library revalidates the path and supported media extension.
 
 Power benchmarking follows the same real-time boundary. The gameplay hook
 samples Android `BatteryManager`, a monotonic process CPU clock, and the

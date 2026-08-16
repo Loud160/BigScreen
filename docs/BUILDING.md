@@ -155,7 +155,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-c
 
 Install that single QMOD, then use **Misc > Performance > Use FFmpeg 9** to
 switch between the bundled runtimes and **Hardware Video Decoding** to switch
-between supported software decoders and MediaCodec. Both switches default off. An
+between supported software decoders and MediaCodec. Both switches default on. An
 active Video Library preview is recreated at its retained song position, while
 gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback

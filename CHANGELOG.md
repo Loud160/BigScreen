@@ -28,6 +28,22 @@
   cleanable, and local scans can stop without blocking a soft restart.
 - Added behavioral codec-policy coverage for H.264, H.265/HEVC, VP8, VP9,
   HDR/10-bit rejection, and the hardware-only greater-than-1080p boundary.
+- The managed showcase now receives a temporary No Fail modifier only when it
+  is launched from Big Screen; normal launches retain the player's modifiers.
+- Added Show Menu Environment for scenery, lighting, and floor together, plus
+  an independent Show Lane Guides control for coordinate-referenced placement.
+  Every captured menu renderer and light is restored at lifecycle boundaries.
+- Resolve the renamed Beat Saber 1.40.8 menu-environment hierarchy through
+  its BasicMenuGround renderer while preserving controller/pointer visuals.
+- Raised the Screen Size Multiplier ceiling to 8.0x for both flat and curved
+  layouts now that the menu floor can be hidden to expose the full canvas.
+- Expanded docked Screen Distance, X, Y, and Tilt controls to +/-180 so an 8x
+  canvas retains unrestricted placement and rotation authority.
+- Prevented large or distant menu previews from strobing black backing-mesh
+  fragments by scaling picture-layer separation with canvas size and skipping
+  the backing renderer entirely when the picture already covers the frame.
+- Per-layout Reset Screen now refreshes the visible state of every affected
+  animated switch, including Advanced Screen Controls and Curved Screen.
 
 ## 0.6.6 — Beat Saber 1.37 alpha baseline
 

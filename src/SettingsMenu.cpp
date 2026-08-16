@@ -16,6 +16,9 @@
 #include "fmt/format.h"
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/MenuEnvironmentVisibility.hpp"
+#include "BigScreen/MenuPlacementGuide.hpp"
+#include "BigScreen/NestedHoverHintOverride.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -81,6 +84,12 @@ namespace BigScreen {
         std::array<std::string_view, 5> SettingsTabNames{
             "General", "Screen", "Environment", "Update", "Misc"
         };
+
+        // Reset controls intentionally share one compact visual contract. The
+        // glyph may be enlarged for readability, but the fixed button footprint
+        // must remain unchanged so neither settings row is pushed or clipped.
+        constexpr float ResetGlyphTextSize = 6.0f;
+        constexpr float ResetButtonSize = 7.0f;
 
         constexpr float VideoOffsetToZoomSlider(float offset)
         {
@@ -192,6 +201,8 @@ namespace BigScreen {
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         distractionFreeMenuToggle_ = nullptr;
+        showMenuEnvironmentToggle_ = nullptr;
+        showLaneGuidesToggle_ = nullptr;
         advancedOptionsToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
         previewToggle_ = nullptr;
@@ -243,6 +254,7 @@ namespace BigScreen {
         ffmpeg9Toggle_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
+        automaticPerformanceWarningModal_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
         automaticPerformanceResponseSlider_ = nullptr;
         performancePanelResetButton_ = nullptr;
@@ -295,7 +307,7 @@ namespace BigScreen {
 
         auto* backButton = BSML::Lite::CreateUIButton(
             headerParent,
-            "< Back",
+            "Close",
             UnityEngine::Vector2{0.0f, 0.0f},
             UnityEngine::Vector2{18.0f, 8.0f},
             [this, callback = std::move(onBack)]()
@@ -310,6 +322,9 @@ namespace BigScreen {
                 layout->set_preferredWidth(18.0f);
                 layout->set_preferredHeight(8.0f);
             }
+            BSML::Lite::AddHoverHint(
+                backButton,
+                "Closes the Big Screen menu and returns to Beat Saber's main menu. If a screen has unsaved placement changes, Big Screen asks what to do first.");
         }
 
         auto* title = BSML::Lite::CreateText(
@@ -631,7 +646,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             ffmpeg9Toggle_,
-            "Experimental: selects the FFmpeg 9.0.1 playback decoder for side-by-side performance and compatibility testing. Off uses the proven FFmpeg 4.4.8 default. An active Video Library preview restarts at the same position; gameplay uses the selection on the next map. This does not change or redownload the video.");
+            "Experimental: selects the default FFmpeg 9.0.1 playback runtime. Turn this off to use FFmpeg 4.4.8 for compatibility or side-by-side testing. An active Video Library preview restarts at the same position; gameplay uses the selection on the next map. This does not change or redownload the video.");
 
         hardwareDecodingToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -648,7 +663,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             hardwareDecodingToggle_,
-            "Experimental: uses the Quest's dedicated MediaCodec decoders to reduce CPU work. H.264, VP8, and VP9 at 1080p or lower can fall back to software. H.265 and video above 1080p require hardware and stop video safely if it fails. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
+            "Uses the Quest's dedicated MediaCodec decoders by default to reduce CPU work and decode latency. H.264, VP8, and VP9 at 1080p or lower can fall back to software. H.265 and video above 1080p require hardware and stop video safely if it fails. Turn this off to force supported videos through software decoding. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -656,12 +671,28 @@ namespace BigScreen {
             settings.AutomaticPerformanceEnabled(),
             [this](bool enabled)
             {
-                Settings::Instance().SetAutomaticPerformanceEnabled(enabled);
+                if(suppressAutomaticPerformanceCallback_)
+                    return;
+                if(enabled)
+                {
+                    // Keep both the persisted setting and its dependent
+                    // sliders disabled until the player accepts the warning.
+                    // This mirrors the nightly/advanced confirmation contract:
+                    // opening a modal must never silently opt into a feature.
+                    suppressAutomaticPerformanceCallback_ = true;
+                    SetToggleWithoutNotification(
+                        automaticPerformanceToggle_, false);
+                    suppressAutomaticPerformanceCallback_ = false;
+                    if(automaticPerformanceWarningModal_)
+                        automaticPerformanceWarningModal_->Show();
+                    return;
+                }
+                Settings::Instance().SetAutomaticPerformanceEnabled(false);
                 RefreshEnabledState();
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceToggle_,
-            "Continuously adjusts video quality while a map is playing. Sustained frame loss lowers frame rate and then resolution one step at a time; sustained recovery restores those exact steps in reverse order. It never exceeds your saved quality choices.");
+            "Experimental: continuously adjusts video quality while a map is playing. Sustained frame loss lowers frame rate and then resolution one step at a time; sustained recovery restores those exact steps in reverse order. It never exceeds your saved quality choices.");
         automaticPerformanceThresholdSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
             "Frame Rate Loss Trigger",
@@ -732,18 +763,21 @@ namespace BigScreen {
                 PerformancePanel::Instance().ResetPlacement();
                 PaperLogger.info("Reset performance panel placement to defaults");
             });
-        BSML::Lite::SetButtonTextSize(performancePanelResetButton_, 4.2f);
+        BSML::Lite::SetButtonTextSize(
+            performancePanelResetButton_, ResetGlyphTextSize);
         if(auto* layout = performancePanelResetButton_->get_gameObject()
                ->GetComponent<UnityEngine::UI::LayoutElement*>())
         {
-            layout->set_minWidth(8.0f);
-            layout->set_preferredWidth(8.0f);
-            layout->set_preferredHeight(8.0f);
+            layout->set_minWidth(ResetButtonSize);
+            layout->set_preferredWidth(ResetButtonSize);
+            layout->set_preferredHeight(ResetButtonSize);
             layout->set_flexibleWidth(0.0f);
         }
+        constexpr const char* PerformanceResetHint =
+            "Resets the performance panel to its default position and angle. The same placement is used in the Video Library and during video gameplay.";
         BSML::Lite::AddHoverHint(
             performancePanelResetButton_,
-            "Returns the movable performance panel to its safe default position and angle. This placement is shared by the Video Library and video gameplay.");
+            PerformanceResetHint);
 
         performanceDiagnosticsToggle_ = BSML::Lite::CreateToggle(
             diagnosticsParent,
@@ -761,9 +795,37 @@ namespace BigScreen {
             layout->set_preferredWidth(82.0f);
             layout->set_flexibleWidth(1.0f);
         }
-        BSML::Lite::AddHoverHint(
+        // Attach the reset button directly beside the toggle control. This is
+        // the same overlay pattern used by the screen-layout reset below: it
+        // keeps the glyph next to the interactive control instead of placing it
+        // beside the row label, and it consumes no additional row width.
+        if(performancePanelResetButton_ && performanceDiagnosticsToggle_)
+        {
+            auto resetRect = performancePanelResetButton_->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            resetRect->SetParent(
+                performanceDiagnosticsToggle_->get_transform(), false);
+            resetRect->set_anchorMin({0.0f, 0.5f});
+            resetRect->set_anchorMax({0.0f, 0.5f});
+            resetRect->set_pivot({1.0f, 0.5f});
+            resetRect->set_anchoredPosition({-1.5f, 0.0f});
+            resetRect->set_sizeDelta({ResetButtonSize, ResetButtonSize});
+            resetRect->SetAsLastSibling();
+        }
+        constexpr const char* PerformanceToggleHint =
+            "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move and angle it. Its placement is saved when you turn it off or leave the menu, then reused during gameplay. Completed, failed, and exited video maps are appended to the performance log.";
+        auto* performanceToggleHoverHint = BSML::Lite::AddHoverHint(
             performanceDiagnosticsToggle_,
-            "Shows a movable performance panel in the Video Library and during video maps. Hold the trigger anywhere on the panel to move and angle it. Its placement is saved when you turn it off or leave the menu, then reused during gameplay. Completed, failed, and exited video maps are appended to the performance log.");
+            PerformanceToggleHint);
+        if(performancePanelResetButton_ && performanceToggleHoverHint)
+        {
+            performancePanelResetButton_->get_gameObject()
+                ->AddComponent<NestedHoverHintOverride*>()
+                ->Configure(
+                    performanceToggleHoverHint,
+                    PerformanceToggleHint,
+                    PerformanceResetHint);
+        }
 
         powerBenchmarkToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -789,6 +851,12 @@ namespace BigScreen {
                 // switch just like playback and screen creation do. Turning
                 // Big Screen off must immediately restore the stock/mod UI.
                 ApplyDistractionFreeMenu();
+                ErrorManager::Instance().Guard(
+                    "updating menu placement visuals after master toggle", []()
+                    {
+                        MenuPlacementGuide::Instance().Apply();
+                        MenuEnvironmentVisibility::Instance().Apply();
+                    });
 
                 // Hooks remain installed so the menu stays reachable, but
                 // disabling immediately tears down every screen and decoder.
@@ -832,6 +900,53 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             distractionFreeMenuToggle_,
             "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
+
+        showMenuEnvironmentToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Show Menu Environment",
+            settings.ShowMenuEnvironment(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetShowMenuEnvironment(enabled);
+                ErrorManager::Instance().Guard(
+                    "updating Show Menu Environment", []()
+                    {
+                        // The one switch owns scenery, lighting, and floor.
+                        // The focused floor scan catches compatible geometry
+                        // outside Beat Saber's resolved environment root.
+                        MenuEnvironmentVisibility::Instance().Apply();
+                        MenuPlacementGuide::Instance().Apply();
+                        MenuEnvironmentVisibility::Instance().Apply();
+                    });
+            });
+        BSML::Lite::AddHoverHint(
+            showMenuEnvironmentToggle_,
+            "Shows Beat Saber's normal menu scenery, lighting, and floor behind Big Screen. Turn this off for an unlit, unobstructed placement space that also keeps screens visible below floor height. Big Screen's menus, video screen, lane guides, and controller input remain active, and the environment is restored when you leave.");
+
+        showLaneGuidesToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Show Lane Guides",
+            settings.ShowLaneGuidesEnabled(),
+            [this](bool enabled)
+            {
+                Settings::Instance().SetShowLaneGuidesEnabled(enabled);
+                ErrorManager::Instance().Guard(
+                    "updating Show Lane Guides", [this]()
+                    {
+                        if(!MenuPlacementGuide::Instance().Apply())
+                        {
+                            // Guide creation is optional. If Unity rejects it,
+                            // Apply saves Off and this mirrors that safe value
+                            // without invoking the toggle callback a second time.
+                            SetToggleWithoutNotification(
+                                showLaneGuidesToggle_,
+                                Settings::Instance().ShowLaneGuidesEnabled());
+                        }
+                    });
+            });
+        BSML::Lite::AddHoverHint(
+            showLaneGuidesToggle_,
+            "Shows thin, non-interactive lane rails, depth marks, and a player-origin marker while Big Screen's menu is open. This can be used whether the menu floor or full environment is shown or hidden, and never changes gameplay.");
 
         videoEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -908,24 +1023,73 @@ namespace BigScreen {
             [this]()
             {
                 Settings::Instance().ResetActiveScreenLayout();
+
+                // Beat Saber's animated switch graphic listens to the native
+                // Toggle change event. SetToggleWithoutNotification updates
+                // the stored/native bool but deliberately suppresses that
+                // event, leaving a reset switch visibly On even though its
+                // dependent controls already reflect Off. A per-layout reset
+                // is a discrete user action, so drive every affected switch
+                // through ToggleSetting's normal visual/callback pipeline.
+                const auto applyLayoutToggle = [](
+                    BSML::ToggleSetting* control, bool value)
+                {
+                    if(control)
+                        control->set_Value(value);
+                };
+                const auto& defaults = Settings::Instance();
+                // Apply ordinary presentation toggles before the two controls
+                // whose Off callbacks perform a full RefreshControls pass.
+                // Otherwise that early pass writes the remaining native bools
+                // without notification and consumes their visual transition.
+                applyLayoutToggle(
+                    curvedScreenToggle_,
+                    defaults.CurvedScreenEnabled());
+                applyLayoutToggle(
+                    maintainCurveAspectToggle_,
+                    defaults.MaintainCurveAspectRatio());
+                applyLayoutToggle(
+                    transparencyToggle_,
+                    defaults.LetterboxTransparencyEnabled());
+                applyLayoutToggle(
+                    stretchVideoToggle_,
+                    defaults.StretchVideoToFit());
+
+                // The settings model is already authoritative after Reset.
+                // Suppress only Big Screen's expensive/re-entrant callbacks;
+                // ToggleSetting still emits the native event that updates the
+                // animated switch graphic.
+                suppressAdvancedCallback_ = true;
+                applyLayoutToggle(
+                    advancedOptionsToggle_,
+                    defaults.AdvancedOptionsEnabled());
+                suppressAdvancedCallback_ = false;
+                suppressUndockCallback_ = true;
+                applyLayoutToggle(
+                    undockScreenToggle_,
+                    defaults.UndockedScreenEnabled());
+                suppressUndockCallback_ = false;
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
                 PaperLogger.info(
                     "Reset screen layout {} to defaults",
                     Settings::Instance().ActiveScreenLayout() + 1);
             });
-        BSML::Lite::SetButtonTextSize(screenLayoutResetButton_, 4.2f);
+        BSML::Lite::SetButtonTextSize(
+            screenLayoutResetButton_, ResetGlyphTextSize);
         if(auto* layout = screenLayoutResetButton_
                ->GetComponent<UnityEngine::UI::LayoutElement*>())
         {
-            layout->set_minWidth(8.0f);
-            layout->set_preferredWidth(8.0f);
-            layout->set_preferredHeight(8.0f);
+            layout->set_minWidth(ResetButtonSize);
+            layout->set_preferredWidth(ResetButtonSize);
+            layout->set_preferredHeight(ResetButtonSize);
             layout->set_flexibleWidth(0.0f);
         }
+        constexpr const char* ScreenLayoutResetHint =
+            "Resets the currently selected screen layout to its default settings. Your other screen layouts are not changed.";
         BSML::Lite::AddHoverHint(
             screenLayoutResetButton_,
-            "Resets only the currently selected screen layout to its default size, position, and appearance. Your other screen layouts are not changed.");
+            ScreenLayoutResetHint);
 
         screenLayoutDropdown_ = BSML::Lite::CreateDropdown(
             screenLayoutParent,
@@ -966,12 +1130,23 @@ namespace BigScreen {
             resetRect->set_anchorMax({0.0f, 0.5f});
             resetRect->set_pivot({1.0f, 0.5f});
             resetRect->set_anchoredPosition({-1.5f, 0.0f});
-            resetRect->set_sizeDelta({7.0f, 7.0f});
+            resetRect->set_sizeDelta({ResetButtonSize, ResetButtonSize});
             resetRect->SetAsLastSibling();
         }
-        BSML::Lite::AddHoverHint(
+        constexpr const char* ScreenLayoutDropdownHint =
+            "Chooses which of your five saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.";
+        auto* screenLayoutDropdownHoverHint = BSML::Lite::AddHoverHint(
             screenLayoutDropdown_,
-            "Chooses which of your five saved layouts is active and which layout the controls below edit. It is used for previews and the next video map.");
+            ScreenLayoutDropdownHint);
+        if(screenLayoutResetButton_ && screenLayoutDropdownHoverHint)
+        {
+            screenLayoutResetButton_->get_gameObject()
+                ->AddComponent<NestedHoverHintOverride*>()
+                ->Configure(
+                    screenLayoutDropdownHoverHint,
+                    ScreenLayoutDropdownHint,
+                    ScreenLayoutResetHint);
+        }
 
         advancedOptionsToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -1052,8 +1227,8 @@ namespace BigScreen {
             "Screen Distance Offset",
             2.0f,
             settings.ScreenDistanceOffset(),
-            -40.0f,
-            40.0f,
+            -180.0f,
+            180.0f,
             0.15f,
             true,
             {0.0f, 0.0f},
@@ -1075,8 +1250,8 @@ namespace BigScreen {
             "Screen X Offset",
             1.0f,
             settings.ScreenHorizontalOffset(),
-            -40.0f,
-            40.0f,
+            -180.0f,
+            180.0f,
             0.15f,
             true,
             {0.0f, 0.0f},
@@ -1094,8 +1269,8 @@ namespace BigScreen {
             "Screen Y Offset",
             1.0f,
             settings.ScreenVerticalOffset(),
-            -40.0f,
-            40.0f,
+            -180.0f,
+            180.0f,
             0.15f,
             true,
             {0.0f, 0.0f},
@@ -1106,15 +1281,15 @@ namespace BigScreen {
             });
         verticalHint_ = BSML::Lite::AddHoverHint(
             verticalSetting_,
-            "Moves the screen down with negative values and up with positive values. Free positioning replaces this control while Undock Screen is enabled.");
+            "Moves the screen down with negative values and up with positive values. The expanded range lets even an 8x screen clear the menu floor. Free positioning replaces this control while Undock Screen is enabled.");
 
         tiltSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
             "Screen Tilt Offset",
             1.0f,
             settings.ScreenTiltOffset(),
-            -30.0f,
-            30.0f,
+            -180.0f,
+            180.0f,
             0.15f,
             true,
             {0.0f, 0.0f},
@@ -1149,7 +1324,7 @@ namespace BigScreen {
         sizeSetting_->slider->UpdateVisuals();
         sizeHint_ = BSML::Lite::AddHoverHint(
             sizeSetting_,
-            "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5. The resize handle replaces this control for an undocked screen.");
+            "Multiplies the screen's physical size. Flat and curved screens allow values from 0.5 to 8.0. The resize handle replaces this control for an undocked screen.");
 
         curvedScreenToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -1158,16 +1333,15 @@ namespace BigScreen {
             [this](bool enabled)
             {
                 Settings::Instance().SetCurvedScreenEnabled(enabled);
-                // Enabling curvature can clamp scale from 4.0 to 2.5. Refresh
-                // the value/range before rebuilding the preview so the text,
-                // arrow state, saved setting, and visible surface change as
-                // one user action.
+                // Both modes currently share the same 8x cap, but refreshing
+                // keeps the slider range correct if their limits intentionally
+                // diverge again in a future release.
                 RefreshCurvatureControl();
                 ApplyDisplaySettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             curvedScreenToggle_,
-            "Switches between a flat screen and a curved screen. Turning this on reveals the curve controls below and limits screen size to 2.5.");
+            "Switches between a flat screen and a curved screen. Turning this on reveals the curve controls below; both modes support screen multipliers up to 8.0.");
 
         maintainCurveAspectToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -1592,6 +1766,51 @@ namespace BigScreen {
         hideSpectrogramBarsHint_ = BSML::Lite::AddHoverHint(
             hideSpectrogramBarsToggle_,
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
+
+        automaticPerformanceWarningModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 38.0f}, nullptr, false);
+        auto* automaticPerformanceWarningText = BSML::Lite::CreateText(
+            automaticPerformanceWarningModal_,
+            "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore video frame rate and resolution during a map when sustained frame loss is detected. Results may vary by video, map, and headset.",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 6.0f},
+            {64.0f, 23.0f});
+        automaticPerformanceWarningText->set_enableWordWrapping(true);
+        automaticPerformanceWarningText->set_enableAutoSizing(true);
+        automaticPerformanceWarningText->set_fontSizeMin(2.5f);
+        automaticPerformanceWarningText->set_fontSizeMax(3.0f);
+        automaticPerformanceWarningText->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        automaticPerformanceWarningText->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            automaticPerformanceWarningModal_->get_transform(), "Cancel",
+            {18.0f, -28.0f}, {25.0f, 8.0f},
+            [this]()
+            {
+                if(automaticPerformanceWarningModal_)
+                    automaticPerformanceWarningModal_->Hide();
+                suppressAutomaticPerformanceCallback_ = true;
+                SetToggleWithoutNotification(
+                    automaticPerformanceToggle_, false);
+                suppressAutomaticPerformanceCallback_ = false;
+                RefreshEnabledState();
+            });
+        BSML::Lite::CreateUIButton(
+            automaticPerformanceWarningModal_->get_transform(), "Enable",
+            {48.0f, -28.0f}, {27.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().SetAutomaticPerformanceEnabled(true);
+                suppressAutomaticPerformanceCallback_ = true;
+                SetToggleWithoutNotification(
+                    automaticPerformanceToggle_, true);
+                suppressAutomaticPerformanceCallback_ = false;
+                if(automaticPerformanceWarningModal_)
+                    automaticPerformanceWarningModal_->Hide();
+                RefreshEnabledState();
+            });
 
         advancedWarningModal_ = BSML::Lite::CreateModal(
             viewController, {72.0f, 38.0f}, nullptr, false);
@@ -2025,6 +2244,10 @@ namespace BigScreen {
             distractionFreeMenuToggle_,
             settings.DistractionFreeMenu());
         SetToggleWithoutNotification(
+            showMenuEnvironmentToggle_, settings.ShowMenuEnvironment());
+        SetToggleWithoutNotification(
+            showLaneGuidesToggle_, settings.ShowLaneGuidesEnabled());
+        SetToggleWithoutNotification(
             advancedOptionsToggle_, settings.AdvancedOptionsEnabled());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
@@ -2163,6 +2386,10 @@ namespace BigScreen {
         // affecting Beat Saber is explicitly locked while the mod is off.
         if(distractionFreeMenuToggle_)
             distractionFreeMenuToggle_->set_interactable(enabled);
+        if(showMenuEnvironmentToggle_)
+            showMenuEnvironmentToggle_->set_interactable(enabled);
+        if(showLaneGuidesToggle_)
+            showLaneGuidesToggle_->set_interactable(enabled);
         if(advancedOptionsToggle_)
             advancedOptionsToggle_->set_interactable(enabled);
         if(videoEnabledToggle_)
@@ -2251,7 +2478,7 @@ namespace BigScreen {
                 : freePositionHint);
         if(sizeHint_)
             sizeHint_->set_text(dockedGeometryEnabled
-                ? "Multiplies the map-authored screen size. Flat screens allow up to 4.0; curved screens allow up to 2.5. The resize handle replaces this control for an undocked screen."
+                ? "Multiplies the map-authored screen size. Flat and curved screens allow values from 0.5 to 8.0, and a playing preview remains visible while resizing. The resize handle replaces this control for an undocked screen."
                 : freePositionHint);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
@@ -2374,8 +2601,8 @@ namespace BigScreen {
             sizeSetting_->set_Value(settings.ScreenScale());
 
             // BSML normally leaves an unusable maximum arrow visible but
-            // disabled. Hide that arrow at the active mode's cap, then restore
-            // it as soon as flat mode raises the cap from 2.5x to 4.0x.
+            // disabled. Hide that arrow at the active mode's cap and restore
+            // it immediately after the value is reduced.
             if(sizeSetting_->incButton)
             {
                 const bool canIncrease =
@@ -2653,6 +2880,12 @@ namespace BigScreen {
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
         ScreenPreview::Instance().SetEnabled(settings.ModEnabled());
         ApplyDistractionFreeMenu();
+        ErrorManager::Instance().Guard(
+            "resetting menu placement visuals", []()
+            {
+                MenuPlacementGuide::Instance().Apply();
+                MenuEnvironmentVisibility::Instance().Apply();
+            });
         RefreshControls();
         PaperLogger.info("Reset all Big Screen settings to defaults");
     }

@@ -20,6 +20,14 @@ Master switch. Off stops previews, downloads, screens, and environment changes w
 
 While the Big Screen menu is open, temporarily hides the neon Beat Saber sign and supported clock/battery overlays it can detect. Objects are restored on exit. Detection is defensive: stock installations and installations without those optional UI objects remain supported.
 
+### Show Menu Environment — default: On
+
+Shows Beat Saber's normal menu scenery, lighting, and floor behind Big Screen. Off provides an unlit, unobstructed placement space and leaves screens visible below gameplay floor height while preserving the environment hierarchy, menu cameras, controller input, Big Screen UI, preview screen, and optional lane guides. The complete environment is restored on focus loss, mod disable, menu exit, and errors.
+
+### Show Lane Guides — default: Off
+
+Draws thin, non-interactive lane rails, depth marks, and a player-origin marker from the menu player position to the default back wall. It works with the floor or complete environment either visible or hidden. The guides exist only in Big Screen's menu and are removed on every menu/focus/gameplay boundary.
+
 ### Video In Map — default: On
 
 Global gameplay-video master. Turning it off also disables Preview Video to avoid background decoder work. It is synchronized with the identically named song-selection header toggle.
@@ -38,7 +46,7 @@ Shows a confirmation dialog, then restores every global option and all five layo
 
 ## Screen
 
-The menu always displays a blank screen in the placement environment. Changes update it immediately. Mapper-controlled Cinema/Chroma presentation can intentionally replace these values for an authored map.
+The menu always displays a blank screen in the placement environment. Changes update it immediately. Turn off **General > Show Menu Environment** for an unobstructed, unlit placement space that also permits positioning below the stock floor, and use **Show Lane Guides** independently when a gameplay-coordinate reference would help. Mapper-controlled Cinema/Chroma presentation can intentionally replace these values for an authored map.
 
 ### Editing Screen Layout — default: Layout 1
 
@@ -52,29 +60,29 @@ Enables independent video framing and free screen placement for the selected lay
 
 Preserves the intended Chroma/Cinema environment for a video map. The map takes ownership of the screen canvas only when both conditions are true: the map is detected as using Chroma, and its video metadata supplies custom position, rotation, size, or curvature. Otherwise the selected Big Screen layout and its Screen Canvas controls remain active. Video Controls, Video Opacity, and Letterbox Transparency always control how the picture is composed inside whichever canvas is active. Detection is map-wide and works whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force Big Screen's canvas and environment options. Timing metadata remains honored either way.
 
-### Screen Distance Offset — default: 0, range: -40 to +40
+### Screen Distance Offset — default: 0, range: -180 to +180
 
 Adds to mapper/default depth. Negative moves the screen closer; positive moves it farther away.
 
-### Screen X Offset — default: 0, range: -40 to +40
+### Screen X Offset — default: 0, range: -180 to +180
 
 Negative moves left and positive moves right.
 
-### Screen Y Offset — default: 0, range: -40 to +40
+### Screen Y Offset — default: 0, range: -180 to +180
 
-Negative moves down and positive moves up.
+Negative moves down and positive moves up. The extended range preserves full placement control for screens enlarged to the 8.0x maximum, including enough upward travel to lift the complete default canvas above the menu floor.
 
-### Screen Tilt Offset — default: 0°, range: -30° to +30°
+### Screen Tilt Offset — default: 0°, range: -180° to +180°
 
 Adjusts the vertical viewing angle. It is useful when the default screen appears to lean toward or away from the player.
 
 ### Screen Size Multiplier — default: 1.0x
 
-Multiplies the authored/default screen height. Flat range is 0.5–4.0x; curved range is 0.5–2.5x. Enabling Curved Screen while above 2.5x immediately clamps and saves 2.5x. Returning to flat restores the 4.0x adjustment range, not the former oversized value.
+Multiplies the authored/default screen height. Flat and curved layouts both range from 0.5–8.0x. Menu and gameplay use the same calculation. Physical size changes do not add curved-screen segments or increase decoder resolution; they enlarge the existing canvas geometry.
 
 ### Curved Screen — default: Off
 
-Switches between a flat quad and segmented curved geometry. Curved surfaces cost more geometry and can grow very wide, so their maximum size is lower.
+Switches between a flat quad and segmented curved geometry. Both modes support the full 0.5–8.0x Screen Size Multiplier range.
 
 ### Maintain Aspect Ratio — default: Off
 
@@ -198,21 +206,23 @@ Opens a dedicated center-screen readiness page. It checks SongCore's live capabi
 
 Opening the page never starts a download. A missing map gets its own **Download Map** button; downloaded files that SongCore has not recognized get **Recheck Map**; and a missing video gets **Download Video** after the map is ready. The map action obtains the immutable `11cf8` Up & Down revision from BeatSaver, validates and safely extracts it under Big Screen's managed `DemoLevels` folder, registers the folder with SongCore, and waits for the song refresh. The video action uses the ordinary managed video library at 1080p. Existing user-installed maps and user video overrides are never replaced or deleted.
 
-**Play Showcase** remains disabled until Chroma, Noodle Extensions, the map, and the video are all ready. It then shows the motion-sickness warning, closes the readiness page, waits for Beat Saber's main menu hierarchy to stabilize, and starts Lawless Expert+ directly. Big Screen does not alter the completed/failed results page or attempt to reopen itself afterward; use Beat Saber's normal navigation, then reopen Big Screen from Mods when wanted.
+**Play Showcase** remains disabled until Chroma, Noodle Extensions, the map, and the video are all ready. It then shows the motion-sickness warning, closes the readiness page, waits for Beat Saber's main menu hierarchy to stabilize, and starts Lawless Expert+ directly with No Fail enabled for that showcase session. Big Screen uses a temporary modifier copy and immediately restores the player's menu modifiers, so playing the map normally is unaffected. Big Screen does not alter the completed results page or attempt to reopen itself afterward; use Beat Saber's normal navigation, then reopen Big Screen from Mods when wanted.
 
 ### Performance
 
-#### Use FFmpeg 9 — default: Off
+#### Use FFmpeg 9 — default: On
 
 This is an experimental comparison option. It selects which bundled decoder runtime opens the next video. Off uses FFmpeg 4.4.8; on uses FFmpeg 9.0.1. It does not change, convert, or redownload the video. If a Video Library preview is active, changing the switch safely recreates playback at the retained song position. A map already in gameplay is never switched underneath its running decoder; the new choice applies when the next playback session starts. The performance overlay and results summary identify the runtime that actually opened.
 
-#### Hardware Video Decoding — default: Off
+#### Hardware Video Decoding — default: On
 
-Experimental comparison option. Off uses the permitted FFmpeg software decoder for H.264, VP8, or VP9 content at no more than 1080p. On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever FFmpeg runtime is selected. MediaCodec output is copied into CPU-readable memory for Big Screen's existing color conversion and Unity texture upload; this preserves every screen shape and effect but is not a zero-copy GPU path. Startup or mid-video hardware failures reopen with software only when the codec and resolution policy permits it. HEVC and content above 1080p instead stop video safely while the map continues. The live panel, results summary, error history, and power benchmark identify the backend that actually remained active. Changing this option restarts an active Video Library preview at its retained time and applies to gameplay on the next map.
+On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever FFmpeg runtime is selected. MediaCodec output is copied into CPU-readable memory for Big Screen's existing color conversion and Unity texture upload; this preserves every screen shape and effect but is not a zero-copy GPU path. Startup or mid-video hardware failures reopen with software only when the codec and resolution policy permits it. HEVC and content above 1080p instead stop video safely while the map continues. Turn the option off to force the permitted FFmpeg software decoder for H.264, VP8, or VP9 content at no more than 1080p. The live panel, results summary, error history, and power benchmark identify the backend that actually remained active. Changing this option restarts an active Video Library preview at its retained time and applies to gameplay on the next map.
 
 #### Automatic Performance — default: Off
 
 Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers quality by one step through 60→30→15 FPS and then 1440→1080→720→480p. A complete window below the trigger restores one prior step in the exact reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. Automatic changes never modify the source video, exceed the saved FPS and resolution settings, or overwrite those settings. The next map starts from the saved limits.
+
+Turning this on opens a confirmation explaining that Automatic Performance is experimental and still under development. Nothing is enabled or saved until the player confirms.
 
 #### Frame Rate Loss Trigger — default: 5%
 
@@ -254,4 +264,4 @@ These belong to the selected library entry, not the global settings file:
 - **Lead-In Background:** on shows negative-time lead-in as solid black; off keeps the screen transparent/hidden until video begins.
 - **Play/Pause, scrubber, time:** previews map audio and video together for timing. Scrubbing after end restarts a valid preview position.
 - **Show File Browser:** opens a wide center-screen browser over a translucent dark background. Custom/WIP songs begin in their map folder; built-in songs begin in the automatically created Video Import folder. **Back One Folder** and clickable path breadcrumbs navigate anywhere under readable Quest shared storage. Folder scanning and MP4 compatibility probes run off the UI thread.
-- **Remove Video:** removes the assignment. Managed downloads can be deleted; browser-selected files are only unregistered and the confirmation explains that the source file remains in its original folder.
+- **Remove Video:** opens a three-choice confirmation. **Unlink** removes only the assignment and keeps the file on the Quest. **Delete File/Video** removes both the assignment and physical media. This works for Big Screen downloads, file-browser assignments, and local videos declared by a map; map-local opt-outs persist without modifying the map package.

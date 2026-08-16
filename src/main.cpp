@@ -15,6 +15,8 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/MenuPlacementGuide.hpp"
+#include "BigScreen/MenuEnvironmentVisibility.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/PauseMenuLayoutSelector.hpp"
 #include "BigScreen/PerformancePanel.hpp"
@@ -66,7 +68,6 @@
 #include "GlobalNamespace/Spectrogram.hpp"
 #include "GlobalNamespace/SpectrogramRow.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
-#include "GlobalNamespace/StandardLevelFailedController.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
 #include "GlobalNamespace/TrackLaneRing.hpp"
@@ -480,12 +481,39 @@ namespace {
         // mods: one title, two clearly separated metric groups, restrained
         // secondary labels, and a cyan accent. All elements are decorative and
         // cannot intercept results-screen pointer input.
+        constexpr float panelWidth = 98.0f;
+        constexpr float panelHeight = 20.0f;
+        constexpr float borderThickness = 0.4f;
+        constexpr float halfPanelWidth = panelWidth * 0.5f;
+        constexpr float halfPanelHeight = panelHeight * 0.5f;
+        const UnityEngine::Color borderColor{0.0f, 0.80f, 1.0f, 1.0f};
+
         CreateResultsImage(
-            parent, {0.0f, centerY}, {98.0f, 20.0f},
+            parent, {0.0f, centerY}, {panelWidth, panelHeight},
             {0.018f, 0.043f, 0.075f, 0.98f});
+
+        // Draw one restrained outline around the complete card. The previous
+        // results summary created only a thick top accent, so the dark body
+        // blended into Beat Saber's results scene and looked like an
+        // unfinished panel. These four equal strips mirror the framed-card
+        // hierarchy used by Qounters-style displays without moving or
+        // resizing any statistics content.
         CreateResultsImage(
-            parent, {0.0f, centerY + 9.5f}, {98.0f, 0.8f},
-            {0.0f, 0.80f, 1.0f, 1.0f});
+            parent,
+            {0.0f, centerY + halfPanelHeight - borderThickness * 0.5f},
+            {panelWidth, borderThickness}, borderColor);
+        CreateResultsImage(
+            parent,
+            {0.0f, centerY - halfPanelHeight + borderThickness * 0.5f},
+            {panelWidth, borderThickness}, borderColor);
+        CreateResultsImage(
+            parent,
+            {-halfPanelWidth + borderThickness * 0.5f, centerY},
+            {borderThickness, panelHeight}, borderColor);
+        CreateResultsImage(
+            parent,
+            {halfPanelWidth - borderThickness * 0.5f, centerY},
+            {borderThickness, panelHeight}, borderColor);
         CreateResultsImage(
             parent, {-24.0f, centerY - 1.3f}, {46.0f, 14.5f},
             {0.050f, 0.095f, 0.150f, 1.0f});
@@ -496,7 +524,10 @@ namespace {
         CreateResultsText(
             parent,
             "<color=#75DFFF><b>BIG SCREEN PERFORMANCE</b></color>",
-            {0.0f, centerY + 6.8f}, {92.0f, 4.0f}, 3.0f,
+            // The statistics cards end at +5.95 and the panel ends at +10.
+            // Center the title in that dedicated header band so it does not
+            // crowd either column's blue section heading.
+            {0.0f, centerY + 8.0f}, {92.0f, 4.0f}, 3.0f,
             TMPro::TextAlignmentOptions::Center);
 
         const auto gameplayAverage = data.sampledGameplayFrames > 0
@@ -1374,6 +1405,8 @@ namespace {
         Application_InvokeFocusChanged(hasFocus);
         if(!hasFocus)
         {
+            BigScreen::MenuEnvironmentVisibility::Instance().Restore();
+            BigScreen::MenuPlacementGuide::Instance().Suspend();
             BigScreen::ErrorManager::Instance().Guard(
                 "cancelling screen positioning after focus loss", []()
                 {
@@ -1383,6 +1416,18 @@ namespace {
             BigScreen::ErrorManager::Instance().Guard("saving settings after focus loss", []() {
                 BigScreen::Settings::Instance().Flush();
             });
+        }
+        else if(BigScreen::IsBigScreenMenuActive())
+        {
+            // Focus loss always restores the stock renderer state. Recreate
+            // the optional guide only after Beat Saber owns the foreground
+            // again and Big Screen's retained flow is still active.
+            BigScreen::ErrorManager::Instance().Guard(
+                "restoring menu placement visuals after focus return", []()
+                {
+                    BigScreen::MenuPlacementGuide::Instance().Apply();
+                    BigScreen::MenuEnvironmentVisibility::Instance().Apply();
+                });
         }
     }
 
@@ -1567,17 +1612,6 @@ namespace {
             });
     }
 
-    MAKE_HOOK_MATCH(
-        StandardLevelFailedController_HandleLevelFailed,
-        &GlobalNamespace::StandardLevelFailedController::HandleLevelFailed,
-        void,
-        GlobalNamespace::StandardLevelFailedController* self)
-    {
-        StandardLevelFailedController_HandleLevelFailed(self);
-        BigScreen::ErrorManager::Instance().Guard("showing failed-map performance information", []() {
-            BigScreen::PlaybackSession::Instance().FinalizeDiagnosticsDisplay();
-        });
-    }
 }
 
 MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
@@ -1634,8 +1668,6 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, Application_InvokeFocusChanged);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
     INSTALL_HOOK(PaperLogger, ResultsViewController_DidActivate);
-    INSTALL_HOOK(PaperLogger, StandardLevelFailedController_HandleLevelFailed);
-
     // SongCore publishes selections after its custom-level details are ready,
     // including WIP songs. A plain native callback keeps this path independent
     // of Beat Saber's private view-controller field layout.

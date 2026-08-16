@@ -1401,21 +1401,23 @@ namespace BigScreen {
             playbackScrubber_,
             "Drag to another point in the song and video preview. The time shown on the bar is the current song position and total song length.");
 
-        // Deleting an override also deletes its downloaded media, thumbnail,
-        // and saved timing. Require an explicit second action so an imprecise
-        // controller click cannot remove those files immediately.
+        // Removing a video offers two deliberately distinct operations. The
+        // safe Unlink action changes only library metadata; Delete additionally
+        // removes the active physical file. Keeping both behind one modal makes
+        // the destructive difference explicit without adding another permanent
+        // button to an already dense storage row.
         removeConfirmModal_ = BSML::Lite::CreateModal(
             editorController,
-            {64.0f, 32.0f},
+            {72.0f, 38.0f},
             nullptr,
             true);
         removeConfirmationText_ = BSML::Lite::CreateText(
             removeConfirmModal_,
-            "Remove this assigned video?\nThe downloaded video and its timing settings will be deleted.",
+            "Remove this assigned video?",
             TMPro::FontStyles::Normal,
             3.3f,
             {0.0f, 4.0f},
-            {56.0f, 16.0f});
+            {64.0f, 22.0f});
         removeConfirmationText_->set_enableWordWrapping(true);
         removeConfirmationText_->set_enableAutoSizing(true);
         removeConfirmationText_->set_fontSizeMin(2.9f);
@@ -1425,27 +1427,41 @@ namespace BigScreen {
         auto* cancelRemoveButton = BSML::Lite::CreateUIButton(
             removeConfirmModal_->get_transform(),
             "Cancel",
-            {18.0f, -25.0f},
-            {20.0f, 8.0f},
+            {10.0f, -31.0f},
+            {18.0f, 8.0f},
             [this]()
             {
                 if(removeConfirmModal_)
                     removeConfirmModal_->Hide();
             });
-        ConfigureLayout(cancelRemoveButton, 20.0f, 8.0f, 0.0f);
-        auto* confirmRemoveButton = BSML::Lite::CreateUIButton(
+        ConfigureLayout(cancelRemoveButton, 18.0f, 8.0f, 0.0f);
+        unlinkVideoButton_ = BSML::Lite::CreateUIButton(
             removeConfirmModal_->get_transform(),
-            "<color=#FF3838>Remove Video</color>",
-            {46.0f, -25.0f},
-            {20.0f, 8.0f},
+            "Unlink",
+            {36.0f, -31.0f},
+            {18.0f, 8.0f},
             [this]()
             {
                 if(removeConfirmModal_)
                     removeConfirmModal_->Hide();
-                RemoveOverride();
+                RemoveOverride(false);
             });
-        ConfigureLayout(confirmRemoveButton, 20.0f, 8.0f, 0.0f);
-        if(auto* confirmText = confirmRemoveButton->get_gameObject()
+        ConfigureLayout(unlinkVideoButton_, 18.0f, 8.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(unlinkVideoButton_, 2.3f);
+        deleteVideoButton_ = BSML::Lite::CreateUIButton(
+            removeConfirmModal_->get_transform(),
+            "<color=#FF3838>Delete File</color>",
+            {62.0f, -31.0f},
+            {18.0f, 8.0f},
+            [this]()
+            {
+                if(removeConfirmModal_)
+                    removeConfirmModal_->Hide();
+                RemoveOverride(true);
+            });
+        ConfigureLayout(deleteVideoButton_, 18.0f, 8.0f, 0.0f);
+        BSML::Lite::SetButtonTextSize(deleteVideoButton_, 2.3f);
+        if(auto* confirmText = deleteVideoButton_->get_gameObject()
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             confirmText->set_color({1.0f, 0.22f, 0.22f, 1.0f});
 
@@ -2276,7 +2292,7 @@ namespace BigScreen {
         RefreshDetails();
     }
 
-    void VideoLibraryMenu::RemoveOverride()
+    void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
         if(!selected_) return;
 
@@ -2289,13 +2305,13 @@ namespace BigScreen {
             removedDescriptor.userOverrideIsImported;
         const bool removingExternalFile =
             removedDescriptor.userOverrideIsExternal;
-        const bool removingManagedUserDownload = hasUserOverride &&
-            !removingLocalMapFile && !removingImportedFile &&
-            !removingExternalFile;
+        const bool activeLocalFile = removingLocalMapFile ||
+            removingImportedFile || removingExternalFile ||
+            (!hasUserOverride && removedDescriptor.hasMapperLocalFile);
 
-        // Stop both clocks before changing the active assignment. Managed
-        // downloads may be deleted after their decoder closes; map-folder MP4s
-        // are only unregistered and always remain untouched.
+        // Close the decoder before either unlinking or deleting. On Android an
+        // open decoder/file descriptor can keep a removed path alive until the
+        // session ends and can also race a new assignment made immediately.
         StopPreviewAudio(true);
         auto& playback = PlaybackSession::Instance();
         if(playback.IsLibraryPreviewActive())
@@ -2308,22 +2324,43 @@ namespace BigScreen {
         const auto mapperThumbnailPath = library.AllocateThumbnailPath(
             levelId, VideoOrigin::Mapper).string();
 
+        // A local file is never deleted as a side effect of unregistering it.
+        // Delete File reaches this path only through the explicit red action in
+        // the confirmation modal, and the library revalidates /sdcard plus the
+        // supported media extension before touching the filesystem.
+        if(deleteFile && activeLocalFile)
+        {
+            std::string error;
+            if(!removedDescriptor.playableConfig ||
+               !library.DeleteLocalVideoFile(
+                   removedDescriptor.playableConfig->videoPath, error))
+            {
+                transientStatus_ = error.empty()
+                    ? "The local video could not be deleted. Its assignment was kept."
+                    : error + " The assignment was kept.";
+                ErrorManager::Instance().RecordError(
+                    "Deleting a local video", transientStatus_);
+                RefreshDetails();
+                return;
+            }
+        }
+
         bool removed = false;
         if(hasUserOverride)
-            removed = library.RemoveUserOverride(levelId, true);
+            removed = library.RemoveUserOverride(
+                levelId,
+                deleteFile && !activeLocalFile);
 
-        // Downloads initiated from the song-selection screen are mapper
-        // records, while downloads replaced from this editor are user records.
-        // If both owned files exist, exposing the mapper copy immediately after
-        // "Remove Video" makes the action appear to have done nothing and
-        // wastes storage. Removing a managed user download therefore removes
-        // its managed mapper fallback as part of the same confirmed action.
-        // User-owned local/import/external files retain the non-destructive
-        // unassign-and-fall-back behavior promised by their dialog.
-        const bool shouldDeleteMapperDownload = hasMapperDownload &&
-            (!hasUserOverride || removingManagedUserDownload);
-        if(shouldDeleteMapperDownload)
-            removed = library.DeleteMapperDownload(levelId) || removed;
+        // Remove every fallback assignment as well, otherwise Unlink could
+        // appear to do nothing when a mapper download or mapper-local file was
+        // waiting underneath a user override. With Unlink, managed MP4 bytes
+        // remain available to Show File Browser and Storage Maintenance.
+        if(hasMapperDownload)
+            removed = library.RemoveMapperDownload(
+                levelId,
+                deleteFile && !activeLocalFile) || removed;
+        if(removedDescriptor.hasMapperLocalFile)
+            removed = library.SuppressMapperLocalVideo(levelId) || removed;
 
         if(!removed)
         {
@@ -2339,13 +2376,10 @@ namespace BigScreen {
         EvictVideoThumbnail(mapperThumbnailPath);
 
         // The thumbnail sprite is UI-owned and independent of the downloaded
-        // MP4. Delete the probe image associated with this song as well, then
-        // release the Unity texture and restore the placeholder. Removing the
-        // file also prevents the periodic refresh from recreating the sprite
-        // from a stale completed-probe snapshot.
+        // MP4. Release the Unity texture and remove stale artwork even when the
+        // video itself was merely unlinked.
         const auto download = DownloadManager::Instance().Snapshot();
-        if(!removingLocalMapFile && !removingImportedFile &&
-           !removingExternalFile &&
+        if(!activeLocalFile &&
            download.levelId == std::string(selected_->levelID) &&
            !download.thumbnailPath.empty())
         {
@@ -2360,13 +2394,14 @@ namespace BigScreen {
             }
         }
         ClearThumbnail();
-        transientStatus_ = removingLocalMapFile
-            ? "Local video assignment removed. The video file remains in the map folder."
-            : removingImportedFile
-                ? "Imported video assignment removed. The video file remains in Video Import."
-            : removingExternalFile
-                ? "Local video assignment removed. The video file remains in its original folder."
-                : "Downloaded video removed. The mapper URL remains available if you want to download it again.";
+        if(activeLocalFile)
+            transientStatus_ = deleteFile
+                ? "Local video unlinked and deleted from the Quest."
+                : "Local video unlinked. The file remains on the Quest and can be deleted later with the Quest file browser.";
+        else
+            transientStatus_ = deleteFile
+                ? "Downloaded video unlinked and deleted. The mapper URL remains available."
+                : "Downloaded video unlinked and kept on the Quest. Use Show File Browser to assign it again or Storage Maintenance to remove it later.";
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
@@ -2677,16 +2712,23 @@ namespace BigScreen {
         }
         if(removeConfirmationText_)
         {
+            const bool activeLocalFile = descriptor.userOverrideIsMapLocal ||
+                descriptor.userOverrideIsImported ||
+                descriptor.userOverrideIsExternal ||
+                (!descriptor.hasUserOverride && descriptor.hasMapperLocalFile);
             removeConfirmationText_->set_text(
-                descriptor.userOverrideIsMapLocal
-                    ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in the map folder."
-                    : descriptor.userOverrideIsImported
-                        ? "Unassign this imported video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in the Video Import folder."
-                    : descriptor.userOverrideIsExternal
-                        ? "Unassign this local video?\n\nBig Screen will remove the assignment and its timing settings. The video file will remain unchanged in its current Quest folder."
-                    : descriptor.hasUserOverride && descriptor.hasMapperDownload
-                        ? "Remove this song's downloaded videos?\n\nBig Screen will delete both owned downloads and their timing settings. The mapper URL will remain available if you want to download it again."
-                    : "Remove this downloaded video?\n\nThe downloaded video and its timing settings will be deleted from Big Screen storage. The mapper URL, when present, will remain available for downloading again.");
+                activeLocalFile
+                    ? "Remove this local video assignment?\n\nUnlink keeps the video file on the Quest and only stops this map from using it. Delete File permanently removes it. You can also delete it later with the Quest file browser."
+                    : "Remove this downloaded video assignment?\n\nUnlink keeps the downloaded file on the Quest. Delete Video permanently removes it. An unlinked download can be reassigned with Show File Browser or removed later with Storage Maintenance.");
+            if(deleteVideoButton_)
+                if(auto* label = deleteVideoButton_->get_gameObject()
+                       ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                {
+                    label->set_text(activeLocalFile
+                        ? "<color=#FF3838>Delete File</color>"
+                        : "<color=#FF3838>Delete Video</color>");
+                    label->set_color(UnityEngine::Color::get_white());
+                }
         }
         const auto download = DownloadManager::Instance().Snapshot();
         const bool thisDownload = download.levelId == std::string(selected_->levelID);
@@ -2909,7 +2951,8 @@ namespace BigScreen {
         if(playbackScrubber_) playbackScrubber_->set_interactable(descriptor.CanPlay());
         if(playPauseButton_) playPauseButton_->set_interactable(descriptor.CanPlay());
         if(removeButton_) removeButton_->set_interactable(
-            descriptor.hasUserOverride || descriptor.hasMapperDownload);
+            descriptor.hasUserOverride || descriptor.hasMapperDownload ||
+            descriptor.hasMapperLocalFile);
         const auto timingHint = mapperTimingWaitingForVideo
             ? std::string(MapperTimingLockedHint)
             : std::string{};

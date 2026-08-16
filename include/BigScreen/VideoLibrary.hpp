@@ -67,6 +67,10 @@ namespace BigScreen {
         std::string songAuthor;
         std::optional<StoredVideo> mapper;
         std::optional<StoredVideo> user;
+        // A mapper-declared local file normally becomes active automatically.
+        // Keep a durable opt-out so Remove Video can unlink that assignment
+        // without editing the map or deleting the mapper/user-owned MP4.
+        bool mapperLocalSuppressed = false;
         // Mapper-local files live inside a map folder rather than the managed
         // video library, so their user-adjusted timing needs a small separate
         // manifest record of its own.
@@ -164,7 +168,19 @@ namespace BigScreen {
             const std::string& fileName,
             std::string& error);
         bool RemoveUserOverride(const std::string& levelId, bool deleteFile);
+        /// Prevents a mapper-declared local file from being selected for this
+        /// map. This changes only library metadata and never removes the MP4.
+        bool SuppressMapperLocalVideo(const std::string& levelId);
+        /// Removes a mapper download record, optionally deleting its managed
+        /// file. When deleteFile is false, the orphan remains available to the
+        /// file browser and Storage Maintenance.
+        bool RemoveMapperDownload(const std::string& levelId, bool deleteFile);
         bool DeleteMapperDownload(const std::string& levelId);
+        /// Deletes an explicitly selected local file after enforcing the
+        /// shared-storage and supported-container boundaries.
+        bool DeleteLocalVideoFile(
+            const std::filesystem::path& path,
+            std::string& error) const;
         bool UpdateTiming(
             const std::string& levelId,
             VideoOrigin origin,

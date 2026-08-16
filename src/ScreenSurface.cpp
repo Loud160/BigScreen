@@ -313,7 +313,7 @@ namespace BigScreen {
         // Quest. Removing the background renderer makes the unused part of a
         // non-16:9 frame genuinely transparent.
         renderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
-            config.letterboxTransparent, false));
+            config.letterboxTransparent, false, videoCoversFrame_));
 
         videoObject_ = UnityEngine::GameObject::New_ctor("Big Screen Video Content");
         if(!videoObject_)
@@ -480,6 +480,22 @@ namespace BigScreen {
         const float panX = config.videoOffsetX * frameWidth * 0.5f;
         const float panY = config.videoOffsetY * frameHeight * 0.5f;
 
+        // Do not render an opaque backing surface when this simple picture
+        // already covers every point of the canvas. Besides avoiding needless
+        // overdraw, this prevents large and distant menu previews from making
+        // the black backing and picture fight for the same depth-buffer value.
+        // Rotation, tilt, or pan can expose a corner, so those presentations
+        // deliberately retain their configured letterbox background.
+        constexpr float CoverageEpsilon = 0.0005f;
+        const bool untransformed =
+            std::abs(config.videoRotation) <= CoverageEpsilon &&
+            std::abs(config.videoTilt) <= CoverageEpsilon &&
+            std::abs(panX) <= CoverageEpsilon &&
+            std::abs(panY) <= CoverageEpsilon;
+        videoCoversFrame_ = untransformed &&
+            contentWidth >= frameWidth - CoverageEpsilon &&
+            contentHeight >= frameHeight - CoverageEpsilon;
+
         const int columns = std::max(8, config.screenSegments);
         const int rows = 8;
         const auto transformed = [&](float u, float v)
@@ -529,7 +545,8 @@ namespace BigScreen {
 
         const auto mapToSurface = [&](const ContentVertex& value)
         {
-            constexpr float VideoLayerOffset = -0.015f;
+            const float videoLayerOffset =
+                CoreLogic::VideoLayerOffset(frameWidth, frameHeight);
             if(cinemaCurve && !cinemaCurveIsFlat)
             {
                 if(config.cinemaCurveYAxis)
@@ -539,14 +556,14 @@ namespace BigScreen {
                         value.x,
                         std::sin(theta) * cinemaRadius,
                         std::cos(theta) * cinemaRadius - cinemaRadius +
-                            value.z + VideoLayerOffset};
+                            value.z + videoLayerOffset};
                 }
                 const float theta = value.x / frameWidth * cinemaArcRadians;
                 return UnityEngine::Vector3{
                     std::sin(theta) * cinemaRadius,
                     value.y,
                     std::cos(theta) * cinemaRadius - cinemaRadius +
-                        value.z + VideoLayerOffset};
+                        value.z + videoLayerOffset};
             }
 
             const float normalizedX = std::clamp(
@@ -558,7 +575,7 @@ namespace BigScreen {
             return UnityEngine::Vector3{
                 value.x,
                 value.y,
-                curveZ + value.z + VideoLayerOffset};
+                curveZ + value.z + videoLayerOffset};
         };
 
         const auto appendTriangle = [&](const ContentVertex& a,
@@ -660,6 +677,7 @@ namespace BigScreen {
             static_cast<float>(textureWidth_) / textureHeight_;
         auto* previousMesh = mesh_;
         auto* previousVideoMesh = videoMesh_;
+        const bool previousVideoCoversFrame = videoCoversFrame_;
         mesh_ = nullptr;
         videoMesh_ = nullptr;
         if(!CreateMesh(config, aspectRatio) || !mesh_ ||
@@ -671,6 +689,7 @@ namespace BigScreen {
                 UnityEngine::Object::Destroy(videoMesh_);
             mesh_ = previousMesh;
             videoMesh_ = previousVideoMesh;
+            videoCoversFrame_ = previousVideoCoversFrame;
             return false;
         }
 
@@ -684,6 +703,7 @@ namespace BigScreen {
             UnityEngine::Object::Destroy(videoMesh_);
             mesh_ = previousMesh;
             videoMesh_ = previousVideoMesh;
+            videoCoversFrame_ = previousVideoCoversFrame;
             return false;
         }
 
@@ -692,6 +712,15 @@ namespace BigScreen {
         // operation, preventing the gray flash caused by recreating a screen.
         filter->set_sharedMesh(mesh_);
         videoFilter->set_sharedMesh(videoMesh_);
+        if(auto* backgroundRenderer =
+               gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
+        {
+            backgroundRenderer->set_enabled(
+                CoreLogic::ScreenBackgroundVisible(
+                    letterboxTransparent_,
+                    leadInActive_ && leadInBlack_,
+                    videoCoversFrame_));
+        }
         fractureMeshActive_ = false;
         fractureShapeCaptured_ = false;
         fractureSnapshotActive_ = false;
@@ -837,7 +866,9 @@ namespace BigScreen {
         {
             backgroundRenderer->set_enabled(
                 CoreLogic::ScreenBackgroundVisible(
-                    letterboxTransparent_, leadInActive_ && leadInBlack_));
+                    letterboxTransparent_,
+                    leadInActive_ && leadInBlack_,
+                    videoCoversFrame_));
         }
         return true;
     }
@@ -980,7 +1011,7 @@ namespace BigScreen {
             {
                 backgroundRenderer->set_enabled(
                     CoreLogic::ScreenBackgroundVisible(
-                        letterboxTransparent_, false));
+                        letterboxTransparent_, false, videoCoversFrame_));
             }
             leadInActive_ = false;
             leadInBlack_ = false;
@@ -1129,7 +1160,8 @@ namespace BigScreen {
                 CoreLogic::DeformationClock::RealTime
             ? realTimeSeconds : songTimeSeconds;
 
-        constexpr float VideoLayerOffset = -0.015f;
+        const float videoLayerOffset =
+            CoreLogic::VideoLayerOffset(frameWidth, frameHeight);
         for(std::size_t index = 0; index < deformationBaseVertices_.size(); ++index)
         {
             const auto& base = deformationBaseVertices_[index];
@@ -1169,7 +1201,7 @@ namespace BigScreen {
             dynamicVideoVertices_[index] = {
                 x + wave.x,
                 y + wave.y,
-                z + wave.z + VideoLayerOffset};
+                z + wave.z + videoLayerOffset};
         }
 
         const float cover = CoreLogic::DeformationAutoCoverScale(
@@ -1236,7 +1268,10 @@ namespace BigScreen {
             ? realTimeSeconds : songTimeSeconds;
         const auto wave = CoreLogic::FlagWaveOffset(
             deformation.wave, point.x, waveClock);
-        return {x + wave.x, y + wave.y, z + wave.z - 0.015f};
+        return {
+            x + wave.x,
+            y + wave.y,
+            z + wave.z + CoreLogic::VideoLayerOffset(frameWidth, frameHeight)};
     }
 
     void ScreenSurface::RestoreWholeVideoMesh()
@@ -1781,6 +1816,7 @@ namespace BigScreen {
         screenWidth_ = 0.0f;
         screenHeight_ = 0.0f;
         letterboxTransparent_ = false;
+        videoCoversFrame_ = false;
         opacity_ = 1.0f;
         visible_ = false;
         leadInActive_ = false;

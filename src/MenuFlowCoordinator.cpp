@@ -9,6 +9,8 @@
 
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
+#include "BigScreen/MenuEnvironmentVisibility.hpp"
+#include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
@@ -424,6 +426,10 @@ namespace BigScreen {
         // as soon as this page leaves the screen hierarchy.
         DisableFoveationForMenu();
         ApplyDistractionFreeMenu();
+        MenuPlacementGuide::Instance().Apply();
+        // Apply the environment last so its Off state remains authoritative
+        // even if the positive floor toggle restored a renderer moments ago.
+        MenuEnvironmentVisibility::Instance().Apply();
 
         // The standard title and Back strip spans the center screen and partly
         // covers the world-space placement preview. SettingsMenu recreates both
@@ -639,6 +645,8 @@ namespace BigScreen {
         ScreenPreview::Instance().Suspend();
         VideoLibraryMenu::Instance().Deactivate();
         ShowcaseMenu::Instance().DismissTransientUi();
+        MenuEnvironmentVisibility::Instance().Restore();
+        MenuPlacementGuide::Instance().Suspend();
         RestoreDistractionFreeMenu();
         RestoreMenuFoveation();
 
@@ -656,6 +664,8 @@ namespace BigScreen {
                 "Closing the Big Screen menu", exception.what());
             // These restorations are individually fail-safe and must still be
             // attempted if another teardown action threw first.
+            MenuEnvironmentVisibility::Instance().Restore();
+            MenuPlacementGuide::Instance().Suspend();
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;
@@ -665,6 +675,8 @@ namespace BigScreen {
             PaperLogger.error("Big Screen menu deactivation failed");
             ErrorManager::Instance().RecordError(
                 "Closing the Big Screen menu", "Unknown native exception");
+            MenuEnvironmentVisibility::Instance().Restore();
+            MenuPlacementGuide::Instance().Suspend();
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;

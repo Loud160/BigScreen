@@ -80,6 +80,12 @@ namespace BigScreen {
 
         bool ModEnabled() const { return modEnabled_; }
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
+        bool ShowMenuEnvironment() const { return showMenuEnvironment_; }
+        // Scenery, lighting, and floor visibility share one user preference.
+        // Keep this accessor so the focused floor-discovery component remains
+        // decoupled from the settings representation.
+        bool ShowMenuFloor() const { return showMenuEnvironment_; }
+        bool ShowLaneGuidesEnabled() const { return showLaneGuidesEnabled_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
         bool AdvancedOptionsEnabled() const { return ActiveLayout().advancedControls; }
@@ -140,6 +146,8 @@ namespace BigScreen {
 
         void SetModEnabled(bool value);
         void SetDistractionFreeMenu(bool value);
+        void SetShowMenuEnvironment(bool value);
+        void SetShowLaneGuidesEnabled(bool value);
         void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
         void SetAdvancedOptionsEnabled(bool value);
@@ -210,6 +218,12 @@ namespace BigScreen {
         // world. This affects only Big Screen's own menu lifetime and restores
         // every stock or optional-mod object when the player leaves.
         bool distractionFreeMenu_ = true;
+        // This positive-logic switch describes what remains visible. The
+        // environment implementation disables only visual/light components;
+        // the menu hierarchy, input systems, and Big Screen surfaces stay live.
+        bool showMenuEnvironment_ = true;
+        // Lane guides remain independent from environment and floor visibility.
+        bool showLaneGuidesEnabled_ = false;
         bool videoEnabled_ = true;
         bool menuPreviewEnabled_ = true;
         std::array<ScreenLayoutProfile, 5> screenLayouts_{};
@@ -230,13 +244,13 @@ namespace BigScreen {
         bool hideSpectrogramBars_ = true;
         int playbackFpsLimit_ = 30;
         int resolutionHeight_ = 720;
-        // FFmpeg 4.4.8 remains the conservative default until repeated Quest
-        // comparisons justify promoting the newer runtime.
-        bool useFfmpeg9_ = false;
-        // MediaCodec is an opt-in experiment until repeated Quest 2 and Quest
-        // 3 measurements establish its compatibility, latency, and power use.
-        // Every failure automatically returns the affected file to software.
-        bool hardwareDecodingEnabled_ = false;
+        // New installations use the current bundled runtime. FFmpeg 4.4.8
+        // remains available from the menu as a compatibility/A-B option.
+        bool useFfmpeg9_ = true;
+        // Compatible videos use the Quest's MediaCodec decoder by default.
+        // Formats that permit software decoding still fall back safely when
+        // MediaCodec cannot open the file.
+        bool hardwareDecodingEnabled_ = true;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceResponseSeconds_ = 5.0f;
