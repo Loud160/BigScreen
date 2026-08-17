@@ -54,6 +54,11 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     // top controller during activation, where Beat Saber may throw.
     DECLARE_INSTANCE_FIELD(bool, restoreCenterOnActivation);
 
+    /// Returns the retained center stack to Big Screen's neutral controller
+    /// while the flow is still active. Showcase gameplay clears HMUI's center
+    /// stack, so deferring this restoration until the next activation would
+    /// make ReplaceTopViewController index an empty collection.
+    DECLARE_INSTANCE_METHOD(void, PrepareForShowcaseDismissal);
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
 
     DECLARE_OVERRIDE_METHOD_MATCH(

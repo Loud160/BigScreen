@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0-alpha.3 — Showcase menu re-entry fix
+
+- Fixed reopening Big Screen after playing the bundled Showcase throwing a
+  `System.ArgumentOutOfRangeException` and leaving the player trapped in an
+  environment-only menu scene. The Showcase launcher now restores Big Screen's
+  neutral center controller while HMUI's retained stack is still valid, before
+  dismissing the mod menu and entering gameplay.
+- Added a repository regression invariant that requires the center-controller
+  restoration to occur before the Showcase dismisses Big Screen, preventing a
+  future change from attempting to rebuild the cleared HMUI stack after play.
+
 ## 0.7.0-alpha.2 — Beat Saber 1.40.8 port
 
 - Added a notification-only Big Screen release checker. It checks the latest

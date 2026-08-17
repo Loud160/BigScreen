@@ -298,6 +298,13 @@ namespace BigScreen {
         {
             ScreenPreview::Instance().CancelUndockedEditing();
             VideoLibraryMenu::Instance().StopActivePreview();
+            // The Showcase page is a replacement on Big Screen's retained
+            // center stack. Restore the neutral controller before dismissing
+            // this flow, while HMUI still has a valid top controller. Gameplay
+            // clears that stack; trying to restore it during the next
+            // DidActivate caused System.ArgumentOutOfRangeException and left
+            // the player looking at an environment with no usable menus.
+            coordinator->PrepareForShowcaseDismissal();
             auto parent =
                 coordinator->__cordl_internal_get__parentFlowCoordinator();
             if(!parent)
@@ -331,6 +338,26 @@ namespace BigScreen {
                 "Unknown native exception");
         }
         return false;
+    }
+
+    void MenuFlowCoordinator::PrepareForShowcaseDismissal()
+    {
+        ShowcaseMenu::Instance().DismissTransientUi();
+        if(!restoreCenterOnActivation)
+            return;
+        if(!centerViewController)
+            throw std::runtime_error(
+                "Big Screen's neutral center controller was unavailable");
+
+        // This mirrors the working Close Showcase Menu path. AnimationType::None
+        // makes the stack replacement synchronous before the parent flow is
+        // dismissed; it does not attempt to reconstruct HMUI after gameplay.
+        ReplaceTopViewController(
+            centerViewController,
+            nullptr,
+            HMUI::ViewController::AnimationType::None,
+            HMUI::ViewController::AnimationDirection::Horizontal);
+        restoreCenterOnActivation = false;
     }
 
     void RestoreDistractionFreeMenu()

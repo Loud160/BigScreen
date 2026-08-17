@@ -825,6 +825,22 @@ assert "RequestReturnToBigScreen" not in main_source
 assert "WaitingForResultsDismissal" not in showcase_source
 assert "RestoreShowcasePageAfterGameplay" not in showcase_source
 
+# Showcase must return Big Screen's retained center stack to its neutral view
+# before the parent flow is dismissed. Gameplay clears HMUI's stack, so waiting
+# until the next DidActivate makes ReplaceTopViewController throw an index error
+# and strands the player in an environment-only menu scene.
+showcase_exit = menu_flow_source.split(
+    "bool ExitBigScreenMenuForShowcase() noexcept", 1
+)[1].split("void MenuFlowCoordinator::PrepareForShowcaseDismissal()", 1)[0]
+assert showcase_exit.index("PrepareForShowcaseDismissal();") < \
+    showcase_exit.index("parent->DismissFlowCoordinator(")
+prepare_showcase_dismissal = menu_flow_source.split(
+    "void MenuFlowCoordinator::PrepareForShowcaseDismissal()", 1
+)[1].split("void MenuFlowCoordinator::DidActivate(", 1)[0]
+assert "ReplaceTopViewController(" in prepare_showcase_dismissal
+assert "AnimationType::None" in prepare_showcase_dismissal
+assert "restoreCenterOnActivation = false;" in prepare_showcase_dismissal
+
 # Showcase glass remains deterministic, programmatic, and isolated from the
 # normal video surface. Only the authored 2:03 damage sequence uses it. Its
 # final break freezes the displayed GPU texture and spreads pieces forward as
