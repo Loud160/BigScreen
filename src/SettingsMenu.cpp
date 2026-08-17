@@ -151,12 +151,13 @@ namespace BigScreen {
 
     void SettingsMenu::CreateUi(
         HMUI::ViewController* viewController,
+        HMUI::ViewController* errorHostViewController,
         std::function<void()> onBack,
         std::function<void()> onManageStorage,
         std::function<void()> onShowShowcase,
         std::function<void(bool)> onModEnabledChanged)
     {
-        if(!viewController)
+        if(!viewController || !errorHostViewController)
             return;
         // The manager owns the once-per-process guard, so rebuilding or
         // reopening this view can safely ask without creating another request.
@@ -232,12 +233,17 @@ namespace BigScreen {
         hideSpectrogramBarsToggle_ = nullptr;
         hideSpectrogramBarsHint_ = nullptr;
         playbackFpsDropdown_ = nullptr;
+        highFrameRateWarningModal_ = nullptr;
         ffmpeg9Toggle_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceWarningModal_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
-        automaticPerformanceResponseSlider_ = nullptr;
+        automaticPerformanceAttackSlider_ = nullptr;
+        automaticPerformanceReleaseSlider_ = nullptr;
+        automaticPerformanceFpsStepSlider_ = nullptr;
+        automaticPerformanceOscillationToggle_ = nullptr;
+        automaticPerformanceOscillationLimitSlider_ = nullptr;
         performancePanelResetButton_ = nullptr;
         performanceDiagnosticsToggle_ = nullptr;
         powerBenchmarkToggle_ = nullptr;
@@ -604,9 +610,21 @@ namespace BigScreen {
             "Video Frame Rate Limit",
             PlaybackFpsLabel(settings.PlaybackFpsLimit()),
             PlaybackFpsChoices,
-            [](StringW value)
+            [this](StringW value)
             {
-                Settings::Instance().SetPlaybackFpsLimit(PlaybackFpsValue(value));
+                const int selectedFps = PlaybackFpsValue(value);
+                if(selectedFps == 60 &&
+                   Settings::Instance().PlaybackFpsLimit() != 60 &&
+                   highFrameRateWarningModal_)
+                {
+                    // A dropdown visually adopts its new cell before invoking
+                    // this callback. Restore the saved value until the player
+                    // explicitly confirms the more demanding ceiling.
+                    RefreshPlaybackFpsControl();
+                    highFrameRateWarningModal_->Show();
+                    return;
+                }
+                Settings::Instance().SetPlaybackFpsLimit(selectedFps);
                 PlaybackSession::Instance().RefreshPlaybackFpsLimitLive();
             });
         BSML::Lite::AddHoverHint(
@@ -670,11 +688,15 @@ namespace BigScreen {
                     return;
                 }
                 Settings::Instance().SetAutomaticPerformanceEnabled(false);
+                // Restore the user's configured ceiling immediately in a
+                // menu preview. Gameplay intentionally keeps its current
+                // decoder but no longer applies another automatic step.
+                PlaybackSession::Instance().RefreshPlaybackFpsLimitLive();
                 RefreshEnabledState();
             });
         BSML::Lite::AddHoverHint(
             automaticPerformanceToggle_,
-            "Experimental: continuously adjusts the video frame-rate limit while a map is playing. Sustained frame loss lowers the limit in 5 FPS steps; sustained recovery restores those exact steps in reverse order. Video resolution is never changed.");
+            "Experimental: continuously adjusts the video frame-rate limit during previews and maps. Attack and release times control how quickly it moves down or back up, and repeated unstable recoveries can be held at the proven lower rate. Video resolution is never changed.");
         automaticPerformanceThresholdSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
             "Frame Rate Loss Trigger",
@@ -695,12 +717,12 @@ namespace BigScreen {
         automaticPerformanceThresholdSlider_->slider->UpdateVisuals();
         BSML::Lite::AddHoverHint(
             automaticPerformanceThresholdSlider_,
-            "Sets the video frame-rate loss that triggers Automatic Performance. At or above this percentage, quality moves down one step; below it, quality can move back up one step. The response-time setting controls how long either condition must continue.");
-        automaticPerformanceResponseSlider_ = BSML::Lite::CreateSliderSetting(
+            "Sets the missed-frame percentage that Automatic Performance treats as overload. Loss at or above this value starts the attack timer; loss below it starts the release timer.");
+        automaticPerformanceAttackSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
-            "Scaling Response Time",
+            "Attack Time",
             0.1f,
-            settings.AutomaticPerformanceResponseSeconds(),
+            settings.AutomaticPerformanceAttackSeconds(),
             0.5f,
             10.0f,
             0.15f,
@@ -708,13 +730,89 @@ namespace BigScreen {
             {0.0f, 0.0f},
             [](float value)
             {
-                Settings::Instance().SetAutomaticPerformanceResponseSeconds(value);
+                Settings::Instance().SetAutomaticPerformanceAttackSeconds(value);
             });
-        automaticPerformanceResponseSlider_->digits = 1;
-        automaticPerformanceResponseSlider_->slider->UpdateVisuals();
+        automaticPerformanceAttackSlider_->digits = 1;
+        automaticPerformanceAttackSlider_->slider->UpdateVisuals();
         BSML::Lite::AddHoverHint(
-            automaticPerformanceResponseSlider_,
-            "Sets how long video performance must remain at or above the trigger before quality drops one step, or below it before quality rises one step. Automatic Performance keeps reevaluating this interval throughout the map.");
+            automaticPerformanceAttackSlider_,
+            "Sets how long frame loss must stay at or above the trigger before the FPS limit is reduced. Short spikes that recover before this time do not lower the limit.");
+        automaticPerformanceReleaseSlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "Release Time",
+            0.1f,
+            settings.AutomaticPerformanceReleaseSeconds(),
+            0.5f,
+            30.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetAutomaticPerformanceReleaseSeconds(value);
+            });
+        automaticPerformanceReleaseSlider_->digits = 1;
+        automaticPerformanceReleaseSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceReleaseSlider_,
+            "Sets how long frame loss must remain below the trigger before the previous FPS limit is restored. A longer release time avoids raising the limit during a brief easy section.");
+        automaticPerformanceFpsStepSlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "FPS Step Size",
+            1.0f,
+            static_cast<float>(settings.AutomaticPerformanceFpsStep()),
+            1.0f,
+            5.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetAutomaticPerformanceFpsStep(
+                    static_cast<int>(std::round(value)));
+            });
+        automaticPerformanceFpsStepSlider_->isInt = true;
+        automaticPerformanceFpsStepSlider_->digits = 0;
+        automaticPerformanceFpsStepSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceFpsStepSlider_,
+            "Sets each automatic reduction from 1 to 5 FPS. Recovery restores the exact prior limit. The first reduction skips limits above the video's actual source rate because those limits would not reduce presentation work.");
+        automaticPerformanceOscillationToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Prevent FPS Oscillation",
+            settings.AutomaticPerformanceOscillationPreventionEnabled(),
+            [this](bool enabled)
+            {
+                Settings::Instance()
+                    .SetAutomaticPerformanceOscillationPreventionEnabled(enabled);
+                RefreshEnabledState();
+            });
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceOscillationToggle_,
+            "Stops repeated switching between the same two FPS limits. After the configured number of failed recovery attempts, upward recovery is held at the stable lower limit for the rest of the current preview or map. Further reductions remain available if needed.");
+        automaticPerformanceOscillationLimitSlider_ =
+            BSML::Lite::CreateSliderSetting(
+                performanceParent,
+                "Oscillation Limit",
+                1.0f,
+                static_cast<float>(
+                    settings.AutomaticPerformanceOscillationLimit()),
+                1.0f,
+                10.0f,
+                0.15f,
+                true,
+                {0.0f, 0.0f},
+                [](float value)
+                {
+                    Settings::Instance().SetAutomaticPerformanceOscillationLimit(
+                        static_cast<int>(std::round(value)));
+                });
+        automaticPerformanceOscillationLimitSlider_->isInt = true;
+        automaticPerformanceOscillationLimitSlider_->digits = 0;
+        automaticPerformanceOscillationLimitSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            automaticPerformanceOscillationLimitSlider_,
+            "Sets how many times a recovered FPS limit may fail and return to the same lower limit before upward recovery is held for the remainder of the current preview or map.");
         // Keep the recovery action visibly attached to the diagnostics toggle.
         // The panel is freely movable in six degrees, so this one-click default
         // is the escape hatch if it is accidentally dragged out of reach.
@@ -1729,11 +1827,49 @@ namespace BigScreen {
             hideSpectrogramBarsToggle_,
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
 
+        highFrameRateWarningModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 38.0f}, nullptr, false);
+        auto* highFrameRateWarningText = BSML::Lite::CreateText(
+            highFrameRateWarningModal_,
+            "Use the 60 FPS limit?\n\n60 FPS requires Big Screen to prepare and upload twice as many video frames as the 30 FPS default. If video playback stutters or looks choppy, enable Automatic Performance in the Misc tab so Big Screen can lower the frame-rate limit when needed.",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 6.0f},
+            {64.0f, 23.0f});
+        highFrameRateWarningText->set_enableWordWrapping(true);
+        highFrameRateWarningText->set_enableAutoSizing(true);
+        highFrameRateWarningText->set_fontSizeMin(2.5f);
+        highFrameRateWarningText->set_fontSizeMax(3.0f);
+        highFrameRateWarningText->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        highFrameRateWarningText->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            highFrameRateWarningModal_->get_transform(), "Cancel",
+            {18.0f, -28.0f}, {25.0f, 8.0f},
+            [this]()
+            {
+                if(highFrameRateWarningModal_)
+                    highFrameRateWarningModal_->Hide();
+                RefreshPlaybackFpsControl();
+            });
+        BSML::Lite::CreateUIButton(
+            highFrameRateWarningModal_->get_transform(), "Use 60 FPS",
+            {48.0f, -28.0f}, {27.0f, 8.0f},
+            [this]()
+            {
+                Settings::Instance().SetPlaybackFpsLimit(60);
+                PlaybackSession::Instance().RefreshPlaybackFpsLimitLive();
+                if(highFrameRateWarningModal_)
+                    highFrameRateWarningModal_->Hide();
+                RefreshPlaybackFpsControl();
+            });
+
         automaticPerformanceWarningModal_ = BSML::Lite::CreateModal(
             viewController, {72.0f, 38.0f}, nullptr, false);
         auto* automaticPerformanceWarningText = BSML::Lite::CreateText(
             automaticPerformanceWarningModal_,
-            "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore the video frame-rate limit in 5 FPS steps when sustained frame loss is detected. It never changes video resolution. Results may vary by video, map, and headset.",
+            "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore the video frame-rate limit when sustained frame loss is detected. Attack, release, step size, and oscillation controls determine how it reacts. It never changes video resolution. Results may vary by video, map, and headset.",
             TMPro::FontStyles::Normal,
             3.0f,
             {0.0f, 6.0f},
@@ -1765,6 +1901,7 @@ namespace BigScreen {
             [this]()
             {
                 Settings::Instance().SetAutomaticPerformanceEnabled(true);
+                PlaybackSession::Instance().RefreshPlaybackFpsLimitLive();
                 suppressAutomaticPerformanceCallback_ = true;
                 SetToggleWithoutNotification(
                     automaticPerformanceToggle_, true);
@@ -2211,10 +2348,13 @@ namespace BigScreen {
             confirmResetText->set_color({1.0f, 0.35f, 0.35f, 1.0f});
 
         // One shared error surface prevents repeated failures from building a
-        // stack of modal views. ErrorManager keeps only the newest pending
-        // message and never permits this UI to appear over active gameplay.
+        // stack of modal views. Host it on Big Screen's neutral center screen,
+        // not this left settings controller: most playback errors originate
+        // while the player is working in the right-side Video Library, and a
+        // left-panel modal is easy to overlook. ErrorManager keeps only the
+        // newest pending message and never permits this UI over gameplay.
         errorModal_ = BSML::Lite::CreateModal(
-            viewController, {72.0f, 42.0f}, nullptr, true);
+            errorHostViewController, {72.0f, 42.0f}, nullptr, true);
         errorModalText_ = BSML::Lite::CreateText(
             errorModal_, "", TMPro::FontStyles::Normal, 3.0f,
             {0.0f, 3.0f}, {66.0f, 30.0f});
@@ -2292,6 +2432,18 @@ namespace BigScreen {
             if(modEnabledUiChanged_)
                 modEnabledUiChanged_(enabled);
         }
+    }
+
+    void SettingsMenu::RefreshPlaybackFpsControl()
+    {
+        if(!playbackFpsDropdown_)
+            return;
+        const int savedFps = Settings::Instance().PlaybackFpsLimit();
+        const int index = savedFps == 15 ? 0 : savedFps == 60 ? 2 : 1;
+        playbackFpsDropdown_->index = index;
+        if(playbackFpsDropdown_->dropdown)
+            playbackFpsDropdown_->dropdown->SelectCellWithIdx(index);
+        playbackFpsDropdown_->UpdateState();
     }
 
     void SettingsMenu::RefreshValues()
@@ -2396,22 +2548,26 @@ namespace BigScreen {
         if(videoTiltSlider_)
             videoTiltSlider_->set_Value(settings.VideoTilt());
         RefreshVideoOffsetValueTexts();
-        if(playbackFpsDropdown_)
-        {
-            const int index = settings.PlaybackFpsLimit() == 15
-                ? 0
-                : settings.PlaybackFpsLimit() == 60 ? 2 : 1;
-            playbackFpsDropdown_->index = index;
-            if(playbackFpsDropdown_->dropdown)
-                playbackFpsDropdown_->dropdown->SelectCellWithIdx(index);
-            playbackFpsDropdown_->UpdateState();
-        }
+        RefreshPlaybackFpsControl();
         if(automaticPerformanceThresholdSlider_)
             automaticPerformanceThresholdSlider_->set_Value(
                 static_cast<float>(settings.AutomaticPerformanceThreshold()));
-        if(automaticPerformanceResponseSlider_)
-            automaticPerformanceResponseSlider_->set_Value(
-                settings.AutomaticPerformanceResponseSeconds());
+        if(automaticPerformanceAttackSlider_)
+            automaticPerformanceAttackSlider_->set_Value(
+                settings.AutomaticPerformanceAttackSeconds());
+        if(automaticPerformanceReleaseSlider_)
+            automaticPerformanceReleaseSlider_->set_Value(
+                settings.AutomaticPerformanceReleaseSeconds());
+        if(automaticPerformanceFpsStepSlider_)
+            automaticPerformanceFpsStepSlider_->set_Value(
+                static_cast<float>(settings.AutomaticPerformanceFpsStep()));
+        SetToggleWithoutNotification(
+            automaticPerformanceOscillationToggle_,
+            settings.AutomaticPerformanceOscillationPreventionEnabled());
+        if(automaticPerformanceOscillationLimitSlider_)
+            automaticPerformanceOscillationLimitSlider_->set_Value(
+                static_cast<float>(
+                    settings.AutomaticPerformanceOscillationLimit()));
     }
 
     void SettingsMenu::RefreshEnabledState()
@@ -2613,9 +2769,24 @@ namespace BigScreen {
         if(automaticPerformanceThresholdSlider_)
             automaticPerformanceThresholdSlider_->set_interactable(
                 enabled && settings.AutomaticPerformanceEnabled());
-        if(automaticPerformanceResponseSlider_)
-            automaticPerformanceResponseSlider_->set_interactable(
-                enabled && settings.AutomaticPerformanceEnabled());
+        const bool automaticPerformanceControlsEnabled =
+            enabled && settings.AutomaticPerformanceEnabled();
+        if(automaticPerformanceAttackSlider_)
+            automaticPerformanceAttackSlider_->set_interactable(
+                automaticPerformanceControlsEnabled);
+        if(automaticPerformanceReleaseSlider_)
+            automaticPerformanceReleaseSlider_->set_interactable(
+                automaticPerformanceControlsEnabled);
+        if(automaticPerformanceFpsStepSlider_)
+            automaticPerformanceFpsStepSlider_->set_interactable(
+                automaticPerformanceControlsEnabled);
+        if(automaticPerformanceOscillationToggle_)
+            automaticPerformanceOscillationToggle_->set_interactable(
+                automaticPerformanceControlsEnabled);
+        if(automaticPerformanceOscillationLimitSlider_)
+            automaticPerformanceOscillationLimitSlider_->set_interactable(
+                automaticPerformanceControlsEnabled &&
+                settings.AutomaticPerformanceOscillationPreventionEnabled());
         if(performancePanelResetButton_)
             performancePanelResetButton_->set_interactable(enabled);
         if(performanceDiagnosticsToggle_)
@@ -2847,16 +3018,26 @@ namespace BigScreen {
         }
         else if(selectedTab_ == 3)
         {
-            // Misc is also constructed while hidden. Force the two Automatic
+            // Misc is also constructed while hidden. Force the Automatic
             // Performance sliders through the same native post-visibility
             // layout pass so their saved/default values start at the handle
             // instead of remaining at the left edge until the first drag.
             if(automaticPerformanceThresholdSlider_ &&
                automaticPerformanceThresholdSlider_->slider)
                 automaticPerformanceThresholdSlider_->slider->UpdateVisuals();
-            if(automaticPerformanceResponseSlider_ &&
-               automaticPerformanceResponseSlider_->slider)
-                automaticPerformanceResponseSlider_->slider->UpdateVisuals();
+            if(automaticPerformanceAttackSlider_ &&
+               automaticPerformanceAttackSlider_->slider)
+                automaticPerformanceAttackSlider_->slider->UpdateVisuals();
+            if(automaticPerformanceReleaseSlider_ &&
+               automaticPerformanceReleaseSlider_->slider)
+                automaticPerformanceReleaseSlider_->slider->UpdateVisuals();
+            if(automaticPerformanceFpsStepSlider_ &&
+               automaticPerformanceFpsStepSlider_->slider)
+                automaticPerformanceFpsStepSlider_->slider->UpdateVisuals();
+            if(automaticPerformanceOscillationLimitSlider_ &&
+               automaticPerformanceOscillationLimitSlider_->slider)
+                automaticPerformanceOscillationLimitSlider_->slider
+                    ->UpdateVisuals();
         }
     }
 

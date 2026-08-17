@@ -130,8 +130,20 @@ namespace BigScreen {
         bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
-        float AutomaticPerformanceResponseSeconds() const {
-            return automaticPerformanceResponseSeconds_;
+        float AutomaticPerformanceAttackSeconds() const {
+            return automaticPerformanceAttackSeconds_;
+        }
+        float AutomaticPerformanceReleaseSeconds() const {
+            return automaticPerformanceReleaseSeconds_;
+        }
+        int AutomaticPerformanceFpsStep() const {
+            return automaticPerformanceFpsStep_;
+        }
+        bool AutomaticPerformanceOscillationPreventionEnabled() const {
+            return automaticPerformanceOscillationPreventionEnabled_;
+        }
+        int AutomaticPerformanceOscillationLimit() const {
+            return automaticPerformanceOscillationLimit_;
         }
         bool PerformanceDiagnosticsEnabled() const { return performanceDiagnosticsEnabled_; }
         float PerformancePanelPositionX() const { return performancePanelPositionX_; }
@@ -189,7 +201,11 @@ namespace BigScreen {
         void SetHardwareDecodingEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
-        void SetAutomaticPerformanceResponseSeconds(float value);
+        void SetAutomaticPerformanceAttackSeconds(float value);
+        void SetAutomaticPerformanceReleaseSeconds(float value);
+        void SetAutomaticPerformanceFpsStep(int value);
+        void SetAutomaticPerformanceOscillationPreventionEnabled(bool value);
+        void SetAutomaticPerformanceOscillationLimit(int value);
         void SetPerformanceDiagnosticsEnabled(bool value);
         /// Stores the diagnostics panel's last safe six-degree-of-freedom
         /// placement. Callers commit this only at toggle/menu/gameplay
@@ -253,7 +269,11 @@ namespace BigScreen {
         bool hardwareDecodingEnabled_ = true;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
-        float automaticPerformanceResponseSeconds_ = 5.0f;
+        float automaticPerformanceAttackSeconds_ = 5.0f;
+        float automaticPerformanceReleaseSeconds_ = 5.0f;
+        int automaticPerformanceFpsStep_ = 5;
+        bool automaticPerformanceOscillationPreventionEnabled_ = true;
+        int automaticPerformanceOscillationLimit_ = 3;
         bool performanceDiagnosticsEnabled_ = false;
         // Both menu and gameplay recreate the movable diagnostics panel from
         // this shared transform. The default remains above the note lanes and

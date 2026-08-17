@@ -380,6 +380,19 @@ namespace BigScreen {
                     transitionFrames_ = 0;
                     return;
                 }
+                // HMUI can report both the parent and main view as stable while
+                // its dismissal coroutine is still releasing Big Screen's
+                // former controller stack. Presenting Solo during that window
+                // entered GameplayModifiersPanelController activation with a
+                // stale/null object and caused a native SIGSEGV at address
+                // 0x11. Use the same wall-clock plus stable-frame gate that
+                // protects ordinary Big Screen menu re-entry, then retain this
+                // launcher's own stable window as an additional handoff frame.
+                if(IsBigScreenMenuTransitionPending())
+                {
+                    transitionFrames_ = 0;
+                    return;
+                }
                 // A dismissed child flow disappears before MainFlowCoordinator
                 // and MainMenuViewController finish their own transition. The
                 // previous four-frame delay raced that handoff and caused the
@@ -403,6 +416,8 @@ namespace BigScreen {
                     transitionFrames_ = 0;
                 if(transitionFrames_ < 12)
                     return;
+                PaperLogger.info(
+                    "Beat Saber's main menu settled after Big Screen dismissal; presenting showcase Solo flow");
                 PresentSoloFlow();
                 return;
             case ShowcaseLaunchState::PresentingSolo:

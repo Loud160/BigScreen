@@ -84,11 +84,14 @@ namespace BigScreen {
         const double activeDecoderCpu = std::max(
             0.0,
             decoder_.WorkerCpuMilliseconds() - decoderCpuBaselineMilliseconds_);
+        const auto expectedFrames = CoreLogic::ReportablePresentationDeadlines(
+            expectedPresentationDeadlines_,
+            deliveredPresentedFrames_);
         return {
             decoder_.Width(), decoder_.Height(),
             decoder_.SourceFramesPerSecond(), effectiveFpsLimit_,
             requestedFrames_,
-            deliveredPresentedFrames_ + missedPresentedFrames_,
+            expectedFrames,
             deliveredPresentedFrames_,
             decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(),
@@ -480,15 +483,16 @@ namespace BigScreen {
         context_ = context;
         requestedFrames_ = 0;
         deliveredPresentedFrames_ = 0;
-        missedPresentedFrames_ = 0;
+        expectedPresentationDeadlines_ = 0;
+        expectedPresentationFraction_ = 0.0;
         windowDeliveredPresentedFrames_ = 0;
-        windowMissedPresentedFrames_ = 0;
+        windowExpectedPresentationDeadlines_ = 0;
+        windowExpectedPresentationFraction_ = 0.0;
         performanceWindowStartSongTime_ = 0.0;
         diagnosticsWindowDeliveredPresentedFrames_ = 0;
-        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        diagnosticsWindowExpectedPresentationFraction_ = 0.0;
         diagnosticsWindowStartSongTime_ = 0.0;
-        lastUploadedPresentationSeconds_.reset();
-        lastUploadedDurationSeconds_ = 0.0;
         minimumFrameSeconds_ = 0.0;
         maximumFrameSeconds_ = 0.0;
         totalFrameSeconds_ = 0.0;
@@ -500,7 +504,6 @@ namespace BigScreen {
         // clock. Exclude that setup work from the map benchmark so video-on
         // and video-off runs cover the same measured interval.
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
-        automaticPerformanceHistory_.Reset();
         diagnosticsFrameCounter_ = 0;
         diagnosticsVisible_ = false;
         mapperEnvironmentApplyCountdown_ =
@@ -521,6 +524,7 @@ namespace BigScreen {
         const double initialSongTime = context == PlaybackContext::MenuPreview
             ? menuPreviewStartSongTime_
             : 0.0;
+        ResetAutomaticPerformanceController(initialSongTime);
         const double initialMediaTime = config_->MediaTimeForSong(
             initialSongTime,
             decoder_.DurationSeconds());
@@ -565,15 +569,16 @@ namespace BigScreen {
         // by PrewarmGameplay before Start() establishes its measured session.
         requestedFrames_ = 0;
         deliveredPresentedFrames_ = 0;
-        missedPresentedFrames_ = 0;
+        expectedPresentationDeadlines_ = 0;
+        expectedPresentationFraction_ = 0.0;
         windowDeliveredPresentedFrames_ = 0;
-        windowMissedPresentedFrames_ = 0;
+        windowExpectedPresentationDeadlines_ = 0;
+        windowExpectedPresentationFraction_ = 0.0;
         performanceWindowStartSongTime_ = songTimeSeconds;
         diagnosticsWindowDeliveredPresentedFrames_ = 0;
-        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        diagnosticsWindowExpectedPresentationFraction_ = 0.0;
         diagnosticsWindowStartSongTime_ = songTimeSeconds;
-        lastUploadedPresentationSeconds_.reset();
-        lastUploadedDurationSeconds_ = 0.0;
         minimumFrameSeconds_ = 0.0;
         maximumFrameSeconds_ = 0.0;
         totalFrameSeconds_ = 0.0;
@@ -581,7 +586,7 @@ namespace BigScreen {
         sampledFrames_ = 0;
         automaticReductions_ = 0;
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
-        automaticPerformanceHistory_.Reset();
+        ResetAutomaticPerformanceController(songTimeSeconds);
         diagnosticsFrameCounter_ = 0;
         decoder_.ResetPeakDecodeMilliseconds();
         PaperLogger.info(
@@ -756,11 +761,16 @@ namespace BigScreen {
         if(mediaTime < 0.0)
         {
             surface_.ShowLeadIn(config_->blackDuringLeadIn);
+            // Lead-in intentionally has no video deadlines. Rebase the song
+            // clock every tick so frame zero does not inherit the elapsed
+            // transparent/black interval as an artificial burst of misses.
+            lastTickSongTime_ = songTimeSeconds;
             return;
         }
         if(config_->stopAtVideoSecond && mediaTime > *config_->stopAtVideoSecond)
         {
             surface_.SetVisible(false);
+            lastTickSongTime_ = songTimeSeconds;
             return;
         }
 
@@ -782,13 +792,45 @@ namespace BigScreen {
             // sample. Mixing frames from before and after a large clock jump
             // could create an artificial miss spike and lower quality.
             windowDeliveredPresentedFrames_ = 0;
-            windowMissedPresentedFrames_ = 0;
+            windowExpectedPresentationDeadlines_ = 0;
+            windowExpectedPresentationFraction_ = 0.0;
             performanceWindowStartSongTime_ = songTimeSeconds;
             diagnosticsWindowDeliveredPresentedFrames_ = 0;
-            diagnosticsWindowMissedPresentedFrames_ = 0;
+            diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+            diagnosticsWindowExpectedPresentationFraction_ = 0.0;
             diagnosticsWindowStartSongTime_ = songTimeSeconds;
-            lastUploadedPresentationSeconds_.reset();
-            lastUploadedDurationSeconds_ = 0.0;
+            // Preserve the session totals across a Replay/practice seek, but
+            // discard a partial deadline that belonged to the old clock span.
+            expectedPresentationFraction_ = 0.0;
+        }
+        else
+        {
+            const double elapsedSongSeconds = std::max(
+                0.0,
+                songTimeSeconds - lastTickSongTime_);
+            const double sourceFps = decoder_.SourceFramesPerSecond();
+            const double playbackRate = config_->playbackRate;
+            expectedPresentationDeadlines_ +=
+                CoreLogic::AccumulatePresentationDeadlines(
+                    elapsedSongSeconds,
+                    sourceFps,
+                    playbackRate,
+                    effectiveFpsLimit_,
+                    expectedPresentationFraction_);
+            windowExpectedPresentationDeadlines_ +=
+                CoreLogic::AccumulatePresentationDeadlines(
+                    elapsedSongSeconds,
+                    sourceFps,
+                    playbackRate,
+                    effectiveFpsLimit_,
+                    windowExpectedPresentationFraction_);
+            diagnosticsWindowExpectedPresentationDeadlines_ +=
+                CoreLogic::AccumulatePresentationDeadlines(
+                    elapsedSongSeconds,
+                    sourceFps,
+                    playbackRate,
+                    effectiveFpsLimit_,
+                    diagnosticsWindowExpectedPresentationFraction_);
         }
         if(!lastPresentationSlot_ ||
            clockDiscontinuity ||
@@ -810,8 +852,9 @@ namespace BigScreen {
             // counters. The percentage and count displayed together must
             // always describe the same set of delivered pictures.
             const auto currentWindowExpected =
-                diagnosticsWindowDeliveredPresentedFrames_ +
-                diagnosticsWindowMissedPresentedFrames_;
+                CoreLogic::ReportablePresentationDeadlines(
+                    diagnosticsWindowExpectedPresentationDeadlines_,
+                    diagnosticsWindowDeliveredPresentedFrames_);
             const auto currentWindowDelivered =
                 diagnosticsWindowDeliveredPresentedFrames_;
             // The UI setting is a ceiling, not a target. Scale the source-
@@ -837,7 +880,8 @@ namespace BigScreen {
             if(songTimeSeconds - diagnosticsWindowStartSongTime_ >= 5.0)
             {
                 diagnosticsWindowDeliveredPresentedFrames_ = 0;
-                diagnosticsWindowMissedPresentedFrames_ = 0;
+                diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+                diagnosticsWindowExpectedPresentationFraction_ = 0.0;
                 diagnosticsWindowStartSongTime_ = songTimeSeconds;
                 completedDiagnosticsWindow = true;
             }
@@ -860,7 +904,9 @@ namespace BigScreen {
                     ? currentWindowExpected - currentWindowDelivered
                     : 0,
                 currentWindowExpected,
-                missedPresentedFrames_,
+                d.expectedFrames > d.presentedFrames
+                    ? d.expectedFrames - d.presentedFrames
+                    : 0,
                 currentWindowVideoFps,
                 currentWindowMissed,
                 d.averageDecodeMilliseconds,
@@ -885,23 +931,51 @@ namespace BigScreen {
             context_ == PlaybackContext::LibraryPreview) &&
            Settings::Instance().AutomaticPerformanceEnabled())
         {
-            if(performanceWindowStartSongTime_ <= 0.0)
-                performanceWindowStartSongTime_ = songTimeSeconds;
-            else if(songTimeSeconds - performanceWindowStartSongTime_ >=
-                    Settings::Instance().AutomaticPerformanceResponseSeconds())
+            const auto& settings = Settings::Instance();
+            if(!settings.AutomaticPerformanceOscillationPreventionEnabled())
             {
-                const double missedPercent = CoreLogic::MissedFramePercent(
-                    windowDeliveredPresentedFrames_ +
-                        windowMissedPresentedFrames_,
-                    windowDeliveredPresentedFrames_);
-                if(missedPercent >= Settings::Instance().AutomaticPerformanceThreshold())
-                    ApplyAutomaticPerformanceReduction();
-                else
-                    ApplyAutomaticPerformanceRecovery();
-                windowDeliveredPresentedFrames_ = 0;
-                windowMissedPresentedFrames_ = 0;
-                performanceWindowStartSongTime_ = songTimeSeconds;
+                automaticPerformanceRecoveryPinned_ = false;
+                automaticPerformanceFailedRecoveries_ = 0;
+                lastAutomaticRecoveryLowFps_.reset();
+                lastAutomaticRecoveryHighFps_.reset();
             }
+
+            const auto expectedWindowFrames =
+                CoreLogic::ReportablePresentationDeadlines(
+                    windowExpectedPresentationDeadlines_,
+                    windowDeliveredPresentedFrames_);
+            const double missedPercent = CoreLogic::MissedFramePercent(
+                expectedWindowFrames,
+                windowDeliveredPresentedFrames_);
+            // Do not classify an empty startup/lead-in interval as healthy.
+            // As soon as real source deadlines exist, the applicable attack
+            // or release duration is measured from this bounded window.
+            if(expectedWindowFrames > 0)
+            {
+                const auto decision =
+                    CoreLogic::EvaluateAutomaticPerformanceWindow(
+                        songTimeSeconds - performanceWindowStartSongTime_,
+                        missedPercent,
+                        static_cast<double>(
+                            settings.AutomaticPerformanceThreshold()),
+                        settings.AutomaticPerformanceAttackSeconds(),
+                        settings.AutomaticPerformanceReleaseSeconds());
+                if(decision !=
+                   CoreLogic::AutomaticPerformanceDecision::Wait)
+                {
+                    if(decision ==
+                       CoreLogic::AutomaticPerformanceDecision::Reduce)
+                        ApplyAutomaticPerformanceReduction();
+                    else
+                        ApplyAutomaticPerformanceRecovery();
+                    ResetAutomaticPerformanceWindow(songTimeSeconds);
+                }
+            }
+        }
+        else if(windowExpectedPresentationDeadlines_ > 0 ||
+                windowDeliveredPresentedFrames_ > 0)
+        {
+            ResetAutomaticPerformanceWindow(songTimeSeconds);
         }
 
         VideoFrame frame;
@@ -910,29 +984,13 @@ namespace BigScreen {
 
         if(surface_.Upload(frame))
         {
-            // Count every distinct image that actually reached Unity. The
-            // timestamp comparison below accounts only for media pictures
-            // skipped between this upload and the preceding upload. Keeping
-            // those as separate monotonic totals makes the live panel, the
-            // results screen, and the persisted log mathematically identical.
+            // Count every distinct picture that actually reached Unity. The
+            // song-clock deadline accumulators above provide the independent
+            // expectation; media timestamp gaps are deliberately irrelevant
+            // because a cap may intentionally skip source pictures.
             ++deliveredPresentedFrames_;
             ++windowDeliveredPresentedFrames_;
             ++diagnosticsWindowDeliveredPresentedFrames_;
-            if(lastUploadedPresentationSeconds_)
-            {
-                const auto intervals = CoreLogic::PresentedFrameIntervals(
-                    *lastUploadedPresentationSeconds_,
-                    lastUploadedDurationSeconds_,
-                    frame.presentationSeconds,
-                    config_->playbackRate,
-                    effectiveFpsLimit_);
-                const auto missed = intervals > 1 ? intervals - 1 : 0;
-                missedPresentedFrames_ += missed;
-                windowMissedPresentedFrames_ += missed;
-                diagnosticsWindowMissedPresentedFrames_ += missed;
-            }
-            lastUploadedPresentationSeconds_ = frame.presentationSeconds;
-            lastUploadedDurationSeconds_ = frame.durationSeconds;
             firstFrameUploaded_ = true;
             if(showcase_.IsCreated() && showcase_.TimelineActive())
             {
@@ -970,7 +1028,7 @@ namespace BigScreen {
         effectiveFpsLimit_ = requestedLimit;
         // A manual preference change is a new quality baseline. Old automatic
         // tiers no longer describe a reversible path from the current value.
-        automaticPerformanceHistory_.Reset();
+        ResetAutomaticPerformanceController(lastTickSongTime_);
         lastPresentationSlot_.reset();
         // A new cap defines a new experiment. Retaining expected/presented
         // counts from the previous cap made the live percentage slow to react
@@ -978,13 +1036,16 @@ namespace BigScreen {
         // Keep the session totals intact. Changing the cap starts a new live
         // comparison window, but Total Missed represents the entire video run.
         diagnosticsWindowDeliveredPresentedFrames_ = 0;
-        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        diagnosticsWindowExpectedPresentationFraction_ = 0.0;
         diagnosticsWindowStartSongTime_ = lastTickSongTime_;
         windowDeliveredPresentedFrames_ = 0;
-        windowMissedPresentedFrames_ = 0;
+        windowExpectedPresentationDeadlines_ = 0;
+        windowExpectedPresentationFraction_ = 0.0;
         performanceWindowStartSongTime_ = lastTickSongTime_;
-        lastUploadedPresentationSeconds_.reset();
-        lastUploadedDurationSeconds_ = 0.0;
+        // The session accumulator continues at the new rate, but a fractional
+        // deadline from the prior cap must not leak across that boundary.
+        expectedPresentationFraction_ = 0.0;
         diagnosticsFrameCounter_ = 29;
         PaperLogger.info(
             "Applied live video frame-rate cap: {} FPS",
@@ -1064,19 +1125,58 @@ namespace BigScreen {
 
     bool PlaybackSession::ApplyAutomaticPerformanceReduction()
     {
+        const auto& settings = Settings::Instance();
+        const double sourceFps = decoder_.SourceFramesPerSecond();
+        const double playbackRate = config_ ? config_->playbackRate : 1.0;
         const auto [changed, nextFps] = CoreLogic::NextPerformanceFpsLimit(
             effectiveFpsLimit_,
-            decoder_.SourceFramesPerSecond(),
-            config_ ? config_->playbackRate : 1.0);
+            sourceFps,
+            playbackRate,
+            settings.AutomaticPerformanceFpsStep());
         if(!changed)
             return false;
 
         const int previousFps = effectiveFpsLimit_;
-        if(!automaticPerformanceHistory_.RecordReduction(previousFps))
+        const int recoveryTarget = CoreLogic::EffectivePerformanceFpsLimit(
+            previousFps,
+            sourceFps,
+            playbackRate);
+
+        if(settings.AutomaticPerformanceOscillationPreventionEnabled())
         {
-            // A 60-to-15 ladder contains exactly nine reductions. Refuse an
-            // unrecorded tenth step if a future policy changes that invariant;
-            // exact reverse recovery is more important than one extra drop.
+            const bool failedLastRecovery =
+                lastAutomaticRecoveryLowFps_ == nextFps &&
+                lastAutomaticRecoveryHighFps_ == previousFps;
+            if(failedLastRecovery)
+            {
+                ++automaticPerformanceFailedRecoveries_;
+                if(automaticPerformanceFailedRecoveries_ >=
+                   settings.AutomaticPerformanceOscillationLimit())
+                {
+                    automaticPerformanceRecoveryPinned_ = true;
+                    PaperLogger.warn(
+                        "Automatic Performance pinned recovery at {} FPS after {} failed {}<->{} FPS cycles",
+                        nextFps,
+                        automaticPerformanceFailedRecoveries_,
+                        nextFps,
+                        previousFps);
+                }
+            }
+            else if(lastAutomaticRecoveryLowFps_ ||
+                    lastAutomaticRecoveryHighFps_)
+            {
+                // A different pair starts a different oscillation sequence.
+                automaticPerformanceFailedRecoveries_ = 0;
+            }
+            lastAutomaticRecoveryLowFps_.reset();
+            lastAutomaticRecoveryHighFps_.reset();
+        }
+
+        if(!automaticPerformanceHistory_.RecordReduction(recoveryTarget))
+        {
+            // A one-FPS ladder can contain forty-five reductions. Refuse an
+            // unrecorded extra step if a future policy exceeds that invariant;
+            // exact reverse recovery is more important than one more drop.
             PaperLogger.error(
                 "Automatic Performance reduction history is full at {} FPS",
                 effectiveFpsLimit_);
@@ -1092,16 +1192,27 @@ namespace BigScreen {
 
     bool PlaybackSession::ApplyAutomaticPerformanceRecovery()
     {
+        const auto& settings = Settings::Instance();
+        if(settings.AutomaticPerformanceOscillationPreventionEnabled() &&
+           automaticPerformanceRecoveryPinned_)
+            return false;
+
         const auto target = automaticPerformanceHistory_.RecoveryTarget();
         if(!target)
             return false;
 
+        const int lowerFps = effectiveFpsLimit_;
         ApplyAutomaticPerformanceFpsLimit(*target);
         automaticPerformanceHistory_.CommitRecovery();
+        if(settings.AutomaticPerformanceOscillationPreventionEnabled())
+        {
+            lastAutomaticRecoveryLowFps_ = lowerFps;
+            lastAutomaticRecoveryHighFps_ = effectiveFpsLimit_;
+        }
         PaperLogger.info(
             "Automatic Performance restored the video frame-rate limit to {} FPS after {:.1f} seconds below the missed-frame threshold",
             effectiveFpsLimit_,
-            Settings::Instance().AutomaticPerformanceResponseSeconds());
+            settings.AutomaticPerformanceReleaseSeconds());
         return true;
     }
 
@@ -1110,15 +1221,32 @@ namespace BigScreen {
         effectiveFpsLimit_ = std::max(15, nextFps);
         lastPresentationSlot_.reset();
         // A cap boundary starts clean controller and live diagnostic samples.
-        // Session-wide delivered/missed totals remain monotonic, while the
+        // Session-wide deadline/upload totals remain monotonic, while the
         // next response window evaluates only the new presentation cadence.
-        windowDeliveredPresentedFrames_ = 0;
-        windowMissedPresentedFrames_ = 0;
+        ResetAutomaticPerformanceWindow(lastTickSongTime_);
         diagnosticsWindowDeliveredPresentedFrames_ = 0;
-        diagnosticsWindowMissedPresentedFrames_ = 0;
+        diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        diagnosticsWindowExpectedPresentationFraction_ = 0.0;
         diagnosticsWindowStartSongTime_ = lastTickSongTime_;
-        lastUploadedPresentationSeconds_.reset();
-        lastUploadedDurationSeconds_ = 0.0;
+        expectedPresentationFraction_ = 0.0;
+    }
+
+    void PlaybackSession::ResetAutomaticPerformanceWindow(double songTimeSeconds)
+    {
+        windowDeliveredPresentedFrames_ = 0;
+        windowExpectedPresentationDeadlines_ = 0;
+        windowExpectedPresentationFraction_ = 0.0;
+        performanceWindowStartSongTime_ = songTimeSeconds;
+    }
+
+    void PlaybackSession::ResetAutomaticPerformanceController(double songTimeSeconds)
+    {
+        automaticPerformanceHistory_.Reset();
+        lastAutomaticRecoveryLowFps_.reset();
+        lastAutomaticRecoveryHighFps_.reset();
+        automaticPerformanceFailedRecoveries_ = 0;
+        automaticPerformanceRecoveryPinned_ = false;
+        ResetAutomaticPerformanceWindow(songTimeSeconds);
     }
 
     void PlaybackSession::CaptureDiagnosticsSummary()

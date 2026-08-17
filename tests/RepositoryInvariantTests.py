@@ -630,6 +630,10 @@ tick_main_thread = error_manager_source.split(
     "void ErrorManager::TickMainThread()", 1)[1].split(
     "void ErrorManager::SetGameplayActive", 1)[0]
 assert 'Guard("disabling Big Screen after repeated errors"' in tick_main_thread
+assert "if(IsBigScreenMenuActive())\n            return;" in tick_main_thread
+assert "SimpleDialogPrompt while this child flow is" in tick_main_thread
+assert "CreateModal(\n            errorHostViewController" in settings_menu_source
+assert "CreateModal(\n            viewController, {72.0f, 42.0f}" not in settings_menu_source
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
@@ -838,26 +842,55 @@ assert "UnityW<BSML::ModalView> warningModal_" in showcase_menu_header
 assert "UnityW<BSML::ModalView>::isAlive" in showcase_menu_source
 assert "object->SetActive(false)" in showcase_menu_source
 assert "transitionFrames_ < 12" in showcase_source
+assert "IsBigScreenMenuTransitionPending()" in showcase_source
+showcase_dismiss_wait = showcase_source.split(
+    "case ShowcaseLaunchState::DismissingBigScreen:", 1
+)[1].split("case ShowcaseLaunchState::PresentingSolo:", 1)[0]
+assert showcase_dismiss_wait.index("IsBigScreenMenuTransitionPending()") < \
+    showcase_dismiss_wait.index("PresentSoloFlow();")
+assert showcase_dismiss_wait.index("transitionFrames_ < 12") < \
+    showcase_dismiss_wait.index("PresentSoloFlow();")
 assert '"Return to Big Screen"' not in main_source
 assert "RequestReturnToBigScreen" not in main_source
 assert "WaitingForResultsDismissal" not in showcase_source
 assert "RestoreShowcasePageAfterGameplay" not in showcase_source
 
-# Showcase must return Big Screen's retained center stack to its neutral view
-# before the parent flow is dismissed. Gameplay clears HMUI's stack, so waiting
-# until the next DidActivate makes ReplaceTopViewController throw an index error
-# and strands the player in an environment-only menu scene.
+# Every controlled exit must return Big Screen's retained center stack to its
+# neutral view before the parent flow is dismissed. Gameplay can clear HMUI's
+# stack, so waiting until the next DidActivate makes ReplaceTopViewController
+# throw an index error and strands the player in an environment-only menu scene.
 showcase_exit = menu_flow_source.split(
     "bool ExitBigScreenMenuForShowcase() noexcept", 1
-)[1].split("void MenuFlowCoordinator::PrepareForShowcaseDismissal()", 1)[0]
-assert showcase_exit.index("PrepareForShowcaseDismissal();") < \
+)[1].split("void MenuFlowCoordinator::PrepareForDismissal()", 1)[0]
+assert showcase_exit.index("PrepareForDismissal();") < \
     showcase_exit.index("parent->DismissFlowCoordinator(")
-prepare_showcase_dismissal = menu_flow_source.split(
-    "void MenuFlowCoordinator::PrepareForShowcaseDismissal()", 1
+prepare_dismissal = menu_flow_source.split(
+    "void MenuFlowCoordinator::PrepareForDismissal()", 1
 )[1].split("void MenuFlowCoordinator::DidActivate(", 1)[0]
-assert "ReplaceTopViewController(" in prepare_showcase_dismissal
-assert "AnimationType::None" in prepare_showcase_dismissal
-assert "restoreCenterOnActivation = false;" in prepare_showcase_dismissal
+assert "ReplaceTopViewController(" in prepare_dismissal
+assert "AnimationType::None" in prepare_dismissal
+assert "mainControllers->get_Count() <= 0" in prepare_dismissal
+assert "restoreCenterOnActivation = false;" in prepare_dismissal
+back_exit = menu_flow_source.split(
+    "void MenuFlowCoordinator::BackButtonWasPressed(", 1
+)[1].split("catch(const std::exception& exception)", 1)[0]
+assert back_exit.index("PrepareForDismissal();") < \
+    back_exit.index("parent->DismissFlowCoordinator(")
+
+# A failure raised from DidActivate must not dismiss HMUI reentrantly. Queue the
+# flow and let the normal main-thread update perform the dismissal on a later
+# frame, then wait for Beat Saber's main menu to become stable before re-entry.
+failed_exit = menu_flow_source.split(
+    "bool ExitBigScreenMenuAfterError() noexcept", 1
+)[1].split("bool ExitBigScreenMenuForShowcase() noexcept", 1)[0]
+assert "pendingFailedMenuExit = coordinator;" in failed_exit
+assert "DismissFlowCoordinator(" not in failed_exit
+reentry_tick = menu_flow_source.split(
+    "void TickMenuReentryGuard() noexcept", 1
+)[1].split("bool ExitBigScreenMenuAfterError() noexcept", 1)[0]
+assert "if(++pendingFailedMenuExitFrames < 2)" in reentry_tick
+assert "parent->DismissFlowCoordinator(" in reentry_tick
+assert "pendingFailedMenuExit = nullptr;" in reentry_tick
 
 # Showcase glass remains deterministic, programmatic, and isolated from the
 # normal video surface. Only the authored 2:03 damage sequence uses it. Its
@@ -911,7 +944,11 @@ for suffix in screen_suffixes:
 assert "*this = Settings{};" in settings_source
 assert "std::array<ScreenLayoutProfile, 5>" in settings_header
 assert "int automaticPerformanceThreshold_ = 5;" in settings_header
-assert "float automaticPerformanceResponseSeconds_ = 5.0f;" in settings_header
+assert "float automaticPerformanceAttackSeconds_ = 5.0f;" in settings_header
+assert "float automaticPerformanceReleaseSeconds_ = 5.0f;" in settings_header
+assert "int automaticPerformanceFpsStep_ = 5;" in settings_header
+assert "bool automaticPerformanceOscillationPreventionEnabled_ = true;" in settings_header
+assert "int automaticPerformanceOscillationLimit_ = 3;" in settings_header
 assert "ResolutionHeight" not in settings_header
 assert "resolutionHeight_" not in settings_header
 assert 'document.RemoveMember("resolutionHeight")' in settings_source
@@ -943,16 +980,35 @@ benchmark_tick = power_benchmark_source.split(
 assert "ofstream" not in benchmark_tick
 assert "create_directories" not in benchmark_tick
 assert 'ReadInt(document, "automaticPerformanceThreshold", 5), 1, 15' in settings_source
+assert '"automaticPerformanceAttackSeconds"' in settings_source
 assert 'ReadFloat(document, "automaticPerformanceResponseSeconds", 5.0f)' in settings_source
-assert '"automaticPerformanceResponseSeconds"' in settings_source
+assert '"automaticPerformanceReleaseSeconds"' in settings_source
+assert '"automaticPerformanceFpsStep"' in settings_source
+assert 'ReadInt(document, "automaticPerformanceFpsStep", 5), 1, 5' in settings_source
+assert '"automaticPerformanceOscillationPreventionEnabled"' in settings_source
+assert '"automaticPerformanceOscillationLimit"' in settings_source
+assert 'document.RemoveMember("automaticPerformanceResponseSeconds")' in settings_source
 assert '"Frame Rate Loss Trigger"' in settings_menu_source
-assert '"Scaling Response Time"' in settings_menu_source
-assert "Settings::Instance().AutomaticPerformanceResponseSeconds()" in playback_source
+assert '"Use the 60 FPS limit?' in settings_menu_source
+assert '"Use 60 FPS"' in settings_menu_source
+assert "highFrameRateWarningModal_->Show();" in settings_menu_source
+assert "RefreshPlaybackFpsControl();" in settings_menu_source
+assert '"Attack Time"' in settings_menu_source
+assert '"Release Time"' in settings_menu_source
+assert '"FPS Step Size"' in settings_menu_source
+assert '"Prevent FPS Oscillation"' in settings_menu_source
+assert '"Oscillation Limit"' in settings_menu_source
+assert "settings.AutomaticPerformanceAttackSeconds()" in playback_source
+assert "settings.AutomaticPerformanceReleaseSeconds()" in playback_source
+assert "settings.AutomaticPerformanceFpsStep()" in playback_source
+assert "settings.AutomaticPerformanceOscillationLimit()" in playback_source
+assert "EvaluateAutomaticPerformanceWindow" in playback_source
+assert "automaticPerformanceLossState_" not in playback_source
 assert "NextPerformanceFpsLimit" in core_logic
-assert "constexpr int StepFps = 5;" in core_logic
+assert "int stepFramesPerSecond = 5" in core_logic
 assert "constexpr int MinimumFps = 15;" in core_logic
 assert "sourceFramesPerSecond * playbackRate" in core_logic
-assert "std::array<int, 9> tiers_" in core_logic
+assert "std::array<int, 45> tiers_" in core_logic
 assert "UncappedOutputHeight" in frame_decoder_header
 assert "UncappedOutputHeight" in playback_source
 assert "effectiveResolutionHeight_" not in playback_header
@@ -1256,15 +1312,23 @@ assert "LoadBeatmapLevelDataAsync" in library_menu_source
 assert "AudioClipAsyncLoaderExtensions::LoadSong" in library_menu_source
 assert "AudioClipAsyncLoaderExtensions::UnloadSong" in library_menu_source
 assert "Loading full official song audio" in library_menu_source
+assert "BeatmapLevelDataVersion::Original" in library_menu_source
+assert "BeatmapLevelDataVersion::NoEnvironmentKeywords" not in library_menu_source
+assert "CancellationToken::get_None()" in library_menu_source
+assert "System::Threading::CancellationToken{}" not in library_menu_source
 
-# Missed-video-frame statistics must use gaps between timestamps that actually
-# reached Unity. Worker deadline sampling mistakes harmless thread scheduling
-# jitter for visible loss, while raw upload totals mistake source-frame reuse.
-assert "PresentedFrameIntervals" in core_logic
-assert "lastUploadedPresentationSeconds_" in playback_header
+# Missed-video-frame statistics compare successful Unity uploads with
+# source-aware song-clock deadlines. Media timestamp gaps are not loss: an
+# output cap and Fit-to-Song intentionally select only some source pictures.
+assert "AccumulatePresentationDeadlines" in core_logic
+assert "ReportablePresentationDeadlines" in core_logic
+assert "expectedPresentationDeadlines_" in playback_header
 assert "deliveredPresentedFrames_" in playback_header
-assert "missedPresentedFrames_" in playback_header
-assert "PresentedFrameIntervals(" in playback_source
+assert "windowExpectedPresentationDeadlines_" in playback_header
+assert "diagnosticsWindowExpectedPresentationDeadlines_" in playback_header
+assert "AccumulatePresentationDeadlines(" in playback_source
+assert "PresentedFrameIntervals" not in core_logic
+assert "lastUploadedPresentationSeconds_" not in playback_header
 assert "Missed Frames \" << missedFrames" in playback_source
 assert "std::setprecision(2) << missedPercent" in playback_source
 assert "PeakDecodeMilliseconds" in frame_decoder_header

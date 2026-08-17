@@ -94,8 +94,8 @@ int main()
     Expect(changed30 && fps30 == 25,
            "the first reduction starts below a 30 FPS source cadence");
     auto [changed24, fps24] = NextPerformanceFpsLimit(60, 24.0, 1.0);
-    Expect(changed24 && fps24 == 20,
-           "a 24 FPS source rounds down to the useful 20 FPS tier");
+    Expect(changed24 && fps24 == 19,
+           "a 24 FPS source applies the configured five-FPS step exactly");
     auto [changedFit, fpsFit] = NextPerformanceFpsLimit(60, 24.0, 1.25);
     Expect(changedFit && fpsFit == 25,
            "Fit-to-Song playback rate participates in the effective cadence");
@@ -108,27 +108,39 @@ int main()
            "a source already below the 15 FPS floor does not record a no-op reduction");
     auto [changedMin, fpsMin] = NextPerformanceFpsLimit(15, 60.0, 1.0);
     Expect(!changedMin && fpsMin == 15, "the 15 FPS floor is stable");
+    auto [changedOne, fpsOne] = NextPerformanceFpsLimit(60, 60.0, 1.0, 1);
+    Expect(changedOne && fpsOne == 59,
+           "the smallest configurable step lowers the cap by one FPS");
+    auto [changedFive, fpsFive] = NextPerformanceFpsLimit(60, 60.0, 1.0, 5);
+    Expect(changedFive && fpsFive == 55,
+           "the maximum configurable step lowers the cap by five FPS");
+    auto [changedClamped, fpsClamped] =
+        NextPerformanceFpsLimit(60, 60.0, 1.0, 10);
+    Expect(changedClamped && fpsClamped == 55,
+           "out-of-range step input is clamped to the five-FPS maximum");
+    Expect(EffectivePerformanceFpsLimit(60, 48.2, 1.0) == 49,
+           "the effective ceiling includes every source presentation deadline");
 
     AutomaticPerformanceHistory performanceHistory;
     Expect(performanceHistory.Empty(), "automatic quality history starts empty");
-    for(const int priorLimit : {60, 55, 50, 45, 40, 35, 30, 25, 20})
+    for(int priorLimit = 60; priorLimit >= 16; --priorLimit)
         Expect(performanceHistory.RecordReduction(priorLimit),
-               "the complete 60-to-15 FPS ladder fits in fixed history");
-    Expect(performanceHistory.Size() == 9,
-           "the fixed history contains every possible five-FPS reduction");
+               "the complete one-FPS ladder fits in fixed history");
+    Expect(performanceHistory.Size() == 45,
+           "the fixed history contains every possible one-FPS reduction");
     Expect(!performanceHistory.RecordReduction(15),
-           "the fixed history rejects a tenth impossible reduction");
+           "the fixed history rejects an impossible reduction below the floor");
     auto recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && *recovery == 20,
+    Expect(recovery && *recovery == 16,
            "recovery first restores the exact most recent tier");
     Expect(performanceHistory.CommitRecovery(),
            "a successful recovery removes exactly one tier");
     recovery = performanceHistory.RecoveryTarget();
-    Expect(recovery && *recovery == 25,
+    Expect(recovery && *recovery == 17,
            "the next recovery restores the preceding FPS tier");
     while(performanceHistory.CommitRecovery()) {}
     Expect(performanceHistory.Empty(),
-           "all nine reductions recover in exact reverse order");
+           "all reductions recover in exact reverse order");
     performanceHistory.Reset();
     Expect(performanceHistory.Empty() && !performanceHistory.RecoveryTarget(),
            "a new playback baseline clears stale recovery tiers");
@@ -196,22 +208,51 @@ int main()
            "extra startup or seek frames do not create negative misses");
     Expect(std::abs(MissedFramePercent(150, 135) - 10.0) < 0.001,
            "miss percentage uses expected source-aware cadence");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 30.0, 1.0 + 1.0 / 30.0, 1.0, 30) == 1,
-           "an ordinary delivered 30 FPS transition is not skipped");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 30.0, 1.0 + 3.0 / 30.0, 1.0, 30) == 3,
-           "a timestamp gap exposes two skipped output pictures");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 60.0, 1.0 + 1.0 / 30.0, 1.0, 30) == 1,
-           "a 30 FPS cap intentionally selects every other 60 FPS source picture");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 24.0, 1.0 + 1.0 / 24.0, 1.0, 30) == 1,
-           "a 24 FPS source under a 30 FPS ceiling does not manufacture misses");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 24.0, 1.0 + 2.0 / 24.0, 2.0, 30) == 1,
-           "fast fit playback samples a 24 FPS source under the output ceiling");
-    Expect(PresentedFrameIntervals(1.0, 1.0 / 24.0, 1.0 + 1.0 / 24.0, 0.5, 30) == 1,
-           "slow fit playback preserves each native source-frame hold");
-    Expect(PresentedFrameIntervals(1.0, 0.1, 1.1, 1.0, 60) == 1,
-           "a variable-frame-rate hold uses its declared duration");
-    Expect(PresentedFrameIntervals(4.0, 1.0 / 30.0, 2.0, 1.0, 30) == 1,
-           "a seek or loop restart does not manufacture skipped frames");
+    Expect(EvaluateAutomaticPerformanceWindow(0.49, 16.0, 3.0, 0.5, 5.0) ==
+               AutomaticPerformanceDecision::Wait,
+           "attack waits for the complete configured interval");
+    Expect(EvaluateAutomaticPerformanceWindow(0.5, 16.0, 3.0, 0.5, 5.0) ==
+               AutomaticPerformanceDecision::Reduce,
+           "an aggressive half-second attack reduces at its deadline");
+    Expect(EvaluateAutomaticPerformanceWindow(4.99, 0.0, 3.0, 0.5, 5.0) ==
+               AutomaticPerformanceDecision::Wait,
+           "release waits independently from the shorter attack setting");
+    Expect(EvaluateAutomaticPerformanceWindow(5.0, 0.0, 3.0, 0.5, 5.0) ==
+               AutomaticPerformanceDecision::Recover,
+           "healthy playback recovers at the release deadline");
+    double fittedDeadlineFraction = 0.0;
+    std::uint64_t fittedDeadlines = 0;
+    for(int update = 0; update < 360; ++update)
+    {
+        fittedDeadlines += AccumulatePresentationDeadlines(
+            1.0 / 72.0,
+            60.0,
+            1.031,
+            50,
+            fittedDeadlineFraction);
+    }
+    Expect(fittedDeadlines == 250,
+           "a 60 FPS Fit-to-Song source under a 50 FPS cap creates exactly 250 five-second output deadlines");
+    Expect(ReportablePresentationDeadlines(fittedDeadlines, 250) == 250,
+           "intentional source-frame selection under a cap never creates false misses");
+    Expect(ReportablePresentationDeadlines(fittedDeadlines, 249) == 249,
+           "one decoder-to-Unity picture may remain in flight without being marked missed");
+    Expect(ReportablePresentationDeadlines(fittedDeadlines, 248) == 249,
+           "older undelivered output deadlines remain visible after the one-frame allowance");
+
+    double nativeDeadlineFraction = 0.0;
+    std::uint64_t nativeDeadlines = 0;
+    for(int update = 0; update < 360; ++update)
+    {
+        nativeDeadlines += AccumulatePresentationDeadlines(
+            1.0 / 72.0,
+            24.0,
+            1.0,
+            60,
+            nativeDeadlineFraction);
+    }
+    Expect(nativeDeadlines == 120,
+           "a 24 FPS source remains source-limited under a 60 FPS ceiling");
 
     Expect(PreviewReachedLoopBoundary(179.98, 180.0, 180.0),
            "preview reaches its loop boundary just before the final sample");

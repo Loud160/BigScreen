@@ -40,6 +40,7 @@ namespace BigScreen {
         void Register();
         void CreateUi(
             HMUI::ViewController* viewController,
+            HMUI::ViewController* errorHostViewController,
             std::function<void()> onBack,
             std::function<void()> onManageStorage,
             std::function<void()> onShowShowcase,
@@ -61,6 +62,9 @@ namespace BigScreen {
         void RefreshEnabledState();
         void RefreshCurvatureControl();
         void RefreshAdvancedControls();
+        /// Restores the FPS dropdown to the persisted value without changing
+        /// playback. Used when the player cancels the 60 FPS warning.
+        void RefreshPlaybackFpsControl();
         /// Aligns the affected video value labels with their slider handles
         /// after Beat Saber has completed the Screen tab's layout pass.
         void AlignVideoValueLabels();
@@ -129,12 +133,17 @@ namespace BigScreen {
         BSML::ToggleSetting* hideSpectrogramBarsToggle_ = nullptr;
         HMUI::HoverHint* hideSpectrogramBarsHint_ = nullptr;
         BSML::DropdownListSetting* playbackFpsDropdown_ = nullptr;
+        BSML::ModalView* highFrameRateWarningModal_ = nullptr;
         BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::ModalView* automaticPerformanceWarningModal_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;
-        BSML::SliderSetting* automaticPerformanceResponseSlider_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceAttackSlider_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceReleaseSlider_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceFpsStepSlider_ = nullptr;
+        BSML::ToggleSetting* automaticPerformanceOscillationToggle_ = nullptr;
+        BSML::SliderSetting* automaticPerformanceOscillationLimitSlider_ = nullptr;
         UnityEngine::UI::Button* performancePanelResetButton_ = nullptr;
         BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
         BSML::ToggleSetting* powerBenchmarkToggle_ = nullptr;

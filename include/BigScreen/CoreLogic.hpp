@@ -1011,37 +1011,49 @@ namespace BigScreen::CoreLogic {
     /// Performance. The saved menu value is a ceiling, so the first reduction
     /// begins below the video's effective source cadence rather than walking
     /// through limits that would not alter presentation. Mapper Fit-to-Song
-    /// speed is part of that cadence. Exact multiples still move down one full
-    /// five-FPS step: 30 -> 25, while a 24 FPS source begins at 20.
-    inline std::pair<bool, int> NextPerformanceFpsLimit(
+    /// speed is part of that cadence. The caller-selected step is applied to
+    /// that effective ceiling, so a 24 FPS source with a five-FPS step begins
+    /// at 19 rather than spending several response windows on no-op caps.
+    inline int EffectivePerformanceFpsLimit(
         int currentLimit,
         double sourceFramesPerSecond,
         double playbackRate)
     {
         constexpr int MinimumFps = 15;
-        constexpr int StepFps = 5;
-        if(currentLimit <= MinimumFps)
-            return {false, currentLimit};
-
-        double effectiveCadence = static_cast<double>(currentLimit);
+        int effectiveLimit = std::max(MinimumFps, currentLimit);
         if(std::isfinite(sourceFramesPerSecond) &&
            std::isfinite(playbackRate) &&
            sourceFramesPerSecond > 0.0 && playbackRate > 0.0)
         {
-            effectiveCadence = std::min(
-                effectiveCadence,
-                sourceFramesPerSecond * playbackRate);
+            effectiveLimit = std::min(
+                effectiveLimit,
+                std::max(
+                    MinimumFps,
+                    static_cast<int>(std::ceil(
+                        sourceFramesPerSecond * playbackRate - 0.000001))));
         }
-        if(effectiveCadence <= static_cast<double>(MinimumFps))
-            return {false, currentLimit};
+        return effectiveLimit;
+    }
 
-        // Subtract a tiny epsilon before flooring so an exact 30.0 cadence
-        // becomes 25 rather than returning a no-op 30 tier. Non-multiples such
-        // as 24 naturally floor to 20.
+    inline std::pair<bool, int> NextPerformanceFpsLimit(
+        int currentLimit,
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int stepFramesPerSecond = 5)
+    {
+        constexpr int MinimumFps = 15;
+        if(currentLimit <= MinimumFps)
+            return {false, currentLimit};
+        const int effectiveLimit = EffectivePerformanceFpsLimit(
+            currentLimit,
+            sourceFramesPerSecond,
+            playbackRate);
+        if(effectiveLimit <= MinimumFps)
+            return {false, currentLimit};
+        const int step = std::clamp(stepFramesPerSecond, 1, 5);
         const int nextLimit = std::max(
             MinimumFps,
-            static_cast<int>(std::floor(
-                (effectiveCadence - 0.000001) / StepFps)) * StepFps);
+            effectiveLimit - step);
         if(nextLimit >= currentLimit)
             return {false, currentLimit};
         return {true, nextLimit};
@@ -1050,9 +1062,9 @@ namespace BigScreen::CoreLogic {
     /// Records the exact path Automatic Performance used while lowering
     /// quality. Recovery reads this small stack backwards instead of trying to
     /// infer the user's previous setting from the current tier. A 60 FPS cap
-    /// can reach the 15 FPS floor in nine five-FPS reductions, so a fixed array
-    /// covers the complete ladder without allocating in Beat Saber's gameplay
-    /// loop.
+    /// can reach the 15 FPS floor in forty-five one-FPS reductions, so a fixed
+    /// array covers every configurable ladder without allocating in Beat
+    /// Saber's gameplay loop.
     class AutomaticPerformanceHistory final {
     public:
         void Reset() noexcept { size_ = 0; }
@@ -1083,7 +1095,7 @@ namespace BigScreen::CoreLogic {
         }
 
     private:
-        std::array<int, 9> tiers_{};
+        std::array<int, 45> tiers_{};
         std::size_t size_ = 0;
     };
 
@@ -1119,6 +1131,56 @@ namespace BigScreen::CoreLogic {
             activeSongSeconds * expectedRate + 0.000001));
     }
 
+    /// Advances a source-aware presentation clock without losing fractional
+    /// deadlines between Unity updates. Repeatedly flooring each short frame
+    /// delta would produce zero at common Quest refresh rates, so the caller
+    /// owns the fractional remainder for the lifetime of its measurement
+    /// window. The returned count represents pictures whose output deadlines
+    /// elapsed, independent of media PTS spacing or decoder scheduling.
+    inline std::uint64_t AccumulatePresentationDeadlines(
+        double elapsedSongSeconds,
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int outputFramesPerSecond,
+        double& fractionalDeadline)
+    {
+        if(!std::isfinite(elapsedSongSeconds) || elapsedSongSeconds <= 0.0)
+            return 0;
+        const double expectedRate = ExpectedPresentationRate(
+            sourceFramesPerSecond,
+            playbackRate,
+            outputFramesPerSecond);
+        if(expectedRate <= 0.0)
+            return 0;
+
+        const double accumulated = std::max(0.0, fractionalDeadline) +
+            elapsedSongSeconds * expectedRate;
+        const auto completed = static_cast<std::uint64_t>(
+            std::floor(accumulated + 0.000001));
+        fractionalDeadline = std::max(
+            0.0,
+            accumulated - static_cast<double>(completed));
+        return completed;
+    }
+
+    /// Converts elapsed output deadlines into the comparison shown to users.
+    /// One deadline may legitimately be in flight between the decoder worker
+    /// and the following Unity upload. Excluding that single picture prevents
+    /// a healthy reactive pipeline from reporting a permanent one-frame loss,
+    /// while every older undelivered deadline remains visible. Startup frames
+    /// can make uploads briefly exceed deadlines, so expected is never allowed
+    /// to be lower than the number of pictures already presented.
+    inline std::uint64_t ReportablePresentationDeadlines(
+        std::uint64_t elapsedDeadlines,
+        std::uint64_t presentedFrames,
+        std::uint64_t inFlightAllowance = 1)
+    {
+        const auto dueDeadlines = elapsedDeadlines > inFlightAllowance
+            ? elapsedDeadlines - inFlightAllowance
+            : 0;
+        return std::max(dueDeadlines, presentedFrames);
+    }
+
     inline double MissedFramePercent(
         std::uint64_t expectedFrames,
         std::uint64_t presentedFrames)
@@ -1129,48 +1191,41 @@ namespace BigScreen::CoreLogic {
                static_cast<double>(expectedFrames);
     }
 
-    /// Returns how many visible output-frame intervals separate two images
-    /// that actually reached Unity. A value above one means intermediate video
-    /// content was skipped. This deliberately uses media timestamps instead of
-    /// worker-thread completion timing: a frame that arrives a few milliseconds
-    /// late but is still displayed is not a visible miss.
-    inline std::uint64_t PresentedFrameIntervals(
-        double previousPresentationSeconds,
-        double previousDurationSeconds,
-        double currentPresentationSeconds,
-        double playbackRate,
-        int outputFramesPerSecond)
+    enum class AutomaticPerformanceDecision {
+        Wait,
+        Reduce,
+        Recover
+    };
+
+    /// Evaluates one bounded Automatic Performance measurement window. The
+    /// previous implementation restarted its timer every time the live
+    /// percentage crossed the threshold. Normal frame-by-frame variation could
+    /// therefore postpone a 0.5-second attack for more than a minute. A window
+    /// now remains intact until the duration for its current aggregate result
+    /// has elapsed, then the caller acts and starts a clean window.
+    inline AutomaticPerformanceDecision EvaluateAutomaticPerformanceWindow(
+        double elapsedSeconds,
+        double missedFramePercent,
+        double thresholdPercent,
+        double attackSeconds,
+        double releaseSeconds)
     {
-        if(!std::isfinite(previousPresentationSeconds) ||
-           !std::isfinite(currentPresentationSeconds) ||
-           currentPresentationSeconds <= previousPresentationSeconds ||
-           playbackRate <= 0.0 || outputFramesPerSecond <= 0)
-            return 1;
+        if(!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
+           !std::isfinite(missedFramePercent) ||
+           !std::isfinite(thresholdPercent) ||
+           !std::isfinite(attackSeconds) ||
+           !std::isfinite(releaseSeconds))
+            return AutomaticPerformanceDecision::Wait;
 
-        // Requests are limited in Beat Saber's song-clock domain. Convert one
-        // output interval into media time, then respect a longer source-frame
-        // duration (including variable-frame-rate samples) so intentional
-        // holds are never classified as missing pictures.
-        const double cappedMediaInterval =
-            playbackRate / static_cast<double>(outputFramesPerSecond);
-        const double sourceInterval =
-            std::isfinite(previousDurationSeconds) &&
-            previousDurationSeconds > 0.0
-                ? previousDurationSeconds
-                : 0.0;
-        const double expectedInterval = std::max(
-            cappedMediaInterval,
-            sourceInterval);
-        if(expectedInterval <= 0.0)
-            return 1;
-
-        const double elapsed =
-            currentPresentationSeconds - previousPresentationSeconds;
-        // Nearest-interval rounding tolerates ordinary MP4 time-base error
-        // (for example 29.97 FPS) without hiding a complete skipped image.
-        return std::max<std::uint64_t>(
-            1,
-            static_cast<std::uint64_t>(std::llround(elapsed / expectedInterval)));
+        const bool overloaded = missedFramePercent >= thresholdPercent;
+        const double requiredSeconds = std::max(
+            0.0,
+            overloaded ? attackSeconds : releaseSeconds);
+        if(elapsedSeconds + 0.000001 < requiredSeconds)
+            return AutomaticPerformanceDecision::Wait;
+        return overloaded
+            ? AutomaticPerformanceDecision::Reduce
+            : AutomaticPerformanceDecision::Recover;
     }
 
     /// Uses the shorter of Beat Saber's song duration and the loaded audio

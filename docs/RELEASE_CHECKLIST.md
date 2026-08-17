@@ -57,7 +57,7 @@
 - [ ] Undocked move/rotate/resize saves only after Save Screen; cancel, focus loss, layout change, and menu exit restore the last saved placement and leave no raycastable overlay.
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
 - [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.
-- [ ] Native 480p/720p/1080p/1440p files and 15/30/60 FPS limits produce expected diagnostics; Automatic Performance changes only the session FPS limit in 5 FPS steps and restores it without reopening the decoder or changing saved settings.
+- [ ] Native 480p/720p/1080p/1440p files and 15/30/60 FPS limits produce expected diagnostics; Automatic Performance honors its attack/release timers, configured FPS step, and anti-oscillation limit while restoring prior limits without reopening the decoder or changing saved settings.
 - [ ] The Misc FFmpeg selector restarts an active library preview at its
       retained position, affects the next gameplay decoder, and the overlay /
       results identify the runtime actually used.

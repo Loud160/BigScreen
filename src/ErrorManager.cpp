@@ -295,6 +295,18 @@ namespace BigScreen {
             nextDialogAttempt_ = {};
         }
 
+        // Big Screen owns a dedicated modal on its settings panel. Presenting
+        // MainFlowCoordinator's SimpleDialogPrompt while this child flow is
+        // active places the prompt behind Big Screen, but its modal blocker
+        // still captures every controller click. The visible menu then looks
+        // completely frozen even though Unity is continuing to render. Leave
+        // ordinary user-facing errors queued here; SettingsMenu consumes them
+        // through TakePendingDialog and displays them on the active flow. A
+        // recovery-requested error reaches this point only after the menu has
+        // been dismissed, so it can safely use Beat Saber's main dialog.
+        if(IsBigScreenMenuActive())
+            return;
+
         std::pair<std::string, std::string> message;
         {
             std::scoped_lock lock(mutex_);

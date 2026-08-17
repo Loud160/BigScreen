@@ -6,7 +6,7 @@ Big Screen has five tabs: General, Screen, Environment, Misc, and Update. Settin
 
 ### Video Frame Rate Limit — default: 30 FPS
 
-Sets the maximum number of frames Big Screen presents per second: 15, 30, or 60. It does not speed up or slow down the video. A 24/30 FPS source remains at its native cadence under a 60 FPS cap; a 60 FPS source drops presentation frames evenly under a 30/15 FPS cap while synchronization still follows song time. Lower values reduce decoding, memory-copy, and texture-upload pressure.
+Sets the maximum number of frames Big Screen presents per second: 15, 30, or 60. It does not speed up or slow down the video. A 24/30 FPS source remains at its native cadence under a 60 FPS cap; a 60 FPS source drops presentation frames evenly under a 30/15 FPS cap while synchronization still follows song time. Lower values reduce decoding, memory-copy, and texture-upload pressure. Selecting 60 FPS from a lower limit opens a confirmation because it doubles the potential presentation work of the 30 FPS default. If playback stutters or looks choppy at 60 FPS, enable Automatic Performance under Misc so Big Screen can lower the active limit when necessary.
 
 ### Big Screen Enabled — default: On
 
@@ -226,17 +226,33 @@ On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever
 
 #### Automatic Performance — default: Off
 
-Continuously watches video presentation for the entire map. At the end of each selected response-time window, frame loss at or above the trigger lowers the presentation limit by 5 FPS, down to a 15 FPS floor. The first useful reduction begins below the video's effective cadence, including Fit to Song playback speed: a 30 FPS video under a 60 FPS preference moves directly to 25 rather than walking through ineffective 55/50/45/40/35 limits, while a 24 FPS video begins at 20. A complete healthy window restores one exact prior limit in reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as the map becomes more or less demanding. It never changes video resolution, reopens the decoder, modifies the source file, exceeds the saved FPS preference, or overwrites that preference. The next playback session starts from the saved limit.
+Continuously watches video presentation for the entire map and during Video Library preview playback. Frame loss at or above the trigger for the complete attack time lowers the presentation limit by the selected FPS step, down to a 15 FPS floor. The first useful reduction begins below the video's effective cadence, including Fit to Song playback speed: limits above the source cadence are skipped because they would not reduce presentation work. Frame loss below the trigger for the complete release time restores one exact prior limit in reverse order. The controller keeps reevaluating, so it can move down and back up repeatedly as load changes. Optional oscillation prevention can hold recovery at a proven lower rate after repeated failed recovery cycles while retaining the ability to reduce further. Automatic Performance never changes video resolution, reopens the decoder, modifies the source file, exceeds the saved FPS preference, or overwrites that preference. The next playback session starts from the saved limit.
 
 Turning this on opens a confirmation explaining that Automatic Performance is experimental and still under development. Nothing is enabled or saved until the player confirms.
 
 #### Frame Rate Loss Trigger — default: 5%
 
-Available when Automatic Performance is on. This 1–15% slider selects the video frame-rate loss at which quality steps down. Below the selected value, quality is eligible to step back up. This measures Big Screen video presentation performance, not Beat Saber's headset refresh rate.
+Available when Automatic Performance is on. This 1–15% slider selects the video frame-rate loss at which the attack condition begins. Below the selected value, the release condition begins. This measures Big Screen video presentation performance, not Beat Saber's headset refresh rate.
 
-#### Scaling Response Time — default: 5.0 seconds
+#### Attack Time — default: 5.0 seconds
 
-Available when Automatic Performance is on. This 0.5–10.0 second slider defaults to 5.0 seconds and controls how long either condition must continue before one 5 FPS step is taken. The same duration is used for reduction and recovery. It operates during gameplay and Video Library preview playback. Short times react quickly but may change limits more often; longer times require more sustained evidence before changing the limit.
+Available when Automatic Performance is on. This 0.5–10.0 second slider controls how long frame loss must remain at or above the trigger before the FPS limit is reduced. Shorter times react quickly; longer times ignore more brief spikes.
+
+#### Release Time — default: 5.0 seconds
+
+Available when Automatic Performance is on. This 0.5–30.0 second slider controls how long frame loss must remain below the trigger before the previous FPS limit is restored. A longer release time helps avoid raising the limit during a short, easy section.
+
+#### FPS Step Size — default: 5 FPS
+
+Available when Automatic Performance is on. This 1–5 FPS slider controls the amount used for each reduction. Recovery retraces the exact limits that were previously reduced. The first reduction starts from the video's effective source cadence, so a source below the global cap does not waste time testing caps that cannot change presentation work.
+
+#### Prevent FPS Oscillation — default: On
+
+Available when Automatic Performance is on. Detects repeated low-to-high-to-low recovery cycles between the same two limits. Once the Oscillation Limit is reached, upward recovery is held at the stable lower rate for the rest of the current preview or map. Automatic Performance may still reduce the limit further if overload continues. A new preview or map starts with a fresh controller.
+
+#### Oscillation Limit — default: 3 cycles
+
+Available when Automatic Performance and Prevent FPS Oscillation are on. This 1–10 cycle slider controls how many failed recovery attempts between the same two FPS limits are allowed before upward recovery is held.
 
 #### Show Performance Information — default: Off
 

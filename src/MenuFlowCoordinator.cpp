@@ -52,6 +52,8 @@ namespace BigScreen {
         bool menuReentryBlocked = false;
         float menuReentryNotBefore = 0.0f;
         int stableMainMenuFrames = 0;
+        UnityW<MenuFlowCoordinator> pendingFailedMenuExit = nullptr;
+        int pendingFailedMenuExitFrames = 0;
 
         BSML::MenuButton* ResolveBigScreenMenuButton()
         {
@@ -193,6 +195,11 @@ namespace BigScreen {
         return activeMenuFlow;
     }
 
+    bool IsBigScreenMenuTransitionPending() noexcept
+    {
+        return menuReentryBlocked || pendingFailedMenuExit;
+    }
+
     void TickMenuReentryGuard() noexcept
     {
         if(!menuReentryBlocked)
@@ -202,6 +209,40 @@ namespace BigScreen {
             // Reassert this in case BSML rebuilt its button view during the
             // parent transition after the guard first disabled the model.
             SetBigScreenMenuButtonInteractable(false);
+
+            // ErrorManager can request recovery from inside DidActivate. HMUI
+            // is still mutating its controller hierarchy during that callback,
+            // so dismissing the flow synchronously there can strand the player
+            // in an environment with no usable menu. Wait for the next update,
+            // then dismiss through Beat Saber's parent flow. The retained
+            // UnityW keeps the coordinator valid until this work is complete.
+            if(pendingFailedMenuExit)
+            {
+                if(++pendingFailedMenuExitFrames < 2)
+                    return;
+
+                auto* coordinator = pendingFailedMenuExit.ptr();
+                auto* parent = coordinator
+                    ? coordinator->__cordl_internal_get__parentFlowCoordinator().ptr()
+                    : nullptr;
+                if(!parent)
+                    parent = BSML::Helpers::GetMainFlowCoordinator();
+                if(!coordinator || !parent)
+                    throw std::runtime_error(
+                        "Big Screen's failed menu hierarchy was unavailable");
+
+                parent->DismissFlowCoordinator(
+                    coordinator,
+                    HMUI::ViewController::AnimationDirection::Horizontal,
+                    nullptr,
+                    true);
+                pendingFailedMenuExit = nullptr;
+                pendingFailedMenuExitFrames = 0;
+                PaperLogger.warn(
+                    "Dismissed Big Screen's menu on a safe frame after an internal UI failure");
+                return;
+            }
+
             if(activeMenuFlow ||
                UnityEngine::Time::get_realtimeSinceStartup() <
                    menuReentryNotBefore)
@@ -251,22 +292,20 @@ namespace BigScreen {
         {
             // Do not use BackButtonWasPressed here. Its unsaved-edit dialog is
             // itself part of Big Screen's UI and may be the component that
-            // failed. Discard the transient editor state, stop both preview
-            // clocks, and dismiss directly through Beat Saber's parent flow.
+            // failed. Discard transient interaction immediately, but defer the
+            // actual HMUI dismissal until the next main-thread update. Calling
+            // DismissFlowCoordinator reentrantly from DidActivate can report
+            // success while leaving the player in an empty environment.
             ScreenPreview::Instance().CancelUndockedEditing();
             VideoLibraryMenu::Instance().StopActivePreview();
-            auto parent = coordinator->__cordl_internal_get__parentFlowCoordinator();
-            if(!parent)
-                throw std::runtime_error(
-                    "Big Screen's parent menu flow was unavailable");
+            ThumbnailPickerMenu::Instance().Hide();
+            LocalVideoBrowserMenu::Instance().CancelScan();
+            ShowcaseMenu::Instance().DismissTransientUi();
             BeginMenuReentryGuard();
-            parent->DismissFlowCoordinator(
-                coordinator,
-                HMUI::ViewController::AnimationDirection::Horizontal,
-                nullptr,
-                true);
+            pendingFailedMenuExit = coordinator;
+            pendingFailedMenuExitFrames = 0;
             PaperLogger.warn(
-                "Dismissed Big Screen's menu after an internal UI failure");
+                "Queued Big Screen's failed menu for safe-frame dismissal");
             return true;
         }
         catch(const std::exception& exception)
@@ -304,7 +343,7 @@ namespace BigScreen {
             // clears that stack; trying to restore it during the next
             // DidActivate caused System.ArgumentOutOfRangeException and left
             // the player looking at an environment with no usable menus.
-            coordinator->PrepareForShowcaseDismissal();
+            coordinator->PrepareForDismissal();
             auto parent =
                 coordinator->__cordl_internal_get__parentFlowCoordinator();
             if(!parent)
@@ -340,14 +379,28 @@ namespace BigScreen {
         return false;
     }
 
-    void MenuFlowCoordinator::PrepareForShowcaseDismissal()
+    void MenuFlowCoordinator::PrepareForDismissal()
     {
         ShowcaseMenu::Instance().DismissTransientUi();
+        ThumbnailPickerMenu::Instance().Hide();
+        LocalVideoBrowserMenu::Instance().CancelScan();
         if(!restoreCenterOnActivation)
             return;
-        if(!centerViewController)
-            throw std::runtime_error(
-                "Big Screen's neutral center controller was unavailable");
+
+        auto* mainControllers =
+            __cordl_internal_get__mainScreenViewControllers();
+        if(!centerViewController || !mainControllers ||
+           mainControllers->get_Count() <= 0)
+        {
+            // A system interruption or another flow may already have cleared
+            // the stack. There is nothing safe to replace in that state; clear
+            // only Big Screen's stale navigation marker and let the enclosing
+            // dismissal return ownership to Beat Saber.
+            restoreCenterOnActivation = false;
+            PaperLogger.warn(
+                "Skipped center-page restoration because HMUI's main stack was already empty");
+            return;
+        }
 
         // This mirrors the working Close Showcase Menu path. AnimationType::None
         // makes the stack replacement synchronous before the parent flow is
@@ -495,6 +548,7 @@ namespace BigScreen {
 
             SettingsMenu::Instance().CreateUi(
                 settingsViewController,
+                centerViewController,
                 [this]()
                 {
                     BackButtonWasPressed(centerViewController);
@@ -675,11 +729,25 @@ namespace BigScreen {
         {
             ThumbnailPickerMenu::Instance().Hide();
             LocalVideoBrowserMenu::Instance().CancelScan();
-            ReplaceTopViewController(
-                centerViewController,
-                nullptr,
-                HMUI::ViewController::AnimationType::None,
-                HMUI::ViewController::AnimationDirection::Horizontal);
+            auto* mainControllers =
+                __cordl_internal_get__mainScreenViewControllers();
+            if(centerViewController && mainControllers &&
+               mainControllers->get_Count() > 0)
+            {
+                ReplaceTopViewController(
+                    centerViewController,
+                    nullptr,
+                    HMUI::ViewController::AnimationType::None,
+                    HMUI::ViewController::AnimationDirection::Horizontal);
+            }
+            else
+            {
+                // Never ask ReplaceTopViewController to index an empty list.
+                // Side panels can still be activated normally, and the neutral
+                // center view is intentionally blank in Big Screen's layout.
+                PaperLogger.warn(
+                    "Cleared stale Big Screen center navigation after HMUI emptied its stack");
+            }
             restoreCenterOnActivation = false;
         }
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
@@ -715,11 +783,21 @@ namespace BigScreen {
             ThumbnailPickerMenu::Instance().Hide();
             LocalVideoBrowserMenu::Instance().CancelScan();
             ShowcaseMenu::Instance().DismissTransientUi();
-            ReplaceTopViewController(
-                centerViewController,
-                nullptr,
-                HMUI::ViewController::AnimationType::None,
-                HMUI::ViewController::AnimationDirection::Horizontal);
+            auto* mainControllers =
+                __cordl_internal_get__mainScreenViewControllers();
+            if(mainControllers && mainControllers->get_Count() > 0)
+            {
+                ReplaceTopViewController(
+                    centerViewController,
+                    nullptr,
+                    HMUI::ViewController::AnimationType::None,
+                    HMUI::ViewController::AnimationDirection::Horizontal);
+            }
+            else
+            {
+                PaperLogger.warn(
+                    "Skipped disabled-menu center restoration because HMUI's main stack was empty");
+            }
             restoreCenterOnActivation = false;
         }
         SetRightScreenViewController(
@@ -809,6 +887,10 @@ namespace BigScreen {
         auto parent = __cordl_internal_get__parentFlowCoordinator();
         if(parent)
         {
+            // Restore a transient storage/showcase/browser page while HMUI's
+            // center stack is still valid. Waiting until the next activation
+            // is unsafe because Beat Saber can clear that list after dismissal.
+            PrepareForDismissal();
             BeginMenuReentryGuard();
             parent->DismissFlowCoordinator(
                 this,

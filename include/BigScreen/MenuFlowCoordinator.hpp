@@ -22,6 +22,10 @@ namespace BigScreen {
     /// Keeps Big Screen's main-menu entry disabled until Beat Saber's parent
     /// menu is active and stable after this flow has been dismissed.
     void TickMenuReentryGuard() noexcept;
+    /// True while Beat Saber is still settling its parent HMUI hierarchy after
+    /// Big Screen closes. New child flows, including Solo, must not be
+    /// presented until this shared transition gate has cleared.
+    bool IsBigScreenMenuTransitionPending() noexcept;
     /// Cancels mod-owned interaction and dismisses Big Screen without routing
     /// through controls that may be part of the failed UI operation.
     bool ExitBigScreenMenuAfterError() noexcept;
@@ -55,10 +59,10 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(bool, restoreCenterOnActivation);
 
     /// Returns the retained center stack to Big Screen's neutral controller
-    /// while the flow is still active. Showcase gameplay clears HMUI's center
-    /// stack, so deferring this restoration until the next activation would
-    /// make ReplaceTopViewController index an empty collection.
-    DECLARE_INSTANCE_METHOD(void, PrepareForShowcaseDismissal);
+    /// while the flow is still active. Beat Saber may clear HMUI's center stack
+    /// after the complete flow is dismissed, so every controlled exit performs
+    /// this normalization before yielding the hierarchy to the parent menu.
+    DECLARE_INSTANCE_METHOD(void, PrepareForDismissal);
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
 
     DECLARE_OVERRIDE_METHOD_MATCH(

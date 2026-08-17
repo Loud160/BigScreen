@@ -322,10 +322,27 @@ namespace BigScreen {
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
             ReadInt(document, "automaticPerformanceThreshold", 5), 1, 15);
-        automaticPerformanceResponseSeconds_ = std::clamp(
-            ReadFloat(document, "automaticPerformanceResponseSeconds", 5.0f),
+        automaticPerformanceAttackSeconds_ = std::clamp(
+            ReadFloat(
+                document,
+                "automaticPerformanceAttackSeconds",
+                ReadFloat(document, "automaticPerformanceResponseSeconds", 5.0f)),
             0.5f,
             10.0f);
+        automaticPerformanceReleaseSeconds_ = std::clamp(
+            ReadFloat(document, "automaticPerformanceReleaseSeconds", 5.0f),
+            0.5f,
+            30.0f);
+        automaticPerformanceFpsStep_ = std::clamp(
+            ReadInt(document, "automaticPerformanceFpsStep", 5), 1, 5);
+        automaticPerformanceOscillationPreventionEnabled_ = ReadBool(
+            document,
+            "automaticPerformanceOscillationPreventionEnabled",
+            true);
+        automaticPerformanceOscillationLimit_ = std::clamp(
+            ReadInt(document, "automaticPerformanceOscillationLimit", 3),
+            1,
+            10);
         performanceDiagnosticsEnabled_ = ReadBool(
             document, "performanceDiagnosticsEnabled", false);
         performancePanelPositionX_ = std::clamp(ReadFloat(
@@ -696,15 +713,42 @@ namespace BigScreen {
         Save();
     }
 
-    void Settings::SetAutomaticPerformanceResponseSeconds(float value)
+    void Settings::SetAutomaticPerformanceAttackSeconds(float value)
     {
         // Quantize persisted values to the same tenth-second grid presented by
         // the slider. This prevents binary float noise from accumulating after
         // repeated arrow taps or JSON load/save cycles.
-        automaticPerformanceResponseSeconds_ = std::clamp(
+        automaticPerformanceAttackSeconds_ = std::clamp(
             std::round(value * 10.0f) / 10.0f,
             0.5f,
             10.0f);
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceReleaseSeconds(float value)
+    {
+        automaticPerformanceReleaseSeconds_ = std::clamp(
+            std::round(value * 10.0f) / 10.0f,
+            0.5f,
+            30.0f);
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceFpsStep(int value)
+    {
+        automaticPerformanceFpsStep_ = std::clamp(value, 1, 5);
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceOscillationPreventionEnabled(bool value)
+    {
+        automaticPerformanceOscillationPreventionEnabled_ = value;
+        Save();
+    }
+
+    void Settings::SetAutomaticPerformanceOscillationLimit(int value)
+    {
+        automaticPerformanceOscillationLimit_ = std::clamp(value, 1, 10);
         Save();
     }
 
@@ -918,10 +962,24 @@ namespace BigScreen {
         Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
+        document.RemoveMember("automaticPerformanceResponseSeconds");
         Replace(
             document,
-            "automaticPerformanceResponseSeconds",
-            automaticPerformanceResponseSeconds_);
+            "automaticPerformanceAttackSeconds",
+            automaticPerformanceAttackSeconds_);
+        Replace(
+            document,
+            "automaticPerformanceReleaseSeconds",
+            automaticPerformanceReleaseSeconds_);
+        Replace(document, "automaticPerformanceFpsStep", automaticPerformanceFpsStep_);
+        Replace(
+            document,
+            "automaticPerformanceOscillationPreventionEnabled",
+            automaticPerformanceOscillationPreventionEnabled_);
+        Replace(
+            document,
+            "automaticPerformanceOscillationLimit",
+            automaticPerformanceOscillationLimit_);
         Replace(document, "performanceDiagnosticsEnabled", performanceDiagnosticsEnabled_);
         Replace(document, "performancePanelPositionX", performancePanelPositionX_);
         Replace(document, "performancePanelPositionY", performancePanelPositionY_);

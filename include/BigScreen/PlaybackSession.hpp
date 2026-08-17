@@ -171,6 +171,8 @@ namespace BigScreen {
         bool ApplyAutomaticPerformanceReduction();
         bool ApplyAutomaticPerformanceRecovery();
         void ApplyAutomaticPerformanceFpsLimit(int nextFps);
+        void ResetAutomaticPerformanceWindow(double songTimeSeconds);
+        void ResetAutomaticPerformanceController(double songTimeSeconds);
         void CaptureDiagnosticsSummary();
 
         std::filesystem::path levelDirectory_;
@@ -214,19 +216,21 @@ namespace BigScreen {
         double lastTickSongTime_ = 0.0;
         int effectiveFpsLimit_ = 30;
         std::uint64_t requestedFrames_ = 0;
-        // Presentation statistics are derived only from timestamps of images
-        // that successfully reached Unity. Thread scheduling latency is not a
-        // missed frame; a gap in delivered media timestamps is.
+        // Presentation loss compares pictures that successfully reached Unity
+        // with source-aware output deadlines advanced by Beat Saber's song
+        // clock. Fractional deadlines must survive between Unity updates or a
+        // 60 FPS source sampled by a 72 Hz headset would be undercounted.
         std::uint64_t deliveredPresentedFrames_ = 0;
-        std::uint64_t missedPresentedFrames_ = 0;
+        std::uint64_t expectedPresentationDeadlines_ = 0;
+        double expectedPresentationFraction_ = 0.0;
         std::uint64_t windowDeliveredPresentedFrames_ = 0;
-        std::uint64_t windowMissedPresentedFrames_ = 0;
+        std::uint64_t windowExpectedPresentationDeadlines_ = 0;
+        double windowExpectedPresentationFraction_ = 0.0;
         double performanceWindowStartSongTime_ = 0.0;
         std::uint64_t diagnosticsWindowDeliveredPresentedFrames_ = 0;
-        std::uint64_t diagnosticsWindowMissedPresentedFrames_ = 0;
+        std::uint64_t diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        double diagnosticsWindowExpectedPresentationFraction_ = 0.0;
         double diagnosticsWindowStartSongTime_ = 0.0;
-        std::optional<double> lastUploadedPresentationSeconds_;
-        double lastUploadedDurationSeconds_ = 0.0;
         // Unity frame timing is sampled only while the active playback clock
         // advances. The same session-local counters feed the live Video
         // Library overlay and the final gameplay log, but only gameplay
@@ -246,6 +250,13 @@ namespace BigScreen {
         // were lowered. The controller continues evaluating throughout the
         // map, so later pressure can lower and recover repeatedly.
         CoreLogic::AutomaticPerformanceHistory automaticPerformanceHistory_;
+        // A failed recovery is the exact low->high->low pair that causes FPS
+        // flapping. Once the configurable number of failures is reached, only
+        // further reductions are allowed for the rest of this playback session.
+        std::optional<int> lastAutomaticRecoveryLowFps_;
+        std::optional<int> lastAutomaticRecoveryHighFps_;
+        int automaticPerformanceFailedRecoveries_ = 0;
+        bool automaticPerformanceRecoveryPinned_ = false;
         int diagnosticsFrameCounter_ = 0;
         bool diagnosticsVisible_ = false;
         // Quest Chroma applies difficulty environment data from an end-of-frame

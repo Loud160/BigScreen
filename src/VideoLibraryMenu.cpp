@@ -3450,8 +3450,20 @@ namespace BigScreen {
 
                 levelDataLoadTask_ = model->LoadBeatmapLevelDataAsync(
                     selected_->levelID,
-                    GlobalNamespace::BeatmapLevelDataVersion::NoEnvironmentKeywords,
-                    System::Threading::CancellationToken{});
+                    // Packaged OST and DLC levels expose their gameplay song
+                    // through the original level-data variant. The alternate
+                    // NoEnvironmentKeywords variant is used by newer gameplay
+                    // setup paths, but requesting it here makes the official
+                    // loader return LoadBeatmapLevelDataResult::Error before
+                    // AudioClipAsyncLoader can acquire the full song clip.
+                    GlobalNamespace::BeatmapLevelDataVersion::Original,
+                    // CORDL's generated empty C++ constructor does not clear
+                    // CancellationToken::_source. Passing CancellationToken{}
+                    // therefore forwards an indeterminate managed pointer and
+                    // crashes when Beat Saber's asset loader checks whether
+                    // cancellation was requested. Always obtain .NET's real,
+                    // zero-source CancellationToken.None value instead.
+                    System::Threading::CancellationToken::get_None());
                 if(!levelDataLoadTask_)
                 {
                     officialSongAudioLoader_ = nullptr;
@@ -4020,6 +4032,12 @@ namespace BigScreen {
                 }
                 else
                 {
+                    PaperLogger.error(
+                        "Official full-song level-data load failed for '{}': "
+                        "resultError={}, levelDataPresent={}",
+                        audioLoadLevelId_,
+                        result.isError,
+                        result.beatmapLevelData != nullptr);
                     transientStatus_ =
                         "Beat Saber could not load this song's full level data.";
                     officialSongAudioLoader_ = nullptr;
@@ -4028,6 +4046,13 @@ namespace BigScreen {
             }
             else if(selectionStillMatches)
             {
+                PaperLogger.error(
+                    "Official full-song level-data task failed for '{}': "
+                    "completedSuccessfully={}, canceled={}, faulted={}",
+                    audioLoadLevelId_,
+                    completedTask->get_IsCompletedSuccessfully(),
+                    completedTask->get_IsCanceled(),
+                    completedTask->get_IsFaulted());
                 transientStatus_ =
                     "Beat Saber could not load this song's full level data.";
                 officialSongAudioLoader_ = nullptr;
