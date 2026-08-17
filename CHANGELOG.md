@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
+## 0.7.0-alpha.2 — Beat Saber 1.40.8 port
 
 - Added a notification-only Big Screen release checker. It checks the latest
   public stable GitHub release once when the menu first opens in each Beat Saber
