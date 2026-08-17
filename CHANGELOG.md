@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0-alpha.6 — Playback adaptation and menu recovery
+
+- Corrected frame-loss accounting to compare successful Unity uploads with
+  source-aware song-time presentation deadlines instead of inferring loss from
+  media timestamp gaps. Playback speed, source cadence, and the active FPS cap
+  are now included in the expected-frame calculation.
+- Expanded Automatic Performance with separate attack and release timing,
+  configurable 1–5 FPS steps, repeated bidirectional adjustment, and optional
+  oscillation prevention that can hold an unstable upper tier while retaining
+  the ability to reduce FPS further.
+- Fixed complete OST and DLC preview playback by requesting Beat Saber's
+  original level-data variant with a valid `CancellationToken.None` value.
+- Hardened normal and Showcase menu transitions against empty retained HMUI
+  stacks, unsafe re-entrant dismissal, and premature Solo-flow presentation.
+- Fixed playback errors opening an invisible Beat Saber modal behind Big
+  Screen and capturing all controller input. Active-menu errors now appear in
+  Big Screen's visible center-screen dialog.
+
 ## 0.7.0-alpha.5 — Complete built-in song previews
 
 - Fixed Video Library previews for OST and DLC maps looping Beat Saber's short
