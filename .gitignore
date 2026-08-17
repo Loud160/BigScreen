@@ -20,6 +20,7 @@ __pycache__/
 # root-level development captures.
 /diagnostics/
 /BigScreen Support Logs/
+/BigScreen Tools/
 /bigscreen-*.png
 /bigscreen-*.jpg
 /bigscreen-live-settings.json

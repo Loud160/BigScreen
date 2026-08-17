@@ -31,6 +31,9 @@ log_collector_launcher = (root / "Collect-BigScreen-Logs.bat").read_text(
     encoding="utf-8")
 log_collector = (root / "scripts/collect-crash-logs.ps1").read_text(
     encoding="utf-8")
+adb_session_completion = (root / "scripts/complete-adb-session.ps1").read_text(
+    encoding="utf-8")
+adb_bootstrap = (root / "scripts/ensure-adb.ps1").read_text(encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
 ndk_install = (root / "scripts/install-pinned-ndk.sh").read_text(
     encoding="utf-8")
@@ -319,6 +322,8 @@ for launcher_disclosure in (
 # distinction between a current incident and whatever stale file happens to be
 # newest. These are deliberate support contracts, not implementation details.
 assert '%~dp0scripts\\collect-crash-logs.ps1' in log_collector_launcher
+assert log_collector_launcher.index("ensure-adb.ps1") < log_collector_launcher.index(
+    "collect-crash-logs.ps1")
 for collector_contract in (
     '"/sdcard/ModData/$($script:PackageName)"',
     '"$($script:ModDataRoot)/BigScreen/Logs"',
@@ -334,8 +339,56 @@ for collector_contract in (
     "Compress-Archive",
     "REPORT.txt",
     "manifest.json",
+    "AdbWasRunningAtStart",
+    "AdbPromptTimeoutSeconds = 300",
+    "Stopping the ADB server started by this collector",
 ):
     assert collector_contract in log_collector
+for adb_lifecycle_contract in (
+    'set "BIGSCREEN_ADB_WAS_RUNNING=0"',
+    'set "BIGSCREEN_ADB_WAS_USED=0"',
+    'set "BIGSCREEN_ADB_WAS_USED=1"',
+    "complete-adb-session.ps1",
+    "-WasRunningAtStart %BIGSCREEN_ADB_WAS_RUNNING%",
+):
+    assert adb_lifecycle_contract in build_launcher
+for adb_completion_contract in (
+    "WasRunningAtStart",
+    'ExistingAdbAction = "Ask"',
+    "PromptTimeoutSeconds = 300",
+    'choice.exe /C YN /N /T $PromptTimeoutSeconds /D N',
+    "Stopping the ADB server started by deployment",
+    "ADB was left running",
+):
+    assert adb_completion_contract in adb_session_completion
+assert build_launcher.index("ensure-adb.ps1") < build_launcher.index(
+    'scripts\\copy.ps1')
+for adb_bootstrap_contract in (
+    'platformToolsVersion = "37.0.0"',
+    "https://dl.google.com/android/repository/platform-tools_r37.0.0-win.zip",
+    "4fe305812db074cea32903a489d061eb4454cbc90a49e8fea677f4b7af764918",
+    'Join-Path $repoRoot "BigScreen Tools"',
+    "https://developer.android.com/studio/terms",
+    'choice.exe /C YN /N /T $PromptTimeoutSeconds /D N',
+    "Get-FileHash",
+    "Get-AuthenticodeSignature",
+    "O=Google LLC",
+    "Move-Item",
+    "Invoke-DownloadWithConsoleProgress",
+    "Downloaded {0:N1} MB / {1:N1} MB ({2}%)",
+    "Still downloading: {0:N1} MB / {1:N1} MB ({2}%)",
+    "Verifying downloaded archive SHA-256",
+    "Checking extracted Platform Tools version metadata",
+    "Verifying the extracted adb.exe Google LLC digital signature",
+    "Installing the verified portable tools into BigScreen Tools",
+):
+    assert adb_bootstrap_contract in adb_bootstrap
+for adb_launcher_progress_contract in (
+    build_launcher,
+    log_collector_launcher,
+):
+    assert "Portable ADB download progress will be shown" in adb_launcher_progress_contract
+assert "/BigScreen Tools/" in gitignore
 for bootstrap_contract in (
     "Programs/QPM/qpm.exe",
     "restore",

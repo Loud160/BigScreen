@@ -23,7 +23,13 @@ param(
 
     [switch] $NoExplorer,
 
-    [string] $OutputRoot = ""
+    [string] $OutputRoot = "",
+
+    [ValidateSet("Ask", "Stop", "Leave")]
+    [string] $ExistingAdbAction = "Ask",
+
+    [ValidateRange(1, 300)]
+    [int] $AdbPromptTimeoutSeconds = 300
 )
 
 Set-StrictMode -Version 2.0
@@ -35,6 +41,9 @@ $script:BigScreenLogRoot = "$($script:ModDataRoot)/BigScreen/Logs"
 $script:Manifest = New-Object System.Collections.Generic.List[object]
 $script:ReportLines = New-Object System.Collections.Generic.List[string]
 $script:Adb = $null
+$script:AdbWasRunningAtStart = $null -ne (Get-Process adb -ErrorAction SilentlyContinue)
+$script:AdbWasUsed = $false
+$script:AdbLifecycleCompleted = $false
 $script:DeviceNowEpoch = 0L
 $script:CutoffEpoch = 0L
 $script:DeviceOffset = "+00:00"
@@ -60,6 +69,7 @@ function Find-Adb {
     if ($command) { return $command.Source }
 
     $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path $PSScriptRoot "../BigScreen Tools/platform-tools/adb.exe"))
     $candidates.Add((Join-Path $PSScriptRoot "../platform-tools/adb.exe"))
     $candidates.Add((Join-Path $PSScriptRoot "../../platform-tools/adb.exe"))
 
@@ -117,6 +127,62 @@ function Invoke-Adb {
 
 function Invoke-AdbShell([string] $Command, [switch] $AllowFailure) {
     return Invoke-Adb -Arguments @("shell", $Command) -AllowFailure:$AllowFailure
+}
+
+function Stop-AdbServer([string] $Reason) {
+    if (-not (Get-Process adb -ErrorAction SilentlyContinue)) { return }
+    Write-Host $Reason -ForegroundColor Cyan
+    if ($script:Adb) {
+        [void](Invoke-Adb -Arguments @("kill-server") -AllowFailure)
+        Start-Sleep -Milliseconds 300
+    }
+    # kill-server is normally sufficient. The fallback handles a damaged or
+    # mismatched daemon without asking a nontechnical user to run taskkill.
+    Get-Process adb -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Complete-AdbSession {
+    if ($script:AdbLifecycleCompleted) { return }
+    $script:AdbLifecycleCompleted = $true
+    if (-not $script:AdbWasUsed -or
+        -not (Get-Process adb -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    if (-not $script:AdbWasRunningAtStart) {
+        Stop-AdbServer "Stopping the ADB server started by this collector..."
+        Write-Host "ADB was stopped." -ForegroundColor Green
+        return
+    }
+
+    $stopExisting = $false
+    switch ($ExistingAdbAction) {
+        "Stop" { $stopExisting = $true }
+        "Leave" { $stopExisting = $false }
+        default {
+            Write-Host ""
+            Write-Host "ADB was already running before log collection." -ForegroundColor Yellow
+            Write-Host "Stopping it can help ModsBeforeFriday connect. If no choice is made within five minutes, ADB will be left running." -ForegroundColor Yellow
+            $choiceResult = 2
+            $priorErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                & choice.exe /C YN /N /T $AdbPromptTimeoutSeconds /D N /M "Stop ADB now? [Y/N] "
+                $choiceResult = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $priorErrorActionPreference
+            }
+            $stopExisting = $choiceResult -eq 1
+        }
+    }
+
+    if ($stopExisting) {
+        Stop-AdbServer "Stopping the existing ADB server..."
+        Write-Host "ADB was stopped." -ForegroundColor Green
+    } else {
+        Write-Host "ADB was left running." -ForegroundColor DarkGray
+    }
 }
 
 function Convert-DeviceTimestampToEpoch([string] $Timestamp) {
@@ -345,6 +411,7 @@ try {
     }
 
     Write-Host "`nChecking the Quest connection..." -ForegroundColor Cyan
+    $script:AdbWasUsed = $true
     $devices = Invoke-Adb -Arguments @("devices")
     $authorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sdevice$" })
     $unauthorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sunauthorized$" })
@@ -543,6 +610,11 @@ try {
     Write-Host "`nReview REPORT.txt first. It explains which records are fresh, stale, or missing." -ForegroundColor Yellow
     Write-Host "Logs can contain song names, paths, URLs, or usernames; review them before posting publicly." -ForegroundColor Yellow
 
+    # Resolve ADB ownership before Explorer takes focus away from this console;
+    # otherwise a user could miss the shutdown question for five minutes.
+    try { Complete-AdbSession } catch {
+        Write-Host "ADB cleanup warning: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
     if (-not $NoExplorer) {
         Start-Process explorer.exe -ArgumentList "/select,`"$zipPath`""
     }
@@ -557,5 +629,8 @@ try {
     if ($script:StageRoot -and (Test-Path -LiteralPath $script:StageRoot) -and
         ([IO.Path]::GetFileName($script:StageRoot) -like "BigScreen-Support-*")) {
         Remove-Item -LiteralPath $script:StageRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    try { Complete-AdbSession } catch {
+        Write-Host "ADB cleanup warning: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }

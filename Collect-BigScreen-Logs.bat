@@ -20,10 +20,18 @@ echo =================================
 echo This collects recent Big Screen, Beat Saber, and Quest crash information.
 echo It does not change anything on the headset.
 echo.
+echo Checking for ADB...
+echo Portable ADB download progress will be shown if a local copy is needed.
+
+"%BIGSCREEN_POWERSHELL%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure-adb.ps1"
+set "BIGSCREEN_RESULT=%ERRORLEVEL%"
+if not "%BIGSCREEN_RESULT%"=="0" goto :finish
+if exist "%~dp0BigScreen Tools\platform-tools\adb.exe" set "PATH=%~dp0BigScreen Tools\platform-tools;%PATH%"
 
 "%BIGSCREEN_POWERSHELL%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\collect-crash-logs.ps1" %*
 set "BIGSCREEN_RESULT=%ERRORLEVEL%"
 
+:finish
 echo.
 if not "%BIGSCREEN_RESULT%"=="0" (
     echo Log collection did not complete. Read the message above for the cause.

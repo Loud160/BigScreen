@@ -113,6 +113,18 @@ and creates one ZIP containing freshness-labelled Big Screen, Beat Saber, and
 Quest OS diagnostics. No ADB commands or manual file hunting are required.
 See [Troubleshooting](docs/TROUBLESHOOTING.md#collecting-a-support-bundle) for
 what is collected, stale-log protection, and privacy guidance.
+ADB started by the collector is stopped automatically. An ADB server that was
+already running receives a five-minute **Stop ADB?** prompt that defaults to
+leaving the existing session alone.
+
+If ADB is not installed, the BAT offers to download Google's pinned Windows
+Platform Tools package after showing its source, size, destination, and SDK
+terms. The archive and extracted `adb.exe` are verified before use. The
+approximately 17 MB portable copy remains under `BigScreen Tools` beside the
+BAT; deleting that folder removes it without an uninstaller or `PATH` changes.
+The console reports transferred megabytes and percentage during the download,
+then announces archive verification, extraction, signature checking, and final
+installation so a slow first run does not look frozen.
 
 ## Built for standalone Quest use
 
@@ -194,6 +206,12 @@ builds and validates Big Screen, creates the QMOD, removes stale copies from the
 opposite Scotland2 load phase, installs the complete runtime, and asks Beat
 Saber to restart. The console remains open and reports either success or the
 exact failed step.
+
+After deployment, ADB is stopped automatically when the launcher started it.
+If ADB was already active, the launcher asks whether to stop it and defaults to
+**No** after five minutes so it cannot silently disrupt an existing session.
+When ADB is missing, this launcher uses the same disclosed, verified portable
+Platform Tools download as the crash-log collector.
 
 The first clean run needs internet access, several gigabytes of temporary
 space, and time to compile FFmpeg. Later runs reuse hash-verified caches. The

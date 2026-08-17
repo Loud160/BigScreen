@@ -29,6 +29,24 @@ settings, or alter files on the Quest. Logs can contain song/map names, file
 paths, video URLs, or usernames; review the extracted text before posting the
 ZIP publicly.
 
+If the collector had to start ADB, it stops that daemon automatically when
+finished. If ADB was already running, it asks whether to stop it and defaults
+to **No** after five minutes. This prevents the collector from silently ending
+another tool's established ADB session while still giving nontechnical users a
+one-key way to free the Quest for ModsBeforeFriday.
+
+When no existing ADB installation can be found, the BAT offers to download the
+pinned Google Android SDK Platform Tools 37.0.0 Windows archive. It discloses
+the official URL, Google SDK terms, approximately 7.8 MB download, approximately
+16.7 MB extracted size, and exact destination before asking. No response for
+five minutes defaults to **No**. Approved downloads are SHA-256 checked, and
+the extracted `adb.exe` must have a valid Google LLC Authenticode signature.
+Nothing is installed system-wide: the files live under `BigScreen Tools` next
+to the BAT and can be removed by deleting that folder. During an approved
+download, the BAT reports transferred megabytes and percentage and announces
+the verification, extraction, signature-checking, and installation stages so
+slow machines or connections do not appear to have stalled.
+
 Big Screen logs to Beat Saber's standard mod log folder:
 
 `/sdcard/ModData/com.beatgames.beatsaber/logs`
