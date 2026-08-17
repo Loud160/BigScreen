@@ -31,12 +31,17 @@
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "GlobalNamespace/AudioClipAsyncLoader.hpp"
+#include "GlobalNamespace/AudioClipAsyncLoaderExtensions.hpp"
 #include "GlobalNamespace/AudioHelpers.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
+#include "GlobalNamespace/BeatmapLevelDataVersion.hpp"
 #include "GlobalNamespace/BeatmapLevelPack.hpp"
 #include "GlobalNamespace/BeatmapLevelsModel.hpp"
 #include "GlobalNamespace/BeatmapLevelsRepository.hpp"
+#include "GlobalNamespace/IBeatmapLevelData.hpp"
 #include "GlobalNamespace/LevelListTableCell.hpp"
+#include "GlobalNamespace/LoadBeatmapLevelDataResult.hpp"
 #include "GlobalNamespace/IPreviewMediaData.hpp"
 #include "GlobalNamespace/PerceivedLoudnessPerLevelModel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
@@ -3410,13 +3415,71 @@ namespace BigScreen {
         const std::string levelId(selected_->levelID);
         if(IsAlive(previewAudioClip_) && audioLoadLevelId_ == levelId)
             return;
-        if(audioLoadTask_ && audioLoadLevelId_ == levelId)
+        if((audioLoadTask_ || levelDataLoadTask_) &&
+           audioLoadLevelId_ == levelId)
             return;
 
+        ReleaseOfficialSongAudio();
         previewAudioClip_ = nullptr;
         previewAudioSource_ = nullptr;
-        previewMediaData_ = selected_->__cordl_internal_get_previewMediaData();
         audioLoadLevelId_ = levelId;
+
+        // SongCore's custom preview provider returns the complete song file,
+        // which is why custom-map previews already run to the real song end.
+        // Official OST/DLC BeatmapLevel objects instead expose only the short
+        // menu audition. Resolve the full level data and its gameplay audio
+        // asynchronously so no disk/asset loading blocks Beat Saber's UI.
+        if(!SongCore::API::Loading::GetLevelByLevelID(levelId))
+        {
+            try
+            {
+                auto* container = BSML::Helpers::GetDiContainer();
+                auto* model = container
+                    ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
+                    : nullptr;
+                officialSongAudioLoader_ = container
+                    ? container->Resolve<GlobalNamespace::AudioClipAsyncLoader*>()
+                    : nullptr;
+                if(!model || !officialSongAudioLoader_)
+                {
+                    officialSongAudioLoader_ = nullptr;
+                    transientStatus_ =
+                        "Beat Saber could not provide the full song-audio loader.";
+                    return;
+                }
+
+                levelDataLoadTask_ = model->LoadBeatmapLevelDataAsync(
+                    selected_->levelID,
+                    GlobalNamespace::BeatmapLevelDataVersion::NoEnvironmentKeywords,
+                    System::Threading::CancellationToken{});
+                if(!levelDataLoadTask_)
+                {
+                    officialSongAudioLoader_ = nullptr;
+                    transientStatus_ =
+                        "Beat Saber could not start loading this song's full audio.";
+                }
+                else
+                {
+                    transientStatus_ = "Loading full song audio for preview...";
+                    PaperLogger.info(
+                        "Loading full official song audio for Video Library preview: '{}'",
+                        levelId);
+                }
+            }
+            catch(const std::exception& error)
+            {
+                levelDataLoadTask_ = nullptr;
+                officialSongAudioLoader_ = nullptr;
+                transientStatus_ = "Beat Saber could not load this song's full audio.";
+                PaperLogger.error(
+                    "Could not start full official-song audio load for '{}': {}",
+                    levelId,
+                    error.what());
+            }
+            return;
+        }
+
+        previewMediaData_ = selected_->__cordl_internal_get_previewMediaData();
         if(!previewMediaData_)
         {
             transientStatus_ = "This song does not expose preview audio.";
@@ -3428,6 +3491,36 @@ namespace BigScreen {
         audioLoadTask_ = previewMediaData_->GetPreviewAudioClip();
         if(!audioLoadTask_)
             transientStatus_ = "Beat Saber could not start loading this song's audio.";
+    }
+
+    void VideoLibraryMenu::ReleaseOfficialSongAudio()
+    {
+        auto* loader = officialSongAudioLoader_;
+        auto* levelData = officialSongLevelData_;
+        officialSongAudioLoader_ = nullptr;
+        officialSongLevelData_ = nullptr;
+        levelDataLoadTask_ = nullptr;
+        if(!loader || !levelData)
+            return;
+
+        try
+        {
+            // LoadSong uses Beat Saber's reference-counted audio cache. Match
+            // every successful acquisition when the editor changes songs or
+            // closes so full OST/DLC clips do not accumulate in Quest memory.
+            GlobalNamespace::AudioClipAsyncLoaderExtensions::UnloadSong(
+                loader,
+                levelData);
+        }
+        catch(const std::exception& error)
+        {
+            // Audio teardown is best-effort and must never strand the player
+            // inside the mod menu merely because Beat Saber already discarded
+            // a level-data object during a scene transition.
+            PaperLogger.warn(
+                "Could not release official full-song preview audio: {}",
+                error.what());
+        }
     }
 
     void VideoLibraryMenu::TogglePreviewPlayback()
@@ -3676,6 +3769,11 @@ namespace BigScreen {
             PaperLogger.warn("Could not restore menu music during preview teardown: {}", error.what());
         }
 
+        // Release only after SongPreviewPlayer has relinquished the active
+        // channel. Unloading first could invalidate the AudioClip while Unity
+        // is still crossfading away from it.
+        ReleaseOfficialSongAudio();
+
         if(active_ && editorVisible_)
         {
             try { RefreshPlaybackControls(); }
@@ -3695,6 +3793,7 @@ namespace BigScreen {
         audioLoadTask_ = nullptr;
         previewMediaData_ = nullptr;
         audioLoadLevelId_.clear();
+        ReleaseOfficialSongAudio();
         previewPlaying_ = false;
         previewPaused_ = false;
         playWhenAudioReady_ = shouldResume;
@@ -3880,7 +3979,8 @@ namespace BigScreen {
            (previewAudioSource_.unsafePtr() && !IsAlive(previewAudioSource_)))
             RecoverInvalidPreviewAudio("menu update");
         if(editorVisible_ && playWhenAudioReady_ &&
-           !IsAlive(previewAudioClip_) && !audioLoadTask_)
+           !IsAlive(previewAudioClip_) && !audioLoadTask_ &&
+           !levelDataLoadTask_)
             RequestSelectedAudio();
         if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
         {
@@ -3890,6 +3990,52 @@ namespace BigScreen {
 
         try
         {
+          if(editorVisible_ && levelDataLoadTask_ &&
+             levelDataLoadTask_->get_IsCompleted())
+          {
+            auto* completedTask = levelDataLoadTask_;
+            levelDataLoadTask_ = nullptr;
+            const bool selectionStillMatches = selected_ && selected_->levelID &&
+                audioLoadLevelId_ == std::string(selected_->levelID);
+            if(completedTask->get_IsCompletedSuccessfully() &&
+               selectionStillMatches && officialSongAudioLoader_)
+            {
+                const auto result = completedTask->get_Result();
+                if(!result.isError && result.beatmapLevelData)
+                {
+                    officialSongLevelData_ = result.beatmapLevelData;
+                    audioLoadTask_ =
+                        GlobalNamespace::AudioClipAsyncLoaderExtensions::LoadSong(
+                            officialSongAudioLoader_,
+                            officialSongLevelData_);
+                    if(audioLoadTask_)
+                        transientStatus_ = "Loading full song audio for preview...";
+                    else
+                    {
+                        transientStatus_ =
+                            "Beat Saber could not start loading this song's full audio.";
+                        ReleaseOfficialSongAudio();
+                        playWhenAudioReady_ = false;
+                    }
+                }
+                else
+                {
+                    transientStatus_ =
+                        "Beat Saber could not load this song's full level data.";
+                    officialSongAudioLoader_ = nullptr;
+                    playWhenAudioReady_ = false;
+                }
+            }
+            else if(selectionStillMatches)
+            {
+                transientStatus_ =
+                    "Beat Saber could not load this song's full level data.";
+                officialSongAudioLoader_ = nullptr;
+                playWhenAudioReady_ = false;
+            }
+            RefreshDetails();
+          }
+
           if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
           {
             auto* completedTask = audioLoadTask_;
@@ -3905,13 +4051,22 @@ namespace BigScreen {
                         : nullptr;
                 if(!IsAlive(previewAudioClip_))
                     transientStatus_ = "Beat Saber returned no audio for this song.";
-                else if(playWhenAudioReady_)
-                    StartPreviewAudio();
+                else
+                {
+                    PaperLogger.info(
+                        "Video Library audio ready for '{}' ({:.2f}s clip, {:.2f}s song)",
+                        audioLoadLevelId_,
+                        previewAudioClip_->get_length(),
+                        selected_->songDuration);
+                    if(playWhenAudioReady_)
+                        StartPreviewAudio();
+                }
             }
             else
             {
                 transientStatus_ = "Beat Saber could not load this song's audio.";
                 playWhenAudioReady_ = false;
+                ReleaseOfficialSongAudio();
             }
             RefreshDetails();
           }

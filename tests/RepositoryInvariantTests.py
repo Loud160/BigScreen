@@ -34,6 +34,10 @@ ffmpeg_elf_audit = (root / "scripts/validate-ffmpeg-elf.ps1").read_text(
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
 quickjs_fetch = (root / "scripts/fetch-quickjs-ng.ps1").read_text(
     encoding="utf-8")
+rapidjson_fetch = (root / "scripts/fetch-rapidjson.ps1").read_text(
+    encoding="utf-8")
+core_tests_workflow = (root / ".github/workflows/core-tests.yml").read_text(
+    encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
 runtime_manifest_sync = (
     root / "scripts/sync-runtime-manifest.ps1"
@@ -325,6 +329,14 @@ for cache_disclosure in (
 ):
     assert cache_disclosure in runtime_fetch
 assert "Using cached QuickJS-NG" in quickjs_fetch
+for rapidjson_restore_contract in (
+    "https://github.com/Tencent/rapidjson.git",
+    "24b5e7a8b27f42fa16b96fc70aade9106cf7102f",
+    "include/rapidjson/document.h",
+    "rev-parse HEAD",
+):
+    assert rapidjson_restore_contract in rapidjson_fetch
+assert "./scripts/fetch-rapidjson.ps1" in core_tests_workflow
 assert "Using cached FFmpeg" in ffmpeg_build
 assert "archive_download_path=" in ffmpeg_build
 assert "archive_is_valid" in ffmpeg_build
@@ -1240,6 +1252,10 @@ for unsafe_condition in (
     assert unsafe_condition not in library_menu_source, unsafe_condition
 assert "RecoverInvalidPreviewAudio(\"menu update\")" in library_menu_source
 assert "UnityW<UnityEngine::AudioClip>::isAlive" in library_menu_source
+assert "LoadBeatmapLevelDataAsync" in library_menu_source
+assert "AudioClipAsyncLoaderExtensions::LoadSong" in library_menu_source
+assert "AudioClipAsyncLoaderExtensions::UnloadSong" in library_menu_source
+assert "Loading full official song audio" in library_menu_source
 
 # Missed-video-frame statistics must use gaps between timestamps that actually
 # reached Unity. Worker deadline sampling mistakes harmless thread scheduling

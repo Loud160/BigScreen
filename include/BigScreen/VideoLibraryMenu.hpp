@@ -23,9 +23,12 @@ namespace BSML {
     class ToggleSetting;
 }
 namespace GlobalNamespace {
+    class AudioClipAsyncLoader;
     class BeatmapLevel;
+    class IBeatmapLevelData;
     class IPreviewMediaData;
     class SongPreviewPlayer;
+    struct LoadBeatmapLevelDataResult;
 }
 namespace HMUI { class HoverHint; class ImageView; class InputFieldView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
@@ -107,6 +110,10 @@ namespace BigScreen {
         void RefreshVisibleVideoThumbnails();
         void StartSelectedPreview();
         void RequestSelectedAudio();
+        /// Releases the reference-counted full-song audio acquired for an
+        /// official OST/DLC map. Custom maps keep using their existing preview
+        /// provider because SongCore exposes the complete song through it.
+        void ReleaseOfficialSongAudio();
         void TogglePreviewPlayback();
         void SeekPreview(float songTimeSeconds);
         /// Starts the song audition at previewSongTime_. Normal user actions
@@ -215,7 +222,15 @@ namespace BigScreen {
         // validate m_CachedPtr, preventing stale references from being treated
         // as live merely because their managed pointer still has an address.
         UnityW<GlobalNamespace::SongPreviewPlayer> songPreviewPlayer_ = nullptr;
+        // Official Beat Saber maps deliberately expose only their short menu
+        // audition through IPreviewMediaData. Load their level data first and
+        // then ask AudioClipAsyncLoader for the full gameplay song; otherwise
+        // the synchronized library preview loops after roughly eight seconds.
+        System::Threading::Tasks::Task_1<GlobalNamespace::LoadBeatmapLevelDataResult>*
+            levelDataLoadTask_ = nullptr;
         System::Threading::Tasks::Task_1<UnityW<UnityEngine::AudioClip>>* audioLoadTask_ = nullptr;
+        GlobalNamespace::AudioClipAsyncLoader* officialSongAudioLoader_ = nullptr;
+        GlobalNamespace::IBeatmapLevelData* officialSongLevelData_ = nullptr;
         UnityW<UnityEngine::AudioClip> previewAudioClip_ = nullptr;
         UnityW<UnityEngine::AudioSource> previewAudioSource_ = nullptr;
         SongLibraryFilter filter_ = SongLibraryFilter::All;

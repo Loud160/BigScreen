@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0-alpha.5 — Complete built-in song previews
+
+- Fixed Video Library previews for OST and DLC maps looping Beat Saber's short
+  menu-audition clip. Big Screen now loads the complete official song audio for
+  synchronized preview playback while retaining SongCore's established path
+  for custom and WIP maps.
+- Reworded the packaged Mods Before Friday description around the advanced
+  playback features users can configure, and explicitly documented support for
+  adding videos to OST, DLC, custom, and WIP maps without implying that the
+  hard-coded Showcase choreography is a user-facing screen editor.
+- Restored the exact QPM-pinned RapidJSON revision in GitHub host-test jobs so
+  clean CI checkouts can compile the map-configuration tests.
+
 ## 0.7.0-alpha.4 — Mods Before Friday package fix
 
 - Fixed the generated QMOD manifest using a UTF-8 byte-order mark that Mods
