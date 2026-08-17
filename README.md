@@ -91,6 +91,20 @@ removes only the map assignment and leaves the original file untouched.
 - Video previews and in-map playback have separate global switches.
 - Replay playback and recording retain the video screen.
 
+## Install a testing release with ModsBeforeFriday
+
+Until Big Screen is listed in the ModsBeforeFriday catalog, you can install a
+release manually:
+
+1. Download the `.qmod` file from the [latest Big Screen release](https://github.com/Loud160/BigScreen/releases/latest).
+2. Connect your Quest to your computer with USB and open [ModsBeforeFriday](https://mbf.bsquest.xyz/) in a compatible browser such as Chrome or Edge.
+3. Connect ModsBeforeFriday to the headset and select **Upload Files**.
+4. Choose the downloaded Big Screen `.qmod` file and let ModsBeforeFriday install it.
+5. Start or restart Beat Saber. Big Screen will appear in the game's **Mods** menu.
+
+Beat Saber must already be patched for mods, and the Big Screen release must
+match the Beat Saber version installed on the headset.
+
 ## Built for standalone Quest use
 
 Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. YouTube downloads
