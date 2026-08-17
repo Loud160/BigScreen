@@ -170,13 +170,13 @@ foreach ($runtime in @(
 Write-Output ""
 Write-Output "Preparing the embedded downloader runtime. Missing first-run archives will be downloaded, verified, and extracted; this can take several minutes."
 & (Join-Path $PSScriptRoot "fetch-quickjs-ng.ps1")
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if (-not $?) {
+    throw "QuickJS-NG preparation failed."
 }
 
 & (Join-Path $PSScriptRoot "fetch-downloader-runtime.ps1")
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if (-not $?) {
+    throw "Embedded downloader runtime preparation failed."
 }
 
 # The current development package intentionally includes the hard-coded
@@ -235,4 +235,6 @@ if ($env:OS -eq "Windows_NT") {
 # matching private FFmpeg namespace. Without this audit a valid-looking build
 # could still route both toggle states through whichever FFmpeg loaded first.
 & (Join-Path $PSScriptRoot "validate-ffmpeg-elf.ps1")
-exit $LASTEXITCODE
+if (-not $?) {
+    throw "Dual FFmpeg backend ELF isolation validation failed."
+}
