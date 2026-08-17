@@ -54,7 +54,7 @@ Enables independent video framing and free screen placement for the selected lay
 
 ### Allow Chroma Override — default: On
 
-Preserves the intended Chroma/Cinema environment for a video map. The map takes ownership of the screen canvas only when both conditions are true: the map is detected as using Chroma, and its video metadata supplies custom position, rotation, size, or curvature. Otherwise the selected Big Screen layout and its Screen Canvas controls remain active. Video Controls, Video Opacity, and Letterbox Transparency always control how the picture is composed inside whichever canvas is active. Detection is map-wide and works whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force Big Screen's canvas and environment options. Timing metadata remains honored either way.
+Preserves the intended environment only for a video map that is actually detected as using Chroma. Cinema metadata by itself—including a requested environment—does not activate this override, so non-Chroma maps continue to use Big Screen's environment settings. The map takes ownership of the screen canvas only when both conditions are true: the map is detected as using Chroma, and its video metadata supplies custom position, rotation, size, or curvature. Otherwise the selected Big Screen layout and its Screen Canvas controls remain active. Video Controls, Video Opacity, and Letterbox Transparency always control how the picture is composed inside whichever canvas is active. Detection is map-wide and works whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force Big Screen's canvas and environment options. Timing metadata remains honored either way.
 
 ### Screen Distance Offset — default: 0, range: -180 to +180
 
@@ -156,7 +156,7 @@ Disabled child controls do not display hover hints; Map Light Show keeps its own
 
 ### Use Big Mirror Override — default: On
 
-Loads Big Mirror for video maps because its open back-wall area fits a large screen. Off preserves the map's intended environment, which can place scenery in front of the video. A mapper-owned Chroma/Cinema environment takes precedence when Allow Chroma Override is active.
+Loads Big Mirror for video maps because its open back-wall area fits a large screen. Off preserves the map's intended environment, which can place scenery in front of the video. A map detected as using Chroma takes environment precedence when Allow Chroma Override is active; Cinema metadata alone does not.
 
 ### Disable Rotation and Motion — default: Off
 

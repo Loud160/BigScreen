@@ -34,16 +34,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       name: Checkout
       with:
         submodules: true
         lfs: true
 
-    - uses: seanmiddleditch/gha-setup-ninja@3b1f8f94a2f8254bd26914c4ab9474d4f0015f67 # v6
+    # Ubuntu's packaged Ninja avoids depending on the unmaintained
+    # gha-setup-ninja action, whose current release still embeds Node 20.
+    - name: Install native build tools
+      run: sudo apt-get update && sudo apt-get install -y ninja-build unzip
 
     - name: Set up Android SDK
-      uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
 
     - name: Install pinned Android NDK r27d
       run: sdkmanager "ndk;27.3.13750724"
@@ -61,13 +64,28 @@ jobs:
         echo "TAG=${GITHUB_REF#refs/tags/}" >> ${GITHUB_OUTPUT}
         echo "VERSION=${GITHUB_REF#refs/tags/v}" >> ${GITHUB_OUTPUT}
 
-    - name: Setup qpm
-      uses: Fernthedev/qpm-action@6e4291275695b10523c98f1317fd9fb0983e2957 # main, pinned 2026-08-12
-      with:
-        workflow_token: ${{ secrets.GITHUB_TOKEN }}
-        restore: true
-        cache: true
-        publish: false
+    # qpm-action obtains an ephemeral artifact from QPM.CLI's main-branch
+    # workflow. When that artifact expires or is absent, CI fails before this
+    # repository is built. Install QPM's immutable official release instead,
+    # and verify the archive before executing it.
+    - name: Install QPM CLI 1.5.11
+      env:
+        QPM_ARCHIVE_SHA256: 4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df
+      run: |
+        qpm_dir="${RUNNER_TEMP}/qpm-1.5.11"
+        qpm_archive="${RUNNER_TEMP}/qpm-linux-x64-musl-1.5.11.zip"
+        curl --fail --location --retry 3 --silent --show-error \
+          --output "${qpm_archive}" \
+          "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip"
+        echo "${QPM_ARCHIVE_SHA256}  ${qpm_archive}" | sha256sum --check --strict
+        mkdir -p "${qpm_dir}"
+        unzip -q "${qpm_archive}" -d "${qpm_dir}"
+        chmod 0755 "${qpm_dir}/qpm"
+        echo "${qpm_dir}" >> "${GITHUB_PATH}"
+        "${qpm_dir}/qpm" --help >/dev/null
+
+    - name: Restore pinned Quest dependencies
+      run: qpm restore
 
     - name: Build isolated LGPL FFmpeg runtime
       run: |
@@ -90,14 +108,14 @@ jobs:
         echo "NAME=${files[0]}" >> ${GITHUB_OUTPUT}
 
     - name: Upload artifact
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: ${{ steps.libname.outputs.NAME }}
         path: ./build/${{ steps.libname.outputs.NAME }}
         if-no-files-found: error
 
     - name: Upload qmod artifact
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: ${{env.qmod_name}}.qmod
         path: ./${{ env.qmod_name }}.qmod
@@ -107,7 +125,7 @@ jobs:
     - name: Upload release artifacts
       if: startsWith(github.ref, 'refs/tags/v')
       id: upload_file_release
-      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
       with:
         tag_name: ${{ steps.version.outputs.TAG }}
         draft: true

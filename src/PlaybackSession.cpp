@@ -62,11 +62,16 @@ namespace BigScreen {
 
     bool PlaybackSession::MapperEnvironmentPresentationActive() const
     {
+        // A Cinema file can name an environment without the beatmap using
+        // Chroma at all. That metadata alone must not bypass Big Screen's
+        // environment settings (V8C is a real example: it requests Big Mirror
+        // but declares only Cinema). Yield the environment only after the
+        // map-wide detector finds an actual Chroma requirement, suggestion, or
+        // non-empty Chroma environment instruction array.
         return showcaseEligible_ ||
                (Settings::Instance().AllowChromaOverride() &&
                 baseConfig_ &&
-                (chromaMapDetected_ ||
-                 baseConfig_->hasMapperEnvironmentPresentation));
+                chromaMapDetected_);
     }
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
@@ -93,6 +98,7 @@ namespace BigScreen {
             requestedFrames_,
             expectedFrames,
             deliveredPresentedFrames_,
+            presentationMisses_.MissedDeadlines(),
             decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(),
             decoder_.PeakDecodeMilliseconds(),
@@ -485,6 +491,7 @@ namespace BigScreen {
         deliveredPresentedFrames_ = 0;
         expectedPresentationDeadlines_ = 0;
         expectedPresentationFraction_ = 0.0;
+        presentationMisses_.Reset();
         windowDeliveredPresentedFrames_ = 0;
         windowExpectedPresentationDeadlines_ = 0;
         windowExpectedPresentationFraction_ = 0.0;
@@ -571,6 +578,7 @@ namespace BigScreen {
         deliveredPresentedFrames_ = 0;
         expectedPresentationDeadlines_ = 0;
         expectedPresentationFraction_ = 0.0;
+        presentationMisses_.Reset();
         windowDeliveredPresentedFrames_ = 0;
         windowExpectedPresentationDeadlines_ = 0;
         windowExpectedPresentationFraction_ = 0.0;
@@ -904,9 +912,7 @@ namespace BigScreen {
                     ? currentWindowExpected - currentWindowDelivered
                     : 0,
                 currentWindowExpected,
-                d.expectedFrames > d.presentedFrames
-                    ? d.expectedFrames - d.presentedFrames
-                    : 0,
+                d.missedFrames,
                 currentWindowVideoFps,
                 currentWindowMissed,
                 d.averageDecodeMilliseconds,
@@ -979,42 +985,55 @@ namespace BigScreen {
         }
 
         VideoFrame frame;
-        if(!decoder_.TryTake(frame))
-            return;
-
-        if(surface_.Upload(frame))
+        if(decoder_.TryTake(frame))
         {
-            // Count every distinct picture that actually reached Unity. The
-            // song-clock deadline accumulators above provide the independent
-            // expectation; media timestamp gaps are deliberately irrelevant
-            // because a cap may intentionally skip source pictures.
-            ++deliveredPresentedFrames_;
-            ++windowDeliveredPresentedFrames_;
-            ++diagnosticsWindowDeliveredPresentedFrames_;
-            firstFrameUploaded_ = true;
-            if(showcase_.IsCreated() && showcase_.TimelineActive())
+            if(surface_.Upload(frame))
             {
-                showcase_.SetMediaReady(true);
-                // Apply once more after the first upload so the panels become
-                // visible in this same Unity frame instead of one update late.
-                if(!showcase_.Apply(songTimeSeconds))
+                // Count every distinct picture that actually reached Unity.
+                // The song-clock deadline accumulators above provide the
+                // independent expectation; media timestamp gaps are
+                // deliberately irrelevant because a cap may intentionally
+                // skip source pictures.
+                ++deliveredPresentedFrames_;
+                ++windowDeliveredPresentedFrames_;
+                ++diagnosticsWindowDeliveredPresentedFrames_;
+                firstFrameUploaded_ = true;
+                if(showcase_.IsCreated() && showcase_.TimelineActive())
                 {
-                    showcase_.Destroy();
-                    surface_.SetVisible(true);
-                    PaperLogger.error(
-                        "Up & Down showcase activation failed after first frame; restored ordinary playback");
+                    showcase_.SetMediaReady(true);
+                    // Apply once more after the first upload so the panels
+                    // become visible in this same Unity frame instead of one
+                    // update late.
+                    if(!showcase_.Apply(songTimeSeconds))
+                    {
+                        showcase_.Destroy();
+                        surface_.SetVisible(true);
+                        PaperLogger.error(
+                            "Up & Down showcase activation failed after first frame; restored ordinary playback");
+                    }
+                    else
+                    {
+                        surface_.SetVisible(false);
+                    }
                 }
                 else
                 {
-                    surface_.SetVisible(false);
+                    surface_.SetVisible(true);
                 }
             }
-            else
-            {
-                surface_.SetVisible(true);
-            }
+            decoder_.Recycle(std::move(frame));
         }
-        decoder_.Recycle(std::move(frame));
+
+        // Evaluate deadline outcomes after this tick's possible Unity upload.
+        // This keeps a picture delivered on the current update from being
+        // classified as late merely because Tick() checks the decoder near the
+        // end of the function. Automatic Performance continues using its own
+        // bounded, recoverable backlog window above.
+        presentationMisses_.Observe(
+            CoreLogic::ReportablePresentationDeadlines(
+                expectedPresentationDeadlines_,
+                deliveredPresentedFrames_),
+            deliveredPresentedFrames_);
     }
 
     void PlaybackSession::RefreshPlaybackFpsLimitLive()
@@ -1252,19 +1271,20 @@ namespace BigScreen {
     void PlaybackSession::CaptureDiagnosticsSummary()
     {
         const auto diagnostics = Diagnostics();
-        const auto missedFrames =
-            diagnostics.expectedFrames > diagnostics.presentedFrames
-                ? diagnostics.expectedFrames - diagnostics.presentedFrames
-                : 0;
-        const double missedPercent = CoreLogic::MissedFramePercent(
-            diagnostics.expectedFrames, diagnostics.presentedFrames);
+        const auto missedFrames = diagnostics.missedFrames;
+        const double missedPercent = diagnostics.expectedFrames > 0
+            ? 100.0 * static_cast<double>(missedFrames) /
+                static_cast<double>(diagnostics.expectedFrames)
+            : 0.0;
         const double expectedVideoFps = CoreLogic::ExpectedPresentationRate(
             diagnostics.sourceFps,
             config_ ? config_->playbackRate : 1.0,
             diagnostics.outputFpsLimit);
         const double averageVideoFps = diagnostics.expectedFrames > 0
             ? expectedVideoFps *
-                static_cast<double>(diagnostics.presentedFrames) /
+                static_cast<double>(
+                    diagnostics.expectedFrames -
+                    std::min(diagnostics.expectedFrames, missedFrames)) /
                 static_cast<double>(diagnostics.expectedFrames)
             : 0.0;
         std::ostringstream text;
@@ -1273,8 +1293,8 @@ namespace BigScreen {
              << diagnostics.sourceFps << " FPS video  |  "
              << "Codec " << diagnostics.codec << "  |  "
              << "Presentation limit " << diagnostics.outputFpsLimit << " FPS\n"
-             << "Delivered " << diagnostics.presentedFrames << " / "
-             << diagnostics.expectedFrames << " expected pictures  |  "
+             << "Uploaded " << diagnostics.presentedFrames << " pictures  |  "
+             << diagnostics.expectedFrames << " presentation deadlines  |  "
              << "Missed Frames " << missedFrames << " ("
              << std::setprecision(2) << missedPercent << "%)  |  "
              << "Video Average " << std::setprecision(1)
@@ -1333,7 +1353,11 @@ namespace BigScreen {
             diagnostics.outputFpsLimit);
         const double averageVideoFps = diagnostics.expectedFrames > 0
             ? expectedVideoFps *
-                static_cast<double>(diagnostics.presentedFrames) /
+                static_cast<double>(
+                    diagnostics.expectedFrames -
+                    std::min(
+                        diagnostics.expectedFrames,
+                        diagnostics.missedFrames)) /
                 static_cast<double>(diagnostics.expectedFrames)
             : 0.0;
         PerformancePanel::Instance().SetStatistics({
@@ -1346,17 +1370,14 @@ namespace BigScreen {
             diagnostics.videoHeight,
             diagnostics.sourceFps,
             diagnostics.outputFpsLimit,
-            diagnostics.expectedFrames > diagnostics.presentedFrames
-                ? diagnostics.expectedFrames - diagnostics.presentedFrames
-                : 0,
+            diagnostics.missedFrames,
             diagnostics.expectedFrames,
-            diagnostics.expectedFrames > diagnostics.presentedFrames
-                ? diagnostics.expectedFrames - diagnostics.presentedFrames
-                : 0,
+            diagnostics.missedFrames,
             averageVideoFps,
-            CoreLogic::MissedFramePercent(
-                diagnostics.expectedFrames,
-                diagnostics.presentedFrames),
+            diagnostics.expectedFrames > 0
+                ? 100.0 * static_cast<double>(diagnostics.missedFrames) /
+                    static_cast<double>(diagnostics.expectedFrames)
+                : 0.0,
             diagnostics.averageDecodeMilliseconds,
             diagnostics.peakDecodeMilliseconds,
             diagnostics.decodeMethod,

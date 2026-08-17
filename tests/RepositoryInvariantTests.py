@@ -581,6 +581,12 @@ assert "AVERROR(EAGAIN)" in frame_decoder_source
 assert "std::optional<double> endOfStreamTime" in frame_decoder_source
 assert "std::optional<double> firstAvailableFrameTime" in frame_decoder_source
 assert "ReadDecodedFrame(bool& reachedEndOfStream)" in frame_decoder_source
+assert "compressedPacketPending_" in frame_decoder_header
+assert "decoderDraining_" in frame_decoder_header
+assert "if(compressedPacketPending_)" in frame_decoder_source
+assert "decoderDraining_ = true" in frame_decoder_source
+assert "MaximumDrainWaitAttempts = 250" in frame_decoder_source
+assert "finalResult == AVERROR_EOF || finalResult == AVERROR(EAGAIN)" not in frame_decoder_source
 open_body = frame_decoder_source.split("bool FrameDecoder::Open(", 1)[1].split(
     "void FrameDecoder::Close()", 1)[0]
 close_body = frame_decoder_source.split("void FrameDecoder::Close()", 1)[1].split(
@@ -1322,14 +1328,17 @@ assert "System::Threading::CancellationToken{}" not in library_menu_source
 # output cap and Fit-to-Song intentionally select only some source pictures.
 assert "AccumulatePresentationDeadlines" in core_logic
 assert "ReportablePresentationDeadlines" in core_logic
+assert "PresentationMissAccumulator" in core_logic
 assert "expectedPresentationDeadlines_" in playback_header
 assert "deliveredPresentedFrames_" in playback_header
+assert "PresentationMissAccumulator presentationMisses_" in playback_header
 assert "windowExpectedPresentationDeadlines_" in playback_header
 assert "diagnosticsWindowExpectedPresentationDeadlines_" in playback_header
 assert "AccumulatePresentationDeadlines(" in playback_source
 assert "PresentedFrameIntervals" not in core_logic
 assert "lastUploadedPresentationSeconds_" not in playback_header
 assert "Missed Frames \" << missedFrames" in playback_source
+assert "presentationMisses_.MissedDeadlines()" in playback_source
 assert "std::setprecision(2) << missedPercent" in playback_source
 assert "PeakDecodeMilliseconds" in frame_decoder_header
 assert "ResetPeakDecodeMilliseconds" in playback_source
@@ -1371,6 +1380,26 @@ for obsolete_counter in (
 ):
     assert obsolete_counter not in playback_header
     assert obsolete_counter not in playback_source
+
+# CI installs the exact official QPM CLI release instead of depending on a
+# short-lived artifact from QPM.CLI's main-branch workflow. Keep third-party
+# actions immutable and on Node 24-capable releases so GitHub's runner upgrade
+# cannot turn deprecation warnings into bootstrap failures.
+build_workflow = (root / ".github" / "workflows" / "build-ndk.yml").read_text(
+    encoding="utf-8"
+)
+core_workflow = (root / ".github" / "workflows" / "core-tests.yml").read_text(
+    encoding="utf-8"
+)
+assert "Fernthedev/qpm-action" not in build_workflow
+assert "QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip" in build_workflow
+assert "4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df" in build_workflow
+assert "qpm restore" in build_workflow
+assert "uses: seanmiddleditch/gha-setup-ninja" not in build_workflow
+assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in build_workflow
+assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in core_workflow
+assert "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" in core_workflow
+assert "pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320" in core_workflow
 
 # BSML's Full floating-screen handle is not reliably draggable on the
 # Quest. Keep the proven Top handler, expand its hit volume over the panel, and

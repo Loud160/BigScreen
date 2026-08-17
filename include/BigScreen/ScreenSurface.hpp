@@ -54,8 +54,8 @@ namespace BigScreen {
             const char* rootName);
         /// Rebuilds only geometry and placement while preserving the decoder's
         /// current texture, material, visibility, and most recently presented
-        /// frame. This is used by the pause-menu layout selector so changing a
-        /// layout cannot restart or desynchronize video playback.
+        /// frame. This allows future live layout controls to change geometry
+        /// without restarting or desynchronizing video playback.
         bool UpdateGeometry(const MapVideoConfig& config);
         void Destroy();
         void SetVisible(bool visible);

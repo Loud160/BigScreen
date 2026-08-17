@@ -521,6 +521,8 @@ namespace BigScreen {
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
+        compressedPacketPending_ = false;
+        decoderDraining_ = false;
         codecName_ = "unknown";
         softwareFallbackAllowed_ = true;
         softwareFallbackBlockedReason_.clear();
@@ -796,6 +798,8 @@ namespace BigScreen {
     bool FrameDecoder::ReadDecodedFrame(bool& reachedEndOfStream)
     {
         reachedEndOfStream = false;
+        int drainWaitAttempts = 0;
+        constexpr int MaximumDrainWaitAttempts = 250;
         const auto applyDecodedCrop = [this]() {
             // Apply codec crop metadata before swscale sees the picture. This
             // prevents padded MediaCodec stride/slice dimensions (or ordinary
@@ -831,6 +835,55 @@ namespace BigScreen {
                 return false;
             }
 
+            // FFmpeg's send/receive contract is strict: EAGAIN from
+            // avcodec_send_packet() means the AVPacket was not consumed. Retry
+            // that same referenced packet only after receive_frame() has made
+            // room. The prior implementation unreferenced it unconditionally,
+            // which dropped compressed input whenever MediaCodec applied
+            // backpressure and could leave the final seconds undecodable.
+            if(compressedPacketPending_)
+            {
+                result = avcodec_send_packet(codec_, packet_);
+                if(result == 0)
+                {
+                    av_packet_unref(packet_);
+                    compressedPacketPending_ = false;
+                    continue;
+                }
+                if(result == AVERROR(EAGAIN))
+                {
+                    // libavcodec normally guarantees that receive EAGAIN and
+                    // send EAGAIN cannot happen in a permanent cycle. Yielding
+                    // keeps a vendor MediaCodec implementation from turning a
+                    // transient violation into a hot decoder-thread spin.
+                    std::this_thread::yield();
+                    continue;
+                }
+                av_packet_unref(packet_);
+                compressedPacketPending_ = false;
+                SetWorkerError(
+                    "FFmpeg could not submit a compressed video packet: " +
+                    FfmpegError(result));
+                return false;
+            }
+
+            if(decoderDraining_)
+            {
+                // MediaCodec may report EAGAIN briefly after accepting the
+                // null drain packet because its final CPU-readable frames are
+                // delivered asynchronously. Wait only on the decoder worker;
+                // the Unity/game thread remains non-blocking. AVERROR_EOF above
+                // is the authoritative completed-drain signal.
+                if(++drainWaitAttempts <= MaximumDrainWaitAttempts)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
+                }
+                SetWorkerError(
+                    "FFmpeg did not finish draining the final video frames within 250 ms.");
+                return false;
+            }
+
             // Feed packets until this codec has enough compressed data to emit
             // another frame. Non-video packets are discarded immediately.
             result = av_read_frame(format_, packet_);
@@ -848,40 +901,39 @@ namespace BigScreen {
                 }
 
                 const int flushResult = avcodec_send_packet(codec_, nullptr);
-                if(flushResult < 0 && flushResult != AVERROR_EOF)
+                if(flushResult == 0)
                 {
-                    SetWorkerError(
-                        "FFmpeg could not flush the final video packet: " +
-                        FfmpegError(flushResult));
+                    decoderDraining_ = true;
+                    drainWaitAttempts = 0;
+                    continue;
+                }
+                if(flushResult == AVERROR(EAGAIN))
+                {
+                    // Output is still waiting. receive_frame() runs first on
+                    // the next iteration, after which EOF will retry the null
+                    // packet rather than losing the drain request.
+                    continue;
+                }
+                if(flushResult == AVERROR_EOF)
+                {
+                    reachedEndOfStream = true;
                     return false;
                 }
-                const int finalResult = avcodec_receive_frame(codec_, decoded_);
-                if(finalResult == 0)
-                    return applyDecodedCrop();
-                if(finalResult != AVERROR_EOF && finalResult != AVERROR(EAGAIN))
-                {
-                    SetWorkerError(
-                        "FFmpeg could not receive the final video frame: " +
-                        FfmpegError(finalResult));
-                }
-                reachedEndOfStream =
-                    finalResult == AVERROR_EOF || finalResult == AVERROR(EAGAIN);
-                return false;
-            }
-
-            if(packet_->stream_index == videoStream_)
-                result = avcodec_send_packet(codec_, packet_);
-            else
-                result = 0;
-            av_packet_unref(packet_);
-
-            if(result < 0 && result != AVERROR(EAGAIN))
-            {
                 SetWorkerError(
-                    "FFmpeg could not submit a compressed video packet: " +
-                    FfmpegError(result));
+                    "FFmpeg could not flush the final video packet: " +
+                    FfmpegError(flushResult));
                 return false;
             }
+
+            if(packet_->stream_index != videoStream_)
+            {
+                av_packet_unref(packet_);
+                continue;
+            }
+
+            compressedPacketPending_ = true;
+            // Submission occurs at the top of the next iteration after one
+            // receive attempt, preserving the required receive/send cadence.
         }
         return false;
     }
@@ -903,6 +955,10 @@ namespace BigScreen {
         }
 
         avcodec_flush_buffers(codec_);
+        if(compressedPacketPending_)
+            av_packet_unref(packet_);
+        compressedPacketPending_ = false;
+        decoderDraining_ = false;
         return true;
     }
 

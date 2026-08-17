@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.7.0-alpha.7 — Reliable preview completion and runtime hardening
+
+- Fixed Video Library previews intermittently freezing two or three seconds
+  before the end. Big Screen now disables `SongPreviewPlayer`'s automatic
+  early return-to-menu-music timer and remains the sole owner of synchronized
+  preview looping at the actual song/audio boundary.
+- Corrected FFmpeg send/receive handling under decoder backpressure. Compressed
+  packets rejected with `EAGAIN` remain referenced until accepted, and the
+  asynchronous MediaCodec end-of-stream drain now waits for authoritative EOF
+  instead of dropping final pictures or declaring completion early.
+- Made the displayed Frames Skipped total monotonic by recording completed
+  presentation deadlines. A decoder catching up can satisfy later deadlines
+  without making an already missed frame disappear from the user-facing total.
+- Limited mapper environment ownership to maps actually detected as using
+  Chroma. Cinema metadata alone no longer bypasses Big Screen's environment
+  settings, while Chroma maps and authored screen geometry remain supported
+  when Allow Chroma Override is enabled.
+- Removed the non-rendering Beat Saber 1.40.8 pause-menu controls and their
+  unsafe hidden BSML hierarchy, which could leave a stale Unity animation
+  reference and crash while exiting a video map.
+- Repaired GitHub builds by installing and hash-verifying the immutable QPM
+  1.5.11 release instead of relying on an expiring main-branch artifact. CI
+  actions now use Node 24-capable releases and Ubuntu's packaged Ninja.
+- Expanded regression coverage for repeated decoder EOF/seek loops, monotonic
+  presentation misses, Cinema-versus-Chroma detection, and CI invariants.
+
 ## 0.7.0-alpha.6 — Playback adaptation and menu recovery
 
 - Corrected frame-loss accounting to compare successful Unity uploads with

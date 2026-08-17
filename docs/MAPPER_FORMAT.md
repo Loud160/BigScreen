@@ -17,7 +17,7 @@ are user/map-owned and are never deleted by Big Screen.
 
 ## Cinema and Chroma presentation compatibility
 
-When the player enables Allow Chroma Override, Big Screen recognizes Cinema's
+Big Screen recognizes Cinema's
 `screenPosition`, `screenRotation`, `screenHeight`, `screenCurvature`,
 `screenSubsurfaces`, `curveYAxis`, `transparency`, `environmentName`,
 `disableDefaultModifications`, `forceEnvironmentModifications`, and
@@ -32,10 +32,13 @@ Big Screen detects Chroma requirements/suggestions and non-empty Chroma
 environment arrays across the entire map folder. This separate detection also
 applies when the active video is a user download, import, or map-folder MP4,
 so adding a video never causes Big Screen to force an environment over Chroma.
-Big Screen then applies Cinema's separate `environment` array as a final
-one-time scene pass after the environment and video surface exist.
-Environment and screen ownership are evaluated separately. Chroma/Cinema can
-retain the intended environment without disabling the player's screen layout.
+When the player enables Allow Chroma Override and the map is actually detected
+as using Chroma, Big Screen applies Cinema's separate `environment` array as a
+final one-time scene pass after the environment and video surface exist. A
+Cinema file or Cinema suggestion by itself never claims the gameplay
+environment. Environment and screen ownership are evaluated separately. A
+Chroma map can retain its intended environment without disabling the player's
+screen layout.
 The authored screen canvas wins only when Chroma is detected and the video
 metadata contains custom position, rotation, size, or curvature. The selected
 layout still owns picture-only controls inside that canvas, including video

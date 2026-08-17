@@ -147,6 +147,19 @@ int main()
     Expect(environmentOnly && !environmentOnly->hasMapperScreenGeometry,
            "environment metadata must not claim video screen geometry");
 
+    // Cinema metadata—including a requested environment—and a Cinema-only
+    // suggestion do not mean the beatmap uses Chroma. Playback uses this
+    // distinction to keep Big Screen's environment settings authoritative for
+    // maps such as V8C while still honoring the video's media/timing fields.
+    const auto info = root / "Info.dat";
+    {
+        std::ofstream output(info, std::ios::trunc);
+        output << R"({"_customData":{"_suggestions":["Cinema"]}})";
+    }
+    std::string chromaReason;
+    Expect(!BigScreen::ChromaMapDetector::UsesChroma(root, chromaReason),
+           "Cinema-only metadata must not be mistaken for Chroma use");
+
     {
         std::ofstream output(metadata, std::ios::trunc);
         output << R"({"videoUrl":"https://youtube.com.example.invalid/video"})";
@@ -159,18 +172,18 @@ int main()
     // A user-downloaded or locally assigned video has no reason to modify the
     // map files. Detect Chroma independently so those videos still yield the
     // environment to Chroma when Allow Chroma Override is enabled.
-    const auto info = root / "Info.dat";
+    std::filesystem::remove(info);
+    const auto chromaInfo = root / "ChromaInfo.dat";
     {
-        std::ofstream output(info, std::ios::trunc);
+        std::ofstream output(chromaInfo, std::ios::trunc);
         output << R"({"_customData":{"_suggestions":["Chroma"]}})";
     }
-    std::string chromaReason;
     Expect(BigScreen::ChromaMapDetector::UsesChroma(root, chromaReason),
            "Info.dat Chroma suggestion should activate map-wide detection");
     Expect(!chromaReason.empty(),
            "Chroma detection should explain which declaration matched");
 
-    std::filesystem::remove(info);
+    std::filesystem::remove(chromaInfo);
     const auto difficulty = root / "ExpertPlus.dat";
     {
         std::ofstream output(difficulty, std::ios::trunc);

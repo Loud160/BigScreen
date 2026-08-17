@@ -232,6 +232,15 @@ namespace BigScreen {
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
+        // avcodec_send_packet() returning EAGAIN means the packet was not
+        // consumed. Keep that AVPacket referenced across ReadDecodedFrame()
+        // calls until libavcodec accepts it; dropping it creates a permanent
+        // hole in the video and can make MediaCodec appear to end early.
+        bool compressedPacketPending_ = false;
+        // Once the demuxer reaches EOF, a single null packet starts codec
+        // draining. Continue receiving until AVERROR_EOF instead of treating
+        // an asynchronous MediaCodec EAGAIN as the end of the video.
+        bool decoderDraining_ = false;
 
         std::thread worker_;
         std::atomic<bool> open_{false};

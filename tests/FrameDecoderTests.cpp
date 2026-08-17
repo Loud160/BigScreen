@@ -74,6 +74,25 @@ namespace {
             Expect(frame.durationSeconds > 0.0, "frame duration should use real timing or fallback");
             decoder.Recycle(std::move(frame));
         }
+
+        // Exercise the exact long-running preview transition: drain beyond the
+        // final timestamp, then seek backward as the menu audio loops. A true
+        // EOF latch must clear and produce an opening frame every time.
+        for(int loop = 0; loop < 3; ++loop)
+        {
+            decoder.Request(decoder.DurationSeconds() + 0.25);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            decoder.Request(0.1);
+            BigScreen::VideoFrame loopedFrame;
+            Expect(WaitForFrame(decoder, loopedFrame),
+                   "a request after EOF should restart decoding for a preview loop");
+            if(!loopedFrame.rgba.empty())
+            {
+                Expect(loopedFrame.presentationSeconds < 0.5,
+                       "a preview loop should return to an opening video frame");
+                decoder.Recycle(std::move(loopedFrame));
+            }
+        }
         Expect(decoder.BufferAllocations() <= 3,
                "reusable RGBA pool should stop repeated capacity growth");
         decoder.Close();

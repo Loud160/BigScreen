@@ -240,6 +240,21 @@ int main()
     Expect(ReportablePresentationDeadlines(fittedDeadlines, 248) == 249,
            "older undelivered output deadlines remain visible after the one-frame allowance");
 
+    PresentationMissAccumulator presentationMisses;
+    Expect(presentationMisses.Observe(100, 93) == 7,
+           "the cumulative counter records every deadline without an available picture");
+    Expect(presentationMisses.Observe(101, 94) == 7,
+           "an on-time picture satisfies the next deadline without adding a miss");
+    Expect(presentationMisses.Observe(102, 94) == 8,
+           "a later deadline without a picture increments the cumulative total");
+    Expect(presentationMisses.Observe(102, 95) == 8,
+           "a late decoder catch-up cannot subtract a previously missed deadline");
+    Expect(presentationMisses.Observe(103, 95) == 8,
+           "the caught-up picture remains available for the following deadline");
+    presentationMisses.Reset();
+    Expect(presentationMisses.Observe(1, 1) == 0,
+           "a new playback measurement resets cumulative deadline outcomes");
+
     double nativeDeadlineFraction = 0.0;
     std::uint64_t nativeDeadlines = 0;
     for(int update = 0; update < 360; ++update)

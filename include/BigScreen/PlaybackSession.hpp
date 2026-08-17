@@ -32,6 +32,9 @@ namespace BigScreen {
         std::uint64_t requestedFrames = 0;
         std::uint64_t expectedFrames = 0;
         std::uint64_t presentedFrames = 0;
+        /// Cumulative output deadlines missed during this playback session.
+        /// Unlike expected-presented backlog, this value is monotonic.
+        std::uint64_t missedFrames = 0;
         std::uint64_t rgbaBufferAllocations = 0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
@@ -120,9 +123,10 @@ namespace BigScreen {
         /// uses Chroma, and its video metadata authors custom screen geometry.
         /// Only this predicate may suppress the player's canvas controls.
         bool MapperScreenPresentationActive() const;
-        /// True when Chroma or Cinema environment metadata should retain
-        /// ownership of the gameplay scene. This intentionally does not imply
-        /// ownership of the video canvas.
+        /// True only when Allow Chroma Override is enabled and the video map
+        /// is actually detected as using Chroma. Cinema environment metadata
+        /// alone does not claim the gameplay scene. This intentionally does
+        /// not imply ownership of the video canvas.
         bool MapperEnvironmentPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
@@ -223,6 +227,10 @@ namespace BigScreen {
         std::uint64_t deliveredPresentedFrames_ = 0;
         std::uint64_t expectedPresentationDeadlines_ = 0;
         double expectedPresentationFraction_ = 0.0;
+        // The live backlog may decrease when FFmpeg catches up. Keep a
+        // separate deadline-outcome accumulator for the user-facing total so
+        // "Frames Skipped" never changes from eight back to seven.
+        CoreLogic::PresentationMissAccumulator presentationMisses_;
         std::uint64_t windowDeliveredPresentedFrames_ = 0;
         std::uint64_t windowExpectedPresentationDeadlines_ = 0;
         double windowExpectedPresentationFraction_ = 0.0;

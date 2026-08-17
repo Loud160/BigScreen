@@ -18,7 +18,6 @@
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
 #include "BigScreen/PlaybackSession.hpp"
-#include "BigScreen/PauseMenuLayoutSelector.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/PowerBenchmark.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
@@ -61,7 +60,6 @@
 #include "GlobalNamespace/LightsAnimator.hpp"
 #include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
 #include "GlobalNamespace/PlayerSpecificSettings.hpp"
-#include "GlobalNamespace/PauseMenuManager.hpp"
 #include "GlobalNamespace/PointLight.hpp"
 #include "GlobalNamespace/Rotate.hpp"
 #include "GlobalNamespace/ResultsViewController.hpp"
@@ -970,44 +968,6 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
-        PauseMenuManager_Start,
-        &GlobalNamespace::PauseMenuManager::Start,
-        void,
-        GlobalNamespace::PauseMenuManager* self)
-    {
-        PauseMenuManager_Start(self);
-        BigScreen::ErrorManager::Instance().Guard(
-            "creating the pause-menu screen layout selector",
-            [&]() {
-                BigScreen::PauseMenuLayoutSelector::Instance().CreateUi(self);
-            });
-    }
-
-    MAKE_HOOK_MATCH(
-        PauseMenuManager_ShowMenu,
-        &GlobalNamespace::PauseMenuManager::ShowMenu,
-        void,
-        GlobalNamespace::PauseMenuManager* self)
-    {
-        PauseMenuManager_ShowMenu(self);
-        BigScreen::ErrorManager::Instance().Guard(
-            "showing the pause-menu screen layout selector",
-            []() {
-                BigScreen::PauseMenuLayoutSelector::Instance().MenuShown();
-            });
-    }
-
-    MAKE_HOOK_MATCH(
-        PauseMenuManager_OnDestroy,
-        &GlobalNamespace::PauseMenuManager::OnDestroy,
-        void,
-        GlobalNamespace::PauseMenuManager* self)
-    {
-        BigScreen::PauseMenuLayoutSelector::Instance().ForgetUi();
-        PauseMenuManager_OnDestroy(self);
-    }
-
-    MAKE_HOOK_MATCH(
         StandardLevelDetailView_Awake,
         &GlobalNamespace::StandardLevelDetailView::Awake,
         void,
@@ -1655,9 +1615,14 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
-    INSTALL_HOOK(PaperLogger, PauseMenuManager_Start);
-    INSTALL_HOOK(PaperLogger, PauseMenuManager_ShowMenu);
-    INSTALL_HOOK(PaperLogger, PauseMenuManager_OnDestroy);
+    // Do not install pause-menu UI hooks on Beat Saber 1.40.8. The attempted
+    // BSML IncrementSetting/ToggleSetting controls never rendered in the pause
+    // menu, and destroying their hidden hierarchy left an invalid
+    // UnityEngine.UI::AnimationTriggers reference for Custom Types 0.18.4's
+    // AssetGarbageCol liveness traversal. The result was a reproducible native
+    // SIGSEGV whenever a video map exited. Reintroduce this feature only with
+    // controls proven visible and a lifecycle that does not use that failed
+    // custom-setting hierarchy.
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

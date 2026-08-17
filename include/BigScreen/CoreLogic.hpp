@@ -1181,6 +1181,64 @@ namespace BigScreen::CoreLogic {
         return std::max(dueDeadlines, presentedFrames);
     }
 
+    /// Accumulates completed presentation deadlines that did not have a new
+    /// picture available. This is deliberately stateful: expected-presented is
+    /// only the decoder's current backlog and can shrink when a late picture
+    /// arrives. A user-facing "Frames Skipped" total must instead remember a
+    /// missed deadline permanently and therefore can never count backwards.
+    ///
+    /// Pictures uploaded before their deadline are retained as credits. A
+    /// picture uploaded after a missed deadline can satisfy a later deadline,
+    /// but it cannot erase the deadline that was already missed.
+    class PresentationMissAccumulator final {
+    public:
+        void Reset() noexcept
+        {
+            observedDeadlines_ = 0;
+            observedPresentedFrames_ = 0;
+            availablePictures_ = 0;
+            missedDeadlines_ = 0;
+        }
+
+        std::uint64_t Observe(
+            std::uint64_t reportableDeadlines,
+            std::uint64_t presentedFrames) noexcept
+        {
+            // Session counters normally only increase. Treat a lower value as
+            // an explicit measurement reset rather than allowing unsigned
+            // subtraction to turn it into an enormous false miss count.
+            if(reportableDeadlines < observedDeadlines_ ||
+               presentedFrames < observedPresentedFrames_)
+            {
+                Reset();
+            }
+
+            availablePictures_ +=
+                presentedFrames - observedPresentedFrames_;
+            const auto newDeadlines =
+                reportableDeadlines - observedDeadlines_;
+            const auto matchedPictures = std::min(
+                newDeadlines,
+                availablePictures_);
+            missedDeadlines_ += newDeadlines - matchedPictures;
+            availablePictures_ -= matchedPictures;
+            observedDeadlines_ = reportableDeadlines;
+            observedPresentedFrames_ = presentedFrames;
+            return missedDeadlines_;
+        }
+
+        std::uint64_t MissedDeadlines() const noexcept
+        {
+            return missedDeadlines_;
+        }
+
+    private:
+        std::uint64_t observedDeadlines_ = 0;
+        std::uint64_t observedPresentedFrames_ = 0;
+        std::uint64_t availablePictures_ = 0;
+        std::uint64_t missedDeadlines_ = 0;
+    };
+
     inline double MissedFramePercent(
         std::uint64_t expectedFrames,
         std::uint64_t presentedFrames)

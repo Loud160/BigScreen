@@ -3707,7 +3707,15 @@ namespace BigScreen {
             previewAudioClip_,
             musicVolume,
             static_cast<float>(previewSongTime_),
-            static_cast<float>(std::max(0.1, availableDuration - previewSongTime_)),
+            // SongPreviewPlayer interprets a positive duration as a request to
+            // begin returning to Beat Saber's default menu music before that
+            // duration expires. The transition begins early enough for its
+            // configured fade-out, which can release Big Screen's clock source
+            // two or three seconds before the song ends. A zero duration turns
+            // off that internal timer. Big Screen detects the real clip/song
+            // boundary in Tick and explicitly starts the next synchronized
+            // loop, so there must be only one owner of end-of-preview timing.
+            0.0f,
             nullptr);
         previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
         if(IsAlive(previewAudioSource_))
