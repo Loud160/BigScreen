@@ -49,12 +49,18 @@ function Invoke-CheckedCommand {
         [Parameter(Mandatory = $true)]
         [string] $Description,
 
+        [Parameter(Mandatory = $false)]
+        [string] $DurationNote = "",
+
         [Parameter(Mandatory = $true)]
         [scriptblock] $Command
     )
 
     Write-Output ""
     Write-Output "--- $Description ---"
+    if ($DurationNote) {
+        Write-Output "NOTE: $DurationNote"
+    }
     & $Command
     if ($LASTEXITCODE -ne 0) {
         throw "$Description failed with exit code $LASTEXITCODE."
@@ -138,7 +144,9 @@ try {
     if ($qpmStampMatches -and $null -eq $qpmInputsComplete) {
         Write-Output "Using QPM dependencies already restored for the current lockfile."
     } else {
-        Invoke-CheckedCommand "Restore pinned Quest headers and libraries" {
+        Invoke-CheckedCommand `
+            "Restore pinned Quest headers and libraries" `
+            "A first restore downloads several modding packages and can take a few minutes. QPM will continue printing activity while it works." {
             & $qpmExecutable restore
         }
         foreach ($relativeInput in $requiredQpmInputs) {
@@ -159,7 +167,9 @@ try {
     if ($windowsNdk) {
         Write-Output "Using installed Windows Android NDK r27d: $windowsNdk"
     } else {
-        Invoke-CheckedCommand "Resolve the Windows Android NDK r27d" {
+        Invoke-CheckedCommand `
+            "Resolve the Windows Android NDK r27d" `
+            "The first run downloads and extracts the large Android compiler toolchain. This can take several minutes." {
             & $qpmExecutable ndk resolve --download
         }
         $windowsNdk = Get-ValidPinnedWindowsNdk -PathFile $ndkPathFile
@@ -213,7 +223,9 @@ Then re-run Build-And-Deploy.bat.
     if (-not $linuxInstallScript) {
         throw "WSL could not translate the Linux NDK installer path $windowsInstallScript"
     }
-    Invoke-CheckedCommand "Verify or install the Linux Android NDK r27d for FFmpeg" {
+    Invoke-CheckedCommand `
+        "Verify or install the Linux Android NDK r27d for FFmpeg" `
+        "If the verified WSL copy is missing, downloading and extracting this large toolchain can take several minutes." {
         & $wslCommand.Source -- bash $linuxInstallScript
     }
 

@@ -116,6 +116,9 @@ $modJson = Get-Content "./mod.json" -Raw | ConvertFrom-Json
 $modFiles = $modJson.modFiles
 $lateModFiles = $modJson.lateModFiles
 
+Write-Output ""
+Write-Output "Deploying Big Screen's native libraries and embedded downloader runtime to the Quest. Many files are copied individually, so this can take a few minutes on some USB connections."
+
 # A development build can move a native mod between Scotland2's early and late
 # phases while an older copy remains in the other folder. Scotland2 treats both
 # files as independent mods, which caused Big Screen to initialize its embedded

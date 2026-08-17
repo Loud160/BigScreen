@@ -198,6 +198,7 @@ $qmod = Join-Path $repositoryRoot ($qmodName + ".qmod")
 $temporaryZip = Join-Path $repositoryRoot (
     "." + $qmodName + "." + [Guid]::NewGuid().ToString("N") + ".zip")
 try {
+    Write-Output "Packaging the complete mod and embedded runtime into the QMOD. Compression can take a little while; please wait."
     Compress-Archive -LiteralPath $filelist -DestinationPath $temporaryZip
     $archive = [System.IO.Compression.ZipFile]::OpenRead($temporaryZip)
     try {

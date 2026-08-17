@@ -48,12 +48,16 @@ if errorlevel 2 (
 
 echo.
 echo Preparing the pinned build toolchain and dependencies...
+echo This phase may take several minutes on a first run. Each long
+echo download, restore, or compilation phase will announce itself.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\bootstrap-build.ps1"
 set "BIGSCREEN_RESULT=%ERRORLEVEL%"
 if not "%BIGSCREEN_RESULT%"=="0" goto :failure
 
 echo.
 echo Building Big Screen and deploying it to the Quest...
+echo Native compilation, final link optimization, QMOD preparation,
+echo and USB deployment will print wait notices before longer phases.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\copy.ps1"
 set "BIGSCREEN_RESULT=%ERRORLEVEL%"

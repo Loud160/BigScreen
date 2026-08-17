@@ -155,6 +155,17 @@ them in QPM's recursively linked input directory.
 
 `scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV and Matroska/WebM demuxing; the local-file protocol; and `libswscale`. It explicitly omits GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container.
 
+A clean native build can take several minutes. Ninja's final progress item
+combines the main `libbigscreen.so` link, ThinLTO optimization, debug-symbol
+handling, stripping, and runtime-library staging. The progress counter may stay
+on that final line without changing while the linker is still working. The
+build script prints an explicit wait message before this step; do not close the
+window unless the command reports an error or returns to the prompt. While the
+native build remains active, an elapsed-time heartbeat is printed every 15
+seconds. The linker does not expose a meaningful internal percentage, so this
+heartbeat intentionally reports activity and elapsed time instead of inventing
+an inaccurate progress value.
+
 The FFmpeg build suppresses compiler warnings originating in its pinned
 third-party C sources. FFmpeg 4 predates the current Android NDK by several
 years and otherwise emits a large set of diagnostics for valid legacy code,

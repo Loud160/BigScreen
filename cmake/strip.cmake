@@ -12,6 +12,17 @@ function(_setup_linux_strip_project)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
         message("Enabling Stripping")
 
+        # Ninja combines the final link, ThinLTO optimization, symbol handling,
+        # and all POST_BUILD staging commands into one progress item. On a clean
+        # build that item can remain visible for a while with no changing
+        # percentage. Print a separate line from the rule immediately before
+        # the linker starts so an end user does not mistake normal work for a
+        # frozen build script.
+        add_custom_command(TARGET ${COMPILE_ID} PRE_LINK
+            COMMAND ${CMAKE_COMMAND} -E echo
+                "Final Big Screen link and optimization is running. This can take a few minutes on some computers; please wait."
+        )
+
         # Strip debug symbols
         add_custom_command(TARGET ${COMPILE_ID} POST_BUILD
             COMMAND ${CMAKE_STRIP} -d --strip-all

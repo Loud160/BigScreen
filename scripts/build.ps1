@@ -139,6 +139,7 @@ foreach ($runtime in @(
     }
     if (-not $ffmpegValid) {
         Write-Output "Rebuilding FFmpeg $($runtime.Version): $ffmpegInvalidReason."
+        Write-Output "NOTE: Compiling FFmpeg $($runtime.Version) is a long first-build step and can take several minutes. Compiler output may pause between groups of files; please wait for a success or error message."
         if (-not $wslCommand) {
             throw "FFmpeg $($runtime.Version) is not staged and WSL was not found. Run scripts/build-ffmpeg-lgpl.sh in Linux for both supported versions."
         }
@@ -165,6 +166,8 @@ foreach ($runtime in @(
 
 # Stage the pinned Android CPython, yt-dlp, certificate bundle, and native
 # extension modules before CMake tries to include or link the runtime.
+Write-Output ""
+Write-Output "Preparing the embedded downloader runtime. Missing first-run archives will be downloaded, verified, and extracted; this can take several minutes."
 & (Join-Path $PSScriptRoot "fetch-quickjs-ng.ps1")
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
@@ -191,9 +194,29 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $cmakeExe --build build
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+Write-Output ""
+Write-Output "Building Big Screen's native Quest libraries. A clean build can take several minutes."
+Write-Output "The final link/LTO step may remain on the last Ninja progress line for a while; this is normal and the build is still working."
+$nativeBuildStarted = Get-Date
+# Keep CMake/Ninja attached to this console so their normal [x/y] progress is
+# still visible. Wait in bounded intervals around the process to add a
+# heartbeat during single, internally silent operations such as ThinLTO and the
+# final native link. The linker does not expose a truthful sub-percentage, so
+# elapsed time is more useful than a fabricated progress bar.
+$nativeBuildProcess = Start-Process `
+    -FilePath $cmakeExe `
+    -ArgumentList @("--build", "build") `
+    -WorkingDirectory $repositoryRoot `
+    -NoNewWindow `
+    -PassThru
+while (-not $nativeBuildProcess.WaitForExit(15000)) {
+    $elapsed = [int]((Get-Date) - $nativeBuildStarted).TotalSeconds
+    Write-Output "Still building Big Screen... $elapsed seconds elapsed. The current compiler or linker step is still running."
+}
+$nativeBuildProcess.WaitForExit()
+$nativeBuildProcess.Refresh()
+if ($nativeBuildProcess.ExitCode -ne 0) {
+    exit $nativeBuildProcess.ExitCode
 }
 
 # Prove that each separately compiled decoder retained requirements for its
