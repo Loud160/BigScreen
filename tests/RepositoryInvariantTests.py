@@ -23,6 +23,7 @@ root = pathlib.Path(sys.argv[1]).resolve()
 gitignore = (root / ".gitignore").read_text(encoding="utf-8")
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
+strip_script = (root / "cmake" / "strip.cmake").read_text(encoding="utf-8")
 bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
     encoding="utf-8")
 build_launcher = (root / "Build-And-Deploy.bat").read_text(encoding="utf-8")
@@ -1449,6 +1450,7 @@ assert "QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl
 assert '-S $repositoryRoot -B $buildDirectory' in build_script
 assert '& $cmakeExe --build $buildDirectory' in build_script
 assert build_script.count('if (-not $?)') >= 3
+assert "computers; please wait" not in strip_script
 assert 'draft: false' in build_workflow
 assert "4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df" in build_workflow
 assert "qpm restore" in build_workflow

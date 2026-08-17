@@ -20,7 +20,7 @@ function(_setup_linux_strip_project)
         # frozen build script.
         add_custom_command(TARGET ${COMPILE_ID} PRE_LINK
             COMMAND ${CMAKE_COMMAND} -E echo
-                "Final Big Screen link and optimization is running. This can take a few minutes on some computers; please wait."
+                "Final Big Screen link and optimization is running. This can take a few minutes on some computers, so please wait."
         )
 
         # Strip debug symbols
