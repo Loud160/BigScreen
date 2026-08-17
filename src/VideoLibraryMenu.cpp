@@ -757,7 +757,15 @@ namespace BigScreen {
                 "Beat Saber did not create the native list control");
             list_ = BSML::Lite::CreateScrollableList(
                 listRow, {0.0f, 0.0f}, {46.0f, 50.0f},
-                [this](int row) { SelectRow(row); });
+                [this](int row)
+                {
+                    // Keep a Unity/IL2CPP failure inside Big Screen's normal
+                    // recovery boundary. If this exception escapes, the
+                    // custom-types delegate wrapper aborts the entire game.
+                    ErrorManager::Instance().Guard(
+                        "opening a Video Library song",
+                        [this, row]() { SelectRow(row); });
+                });
         }
         if(list_)
         {
@@ -785,7 +793,13 @@ namespace BigScreen {
                         std::function<void(UnityW<HMUI::TableView>, int)>(
                         [this](UnityW<HMUI::TableView>, int row)
                         {
-                            SelectRow(row);
+                            // This is the normal native-list path. Match the
+                            // fallback list's exception boundary so a stale
+                            // Unity object cannot escape through BSML and turn
+                            // a recoverable menu failure into SIGABRT.
+                            ErrorManager::Instance().Guard(
+                                "opening a Video Library song",
+                                [this, row]() { SelectRow(row); });
                         })));
             }
         }
@@ -4268,6 +4282,10 @@ namespace BigScreen {
     {
         active_ = false;
         editorVisible_ = false;
+        const std::string selectedLevelId =
+            selected_ && selected_->levelID
+                ? std::string(selected_->levelID)
+                : std::string{};
         // Decoder shutdown is deliberately independent from Unity audio and
         // download cleanup. One subsystem throwing must not leave another
         // subsystem's background thread alive across a scene transition.
@@ -4284,6 +4302,8 @@ namespace BigScreen {
         {
             if(PlaybackSession::Instance().IsLibraryPreviewActive())
                 PlaybackSession::Instance().Stop();
+            PlaybackSession::Instance().ClearPreparedPreviewForLevel(
+                selectedLevelId);
         }
         catch(const std::exception& error)
         {

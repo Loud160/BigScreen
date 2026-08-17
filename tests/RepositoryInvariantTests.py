@@ -923,6 +923,59 @@ assert "forwardScatterDistance" in core_logic
 assert "forwardScatterDistance = 42.0f" in showcase_timeline_source
 assert "randomizedForwardAmount" in screen_surface_source
 
+# Gameplay scene teardown can destroy the showcase's GameObjects before the
+# video-session owner is asked to stop. Raw IL2CPP pointers then remain non-null
+# but cannot be dereferenced. Keep the glass cleanup fake-null aware and keep
+# song-row callbacks behind Big Screen's error boundary instead of allowing a
+# custom-types delegate to abort Beat Saber.
+restore_whole_mesh = screen_surface_source.split(
+    "void ScreenSurface::RestoreWholeVideoMesh()", 1
+)[1].split("void ScreenSurface::DestroyFractureResources()", 1)[0]
+assert "UnityW<UnityEngine::GameObject>::isAlive(videoObject_)" in \
+    restore_whole_mesh
+assert "UnityW<UnityEngine::Mesh>::isAlive(videoMesh_)" in restore_whole_mesh
+assert "UnityW<UnityEngine::GameObject>::isAlive(crackObject_)" in \
+    restore_whole_mesh
+assert library_menu_source.count('"opening a Video Library song"') == 2
+
+# CustomTypes 0.18.4's optional GC diagnostics use an invalid liveness-state
+# offset on Beat Saber 1.40.8 and crash inside HasParentUnsafe while campaign
+# MissionDataSO assets unload. Keep its supported diagnostic opt-out set before
+# AutoRegister; normal CustomTypes registration and Unity GC remain active.
+assert 'setenv("CT_DISABLE_LIVENESS_CHECKS", "1", 1)' in main_source
+assert main_source.index('setenv("CT_DISABLE_LIVENESS_CHECKS", "1", 1)') < \
+    main_source.index("custom_types::Register::AutoRegister()")
+
+# Campaign missions can launch without first visiting StandardLevelDetailView,
+# and in-level Restart replaces GameCore without calling the normal Finish
+# hook. Gameplay preparation must therefore use the saved global preference,
+# rebuild a retained gameplay session at StartSong, and reject Unity fake-null
+# textures before uploading another decoded frame.
+assert "if(BigScreen::Settings::Instance().VideoEnabled())" in main_source
+assert "if(playback.IsGameplayActive())" in main_source
+assert "Detected gameplay restart; rebuilding the video session" in main_source
+for campaign_lifecycle_hook in (
+    "MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData",
+    "MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel",
+    "MissionLevelScenesTransitionSetupDataSO_Finish",
+    "MissionLevelRestartController_RestartLevel",
+    "StandardLevelRestartController_RestartLevel",
+):
+    assert f"INSTALL_HOOK(PaperLogger, {campaign_lifecycle_hook})" in main_source
+assert '"preparing campaign video"' in main_source
+assert '"stopping campaign gameplay video"' in main_source
+assert "ClearPreparedPreviewForLevel" in playback_header
+assert "ClearPreparedPreviewForLevel" in playback_source
+assert "ClearPreparedPreviewForLevel" in library_menu_source
+upload_surface = screen_surface_source.split(
+    "bool ScreenSurface::Upload(const VideoFrame& frame)", 1
+)[1].split("void ScreenSurface::ShowLeadIn", 1)[0]
+assert "UnityW<UnityEngine::Texture2D>::isAlive(texture_)" in upload_surface
+assert "UnityW<UnityEngine::Material>::isAlive(material_)" in upload_surface
+assert "DestroyIfAlive(texture_)" in screen_surface_source
+assert "Video frame upload stopped because the Unity screen is no longer valid" in \
+    playback_source
+
 # Error timestamps are generated from thread-safe platform APIs because worker
 # failures can reach the logger concurrently with game-thread failures.
 assert "localtime_s" in error_manager_source
@@ -1448,6 +1501,39 @@ assert selection_toggle_source.count("SetAsLastSibling()") >= 3
 assert "void SelectionVideoToggle::LayoutSelectorChanged(float value)" in selection_toggle_source
 assert selection_toggle_source.count("SettingsMenu::Instance().RefreshControls()") >= 3
 assert "SelectionVideoToggle::Instance().ScreenLayoutPreferenceChanged()" in settings_menu_source
+
+# Campaign does not instantiate StandardLevelDetailView. Its mission detail
+# controller must therefore create the same shared top-row canvas from its own
+# DidActivate and explicitly hide the scene-root canvas on navigation exit.
+# The common creation path also prevents Campaign from cloning Solo's
+# difficulty/download row or drifting to a separately maintained layout. The
+# retained Solo view re-anchors that canvas from OnEnable after Campaign.
+assert "void SelectionVideoToggle::CreateTopControls(" in selection_toggle_source
+assert "void SelectionVideoToggle::CreateCampaignUi(" in selection_toggle_source
+campaign_controls = main_source.split(
+    "MissionLevelDetailViewController_DidActivate", 1
+)[1].split("MissionSelectionNavigationController_DidDeactivate", 1)[0]
+assert "CreateCampaignUi(self)" in campaign_controls
+assert "controls.CampaignSelectionShown()" in campaign_controls
+assert "controlsRequireTopScreen_ = requireTopScreen" in selection_toggle_source
+assert "if(controlsRequireTopScreen_)" in selection_toggle_source
+assert "controlsPositionPending_ = true" in selection_toggle_source
+assert "if(controlsPositionPending_ && controlsVisibleRequested_)" in \
+    selection_toggle_source
+campaign_controls_cleanup = main_source.split(
+    "MissionSelectionNavigationController_DidDeactivate", 1
+)[1].split("MAKE_HOOK_MATCH(", 1)[0]
+assert "controls.CampaignSelectionHidden()" in campaign_controls_cleanup
+assert "controls.ForgetUi()" not in campaign_controls_cleanup
+solo_enable = main_source.split(
+    "StandardLevelDetailView_OnEnable", 1
+)[1].split("StandardLevelDetailView_OnDisable", 1)[0]
+assert "controls.CreateUi(self)" in solo_enable
+for campaign_ui_hook in (
+    "MissionLevelDetailViewController_DidActivate",
+    "MissionSelectionNavigationController_DidDeactivate",
+):
+    assert f"INSTALL_HOOK(PaperLogger, {campaign_ui_hook})" in main_source
 
 # The playback transport keeps its established edge padding while the visible
 # gray rail is thin and the thumb occupies 80 percent of that rail.

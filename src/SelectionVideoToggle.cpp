@@ -23,6 +23,7 @@
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
+#include "GlobalNamespace/MissionLevelDetailViewController.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
@@ -35,6 +36,7 @@
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Component.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Quaternion.hpp"
@@ -265,11 +267,28 @@ namespace BigScreen {
         return control;
     }
 
-    void SelectionVideoToggle::CreateUi(
-        GlobalNamespace::StandardLevelDetailView* detailView)
+    void SelectionVideoToggle::CreateTopControls(
+        UnityEngine::Component* anchor,
+        bool requireTopScreen)
     {
-        if(!detailView || previewUi_ || inMapUi_ || layoutUi_)
+        if(!anchor)
             return;
+
+        // Solo and Campaign retain their detail controllers independently.
+        // Keep the one proven scene-root canvas and simply re-anchor it to the
+        // active ScreenSystem. Rebuilding here would discard Solo's retained
+        // download-row pointers, while creating a second canvas would stack
+        // duplicate raycasters over the same controls.
+        if(controlsScreen_ && previewUi_ && inMapUi_ && layoutUi_)
+        {
+            controlsAnchor_ = anchor;
+            controlsRequireTopScreen_ = requireTopScreen;
+            PositionControlsRow();
+            RefreshUi();
+            return;
+        }
+        if(controlsScreen_ || previewUi_ || inMapUi_ || layoutUi_)
+            ForgetUi();
 
         const auto& settings = Settings::Instance();
         inMapEnabled_ = settings.VideoEnabled();
@@ -305,7 +324,9 @@ namespace BigScreen {
         if(auto* curved = controlsScreen_->get_gameObject()
                ->GetComponentInChildren<HMUI::CurvedCanvasSettings*>())
             curved->SetRadius(10000.0f);
-        detailView_ = detailView;
+        controlsAnchor_ = anchor;
+        controlsRequireTopScreen_ = requireTopScreen;
+        controlsScreen_->get_gameObject()->SetActive(false);
         PositionControlsRow();
         auto controlsParent = controlsScreen_->get_transform();
 
@@ -344,6 +365,80 @@ namespace BigScreen {
                 LayoutSelectorChanged(value);
             });
         PlaceTopBarLayoutSelector(layoutUi_);
+
+        if(!previewUi_ || !inMapUi_ || !layoutUi_)
+        {
+            PaperLogger.error("Could not create all top-row video controls");
+            ErrorManager::Instance().RecordError(
+                "Creating song-selection video controls",
+                "Beat Saber did not create all three top-row controls");
+            // Do not leave a partially interactive scene-root canvas behind.
+            ForgetUi();
+            return;
+        }
+
+        PlaceTopBarToggle(
+            previewUi_, "Big Screen Preview Video Toggle", PreviewToggleX);
+        PlaceTopBarToggle(
+            inMapUi_, "Big Screen Video In Map Toggle", InMapToggleX);
+        BSML::Lite::AddHoverHint(
+            previewUi_,
+            "Turns video previews on or off while browsing songs. This is a global setting and requires Video In Map to be enabled.");
+        BSML::Lite::AddHoverHint(
+            inMapUi_,
+            "Master switch for all song videos. Turning it off disables both in-map playback and song-selection previews.");
+        BSML::Lite::AddHoverHint(
+            layoutUi_,
+            "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
+        RefreshUi();
+        BringHeaderControlsToFront();
+        PaperLogger.info(
+            "Created shared top-row Preview Video, Video In Map, and Screen Layout controls");
+    }
+
+    void SelectionVideoToggle::CreateCampaignUi(
+        GlobalNamespace::MissionLevelDetailViewController* detailView)
+    {
+        // Campaign has no StandardLevelDetailView and therefore no Cinema-
+        // style difficulty/download strip. It still receives the exact same
+        // global floating controls and positioning path used by Solo.
+        CreateTopControls(detailView, true);
+    }
+
+    void SelectionVideoToggle::CampaignSelectionShown()
+    {
+        // Unlike Solo, Campaign has no selected-song audio preview. Only show
+        // and refresh the global controls; calling SongSelectionShown here
+        // would incorrectly revive whichever Solo song happened to be retained
+        // when the player changed game modes.
+        controlsVisibleRequested_ = true;
+        if(controlsScreen_)
+            PositionControlsRow();
+        RefreshUi();
+        BringHeaderControlsToFront();
+    }
+
+    void SelectionVideoToggle::CampaignSelectionHidden()
+    {
+        // Beat Saber retains Campaign's navigation controller between visits.
+        // Hide the scene-root canvas but keep the shared control objects so a
+        // retained Solo detail view can re-anchor them without duplicating its
+        // Cinema download row on the next OnEnable.
+        controlsVisibleRequested_ = false;
+        if(controlsScreen_)
+            controlsScreen_->get_gameObject()->SetActive(false);
+    }
+
+    void SelectionVideoToggle::CreateUi(
+        GlobalNamespace::StandardLevelDetailView* detailView)
+    {
+        if(!detailView)
+            return;
+
+        CreateTopControls(detailView, false);
+        if(!controlsScreen_ || controlsAnchor_ != detailView || downloadRow_)
+            return;
+
         // ---- Cinema-parity download row --------------------------------
         // Cinema (PC) presents this workflow as one centered row in the empty
         // strip between the difficulty selector and the Play/Practice
@@ -550,45 +645,8 @@ namespace BigScreen {
             [this]() { ConfirmPendingResolutionDownload(); });
         confirmResolutionButton_->get_gameObject()->SetActive(false);
 
-        if(!previewUi_ || !inMapUi_)
-        {
-            PaperLogger.error("Could not create both song-selection video toggles");
-            ErrorManager::Instance().RecordError(
-                "Creating song-selection video controls",
-                "Beat Saber did not create both toggle controls");
-            // Do not leave a half-populated floating canvas or an empty
-            // download row in the scene.
-            if(controlsScreen_)
-                UnityEngine::Object::Destroy(controlsScreen_->get_gameObject());
-            controlsScreen_ = nullptr;
-            detailView_ = nullptr;
-            if(downloadRow_)
-                UnityEngine::Object::Destroy(downloadRow_);
-            downloadRow_ = nullptr;
-            previewUi_ = nullptr;
-            inMapUi_ = nullptr;
-            layoutUi_ = nullptr;
-            downloadButton_ = nullptr;
-            downloadStatus_ = nullptr;
-            return;
-        }
-
-        PlaceTopBarToggle(
-            previewUi_, "Big Screen Preview Video Toggle", PreviewToggleX);
-        PlaceTopBarToggle(
-            inMapUi_, "Big Screen Video In Map Toggle", InMapToggleX);
-        BSML::Lite::AddHoverHint(
-            previewUi_,
-            "Turns video previews on or off while browsing songs. This is a global setting and requires Video In Map to be enabled.");
-        BSML::Lite::AddHoverHint(
-            inMapUi_,
-            "Master switch for all song videos. Turning it off disables both in-map playback and song-selection previews.");
-        BSML::Lite::AddHoverHint(
-            layoutUi_,
-            "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
-        RefreshUi();
-        BringHeaderControlsToFront();
-        PaperLogger.info("Created top-row Preview Video and Video In Map controls");
+        // The common controls were already completed by CreateTopControls.
+        // Everything above is intentionally Solo-only download UI.
     }
 
     void SelectionVideoToggle::ForgetUi()
@@ -609,7 +667,10 @@ namespace BigScreen {
             // pointers below is what guarantees safe recreation.
         }
         controlsScreen_ = nullptr;
-        detailView_ = nullptr;
+        controlsAnchor_ = nullptr;
+        controlsRequireTopScreen_ = false;
+        controlsPositionPending_ = false;
+        controlsVisibleRequested_ = false;
         previewUi_ = nullptr;
         inMapUi_ = nullptr;
         layoutUi_ = nullptr;
@@ -633,7 +694,7 @@ namespace BigScreen {
 
     void SelectionVideoToggle::PositionControlsRow()
     {
-        if(!controlsScreen_ || !detailView_)
+        if(!controlsScreen_ || !controlsAnchor_)
             return;
 
         // Preferred anchor: the ScreenSystem's top screen, which hosts the
@@ -646,7 +707,7 @@ namespace BigScreen {
         const char* source = "top screen";
         bool positioned = false;
         if(auto* screenSystem =
-               detailView_->GetComponentInParent<HMUI::ScreenSystem*>())
+               controlsAnchor_->GetComponentInParent<HMUI::ScreenSystem*>())
         {
             if(auto topScreen = screenSystem->get_topScreen())
             {
@@ -672,7 +733,19 @@ namespace BigScreen {
         }
         if(!positioned)
         {
-            auto detailTransform = detailView_->get_transform();
+            if(controlsRequireTopScreen_)
+            {
+                // MissionLevelDetailViewController can activate before its
+                // navigation hierarchy has assigned a usable top screen. Its
+                // local coordinates are unrelated to Solo's detail panel (the
+                // old fallback placed this row hundreds of world units away),
+                // so wait for the real shared anchor instead. TickDownloadUi
+                // retries this on the game thread until Campaign is ready.
+                controlsPositionPending_ = true;
+                controlsScreen_->get_gameObject()->SetActive(false);
+                return;
+            }
+            auto detailTransform = controlsAnchor_->get_transform();
             if(!detailTransform)
             {
                 PaperLogger.warn(
@@ -687,6 +760,9 @@ namespace BigScreen {
         auto screenTransform = controlsScreen_->get_transform();
         screenTransform->set_position(rowCenter);
         screenTransform->set_rotation(rowRotation);
+        controlsPositionPending_ = false;
+        controlsScreen_->get_gameObject()->SetActive(
+            controlsVisibleRequested_);
         PaperLogger.info(
             "Positioned song controls row at ({:.2f}, {:.2f}, {:.2f}) from {}",
             rowCenter.x,
@@ -701,11 +777,9 @@ namespace BigScreen {
         // own panel visibility no longer hides it implicitly. Mirror the
         // panel's visibility here and in SongSelectionHidden, and re-derive
         // the row's position now that the menu layout is guaranteed final.
+        controlsVisibleRequested_ = true;
         if(controlsScreen_)
-        {
-            controlsScreen_->get_gameObject()->SetActive(true);
             PositionControlsRow();
-        }
         if(selectedLevel_)
         {
             selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
@@ -740,6 +814,7 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionHidden()
     {
+        controlsVisibleRequested_ = false;
         if(controlsScreen_)
             controlsScreen_->get_gameObject()->SetActive(false);
         resumeWhenSongAudioStarts_ = false;
@@ -1161,6 +1236,12 @@ namespace BigScreen {
 
     void SelectionVideoToggle::TickDownloadUi()
     {
+        // This ticker runs on the Unity game thread even when Campaign has no
+        // Cinema download row. Retry an early Campaign placement independently
+        // of the download controls so the panel appears as soon as Beat Saber
+        // finishes constructing its top screen—normally the next few frames.
+        if(controlsPositionPending_ && controlsVisibleRequested_)
+            PositionControlsRow();
         if(!downloadButton_ || !downloadStatus_) return;
         const float now = UnityEngine::Time::get_unscaledTime();
         if(now < nextDownloadUiRefreshTime_)

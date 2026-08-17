@@ -8,6 +8,7 @@
 #include "main.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <format>
 #include <optional>
 #include <vector>
@@ -49,6 +50,11 @@
 #include "GlobalNamespace/EnvironmentsListModel.hpp"
 #include "GlobalNamespace/FxBeatmapEventData.hpp"
 #include "GlobalNamespace/LevelCompletionResults.hpp"
+#include "GlobalNamespace/MissionCompletionResults.hpp"
+#include "GlobalNamespace/MissionLevelDetailViewController.hpp"
+#include "GlobalNamespace/MissionLevelRestartController.hpp"
+#include "GlobalNamespace/MissionSelectionNavigationController.hpp"
+#include "GlobalNamespace/MissionLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/IReadonlyBeatmapData.hpp"
 #include "GlobalNamespace/LightColorBeatmapEventData.hpp"
 #include "GlobalNamespace/LightWithIdMonoBehaviour.hpp"
@@ -67,6 +73,7 @@
 #include "GlobalNamespace/Spectrogram.hpp"
 #include "GlobalNamespace/SpectrogramRow.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
+#include "GlobalNamespace/StandardLevelRestartController.hpp"
 #include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
 #include "GlobalNamespace/TrackLaneRingsPositionStepEffectSpawner.hpp"
 #include "GlobalNamespace/TrackLaneRing.hpp"
@@ -102,6 +109,77 @@
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
 
 namespace {
+    void PrepareGameplayVideoForLevel(
+        GlobalNamespace::BeatmapLevel* level,
+        GlobalNamespace::BeatmapKey beatmapKey)
+    {
+        std::string characteristic;
+        if(beatmapKey.beatmapCharacteristic)
+        {
+            const auto serializedName =
+                beatmapKey.beatmapCharacteristic->get_serializedName();
+            if(serializedName)
+                characteristic = std::string(serializedName);
+        }
+
+        auto& playback = BigScreen::PlaybackSession::Instance();
+        // Prepare benchmark identity even when Video In Map is off so baseline
+        // and video runs remain directly comparable.
+        BigScreen::PowerBenchmark::Instance().Prepare(
+            level && level->levelID ? std::string(level->levelID) : std::string{},
+            level && level->songName
+                ? std::string(level->songName)
+                : "Unknown song",
+            level && level->songAuthorName
+                ? std::string(level->songAuthorName)
+                : "Unknown artist",
+            characteristic,
+            beatmapKey.difficulty.value__);
+
+        // Gameplay eligibility belongs to the saved global setting, not to
+        // StandardLevelDetailView's cached selection UI. Campaign launches do
+        // not pass through that screen at all.
+        if(BigScreen::Settings::Instance().VideoEnabled())
+        {
+            playback.Prepare(level);
+            playback.ConfigureGameplayBeatmap(
+                characteristic,
+                beatmapKey.difficulty.value__);
+            playback.PrewarmGameplay();
+        }
+        else
+        {
+            playback.Prepare(nullptr);
+        }
+    }
+
+    // Beat Saber 1.40.8 retains both Mission Init overloads. One can delegate
+    // to the other depending on which campaign entry point supplied already-
+    // loaded beatmap data. Prevent that internal delegation from preparing and
+    // prewarming the same video twice while still hooking both public paths.
+    bool missionInitPreparationActive = false;
+
+    class MissionInitPreparationScope final {
+    public:
+        MissionInitPreparationScope()
+            : ownsPreparation_(!missionInitPreparationActive)
+        {
+            if(ownsPreparation_)
+                missionInitPreparationActive = true;
+        }
+
+        ~MissionInitPreparationScope()
+        {
+            if(ownsPreparation_)
+                missionInitPreparationActive = false;
+        }
+
+        bool OwnsPreparation() const { return ownsPreparation_; }
+
+    private:
+        bool ownsPreparation_ = false;
+    };
+
     void HandleLevelWasSelected(
         SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& eventArgs)
     {
@@ -990,7 +1068,12 @@ namespace {
         // it. Initial activation is harmless because no map is prepared yet.
         StandardLevelDetailView_OnEnable(self);
         BigScreen::ErrorManager::Instance().Guard("showing song-screen video controls", [&]() {
-            BigScreen::SelectionVideoToggle::Instance().SongSelectionShown();
+            auto& controls = BigScreen::SelectionVideoToggle::Instance();
+            // StandardLevelDetailView is commonly retained rather than Awakened
+            // again after visiting Campaign. Re-anchor the shared canvas here
+            // before showing it so it always returns to Solo's ScreenSystem.
+            controls.CreateUi(self);
+            controls.SongSelectionShown();
         });
     }
 
@@ -1026,6 +1109,53 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
+        MissionLevelDetailViewController_DidActivate,
+        &GlobalNamespace::MissionLevelDetailViewController::DidActivate,
+        void,
+        GlobalNamespace::MissionLevelDetailViewController* self,
+        bool firstActivation,
+        bool addedToHierarchy,
+        bool screenSystemEnabling)
+    {
+        // Campaign owns a separate mission-detail controller and never creates
+        // StandardLevelDetailView, so Solo's lifecycle hooks cannot create the
+        // global video controls here. Hook the detail view itself rather than
+        // its parent NavigationController: the parent's DidActivate runs before
+        // this view is reliably attached to ScreenSystem and previously placed
+        // the row hundreds of world units offscreen on the first Campaign visit.
+        MissionLevelDetailViewController_DidActivate(
+            self, firstActivation, addedToHierarchy, screenSystemEnabling);
+        BigScreen::ErrorManager::Instance().Guard(
+            "showing campaign video controls", [&]() {
+                auto& controls = BigScreen::SelectionVideoToggle::Instance();
+                controls.CreateCampaignUi(self);
+                controls.CampaignSelectionShown();
+            });
+    }
+
+    MAKE_HOOK_MATCH(
+        MissionSelectionNavigationController_DidDeactivate,
+        &GlobalNamespace::MissionSelectionNavigationController::DidDeactivate,
+        void,
+        GlobalNamespace::MissionSelectionNavigationController* self,
+        bool removedFromHierarchy,
+        bool screenSystemDisabling)
+    {
+        // The canvas is a scene-root object rather than a child of Campaign's
+        // navigation controller. Hide it explicitly before the controller is
+        // hidden so it cannot remain over gameplay, home, or another flow.
+        // Keep the shared controls alive because Beat Saber also retains Solo's
+        // detail view and download row between visits.
+        BigScreen::ErrorManager::Instance().Guard(
+            "hiding campaign video controls", []() {
+                auto& controls = BigScreen::SelectionVideoToggle::Instance();
+                controls.CampaignSelectionHidden();
+            });
+        MissionSelectionNavigationController_DidDeactivate(
+            self, removedFromHierarchy, screenSystemDisabling);
+    }
+
+    MAKE_HOOK_MATCH(
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo,
         &GlobalNamespace::StandardLevelScenesTransitionSetupDataSO::InitEnvironmentInfo,
         void,
@@ -1048,36 +1178,9 @@ namespace {
         auto& playback = BigScreen::PlaybackSession::Instance();
         BigScreen::ErrorManager::Instance().Guard(
             "preparing video before environment selection", [&]() {
-                auto beatmapKey = self->get_beatmapKey();
-                std::string characteristic;
-                if(beatmapKey.beatmapCharacteristic)
-                {
-                    const auto serializedName =
-                        beatmapKey.beatmapCharacteristic->get_serializedName();
-                    if(serializedName)
-                        characteristic = std::string(serializedName);
-                }
-                auto* level = self->get_beatmapLevel();
-                // Prepare benchmark identity even when Video In Map is off so
-                // baseline and video runs remain directly comparable.
-                BigScreen::PowerBenchmark::Instance().Prepare(
-                    level && level->levelID ? std::string(level->levelID) : std::string{},
-                    level && level->songName ? std::string(level->songName) : "Unknown song",
-                    level && level->songAuthorName
-                        ? std::string(level->songAuthorName)
-                        : "Unknown artist",
-                    characteristic,
-                    beatmapKey.difficulty.value__);
-                if(BigScreen::SelectionVideoToggle::Instance().IsEnabledForSelectedLevel())
-                {
-                    playback.Prepare(level);
-                    playback.ConfigureGameplayBeatmap(
-                        characteristic,
-                        beatmapKey.difficulty.value__);
-                    playback.PrewarmGameplay();
-                }
-                else
-                    playback.Prepare(nullptr);
+                PrepareGameplayVideoForLevel(
+                    self->get_beatmapLevel(),
+                    self->get_beatmapKey());
             });
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
             self,
@@ -1249,6 +1352,167 @@ namespace {
             startPaused);
     }
 
+    using MissionObjectiveArray = ArrayW<
+        GlobalNamespace::MissionObjective*,
+        Array<GlobalNamespace::MissionObjective*>*>;
+    using MissionInitWithLoadedData = void (
+        GlobalNamespace::MissionLevelScenesTransitionSetupDataSO::*)(
+            StringW,
+            GlobalNamespace::IBeatmapLevelData*,
+            ByRef<GlobalNamespace::BeatmapKey>,
+            GlobalNamespace::BeatmapLevel*,
+            MissionObjectiveArray,
+            GlobalNamespace::ColorScheme*,
+            GlobalNamespace::GameplayModifiers*,
+            GlobalNamespace::PlayerSpecificSettings*,
+            GlobalNamespace::EnvironmentsListModel*,
+            GlobalNamespace::AudioClipAsyncLoader*,
+            GlobalNamespace::SettingsManager*,
+            GlobalNamespace::BeatmapDataLoader*,
+            StringW);
+    using MissionInitWithLevelsModel = void (
+        GlobalNamespace::MissionLevelScenesTransitionSetupDataSO::*)(
+            StringW,
+            ByRef<GlobalNamespace::BeatmapKey>,
+            GlobalNamespace::BeatmapLevel*,
+            MissionObjectiveArray,
+            GlobalNamespace::ColorScheme*,
+            GlobalNamespace::GameplayModifiers*,
+            GlobalNamespace::PlayerSpecificSettings*,
+            GlobalNamespace::EnvironmentsListModel*,
+            GlobalNamespace::BeatmapLevelsModel*,
+            GlobalNamespace::AudioClipAsyncLoader*,
+            GlobalNamespace::SettingsManager*,
+            GlobalNamespace::BeatmapDataLoader*,
+            StringW);
+
+    MAKE_HOOK_MATCH(
+        MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData,
+        static_cast<MissionInitWithLoadedData>(
+            &GlobalNamespace::MissionLevelScenesTransitionSetupDataSO::Init),
+        void,
+        GlobalNamespace::MissionLevelScenesTransitionSetupDataSO* self,
+        StringW missionId,
+        GlobalNamespace::IBeatmapLevelData* beatmapLevelData,
+        ByRef<GlobalNamespace::BeatmapKey> beatmapKey,
+        GlobalNamespace::BeatmapLevel* beatmapLevel,
+        MissionObjectiveArray missionObjectives,
+        GlobalNamespace::ColorScheme* overrideColorScheme,
+        GlobalNamespace::GameplayModifiers* gameplayModifiers,
+        GlobalNamespace::PlayerSpecificSettings* playerSpecificSettings,
+        GlobalNamespace::EnvironmentsListModel* environmentsListModel,
+        GlobalNamespace::AudioClipAsyncLoader* audioClipAsyncLoader,
+        GlobalNamespace::SettingsManager* settingsManager,
+        GlobalNamespace::BeatmapDataLoader* beatmapDataLoader,
+        StringW backButtonText)
+    {
+        MissionInitPreparationScope preparationScope;
+        if(BigScreen::Settings::Instance().ModEnabled() &&
+           preparationScope.OwnsPreparation())
+        {
+            BigScreen::ErrorManager::Instance().Guard(
+                "preparing campaign video", [&]() {
+                    PrepareGameplayVideoForLevel(beatmapLevel, *beatmapKey);
+                });
+        }
+        MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData(
+            self,
+            missionId,
+            beatmapLevelData,
+            beatmapKey,
+            beatmapLevel,
+            missionObjectives,
+            overrideColorScheme,
+            gameplayModifiers,
+            playerSpecificSettings,
+            environmentsListModel,
+            audioClipAsyncLoader,
+            settingsManager,
+            beatmapDataLoader,
+            backButtonText);
+    }
+
+    MAKE_HOOK_MATCH(
+        MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel,
+        static_cast<MissionInitWithLevelsModel>(
+            &GlobalNamespace::MissionLevelScenesTransitionSetupDataSO::Init),
+        void,
+        GlobalNamespace::MissionLevelScenesTransitionSetupDataSO* self,
+        StringW missionId,
+        ByRef<GlobalNamespace::BeatmapKey> beatmapKey,
+        GlobalNamespace::BeatmapLevel* beatmapLevel,
+        MissionObjectiveArray missionObjectives,
+        GlobalNamespace::ColorScheme* overrideColorScheme,
+        GlobalNamespace::GameplayModifiers* gameplayModifiers,
+        GlobalNamespace::PlayerSpecificSettings* playerSpecificSettings,
+        GlobalNamespace::EnvironmentsListModel* environmentsListModel,
+        GlobalNamespace::BeatmapLevelsModel* beatmapLevelsModel,
+        GlobalNamespace::AudioClipAsyncLoader* audioClipAsyncLoader,
+        GlobalNamespace::SettingsManager* settingsManager,
+        GlobalNamespace::BeatmapDataLoader* beatmapDataLoader,
+        StringW backButtonText)
+    {
+        MissionInitPreparationScope preparationScope;
+        if(BigScreen::Settings::Instance().ModEnabled() &&
+           preparationScope.OwnsPreparation())
+        {
+            BigScreen::ErrorManager::Instance().Guard(
+                "preparing campaign video", [&]() {
+                    PrepareGameplayVideoForLevel(beatmapLevel, *beatmapKey);
+                });
+        }
+        MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel(
+            self,
+            missionId,
+            beatmapKey,
+            beatmapLevel,
+            missionObjectives,
+            overrideColorScheme,
+            gameplayModifiers,
+            playerSpecificSettings,
+            environmentsListModel,
+            beatmapLevelsModel,
+            audioClipAsyncLoader,
+            settingsManager,
+            beatmapDataLoader,
+            backButtonText);
+    }
+
+    MAKE_HOOK_MATCH(
+        StandardLevelRestartController_RestartLevel,
+        &GlobalNamespace::StandardLevelRestartController::RestartLevel,
+        void,
+        GlobalNamespace::StandardLevelRestartController* self)
+    {
+        // Restart destroys GameCore before StartSong runs for the replacement
+        // scene. Stop at the button/controller boundary so no intervening
+        // AudioTimeSyncController update can upload into a destroyed texture.
+        BigScreen::ErrorManager::Instance().Guard(
+            "stopping video before level restart", []() {
+                RestoreShowcaseTrackRings();
+                RestoreShowcaseSidePillars();
+                RestoreShowcaseBackground();
+                BigScreen::PlaybackSession::Instance().Stop();
+            });
+        StandardLevelRestartController_RestartLevel(self);
+    }
+
+    MAKE_HOOK_MATCH(
+        MissionLevelRestartController_RestartLevel,
+        &GlobalNamespace::MissionLevelRestartController::RestartLevel,
+        void,
+        GlobalNamespace::MissionLevelRestartController* self)
+    {
+        BigScreen::ErrorManager::Instance().Guard(
+            "stopping campaign video before level restart", []() {
+                RestoreShowcaseTrackRings();
+                RestoreShowcaseSidePillars();
+                RestoreShowcaseBackground();
+                BigScreen::PlaybackSession::Instance().Stop();
+            });
+        MissionLevelRestartController_RestartLevel(self);
+    }
+
     MAKE_HOOK_MATCH(
         BeatmapObjectSpawnController_Start,
         &GlobalNamespace::BeatmapObjectSpawnController::Start,
@@ -1317,6 +1581,19 @@ namespace {
         BigScreen::ErrorManager::Instance().Guard("starting gameplay video", [&]() {
             const auto& settings = BigScreen::Settings::Instance();
             auto& playback = BigScreen::PlaybackSession::Instance();
+            if(playback.IsGameplayActive())
+            {
+                // Beat Saber's in-level Restart replaces GameCore without
+                // calling StandardLevelScenesTransitionSetupDataSO::Finish.
+                // The old Unity screen has therefore been scene-destroyed even
+                // though PlaybackSession still says it is active. Tear down
+                // the retained decoder/session now; Stop deliberately keeps
+                // the prepared map configuration, allowing Start below to
+                // create a fresh screen synchronized to the restarted song.
+                PaperLogger.info(
+                    "Detected gameplay restart; rebuilding the video session");
+                playback.Stop();
+            }
             const bool mapperControlsEnvironment =
                 playback.MapperEnvironmentPresentationActive();
             if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
@@ -1339,7 +1616,7 @@ namespace {
             if(playback.HasPreparedVideo() && !mapperControlsEnvironment &&
                settings.HideSideLaserLights())
                 HideSideLaserGeometry();
-            BigScreen::PlaybackSession::Instance().Start(BigScreen::PlaybackContext::Gameplay);
+            playback.Start(BigScreen::PlaybackContext::Gameplay);
             // The showcase keeps the map's authored environment intact, then
             // temporarily strobes only the central track-ring meshes from a
             // cached set and hides the two side pillars during the floating
@@ -1542,6 +1819,33 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
+        MissionLevelScenesTransitionSetupDataSO_Finish,
+        &GlobalNamespace::MissionLevelScenesTransitionSetupDataSO::Finish,
+        void,
+        GlobalNamespace::MissionLevelScenesTransitionSetupDataSO* self,
+        GlobalNamespace::MissionCompletionResults* levelCompletionResults)
+    {
+        // Campaign uses a separate transition setup type; StandardLevel's
+        // Finish hook is never called. Release the campaign screen and decoder
+        // while their GameCore objects are still valid, before Mission Finish
+        // unloads the scene.
+        BigScreen::ErrorManager::Instance().Guard(
+            "stopping campaign gameplay video", [&]() {
+                RestoreShowcaseTrackRings();
+                RestoreShowcaseSidePillars();
+                RestoreShowcaseBackground();
+                BigScreen::PlaybackSession::Instance().Stop();
+            });
+        BigScreen::PowerBenchmark::Instance().Finish(
+            BigScreen::PlaybackSession::Instance().LastResultsData());
+        BigScreen::ShowcaseLauncher::Instance().OnGameplayFinished();
+        BigScreen::ErrorManager::Instance().SetGameplayActive(false);
+        MissionLevelScenesTransitionSetupDataSO_Finish(
+            self,
+            levelCompletionResults);
+    }
+
+    MAKE_HOOK_MATCH(
         ResultsViewController_DidActivate,
         &GlobalNamespace::ResultsViewController::DidActivate,
         void,
@@ -1578,6 +1882,29 @@ MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
     Paper::Logger::RegisterFileContextId(PaperLogger.tag);
+
+    // CustomTypes 0.18.4 installs optional liveness-diagnostic hooks that read
+    // Unity's liveness-state filter class from the wrong structure offset on
+    // the Unity version used by Beat Saber 1.40.8. When campaign MissionDataSO
+    // assets are collected after gameplay, the diagnostic mistakes a valid
+    // object for corruption and then dereferences the bogus filter-class
+    // pointer in HasParentUnsafe(), crashing Unity's AssetGarbageCol thread.
+    //
+    // CT_DISABLE_LIVENESS_CHECKS is CustomTypes' supported runtime escape
+    // hatch for these diagnostic hooks. It does not disable custom type
+    // registration, delegates, or normal GC; it only passes the three debug
+    // traversal hooks straight through to Unity. Set it before AutoRegister()
+    // and before Big Screen creates any custom UI type. Remove this workaround
+    // after the corrected CustomTypes build is available for this game/toolchain
+    // generation and has passed campaign-exit regression testing.
+    if(::setenv("CT_DISABLE_LIVENESS_CHECKS", "1", 1) != 0)
+        PaperLogger.warn(
+            "Could not disable CustomTypes' incompatible liveness diagnostics; "
+            "campaign asset cleanup may remain unstable");
+    else
+        PaperLogger.info(
+            "Disabled CustomTypes 0.18.4 liveness diagnostics for Beat Saber 1.40.8");
+
     BigScreen::ErrorManager::Instance().InitializePersistentLog();
     BigScreen::ErrorManager::Instance().Guard("loading settings", []() {
         BigScreen::Settings::Instance().Load();
@@ -1611,10 +1938,16 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // setup, and Beat Saber's audio clocks remain authoritative for sync.
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
+    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData);
+    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel);
+    INSTALL_HOOK(PaperLogger, StandardLevelRestartController_RestartLevel);
+    INSTALL_HOOK(PaperLogger, MissionLevelRestartController_RestartLevel);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_Awake);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
     INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
+    INSTALL_HOOK(PaperLogger, MissionLevelDetailViewController_DidActivate);
+    INSTALL_HOOK(PaperLogger, MissionSelectionNavigationController_DidDeactivate);
     // Do not install pause-menu UI hooks on Beat Saber 1.40.8. The attempted
     // BSML IncrementSetting/ToggleSetting controls never rendered in the pause
     // menu, and destroying their hidden hierarchy left an invalid
@@ -1632,6 +1965,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
     INSTALL_HOOK(PaperLogger, Application_InvokeFocusChanged);
     INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
+    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_Finish);
     INSTALL_HOOK(PaperLogger, ResultsViewController_DidActivate);
     // SongCore publishes selections after its custom-level details are ready,
     // including WIP songs. A plain native callback keeps this path independent

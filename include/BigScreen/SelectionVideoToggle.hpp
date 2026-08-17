@@ -22,6 +22,7 @@ namespace BSML {
 
 namespace GlobalNamespace {
     class BeatmapLevel;
+    class MissionLevelDetailViewController;
     class StandardLevelDetailView;
 }
 
@@ -30,6 +31,7 @@ namespace TMPro {
 }
 
 namespace UnityEngine {
+    class Component;
     class GameObject;
 }
 
@@ -48,6 +50,16 @@ namespace BigScreen {
         static SelectionVideoToggle& Instance();
 
         void CreateUi(GlobalNamespace::StandardLevelDetailView* detailView);
+        /// Creates the same global top-row controls used by Solo while omitting
+        /// the Solo-only Cinema download row. Campaign owns a different detail
+        /// controller, but both screens share the same ScreenSystem title bar.
+        void CreateCampaignUi(
+            GlobalNamespace::MissionLevelDetailViewController* detailView);
+        /// Shows or hides only Campaign's copy of the shared global controls.
+        /// Campaign has no song-preview transport or Cinema download strip to
+        /// resume, cancel, or otherwise mutate at these lifecycle boundaries.
+        void CampaignSelectionShown();
+        void CampaignSelectionHidden();
         void ForgetUi();
 
         /// Reapplies the current preview preference when Beat Saber makes the
@@ -109,6 +121,9 @@ namespace BigScreen {
         void ReportDownloadFailure(
             const std::string& detail,
             bool metadataCheck = false);
+        void CreateTopControls(
+            UnityEngine::Component* anchor,
+            bool requireTopScreen);
         void BringHeaderControlsToFront();
         /// Anchors the floating canvas just above ScreenSystem's top screen,
         /// with a detail-view coordinate only as a compatibility fallback.
@@ -120,9 +135,16 @@ namespace BigScreen {
         // Slim self-raycasting canvas hosting the three global controls above
         // the stock title bar. Owned by this class, not by the detail view.
         BSML::FloatingScreen* controlsScreen_ = nullptr;
-        // Needed to re-derive the floating row's placement whenever song
-        // selection is shown. Cleared in ForgetUi with the other pointers.
-        GlobalNamespace::StandardLevelDetailView* detailView_ = nullptr;
+        // Generic Component anchor shared by StandardLevelDetailView (Solo)
+        // and MissionLevelDetailViewController (Campaign). It is used only to
+        // locate the active ScreenSystem and its stock top title screen.
+        UnityEngine::Component* controlsAnchor_ = nullptr;
+        // Campaign's detail transform is not in the same coordinate space as
+        // Solo's fallback anchor. Until its ScreenSystem top screen is ready,
+        // keep the panel hidden and retry rather than placing it far offscreen.
+        bool controlsRequireTopScreen_ = false;
+        bool controlsPositionPending_ = false;
+        bool controlsVisibleRequested_ = false;
         BSML::ToggleSetting* previewUi_ = nullptr;
         BSML::ToggleSetting* inMapUi_ = nullptr;
         BSML::IncrementSetting* layoutUi_ = nullptr;

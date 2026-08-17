@@ -987,6 +987,7 @@ namespace BigScreen {
         VideoFrame frame;
         if(decoder_.TryTake(frame))
         {
+            bool uploadFailed = false;
             if(surface_.Upload(frame))
             {
                 // Count every distinct picture that actually reached Unity.
@@ -1021,7 +1022,24 @@ namespace BigScreen {
                     surface_.SetVisible(true);
                 }
             }
+            else
+            {
+                // An upload failure means the Unity surface was destroyed by
+                // a scene transition/restart or no longer matches the decoder.
+                // Stop consuming frames immediately. Repeatedly invoking a
+                // stale Texture2D is unsafe on IL2CPP and can crash the entire
+                // Beat Saber process instead of throwing a managed exception.
+                playbackFailed_ = true;
+                uploadFailed = true;
+                PaperLogger.error(
+                    "Video frame upload stopped because the Unity screen is no longer valid");
+                ErrorManager::Instance().ReportInternal(
+                    "uploading a decoded video frame",
+                    "The gameplay screen was no longer available. The map will continue without video.");
+            }
             decoder_.Recycle(std::move(frame));
+            if(uploadFailed)
+                decoder_.Close();
         }
 
         // Evaluate deadline outcomes after this tick's possible Unity upload.
@@ -1129,6 +1147,19 @@ namespace BigScreen {
         mapperEnvironmentApplyCountdown_ = 0;
         gameplayLastNoteTime_.reset();
         gameplayFrameSamplingFinished_ = false;
+    }
+
+    void PlaybackSession::ClearPreparedPreviewForLevel(std::string_view levelId)
+    {
+        if(levelId.empty() || preparedLevelId_ != levelId || IsGameplayActive())
+            return;
+
+        // Prepare(nullptr) performs the complete metadata reset in one place
+        // after Stop has joined any active decoder worker and destroyed its
+        // Unity surface. Do not duplicate only part of that state here.
+        Prepare(nullptr);
+        PaperLogger.info(
+            "Cleared Video Library preview state while leaving Big Screen");
     }
 
     void PlaybackSession::SetGameplayLastNoteTime(double songTimeSeconds)

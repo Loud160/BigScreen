@@ -42,6 +42,18 @@ namespace BigScreen {
     namespace {
         constexpr float Pi = 3.14159265358979323846f;
 
+        // Unity scene teardown leaves ordinary IL2CPP pointers non-null after
+        // their managed objects have been destroyed (Unity's "fake null").
+        // Every deferred cleanup path must therefore verify liveness before it
+        // asks Unity to destroy an object again.
+        template<class T>
+        void DestroyIfAlive(T*& object)
+        {
+            if(UnityW<T>::isAlive(object))
+                UnityEngine::Object::Destroy(object);
+            object = nullptr;
+        }
+
         float CurveEdgeShape(float u)
         {
             const float centered = u * 2.0f - 1.0f;
@@ -987,7 +999,15 @@ namespace BigScreen {
 
     bool ScreenSurface::Upload(const VideoFrame& frame)
     {
-        if(!texture_ ||
+        // Restarting a Beat Saber level destroys GameCore's Unity objects
+        // without necessarily reaching Big Screen's normal Finish hook. A raw
+        // Texture2D pointer can consequently remain non-null while referring
+        // to an already-destroyed object. Never call LoadRawTextureData through
+        // such a pointer: on IL2CPP that can jump through stale class metadata
+        // and crash UnityMain rather than producing a managed exception.
+        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_) ||
+           !UnityW<UnityEngine::Material>::isAlive(material_) ||
+           !UnityW<UnityEngine::Texture2D>::isAlive(texture_) ||
            frame.width != textureWidth_ ||
            frame.height != textureHeight_ ||
            frame.rgba.empty())
@@ -1002,7 +1022,7 @@ namespace BigScreen {
             material_->set_mainTexture(texture_);
             material_->set_color(
                 UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
-            if(backgroundMaterial_)
+            if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_))
                 backgroundMaterial_->set_color(letterboxTransparent_
                     ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
                     : UnityEngine::Color::get_black());
@@ -1035,7 +1055,8 @@ namespace BigScreen {
             SetVisible(false);
             return;
         }
-        if(!material_)
+        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_) ||
+           !UnityW<UnityEngine::Material>::isAlive(material_))
             return;
 
         if(leadInActive_ && leadInBlack_)
@@ -1051,7 +1072,7 @@ namespace BigScreen {
         // Lead-In Background describes the complete frame, not just the
         // transformed/cropped video polygon. Make the independent letterbox
         // layer opaque until Upload restores its configured transparency.
-        if(backgroundMaterial_)
+        if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_))
             backgroundMaterial_->set_color(UnityEngine::Color::get_black());
         if(auto* backgroundRenderer =
                gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
@@ -1063,7 +1084,12 @@ namespace BigScreen {
 
     void ScreenSurface::SetVisible(bool visible)
     {
-        if(!gameObject_ || visible_ == visible)
+        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_))
+        {
+            visible_ = false;
+            return;
+        }
+        if(visible_ == visible)
             return;
         gameObject_->SetActive(visible);
         visible_ = visible;
@@ -1276,14 +1302,23 @@ namespace BigScreen {
 
     void ScreenSurface::RestoreWholeVideoMesh()
     {
-        if(videoObject_ && videoMesh_)
+        // Unity destroys gameplay-scene objects before every Big Screen owner
+        // necessarily receives its final Stop()/Destroy() call. Raw IL2CPP
+        // pointers remain non-null after that native destruction, so testing
+        // only the pointer value is unsafe: calling GetComponent on that
+        // "fake-null" object raises a StackTraceException which a BSML event
+        // delegate turns into a process abort. Treat an already-destroyed
+        // surface as already restored and only touch live Unity objects.
+        if(UnityW<UnityEngine::GameObject>::isAlive(videoObject_) &&
+           UnityW<UnityEngine::Mesh>::isAlive(videoMesh_))
         {
             if(auto* filter = videoObject_->GetComponent<UnityEngine::MeshFilter*>())
                 filter->set_sharedMesh(videoMesh_);
         }
-        if(material_ && texture_)
+        if(UnityW<UnityEngine::Material>::isAlive(material_) &&
+           UnityW<UnityEngine::Texture2D>::isAlive(texture_))
             material_->set_mainTexture(texture_);
-        if(crackObject_)
+        if(UnityW<UnityEngine::GameObject>::isAlive(crackObject_))
             crackObject_->SetActive(false);
         fractureMeshActive_ = false;
         fractureShapeCaptured_ = false;
@@ -1293,24 +1328,12 @@ namespace BigScreen {
     void ScreenSurface::DestroyFractureResources()
     {
         RestoreWholeVideoMesh();
-        if(crackObject_)
-            UnityEngine::Object::Destroy(crackObject_);
-        if(crackMesh_)
-            UnityEngine::Object::Destroy(crackMesh_);
-        if(crackMaterial_)
-            UnityEngine::Object::Destroy(crackMaterial_);
-        if(crackTexture_)
-            UnityEngine::Object::Destroy(crackTexture_);
-        if(fractureMesh_)
-            UnityEngine::Object::Destroy(fractureMesh_);
-        if(fractureSnapshot_)
-            UnityEngine::Object::Destroy(fractureSnapshot_);
-        crackObject_ = nullptr;
-        crackMesh_ = nullptr;
-        crackMaterial_ = nullptr;
-        crackTexture_ = nullptr;
-        fractureMesh_ = nullptr;
-        fractureSnapshot_ = nullptr;
+        DestroyIfAlive(crackObject_);
+        DestroyIfAlive(crackMesh_);
+        DestroyIfAlive(crackMaterial_);
+        DestroyIfAlive(crackTexture_);
+        DestroyIfAlive(fractureMesh_);
+        DestroyIfAlive(fractureSnapshot_);
         fracturePattern_ = {};
         fractureRevealGroups_.clear();
         fractureVertexMetadata_.clear();
@@ -1781,35 +1804,21 @@ namespace BigScreen {
     void ScreenSurface::Destroy()
     {
         DestroyFractureResources();
-        if(diagnosticsObject_)
-            UnityEngine::Object::Destroy(diagnosticsObject_);
-        diagnosticsObject_ = nullptr;
+        DestroyIfAlive(diagnosticsObject_);
         diagnosticsText_ = nullptr;
         // Destroying the GameObject also destroys its MeshFilter and Renderer.
         // Mesh, material, and texture were created as standalone Unity objects,
         // so they are released explicitly when gameplay ends or a level changes.
-        if(videoObject_)
-            UnityEngine::Object::Destroy(videoObject_);
-        if(gameObject_)
-            UnityEngine::Object::Destroy(gameObject_);
-        if(texture_ && ownsTexture_)
-            UnityEngine::Object::Destroy(texture_);
-        if(material_)
-            UnityEngine::Object::Destroy(material_);
-        if(mesh_)
-            UnityEngine::Object::Destroy(mesh_);
-        if(videoMesh_)
-            UnityEngine::Object::Destroy(videoMesh_);
-        if(backgroundMaterial_)
-            UnityEngine::Object::Destroy(backgroundMaterial_);
-
-        gameObject_ = nullptr;
-        videoObject_ = nullptr;
-        mesh_ = nullptr;
-        videoMesh_ = nullptr;
-        material_ = nullptr;
-        backgroundMaterial_ = nullptr;
-        texture_ = nullptr;
+        DestroyIfAlive(videoObject_);
+        DestroyIfAlive(gameObject_);
+        if(ownsTexture_)
+            DestroyIfAlive(texture_);
+        else
+            texture_ = nullptr;
+        DestroyIfAlive(material_);
+        DestroyIfAlive(mesh_);
+        DestroyIfAlive(videoMesh_);
+        DestroyIfAlive(backgroundMaterial_);
         textureWidth_ = 0;
         textureHeight_ = 0;
         ownsTexture_ = false;

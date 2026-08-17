@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/CoreLogic.hpp"
@@ -117,6 +118,12 @@ namespace BigScreen {
         /// preview pause/resume. It also starts a clean comparison window.
         void RefreshPlaybackFpsLimitLive();
         void Stop();
+        /// Clears a preview-owned prepared configuration only when it still
+        /// belongs to the supplied level. Leaving Big Screen's menu uses this
+        /// to prevent Campaign—which has its own transition type—from
+        /// accidentally inheriting the last editor preview. A newly prepared
+        /// gameplay level with a different ID is never disturbed.
+        void ClearPreparedPreviewForLevel(std::string_view levelId);
 
         bool HasPreparedVideo() const { return config_.has_value(); }
         /// True only when Allow Chroma Override is enabled, the map actually
