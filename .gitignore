@@ -18,6 +18,7 @@ __pycache__/
 # Local diagnostics and headset captures. Keep intentional documentation
 # images under docs/ with descriptive names instead of committing these
 # root-level development captures.
+/diagnostics/
 /bigscreen-*.png
 /bigscreen-*.jpg
 /bigscreen-live-settings.json

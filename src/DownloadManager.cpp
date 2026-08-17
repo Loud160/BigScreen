@@ -1530,6 +1530,62 @@ except BaseException as error:
     publish('failed', 'yt-dlp update failed: ' + str(error)[-700:])
 )PY";
 
+        // Big Screen updates are notification-only. The latest-release API
+        // intentionally excludes drafts and prereleases, and this request is
+        // unauthenticated so the mod never asks a player for a GitHub token.
+        // GitHub returns 404 for an unauthenticated private repository; that is
+        // an expected unavailable state while development remains private.
+        constexpr const char* ModReleaseScript = R"PY(
+import json, urllib.error, urllib.request
+
+result = {'state': 'unavailable', 'message': 'The release check did not complete.'}
+try:
+    request = urllib.request.Request(
+        'https://api.github.com/repos/Loud160/BigScreen/releases/latest',
+        headers={
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'Big-Screen-Beat-Saber',
+            'X-GitHub-Api-Version': '2022-11-28',
+        })
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = response.read(1024 * 1024 + 1)
+    if len(payload) > 1024 * 1024:
+        raise RuntimeError('GitHub returned an unexpectedly large release response.')
+    release = json.loads(payload.decode('utf-8'))
+    result = {
+        'state': 'received',
+        'version': str(release.get('tag_name') or ''),
+    }
+except urllib.error.HTTPError as error:
+    if error.code == 404:
+        result = {
+            'state': 'unavailable',
+            'message': 'No public Big Screen release is available yet. The GitHub repository may still be private.',
+        }
+    elif error.code in (403, 429):
+        result = {
+            'state': 'unavailable',
+            'message': 'GitHub temporarily limited update checks. Try again later.',
+        }
+    else:
+        result = {
+            'state': 'unavailable',
+            'message': 'GitHub could not check Big Screen releases (HTTP ' + str(error.code) + ').',
+        }
+except urllib.error.URLError:
+    result = {
+        'state': 'unavailable',
+        'message': 'Could not reach GitHub. Check the Quest network connection and try again.',
+    }
+except BaseException as error:
+    result = {
+        'state': 'unavailable',
+        'message': 'Could not check Big Screen releases: ' + str(error)[-300:],
+    }
+
+BIGSCREEN_RELEASE_RESULT = json.dumps(result)
+)PY";
+
         // Video-library rows use the video's YouTube artwork, never Beat
         // Saber's album art. This small worker accepts only recognizable
         // YouTube URLs, derives the stable video id locally, and downloads the
@@ -1579,6 +1635,7 @@ os.replace(temporary, job['destination'])
     {
         Cancel();
         if(worker_.joinable()) worker_.join();
+        if(modReleaseWorker_.joinable()) modReleaseWorker_.join();
         {
             std::scoped_lock lock(thumbnailMutex_);
             stopThumbnailWorker_ = true;
@@ -1644,7 +1701,12 @@ os.replace(temporary, job['destination'])
         const auto promotedCandidate = activation.Promoted();
         const auto candidateVersion = activation.CandidateVersion();
         std::ifstream activeVersion(active.string() + ".version");
-        if(activeVersion) std::getline(activeVersion, currentUpdateVersion_);
+        if(activeVersion)
+        {
+            std::string version;
+            std::getline(activeVersion, version);
+            SetCurrentYtDlpVersion(std::move(version));
+        }
 
         // Register the compiled bridge before CPython starts. Keeping this as
         // a built-in module avoids Android's prohibition on executing a qjs
@@ -1762,10 +1824,11 @@ os.replace(temporary, job['destination'])
                     PyEval_SaveThread();
                     return false;
                 }
-                currentUpdateVersion_ = std::string(BundledYtDlpVersion);
+                std::string restoredVersionText(BundledYtDlpVersion);
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
-                    std::getline(restoredVersion, currentUpdateVersion_);
+                    std::getline(restoredVersion, restoredVersionText);
+                SetCurrentYtDlpVersion(std::move(restoredVersionText));
                 smokeTestError = smokeTest();
                 if(!smokeTestError.empty())
                 {
@@ -1790,7 +1853,7 @@ os.replace(temporary, job['destination'])
                 // stranded update once and retry the immutable shipped copy.
                 if(Utility::IsRegularFile(active))
                 {
-                    auto rejectedVersion = currentUpdateVersion_;
+                    auto rejectedVersion = CurrentYtDlpVersion();
                     std::error_code fileError;
                     std::filesystem::remove(active, fileError);
                     if(!fileError)
@@ -1809,7 +1872,8 @@ os.replace(temporary, job['destination'])
                         runtime / "yt-dlp-rejected.version",
                         std::ios::binary | std::ios::trunc);
                     rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
-                    currentUpdateVersion_ = std::string(BundledYtDlpVersion);
+                    SetCurrentYtDlpVersion(
+                        std::string(BundledYtDlpVersion));
                     smokeTestError = smokeTest();
                     if(smokeTestError.empty())
                     {
@@ -1860,11 +1924,39 @@ os.replace(temporary, job['destination'])
             initializationErrorCode_ + "). See Big Screen's error log for details.";
     }
 
+    std::string DownloadManager::CurrentYtDlpVersion() const
+    {
+        std::scoped_lock lock(versionMutex_);
+        return currentUpdateVersion_;
+    }
+
+    void DownloadManager::SetCurrentYtDlpVersion(std::string version)
+    {
+        std::scoped_lock lock(versionMutex_);
+        currentUpdateVersion_ = version.empty()
+            ? std::string(BundledYtDlpVersion)
+            : std::move(version);
+    }
+
+    ModReleaseSnapshot DownloadManager::ModReleaseStatus() const
+    {
+        std::scoped_lock lock(modReleaseMutex_);
+        return modReleaseSnapshot_;
+    }
+
     std::optional<std::string> DownloadManager::TakeUpdateNotice()
     {
         std::scoped_lock lock(mutex_);
         auto result = updateNotice_;
         updateNotice_.reset();
+        return result;
+    }
+
+    std::optional<ModReleaseNotice> DownloadManager::TakeModReleaseNotice()
+    {
+        std::scoped_lock lock(modReleaseMutex_);
+        auto result = modReleaseNotice_;
+        modReleaseNotice_.reset();
         return result;
     }
 
@@ -2148,6 +2240,92 @@ os.replace(temporary, job['destination'])
             PaperLogger.warn("Scheduled yt-dlp update check skipped: {}", error);
     }
 
+    void DownloadManager::StartAutomaticModReleaseCheck()
+    {
+        bool expected = false;
+        if(!automaticModReleaseCheckStarted_.compare_exchange_strong(
+               expected, true))
+            return;
+
+        std::string error;
+        if(!StartModReleaseCheck(true, error))
+            PaperLogger.info(
+                "Automatic Big Screen release check was not started: {}",
+                error);
+    }
+
+    bool DownloadManager::StartModReleaseCheck(std::string& error)
+    {
+        return StartModReleaseCheck(false, error);
+    }
+
+    bool DownloadManager::StartModReleaseCheck(
+        bool automatic,
+        std::string& error)
+    {
+        std::scoped_lock startLock(modReleaseStartMutex_);
+        if(!initialized_)
+        {
+            error = UnavailableMessage();
+            std::scoped_lock lock(modReleaseMutex_);
+            modReleaseSnapshot_ = {
+                ModReleaseCheckState::Unavailable,
+                VERSION,
+                {},
+                "Release checking is unavailable because the embedded network runtime did not initialize."};
+            if(!automatic)
+            {
+                modReleaseNotice_ = ModReleaseNotice{
+                    "Could not check for updates",
+                    modReleaseSnapshot_.message +
+                        "\n\n" + error};
+            }
+            return false;
+        }
+        {
+            std::scoped_lock lock(modReleaseMutex_);
+            if(modReleaseSnapshot_.Active())
+            {
+                error = "A Big Screen release check is already running.";
+                return false;
+            }
+        }
+        if(modReleaseWorker_.joinable())
+            modReleaseWorker_.join();
+        {
+            std::scoped_lock lock(modReleaseMutex_);
+            modReleaseSnapshot_ = {
+                ModReleaseCheckState::Checking,
+                VERSION,
+                {},
+                "Checking GitHub for the latest Big Screen release..."};
+        }
+        try
+        {
+            modReleaseWorker_ = std::thread(
+                [this, automatic]() { RunModReleaseCheck(automatic); });
+        }
+        catch(const std::exception& exception)
+        {
+            error = std::string("Could not start the release-check worker: ") +
+                exception.what();
+            std::scoped_lock lock(modReleaseMutex_);
+            modReleaseSnapshot_.state = ModReleaseCheckState::Unavailable;
+            modReleaseSnapshot_.message =
+                "Big Screen could not start its release check.";
+            if(!automatic)
+            {
+                modReleaseNotice_ = ModReleaseNotice{
+                    "Could not check for updates",
+                    modReleaseSnapshot_.message};
+            }
+            ErrorManager::Instance().RecordError(
+                "Starting Big Screen release check", exception.what());
+            return false;
+        }
+        return true;
+    }
+
     void DownloadManager::QueueVideoThumbnail(
         std::string levelId,
         std::string sourceUrl,
@@ -2318,12 +2496,14 @@ os.replace(temporary, job['destination'])
                             rejected << (rejectedVersion.empty()
                                 ? "unknown"
                                 : rejectedVersion);
-                            currentUpdateVersion_ = std::string(BundledYtDlpVersion);
+                            std::string restoredVersionText(BundledYtDlpVersion);
                             std::ifstream restoredVersion(
                                 active.string() + ".version", std::ios::binary);
                             if(restoredVersion)
                                 std::getline(
-                                    restoredVersion, currentUpdateVersion_);
+                                    restoredVersion, restoredVersionText);
+                            SetCurrentYtDlpVersion(
+                                std::move(restoredVersionText));
                             if(PyRun_SimpleString(
                                    "import importlib, sys\n"
                                    "importlib.invalidate_caches()\n"
@@ -2665,7 +2845,11 @@ os.replace(temporary, job['destination'])
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "cancelPath", cancelPath_.string(), allocator);
             AddString(document, "nextPath", (runtime / "yt-dlp-next").string(), allocator);
-            AddString(document, "currentVersion", currentUpdateVersion_, allocator);
+            AddString(
+                document,
+                "currentVersion",
+                CurrentYtDlpVersion(),
+                allocator);
             std::string rejectedVersion;
             std::ifstream rejected(runtime / "yt-dlp-rejected.version", std::ios::binary);
             if(rejected)
@@ -2717,6 +2901,144 @@ os.replace(temporary, job['destination'])
         catch(...)
         {
             SetFailure("yt-dlp update stopped because of an unexpected internal error.");
+        }
+    }
+
+    void DownloadManager::RunModReleaseCheck(bool automatic)
+    {
+        ModReleaseSnapshot outcome;
+        outcome.currentVersion = VERSION;
+        outcome.state = ModReleaseCheckState::Unavailable;
+        outcome.message = "The Big Screen release check did not complete.";
+        try
+        {
+            std::string resultJson;
+            std::string pythonFailure;
+            {
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals("{}", 2);
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        ModReleaseScript,
+                        Py_file_input,
+                        globals.get(),
+                        globals.get()));
+                if(!globals || !result)
+                    pythonFailure = TakePythonExceptionText();
+                else if(auto* value = PyDict_GetItemString(
+                            globals.get(), "BIGSCREEN_RELEASE_RESULT"))
+                {
+                    if(const char* text = PyUnicode_AsUTF8(value))
+                        resultJson = text;
+                    else
+                        pythonFailure = TakePythonExceptionText();
+                }
+                else
+                    pythonFailure =
+                        "The release-check script did not return a result.";
+            }
+
+            if(!pythonFailure.empty())
+            {
+                PaperLogger.error(
+                    "Embedded Big Screen release-check failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Checking Big Screen releases", pythonFailure);
+                outcome.message =
+                    "Big Screen could not run the release check. Details were written to the error log.";
+            }
+            else
+            {
+                rapidjson::Document result;
+                result.Parse(resultJson.data(), resultJson.size());
+                if(result.HasParseError() || !result.IsObject())
+                    throw std::runtime_error(
+                        "The GitHub release response could not be interpreted.");
+
+                const std::string state = result.HasMember("state") &&
+                    result["state"].IsString()
+                    ? result["state"].GetString()
+                    : "unavailable";
+                const std::string message = result.HasMember("message") &&
+                    result["message"].IsString()
+                    ? result["message"].GetString()
+                    : "The GitHub release check is currently unavailable.";
+                if(state != "received")
+                    outcome.message = message;
+                else
+                {
+                    outcome.latestVersion = result.HasMember("version") &&
+                        result["version"].IsString()
+                        ? result["version"].GetString()
+                        : std::string{};
+                    if(!CoreLogic::ParseSemanticVersion(outcome.latestVersion))
+                    {
+                        outcome.latestVersion.clear();
+                        outcome.message =
+                            "GitHub's latest release does not use a recognized version number.";
+                    }
+                    else if(CoreLogic::IsReleaseVersionNewer(
+                                outcome.currentVersion,
+                                outcome.latestVersion))
+                    {
+                        outcome.state = ModReleaseCheckState::UpdateAvailable;
+                        outcome.message =
+                            "Installed: " + outcome.currentVersion +
+                            "  |  Available: " + outcome.latestVersion;
+                    }
+                    else
+                    {
+                        outcome.state = ModReleaseCheckState::UpToDate;
+                        outcome.message =
+                            "Big Screen " + outcome.currentVersion +
+                            " is current.";
+                    }
+                }
+            }
+        }
+        catch(const std::exception& exception)
+        {
+            outcome.message =
+                "Could not check Big Screen releases. Try again later.";
+            PaperLogger.error(
+                "Big Screen release check stopped: {}", exception.what());
+            ErrorManager::Instance().RecordError(
+                "Checking Big Screen releases", exception.what());
+        }
+        catch(...)
+        {
+            outcome.message =
+                "Could not check Big Screen releases because of an unexpected internal error.";
+            ErrorManager::Instance().RecordError(
+                "Checking Big Screen releases",
+                "An unknown native exception escaped the release-check worker.");
+        }
+
+        std::scoped_lock lock(modReleaseMutex_);
+        modReleaseSnapshot_ = outcome;
+        if(outcome.state == ModReleaseCheckState::UpdateAvailable)
+        {
+            modReleaseNotice_ = ModReleaseNotice{
+                "Big Screen update available",
+                "Current version: " + outcome.currentVersion +
+                    "\nNew version: " + outcome.latestVersion +
+                    "\n\nDownload and install the update through ModsBeforeFriday or the Big Screen GitHub releases page."};
+        }
+        else if(!automatic &&
+                outcome.state == ModReleaseCheckState::UpToDate)
+        {
+            modReleaseNotice_ = ModReleaseNotice{
+                "Big Screen is up to date",
+                "Current version: " + outcome.currentVersion +
+                    "\n\nNo newer stable release was found."};
+        }
+        else if(!automatic)
+        {
+            modReleaseNotice_ = ModReleaseNotice{
+                "Could not check for updates",
+                outcome.message};
         }
     }
 

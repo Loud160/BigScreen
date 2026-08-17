@@ -1,9 +1,15 @@
 # Architecture and ownership
 
 Unity and Beat Saber objects are accessed only from game-thread lifecycle and
-Update hooks. FFmpeg decoding, yt-dlp work, thumbnail requests, and storage scans
+Update hooks. FFmpeg decoding, yt-dlp work, mod-release checks, thumbnail requests, and storage scans
 run on background workers and exchange plain data through locked mailboxes or
 atomic JSON files. No worker touches a Unity texture, view, or map object.
+
+The mod-release checker uses its own worker and status mailbox, separate from
+video downloads and yt-dlp package updates. An atomic process-lifetime guard
+allows the automatic check only once per Beat Saber session; a manual check may
+run again but cannot overlap an active release check. Only the main-thread menu
+refresh consumes notices and opens BSML dialogs.
 
 The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.
 Big Screen registers a built-in Python module and a preferred yt-dlp JavaScript

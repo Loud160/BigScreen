@@ -58,7 +58,7 @@ namespace BigScreen {
         // Content column width. Deliberately narrow: the darkening plate is
         // sized from this, and it should hug the controls with only a small
         // margin rather than spanning the whole center screen.
-        constexpr float PanelWidth = 92.0f;
+        constexpr float PanelWidth = 86.0f;
         // The preview box bounds every source shape: wide video fills the
         // width and portrait or rotated video fills the height instead.
         constexpr float FrameBoxWidth = 82.0f;
@@ -70,7 +70,10 @@ namespace BigScreen {
         // narrow is undraggable, so the bar never shrinks below this.
         constexpr float MinimumScrubberWidth = 48.0f;
         // Plate margin past the content column on each side / top / bottom.
-        constexpr float PlatePadding = 2.0f;
+        // The controls already occupy the full declared panel dimensions.
+        // Keep only a narrow visual inset so the translucent plate hugs the
+        // picker instead of reading as a second, oversized center panel.
+        constexpr float PlatePadding = 0.5f;
         // Sum of the fixed row heights plus inter-row spacing laid out below.
         constexpr float ContentHeight = 5.5f + FrameBoxHeight + 7.0f + 7.5f +
             5.5f + 8.0f + 5 * 0.7f;

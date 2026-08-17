@@ -2,6 +2,48 @@
 
 ## 0.7.0-alpha.1 — Beat Saber 1.40.8 port
 
+- Added a notification-only Big Screen release checker. It checks the latest
+  public stable GitHub release once when the menu first opens in each Beat Saber
+  session and shows a popup only when a newer version exists. The Update tab
+  displays the installed Big Screen and active yt-dlp versions, while its manual
+  check always reports update, current, or unavailable status. A small creator
+  credit now sits beneath the installed version without adding gameplay branding.
+- Fixed completed YouTube downloads sometimes leaving stale resolution buttons
+  visible after replacing a local assignment, added a reliable translucent file
+  browser backing panel, and aligned the performance-panel reset control with
+  the switch it resets.
+- Compacted the thumbnail-picker backing plate around its controls, gave every
+  Update-tab text row an explicit non-overlapping layout height, placed creator
+  credit directly beneath the installed version, and reordered the tabs to
+  General, Screen, Environment, Misc, Update without moving settings between
+  categories.
+- Condensed the Video Library child editor's song and artist heading onto one
+  line and tightened only its noninteractive status/spacer rows so the complete
+  Video Storage group remains visible within Beat Saber's fixed-height side
+  panel without requiring scrolling.
+- Corrected the Update tab's ignored text-row heights and retained scroll
+  position so its installed version and creator attribution always open in
+  view. Version and creator now share one inseparable display block. The Video
+  Library timing controls also use one direct full-width row contract, with
+  enforced row heights and explicit labels for both switches.
+- Grouped the four full-height synchronization controls with a controlled
+  negative spacing that removes the native rows' unused vertical margins, so
+  the Playback and Video Storage groups retain their full layouts without
+  clipping toggle, slider, label, arrow, or hit-area geometry; ignored local
+  diagnostics captures; and corrected the README's renamed menu-environment
+  placement workflow.
+- Tightened the thumbnail picker's content column and translucent backing plate
+  while preserving the full preview, scrubber, and button sizes.
+- Kept the preview Play/Pause button inside a 12.5-unit rounded Playback panel,
+  positioned its transport row with fixed top and flexible bottom allocations
+  so Unity cannot erase the vertical correction, retained the button's own
+  0.25-unit optical adjustment, placed the section title across the panel's top
+  edge, set storage heading/value pairs to an explicit 70% line height, and set
+  the Video Storage background to 17.5 units. Both panels use preferred-only
+  sizing rather than hard minimums.
+- Split the Windows source-build README into a standalone batch workflow first
+  and a complete manual restore, test, build, package, and deploy workflow.
+
 - Removed the playback-only resolution cap. Gameplay, song previews, and Video
   Library previews now present the selected local/downloaded file at its native
   presentation-oriented resolution; the thumbnail picker retains its explicit

@@ -1,6 +1,6 @@
 # Settings reference
 
-Big Screen has five tabs: General, Screen, Environment, Update, and Misc. Settings are global unless a description explicitly says “current play,” “selected video,” or “selected layout.” Reset to Defaults resets all five layouts and every option described below.
+Big Screen has five tabs: General, Screen, Environment, Misc, and Update. Settings are global unless a description explicitly says “current play,” “selected video,” or “selected layout.” Reset to Defaults resets all five layouts and every option described below.
 
 ## General
 
@@ -175,6 +175,16 @@ Hides Big Mirror's paired near-building structures that can block the screen edg
 Hides audio-reactive lane-side spectrogram geometry.
 
 ## Update
+
+### Current Big Screen Version / Check Big Screen Update
+
+Shows the installed Big Screen version. The first time the Big Screen menu opens during a Beat Saber session, the mod checks GitHub's latest public stable release. The automatic check opens a popup only when a newer version is available, showing both the installed and available versions. It does not repeat when the menu is reopened during the same game session.
+
+**Check Big Screen Update** performs a fresh manual check. Manual checks always report their result: update available, already current, or unable to check. This is notification-only; install a compatible QMOD through ModsBeforeFriday or from Big Screen's GitHub releases. A private repository, missing public release, network problem, or GitHub rate limit is reported without changing the installed mod.
+
+### Current yt-dlp Version
+
+Shows the downloader package that is active in the embedded runtime. This may be the baseline shipped in the QMOD or a verified update activated after restart.
 
 ### Use Nightly Builds — default: Off
 

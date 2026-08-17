@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,136 @@
 #include <vector>
 
 namespace BigScreen::CoreLogic {
+    struct SemanticVersion {
+        std::array<std::uint64_t, 3> core{};
+        std::vector<std::string> prerelease;
+    };
+
+    /// Parses the release-tag subset Big Screen publishes (for example
+    /// v0.7.0 or 0.7.0-alpha.1). Build metadata is intentionally ignored for
+    /// precedence. Rejecting malformed tags is safer than presenting an
+    /// untrusted GitHub label as an actionable update.
+    inline std::optional<SemanticVersion> ParseSemanticVersion(
+        std::string_view text)
+    {
+        while(!text.empty() && std::isspace(
+                  static_cast<unsigned char>(text.front())))
+            text.remove_prefix(1);
+        while(!text.empty() && std::isspace(
+                  static_cast<unsigned char>(text.back())))
+            text.remove_suffix(1);
+        if(!text.empty() && (text.front() == 'v' || text.front() == 'V'))
+            text.remove_prefix(1);
+        if(const auto plus = text.find('+'); plus != std::string_view::npos)
+            text = text.substr(0, plus);
+
+        SemanticVersion version;
+        const auto dash = text.find('-');
+        const auto core = text.substr(0, dash);
+        auto remaining = core;
+        for(std::size_t index = 0; index < version.core.size(); ++index)
+        {
+            const auto dot = remaining.find('.');
+            const auto part = remaining.substr(0, dot);
+            if(part.empty() ||
+               !std::all_of(part.begin(), part.end(), [](unsigned char value) {
+                   return std::isdigit(value) != 0;
+               }))
+                return std::nullopt;
+            std::uint64_t value = 0;
+            const auto result = std::from_chars(
+                part.data(), part.data() + part.size(), value);
+            if(result.ec != std::errc{} || result.ptr != part.data() + part.size())
+                return std::nullopt;
+            version.core[index] = value;
+            if(index + 1 < version.core.size())
+            {
+                if(dot == std::string_view::npos)
+                    return std::nullopt;
+                remaining.remove_prefix(dot + 1);
+            }
+            else if(dot != std::string_view::npos)
+                return std::nullopt;
+        }
+
+        if(dash == std::string_view::npos)
+            return version;
+        auto prerelease = text.substr(dash + 1);
+        if(prerelease.empty())
+            return std::nullopt;
+        while(true)
+        {
+            const auto dot = prerelease.find('.');
+            const auto identifier = prerelease.substr(0, dot);
+            if(identifier.empty() ||
+               !std::all_of(
+                   identifier.begin(), identifier.end(), [](unsigned char value) {
+                       return std::isalnum(value) != 0 || value == '-';
+                   }))
+                return std::nullopt;
+            version.prerelease.emplace_back(identifier);
+            if(dot == std::string_view::npos)
+                break;
+            prerelease.remove_prefix(dot + 1);
+        }
+        return version;
+    }
+
+    inline int CompareSemanticVersions(
+        const SemanticVersion& left,
+        const SemanticVersion& right)
+    {
+        if(left.core < right.core) return -1;
+        if(left.core > right.core) return 1;
+        if(left.prerelease.empty() != right.prerelease.empty())
+            return left.prerelease.empty() ? 1 : -1;
+
+        const auto count = std::min(
+            left.prerelease.size(), right.prerelease.size());
+        for(std::size_t index = 0; index < count; ++index)
+        {
+            const auto& l = left.prerelease[index];
+            const auto& r = right.prerelease[index];
+            const bool lNumeric = std::all_of(
+                l.begin(), l.end(), [](unsigned char value) {
+                    return std::isdigit(value) != 0;
+                });
+            const bool rNumeric = std::all_of(
+                r.begin(), r.end(), [](unsigned char value) {
+                    return std::isdigit(value) != 0;
+                });
+            if(lNumeric && rNumeric)
+            {
+                // Numeric identifiers can exceed an integer type. Stripping
+                // leading zeros and comparing length preserves exact ordering.
+                const auto lStart = std::min(l.find_first_not_of('0'), l.size());
+                const auto rStart = std::min(r.find_first_not_of('0'), r.size());
+                const auto lDigits = l.substr(lStart);
+                const auto rDigits = r.substr(rStart);
+                if(lDigits.size() != rDigits.size())
+                    return lDigits.size() < rDigits.size() ? -1 : 1;
+                if(lDigits != rDigits)
+                    return lDigits < rDigits ? -1 : 1;
+            }
+            else if(lNumeric != rNumeric)
+                return lNumeric ? -1 : 1;
+            else if(l != r)
+                return l < r ? -1 : 1;
+        }
+        if(left.prerelease.size() == right.prerelease.size()) return 0;
+        return left.prerelease.size() < right.prerelease.size() ? -1 : 1;
+    }
+
+    inline bool IsReleaseVersionNewer(
+        std::string_view current,
+        std::string_view candidate)
+    {
+        const auto currentVersion = ParseSemanticVersion(current);
+        const auto candidateVersion = ParseSemanticVersion(candidate);
+        return currentVersion && candidateVersion &&
+            CompareSemanticVersions(*candidateVersion, *currentVersion) > 0;
+    }
+
     enum class VideoCodecKind { Unknown, H264, Hevc, Vp8, Vp9 };
 
     inline bool IsSupportedVideoCodec(VideoCodecKind codec) noexcept

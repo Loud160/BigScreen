@@ -153,6 +153,10 @@ namespace BigScreen {
         UnityEngine::UI::Button* updaterButton_ = nullptr;
         HMUI::HoverHint* updaterHoverHint_ = nullptr;
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;
+        UnityEngine::UI::Button* modUpdaterButton_ = nullptr;
+        TMPro::TextMeshProUGUI* modUpdaterStatus_ = nullptr;
+        TMPro::TextMeshProUGUI* modVersionText_ = nullptr;
+        TMPro::TextMeshProUGUI* ytDlpVersionText_ = nullptr;
         UnityEngine::UI::Button* resetButton_ = nullptr;
         bool suppressNightlyCallback_ = false;
         bool suppressAutomaticPerformanceCallback_ = false;

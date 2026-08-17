@@ -34,6 +34,8 @@ The selected file is referenced in place; it is not copied into Big Screen stora
 
 The playback group starts/stops both the map audio and video. Drag the scrubber to seek; the centered time shows current position and duration. A completed video can be scrubbed backward and played again.
 
+The song editor keeps the full-height timing controls, **Playback Position**, and **Video Storage** visible together without a nested scroll area. The storage row shows the selected map's managed download, any active local-video size, all Big Screen downloads, free Quest space, and the video removal action.
+
 - **Video Playback Offset** moves the video relative to song time. Negative values create time before video frame zero.
 - **Playback Speed** manually adjusts video rate.
 - **Fit to Song** continuously accounts for map duration and offset so the playable video ends with the song; it can handle a source longer or shorter than the song.
@@ -70,3 +72,7 @@ The selected-song storage row distinguishes the current map's managed download, 
 The Misc tab contains Storage, Showcase, and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains Automatic Performance, its frame-loss trigger, the shared reduction/recovery response time, the optional playback-information overlay, and the power benchmark recorder.
 
 **Play Big Screen Showcase** opens an optional center-screen demonstration manager. It lists Chroma, Noodle Extensions, the pinned BeatSaver map, its video, and downloader readiness. Nothing downloads on page open: use **Download Map**, **Recheck Map**, or **Download Video** beside the missing item. **Play Showcase** enables only when everything is ready, then shows the strong-motion warning and starts Lawless Expert+ directly with session-only No Fail. This temporary modifier does not change saved modifiers or affect the map when launched normally. The map is stored in Big Screen's managed `DemoLevels` folder rather than copied over a user's normal custom-map installation. After the run, Beat Saber's ordinary results and navigation controls remain unchanged; reopen Big Screen from Mods to run the showcase again. User video overrides still take priority if the same map is already present.
+
+## Update status
+
+The Update tab shows the installed Big Screen version and the yt-dlp package currently active in the embedded downloader. Big Screen checks the latest public stable mod release once when its menu first opens during each Beat Saber session. A newer version produces one popup showing the installed and available versions; reopening the menu does not repeat that automatic check. **Check Big Screen Update** always performs a fresh manual check and reports whether an update exists, the installed version is current, or the check could not be completed. Mod updates remain user-installed through ModsBeforeFriday or GitHub rather than being silently installed in-game.

@@ -20,6 +20,7 @@ import sys
 
 
 root = pathlib.Path(sys.argv[1]).resolve()
+gitignore = (root / ".gitignore").read_text(encoding="utf-8")
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
 bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
@@ -498,6 +499,7 @@ assert "SetPerformancePanelPlacement" in performance_panel_source
 assert "ResetPerformancePanelPlacement" in performance_panel_source
 assert 'performanceParent, "↻"' not in settings_menu_source
 assert 'diagnosticsParent, "↻"' in settings_menu_source
+assert "performanceDiagnosticsToggle_->toggle->get_transform()" in settings_menu_source
 assert "ApplyDisplaySettingsAndRefreshPreview();" in settings_menu_source
 assert workflow.count("BIGSCREEN_FFMPEG_VERSION=") == 2
 for warning in ("-Wall", "-Wextra", "-Wpedantic"):
@@ -631,6 +633,32 @@ assert "PyErr_Print" not in download_manager_source
 assert "PyEval_GetBuiltins" not in download_manager_source
 assert "PyImport_ImportModule(\"builtins\")" in download_manager_source
 
+# Big Screen checks its own public stable-release feed once per game process,
+# never requests a GitHub credential, and leaves QMOD installation to MBF.
+assert "automaticModReleaseCheckStarted_" in download_manager_header
+assert "compare_exchange_strong" in download_manager_source
+assert "https://api.github.com/repos/Loud160/BigScreen/releases/latest" in (
+    download_manager_source
+)
+assert "StartAutomaticModReleaseCheck();" in settings_menu_source
+assert "Check Big Screen Update" in settings_menu_source
+assert "Current yt-dlp:" in settings_menu_source
+assert "Created by Loud160 (AKA Whisp)" in settings_menu_source
+assert "configureUpdateText" in settings_menu_source
+assert "updateLayout->set_childControlHeight(true);" in settings_menu_source
+assert "tabViewRoots_[4]->GetComponent<BSML::ScrollView*>()" in (
+    settings_menu_source
+)
+assert "scroll->ScrollTo(0.0f, false);" in settings_menu_source
+version_block = settings_menu_source.split(
+    'std::string("Current version: ") + VERSION', 1
+)[1].split('"Check Big Screen Update"', 1)[0]
+assert "Created by Loud160 (AKA Whisp)" in version_block
+assert "ModsBeforeFriday" in download_manager_source
+assert '"Big Screen is up to date"' in download_manager_source
+assert '"Could not check for updates"' in download_manager_source
+assert "downloader.IsReady() && !release.Active()" not in settings_menu_source
+
 # Both user-facing download entry points must consume the probe's exact tier
 # list. Backend support alone is insufficient: otherwise the old single button
 # silently sends DownloadRequest's default 1080p value for every source.
@@ -646,7 +674,75 @@ assert "request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit()" in (
 assert "download.availableHeights" in library_menu_source
 assert "snapshot.availableHeights" in selection_toggle_source
 assert "verifiedAvailableHeights" in download_manager_source
-assert "validatedCompletedTransfer" in library_menu_source
+assert "validatedCompletedTransfer" not in library_menu_source
+assert "const bool showTierButtons = validatedProbe" in library_menu_source
+# The fixed-height side editor must keep storage/removal actions visible without
+# scrolling. Song and artist therefore share one line, while the compact status
+# and spacer rows reclaim height without shrinking interactive controls.
+assert 'name + " — " + author' in library_menu_source
+assert "detailTitle_->set_maxVisibleLines(1);" in library_menu_source
+assert "constexpr float TimingControlHeight = 8.0f;" in library_menu_source
+assert "timingControlsGroup->set_spacing(TimingControlSpacing);" in (
+    library_menu_source
+)
+assert "constexpr float TimingControlSpacing = -2.0f;" in library_menu_source
+assert "timingRows_.push_back(timingControlsGroup->get_gameObject());" in (
+    library_menu_source
+)
+assert "ConfigureLayout(playPauseButton_, 8.5f, 5.8f, 0.0f);" in (
+    library_menu_source
+)
+assert (
+    "playbackRow->set_childAlignment(UnityEngine::TextAnchor::MiddleLeft);"
+    in library_menu_source
+)
+assert "ConfigureLayout(transportColumn, 8.5f, 7.8f, 0.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(transportTopSpacer, 8.5f, 0.75f, 0.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(transportBottomSpacer, 8.5f, 1.25f, 0.0f);" in (
+    library_menu_source
+)
+assert "titleLayout->set_ignoreLayout(true);" in library_menu_source
+assert "titleRect->set_anchoredPosition({0.0f, 0.5f});" in (
+    library_menu_source
+)
+assert "ConfigureLayout(playbackTitleSpacer, -1.0f, 3.60f, 0.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(playbackBottomSpacer, -1.0f, 0.0f, 1.0f, 1.0f);" in (
+    library_menu_source
+)
+assert "playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(storagePanel, -1.0f, 17.5f, 1.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(storageGroupTitle, -1.0f, 3.4f, 1.0f);" in (
+    library_menu_source
+)
+assert 'StorageMetricLineHeight = "70%";' in library_menu_source
+assert "StorageMetricText(" in library_menu_source
+assert "storageLayout->set_minHeight" not in library_menu_source
+assert 'StyleToggleRow(fitToggle_, "Fit to Song");' in library_menu_source
+assert (
+    'StyleToggleRow(blackLeadInToggle_, "Lead-In Background");'
+    in library_menu_source
+)
+assert "timingToggleColumn" not in library_menu_source
+assert "/diagnostics/" in gitignore
+assert "ConfigureLayout(detailText_, -1.0f, 5.5f, 1.0f);" in (
+    library_menu_source
+)
+assert "ConfigureLayout(storageSpacer, -1.0f, 0.8f, 1.0f);" in (
+    library_menu_source
+)
 # The side editor deliberately uses compact one-row labels beside the video
 # thumbnail; the song-selection modal has enough width for the longer form.
 assert 'std::to_string(height) + "p"' in library_menu_source
@@ -887,7 +983,8 @@ assert "CreateClickableText" in local_browser_source
 assert '"<color=#33FF5C>"' in local_browser_source
 assert '"<color=#FF4040>"' in local_browser_source
 assert "BrowserListWidth" in local_browser_source
-assert "0.0f, 0.0f, 0.0f, 0.76f" in local_browser_source
+assert 'ApplyBackground("round-rect-panel")' in local_browser_source
+assert "ApplyAlpha(0.78f)" in local_browser_source
 assert '"Show File Browser"' in library_menu_source
 
 # Thumbnail picker: a map owns at most ONE picked thumbnail at a deterministic
@@ -914,6 +1011,8 @@ assert "frame.height - 1 - row" in thumbnail_picker_source
 assert "std::filesystem::rename(temporaryPath, finalPath" in (
     thumbnail_picker_source)
 assert "ThumbnailPickerMenu::Instance().Tick();" in main_source
+assert "constexpr float PanelWidth = 86.0f;" in thumbnail_picker_source
+assert "constexpr float PlatePadding = 0.5f;" in thumbnail_picker_source
 assert "ThumbnailPickerMenu::Instance().Hide();" in menu_flow_source
 assert "previousFrameButton_->set_interactable(true)" in thumbnail_picker_source
 assert "nextFrameButton_->set_interactable(true)" in thumbnail_picker_source
@@ -921,6 +1020,8 @@ assert "restoreCenterOnActivation" in menu_flow_source
 assert "LocalVideoBrowserMenu::Instance().CancelScan();" in menu_flow_source
 assert "void CancelScan();" in local_browser_header
 assert "LocalThumbnailChanged" in menu_flow_source
+assert 'ApplyBackground("round-rect-panel")' in local_browser_source
+assert "BigScreenLocalFileBrowserPlate" in local_browser_source
 
 # Deleting a LOCAL file is the menu's only unrecoverable action, so it alone
 # gets a second, file-naming confirmation; re-downloadable videos stay
@@ -1086,7 +1187,12 @@ assert "selectedLevel_ = nullptr" in forget_selection
 
 # Misc-tab visibility changes redraw its sliders immediately, and a queued
 # error cannot be consumed before the settings modal has been constructed.
-assert "else if(selectedTab_ == 4)" in settings_menu_source
+assert '"General", "Screen", "Environment", "Misc", "Update"' in (
+    settings_menu_source
+)
+assert "auto* storageContainer = createTabPage(3);" in settings_menu_source
+assert "auto* updateContainer = createTabPage(4);" in settings_menu_source
+assert "else if(selectedTab_ == 3)" in settings_menu_source
 refresh_status = settings_menu_source.split(
     "void SettingsMenu::RefreshDownloaderStatus()", 1
 )[1]

@@ -37,6 +37,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
+#include "bsml/shared/BSML/Components/Backgroundable.hpp"
 #include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
@@ -145,26 +146,37 @@ namespace BigScreen {
         onAssigned_ = std::move(onAssigned);
         rootPath_ = VideoLibrary::Instance().SharedStoragePath();
 
-        // The center view previously rendered directly over the menu world,
-        // which made filenames and scan status difficult to read. Keep the
-        // plate slightly wider than the content and behind every interactive
-        // object. It is intentionally translucent so the user retains spatial
-        // context while choosing a file.
-        auto* background = BSML::Lite::CreateImage(
-            controller,
-            BSML::Utilities::ImageResources::GetBlankSprite());
-        background->set_color({0.0f, 0.0f, 0.0f, 0.76f});
-        background->set_preserveAspect(false);
-        background->set_raycastTarget(false);
-        if(auto backgroundRect = background->get_rectTransform())
+        // A blank-sprite ImageView is not reliably rendered by Beat Saber's
+        // center view controller. Use the same stock Backgroundable panel that
+        // visibly backs the thumbnail picker and editor cards. The plate is
+        // slightly larger than the browser and non-interactive, so filenames
+        // remain readable without stealing pointer events from the controls.
+        auto* backgroundObject =
+            UnityEngine::GameObject::New_ctor("BigScreenLocalFileBrowserPlate");
+        backgroundObject->get_transform()->SetParent(
+            controller->get_transform(), false);
+        if(auto* backgroundable =
+               backgroundObject->AddComponent<BSML::Backgroundable*>())
+        {
+            backgroundable->ApplyBackground("round-rect-panel");
+            backgroundable->ApplyColor({0.0f, 0.0f, 0.0f, 1.0f});
+            backgroundable->ApplyAlpha(0.78f);
+            if(auto* image = backgroundable->background)
+            {
+                image->set_gradient(false);
+                image->set_raycastTarget(false);
+            }
+        }
+        if(auto backgroundRect = backgroundObject->get_transform()
+               .try_cast<UnityEngine::RectTransform>().value_or(nullptr))
         {
             backgroundRect->set_anchorMin({0.5f, 0.5f});
             backgroundRect->set_anchorMax({0.5f, 0.5f});
             backgroundRect->set_pivot({0.5f, 0.5f});
             backgroundRect->set_anchoredPosition({0.0f, 0.0f});
             backgroundRect->set_sizeDelta({PanelWidth + 4.0f, 76.0f});
-            backgroundRect->SetAsFirstSibling();
         }
+        backgroundObject->get_transform()->SetAsFirstSibling();
 
         auto* root = BSML::Lite::CreateVerticalLayoutGroup(controller);
         root->set_spacing(0.55f);

@@ -26,7 +26,9 @@ Keep the defaults initially: 720p, 30 FPS, Big Mirror override, Chroma override,
 
 Install a newer QMOD built for the same Beat Saber version. Do not manually delete ModData before updating: that folder contains settings, assignments, timing data, downloaded videos, thumbnails, and library backups.
 
-The **Check yt-dlp** control updates only the bundled downloader Python package. It does not update Big Screen itself or Beat Saber.
+The Update tab shows the installed Big Screen version and checks for the latest public stable release once per Beat Saber session. A newer release produces a popup with both versions; **Check Big Screen Update** can repeat the check manually. The checker is notification-only and never replaces the installed QMOD. If the repository has no publicly visible release, the manual result explains that no public release information was available.
+
+The separate **Check yt-dlp** control updates only the embedded downloader Python package. It does not update Big Screen itself or Beat Saber. The Update tab also shows the yt-dlp version currently active in the runtime.
 
 ## Removing or disabling
 

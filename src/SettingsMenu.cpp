@@ -27,6 +27,7 @@
 #include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/ShowcaseLauncher.hpp"
 #include "BigScreen/Settings.hpp"
+#include "BigScreen/UiUtility.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
@@ -54,6 +55,7 @@
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML/Components/ModalView.hpp"
+#include "bsml/shared/BSML/Components/ScrollView.hpp"
 #include "bsml/shared/BSML/Components/Settings/DropdownListSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
@@ -76,7 +78,7 @@ namespace BigScreen {
         };
 
         std::array<std::string_view, 5> SettingsTabNames{
-            "General", "Screen", "Environment", "Update", "Misc"
+            "General", "Screen", "Environment", "Misc", "Update"
         };
 
         // Reset controls intentionally share one compact visual contract. The
@@ -156,6 +158,9 @@ namespace BigScreen {
     {
         if(!viewController)
             return;
+        // The manager owns the once-per-process guard, so rebuilding or
+        // reopening this view can safely ask without creating another request.
+        DownloadManager::Instance().StartAutomaticModReleaseCheck();
         if(settingsViewController_ == viewController)
         {
             RefreshControls();
@@ -248,6 +253,10 @@ namespace BigScreen {
         updaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
+        modUpdaterButton_ = nullptr;
+        modUpdaterStatus_ = nullptr;
+        modVersionText_ = nullptr;
+        ytDlpVersionText_ = nullptr;
         resetButton_ = nullptr;
         errorModal_ = nullptr;
         errorModalText_ = nullptr;
@@ -373,8 +382,10 @@ namespace BigScreen {
         auto* generalContainer = createTabPage(0);
         auto* screenContainer = createTabPage(1);
         auto* environmentContainer = createTabPage(2);
-        auto* updateContainer = createTabPage(3);
-        auto* storageContainer = createTabPage(4);
+        // Tab labels and content keep the same semantic ownership; only their
+        // visible order changes. Misc now occupies slot 3 and Update slot 4.
+        auto* storageContainer = createTabPage(3);
+        auto* updateContainer = createTabPage(4);
         if(!generalContainer || !screenContainer ||
            !environmentContainer || !updateContainer || !storageContainer)
         {
@@ -385,6 +396,20 @@ namespace BigScreen {
             return;
         }
         generalContentRoot_ = generalContainer;
+
+        // SettingsContainerTag deliberately leaves childControlHeight off for
+        // the game's stock setting prefabs. The Update page also contains raw
+        // text rows, however, so that default causes every explicit
+        // LayoutElement height below to be ignored. The resulting collapsed
+        // rows can overlap and can push the version/creator block above the
+        // viewport. This page owns its row heights and must honor them.
+        if(auto* updateLayout = updateContainer
+               ->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>())
+        {
+            updateLayout->set_childControlHeight(true);
+            updateLayout->set_childForceExpandHeight(false);
+            updateLayout->set_childAlignment(UnityEngine::TextAnchor::UpperCenter);
+        }
 
         // Scroll containers align their first child directly with the upper
         // mask. A small real spacer keeps the first glyph row below that mask,
@@ -752,16 +777,18 @@ namespace BigScreen {
             layout->set_preferredWidth(82.0f);
             layout->set_flexibleWidth(1.0f);
         }
-        // Attach the reset button directly beside the toggle control. This is
-        // the same overlay pattern used by the screen-layout reset below: it
-        // keeps the glyph next to the interactive control instead of placing it
-        // beside the row label, and it consumes no additional row width.
-        if(performancePanelResetButton_ && performanceDiagnosticsToggle_)
+        // ToggleSetting's outer transform owns both the label and switch. The
+        // reset glyph must instead anchor to the actual switch, just as the
+        // screen reset anchors to the actual layout selector. This places it
+        // immediately left of the control that opens the panel without taking
+        // layout width or drifting toward the row label.
+        if(performancePanelResetButton_ && performanceDiagnosticsToggle_ &&
+           performanceDiagnosticsToggle_->toggle)
         {
             auto resetRect = performancePanelResetButton_->get_transform()
                 .cast<UnityEngine::RectTransform>();
             resetRect->SetParent(
-                performanceDiagnosticsToggle_->get_transform(), false);
+                performanceDiagnosticsToggle_->toggle->get_transform(), false);
             resetRect->set_anchorMin({0.0f, 0.5f});
             resetRect->set_anchorMax({0.0f, 0.5f});
             resetRect->set_pivot({1.0f, 0.5f});
@@ -1919,6 +1946,102 @@ namespace BigScreen {
                 RefreshUpdaterHint();
             });
 
+        const auto createUpdateSectionTitle = [updateContainer](
+            const char* label) -> TMPro::TextMeshProUGUI*
+        {
+            auto* title = BSML::Lite::CreateText(
+                updateContainer, label, 4.2f);
+            if(!title)
+                return nullptr;
+            title->set_fontStyle(TMPro::FontStyles::Bold);
+            title->set_alignment(TMPro::TextAlignmentOptions::Center);
+            title->set_color({0.35f, 0.85f, 1.0f, 1.0f});
+            if(auto* layout = title->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_preferredHeight(5.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+            return title;
+        };
+
+        // Text created directly inside a scrollable settings container needs
+        // an explicit layout height. Without it, Beat Saber's vertical layout
+        // can collapse multiple labels into one row, causing the version,
+        // status, button text, and creator credit to overlap.
+        const auto configureUpdateText = [](
+            TMPro::TextMeshProUGUI* text,
+            float height,
+            float minimumFontSize,
+            float maximumFontSize)
+        {
+            if(!text)
+                return;
+            text->set_alignment(TMPro::TextAlignmentOptions::Center);
+            text->set_enableWordWrapping(true);
+            text->set_enableAutoSizing(true);
+            text->set_fontSizeMin(minimumFontSize);
+            text->set_fontSizeMax(maximumFontSize);
+            text->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+            if(auto* layout = UiUtility::EnsureLayout(text))
+            {
+                layout->set_minHeight(height);
+                layout->set_preferredHeight(height);
+                layout->set_flexibleHeight(0.0f);
+                layout->set_flexibleWidth(1.0f);
+            }
+        };
+
+        auto* updateTopSpacer = BSML::Lite::CreateText(
+            updateContainer, "", 1.0f, {0.0f, 0.0f}, {48.0f, 1.5f});
+        if(auto* layout = updateTopSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            layout->set_preferredHeight(1.5f);
+        createUpdateSectionTitle("Big Screen");
+        modVersionText_ = BSML::Lite::CreateText(
+            updateContainer,
+            std::string("Current version: ") + VERSION +
+                "\nCreated by Loud160 (AKA Whisp)",
+            2.8f);
+        // Version and creator intentionally share one TMPro object. If the
+        // installed version is visible, attribution is therefore guaranteed
+        // to remain directly beneath it instead of becoming a separately
+        // collapsible or clipped row.
+        configureUpdateText(modVersionText_, 7.5f, 2.15f, 2.8f);
+        modUpdaterButton_ = BSML::Lite::CreateUIButton(
+            updateContainer,
+            "Check Big Screen Update",
+            {0.0f, 0.0f},
+            {42.0f, 8.0f},
+            [this]()
+            {
+                std::string error;
+                if(!DownloadManager::Instance().StartModReleaseCheck(error) &&
+                   modUpdaterStatus_)
+                    modUpdaterStatus_->set_text(error);
+                RefreshDownloaderStatus();
+            });
+        BSML::Lite::SetButtonTextSize(modUpdaterButton_, 2.7f);
+        BSML::Lite::AddHoverHint(
+            modUpdaterButton_,
+            "Checks the latest public stable Big Screen release on GitHub. This only reports whether an update exists; install QMOD updates through ModsBeforeFriday or GitHub.");
+        modUpdaterStatus_ = BSML::Lite::CreateText(
+            updateContainer, "Not checked this session", 2.4f);
+        configureUpdateText(modUpdaterStatus_, 8.0f, 1.9f, 2.4f);
+
+        auto* updateSectionSpacer = BSML::Lite::CreateText(
+            updateContainer, "", 1.0f, {0.0f, 0.0f}, {48.0f, 2.0f});
+        if(auto* layout = updateSectionSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            layout->set_preferredHeight(2.0f);
+        createUpdateSectionTitle("YouTube Downloader");
+        ytDlpVersionText_ = BSML::Lite::CreateText(
+            updateContainer,
+            "Current yt-dlp: " +
+                DownloadManager::Instance().CurrentYtDlpVersion(),
+            2.8f);
+        configureUpdateText(ytDlpVersionText_, 4.5f, 2.3f, 2.8f);
+
         nightlyUpdatesToggle_ = BSML::Lite::CreateToggle(
             updateContainer,
             "Use Nightly yt-dlp Updates",
@@ -1962,7 +2085,7 @@ namespace BigScreen {
             });
         updaterHoverHint_ = BSML::Lite::AddHoverHint(updaterButton_, "");
         updaterStatus_ = BSML::Lite::CreateText(updateContainer, "", 2.5f);
-        if(updaterStatus_) updaterStatus_->set_alignment(TMPro::TextAlignmentOptions::Center);
+        configureUpdateText(updaterStatus_, 8.0f, 1.9f, 2.5f);
 
         localVideoInstructionsModal_ = BSML::Lite::CreateModal(
             viewController,
@@ -2503,6 +2626,10 @@ namespace BigScreen {
             nightlyUpdatesToggle_->set_interactable(enabled);
         if(updaterButton_)
             updaterButton_->set_interactable(enabled && DownloadManager::Instance().IsReady());
+        if(modUpdaterButton_)
+            modUpdaterButton_->set_interactable(
+                enabled &&
+                !DownloadManager::Instance().ModReleaseStatus().Active());
         if(showcaseButton_)
             // The readiness page must remain reachable when the downloader is
             // unavailable or an asset transfer is active; that page is where
@@ -2692,6 +2819,21 @@ namespace BigScreen {
             if(tabViewRoots_[page])
                 tabViewRoots_[page]->SetActive(page == selectedTab_);
 
+        // Always open Update at its first row. Its independent ScrollView can
+        // retain an old position while hidden; after the tab order changed,
+        // that stale position made the complete version/creator section look
+        // as though it had never been created.
+        if(selectedTab_ == 4 && tabViewRoots_[4])
+        {
+            UnityEngine::Canvas::ForceUpdateCanvases();
+            if(auto* scroll =
+                   tabViewRoots_[4]->GetComponent<BSML::ScrollView*>())
+            {
+                scroll->ScrollTo(0.0f, false);
+                scroll->RefreshButtons();
+            }
+        }
+
         // Slider values are initially loaded while the Screen tab is hidden.
         // HMUI therefore cannot calculate the final handle/text coordinates at
         // that time. Rebuild and redraw only after the tab is visible, matching
@@ -2703,7 +2845,7 @@ namespace BigScreen {
             if(videoOpacitySlider_ && videoOpacitySlider_->slider)
                 videoOpacitySlider_->slider->UpdateVisuals();
         }
-        else if(selectedTab_ == 4)
+        else if(selectedTab_ == 3)
         {
             // Misc is also constructed while hidden. Force the two Automatic
             // Performance sliders through the same native post-visibility
@@ -2783,6 +2925,9 @@ namespace BigScreen {
             ErrorManager::Instance().ReportUserVisible("Video library recovered", *recovery);
         if(auto update = DownloadManager::Instance().TakeUpdateNotice())
             ErrorManager::Instance().ReportUserVisible("Downloader rollback", *update);
+        if(auto update = DownloadManager::Instance().TakeModReleaseNotice())
+            ErrorManager::Instance().ReportUserVisible(
+                std::move(update->title), std::move(update->message));
         // TakePendingDialog clears the queue. Consume only after this menu has
         // a live modal, otherwise a recoverable creation/order change would
         // discard the one user-visible explanation before it can be shown.
@@ -2809,8 +2954,32 @@ namespace BigScreen {
             showcaseButton_->set_interactable(
                 Settings::Instance().ModEnabled());
         }
+        auto& downloader = DownloadManager::Instance();
+        if(ytDlpVersionText_)
+            ytDlpVersionText_->set_text(
+                "Current yt-dlp: " + downloader.CurrentYtDlpVersion());
+        if(modVersionText_)
+            modVersionText_->set_text(
+                std::string("Current version: ") + VERSION +
+                "\nCreated by Loud160 (AKA Whisp)");
+        const auto release = downloader.ModReleaseStatus();
+        if(modUpdaterStatus_)
+            modUpdaterStatus_->set_text(release.message.empty()
+                ? "Not checked this session"
+                : release.message);
+        if(modUpdaterButton_)
+        {
+            BSML::Lite::SetButtonText(
+                modUpdaterButton_,
+                release.Active()
+                    ? "Checking..."
+                    : "Check Big Screen Update");
+            modUpdaterButton_->set_interactable(
+                Settings::Instance().ModEnabled() &&
+                !release.Active());
+        }
         if(!updaterButton_ || !updaterStatus_) return;
-        const auto snapshot = DownloadManager::Instance().Snapshot();
+        const auto snapshot = downloader.Snapshot();
         if(snapshot.levelId != "__updater__") return;
         updaterStatus_->set_text(snapshot.message);
         BSML::Lite::SetButtonText(

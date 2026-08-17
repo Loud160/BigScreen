@@ -91,6 +91,28 @@ namespace BigScreen {
         }
     };
 
+    enum class ModReleaseCheckState {
+        NotChecked,
+        Checking,
+        UpToDate,
+        UpdateAvailable,
+        Unavailable
+    };
+
+    struct ModReleaseSnapshot {
+        ModReleaseCheckState state = ModReleaseCheckState::NotChecked;
+        std::string currentVersion;
+        std::string latestVersion;
+        std::string message;
+
+        bool Active() const { return state == ModReleaseCheckState::Checking; }
+    };
+
+    struct ModReleaseNotice {
+        std::string title;
+        std::string message;
+    };
+
     /// Runs the official Android CPython build and yt-dlp in-process on one
     /// background thread. Quest's noexec shared storage and Android API 29 W^X
     /// restrictions make an extracted executable interpreter unreliable; the
@@ -110,6 +132,12 @@ namespace BigScreen {
         bool StartMapPackage(MapPackageRequest request, std::string& error);
         bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
         void StartScheduledUpdaterCheck(bool nightly);
+        /// Starts the public GitHub release check at most once per Beat Saber
+        /// process. Reopening Big Screen does not generate another request.
+        void StartAutomaticModReleaseCheck();
+        /// Manual checks bypass the once-per-session automatic guard but never
+        /// overlap another release check.
+        bool StartModReleaseCheck(std::string& error);
         void QueueVideoThumbnail(
             std::string levelId,
             std::string sourceUrl,
@@ -121,7 +149,10 @@ namespace BigScreen {
         /// startup initialization failed. The detailed exception remains in
         /// Big Screen's persistent log under the same error code.
         std::string UnavailableMessage() const;
+        std::string CurrentYtDlpVersion() const;
+        ModReleaseSnapshot ModReleaseStatus() const;
         std::optional<std::string> TakeUpdateNotice();
+        std::optional<ModReleaseNotice> TakeModReleaseNotice();
 
     private:
         DownloadManager() = default;
@@ -133,7 +164,10 @@ namespace BigScreen {
         void RunMapPackage(MapPackageRequest request);
         void RunProbe(std::string levelId, std::string sourceUrl);
         void RunUpdater(bool nightly, bool install);
+        void RunModReleaseCheck(bool automatic);
         void RunThumbnailQueue();
+        bool StartModReleaseCheck(bool automatic, std::string& error);
+        void SetCurrentYtDlpVersion(std::string version);
         void RefreshSnapshotFromDiskLocked();
         void SetFailure(std::string message);
 
@@ -150,6 +184,12 @@ namespace BigScreen {
         // over a joinable std::thread and terminating the process.
         std::mutex startMutex_;
         std::thread worker_;
+        std::thread modReleaseWorker_;
+        std::mutex modReleaseStartMutex_;
+        mutable std::mutex modReleaseMutex_;
+        ModReleaseSnapshot modReleaseSnapshot_;
+        std::optional<ModReleaseNotice> modReleaseNotice_;
+        std::atomic<bool> automaticModReleaseCheckStarted_{false};
         std::thread thumbnailWorker_;
         std::mutex thumbnailMutex_;
         std::condition_variable thumbnailWake_;
@@ -161,6 +201,7 @@ namespace BigScreen {
         std::filesystem::path cancelPath_;
         std::atomic<bool> initialized_{false};
         std::string initializationErrorCode_ = "BS-DL-INIT-000";
+        mutable std::mutex versionMutex_;
         std::string currentUpdateVersion_ = std::string(BundledYtDlpVersion);
         std::optional<std::string> updateNotice_;
         std::chrono::steady_clock::time_point lastStatusRefresh_{};

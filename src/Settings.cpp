@@ -217,7 +217,7 @@ namespace BigScreen {
                 document, (prefix + "Curved").c_str(),
                 legacy ? ReadBool(document, "curvedScreenEnabled", false) : false);
             // Read the geometry mode before normalizing scale. Both modes now
-            // permit 6x, while this shared normalization still protects
+            // permit 8x, while this shared normalization still protects
             // against hand-edited values outside the supported range.
             layout.scale = CoreLogic::NormalizeScreenScale(
                 configuredScale,

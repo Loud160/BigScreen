@@ -113,6 +113,19 @@ namespace BigScreen {
         // can place the handle in VR and work for songs of any duration.
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
+        constexpr std::string_view StorageMetricLineHeight = "70%";
+
+        std::string StorageMetricText(
+            std::string_view heading,
+            std::string_view value)
+        {
+            // TextMeshPro's line-height tag controls the actual baseline
+            // distance used by this font. This is deterministic on-headset,
+            // unlike small lineSpacing values that are visually rounded away.
+            return "<line-height=" + std::string(StorageMetricLineHeight) + ">" +
+                std::string(heading) + "\n" + std::string(value) +
+                "</line-height>";
+        }
         constexpr std::string_view MapperTimingLockedHint =
             "This timing comes from the map author's Cinema configuration. Download or assign the video before changing it.";
         constexpr std::string_view FitTimingHint =
@@ -478,7 +491,26 @@ namespace BigScreen {
             layout->set_flexibleHeight(flexibleHeight);
         }
 
-        void StyleToggleRow(BSML::ToggleSetting* setting)
+        // Keep the timing controls at their normal interactive height. Native
+        // BSML setting rows include unused top/bottom breathing room inside
+        // that height, so a small negative group spacing removes only that
+        // visible dead space. Shrinking the rows themselves clips labels,
+        // arrows, switches, and handles.
+        constexpr float TimingControlHeight = 8.0f;
+        constexpr float TimingControlSpacing = -2.0f;
+        constexpr float TimingControlCount = 4.0f;
+
+        void EnforceTimingControlHeight(UnityEngine::Component* component)
+        {
+            ConfigureLayout(
+                component, -1.0f, TimingControlHeight, 1.0f);
+            if(auto* layout = EnsureLayout(component))
+                layout->set_minHeight(TimingControlHeight);
+        }
+
+        void StyleToggleRow(
+            BSML::ToggleSetting* setting,
+            std::string_view label)
         {
             if(!setting || !setting->toggle) return;
             auto* background = BSML::Lite::CreateImage(
@@ -511,6 +543,27 @@ namespace BigScreen {
             colors.set_selectedColor({0.30f, 0.33f, 0.38f, 0.96f});
             colors.set_disabledColor({0.12f, 0.13f, 0.15f, 0.55f});
             setting->toggle->set_colors(colors);
+
+            // ToggleSetting is cloned from Beat Saber's full-width settings
+            // screen. In this narrower side controller, its NameText can wind
+            // up behind the custom background or outside the row's mask.
+            // Explicitly restore the label after styling and render it above
+            // the background while retaining the native switch on the right.
+            if(setting->text)
+            {
+                setting->text->set_text(std::string(label));
+                setting->text->set_color(UnityEngine::Color::get_white());
+                setting->text->set_enableWordWrapping(false);
+                setting->text->set_enableAutoSizing(true);
+                setting->text->set_fontSizeMin(2.2f);
+                setting->text->set_fontSizeMax(3.0f);
+                setting->text->set_maxVisibleLines(1);
+                setting->text->set_overflowMode(
+                    TMPro::TextOverflowModes::Ellipsis);
+                setting->text->set_alignment(
+                    TMPro::TextAlignmentOptions::MidlineLeft);
+                setting->text->get_transform()->SetAsLastSibling();
+            }
         }
 
         template<class TLayout>
@@ -758,45 +811,40 @@ namespace BigScreen {
         // only reduces usable space without providing a layout benefit.
         const BSML::Lite::TransformWrapper editorBody(editorRoot);
 
-        // Keep the proven single TMPro title object: Beat Saber's side-panel
-        // layout can collapse adjacent standalone text rows even while their
-        // LayoutElements retain space. Explicit padding and reduced line
-        // spacing keep both song and artist visible without either line
-        // crossing the Back divider or the first local-file row.
+        // Keep song and artist on one compact line. The right-side controller
+        // has a fixed visible height, so this recovers room for the always-
+        // visible Video Storage group without introducing a scroll container.
         auto* titleTopSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
-        ConfigureLayout(titleTopSpacer, -1.0f, 0.5f, 1.0f);
+        ConfigureLayout(titleTopSpacer, -1.0f, 0.2f, 1.0f);
         auto* titleActionRow = BSML::Lite::CreateHorizontalLayoutGroup(editorBody);
         ConfigureGroup(titleActionRow);
         titleActionRow->set_spacing(0.7f);
-        ConfigureLayout(titleActionRow, 54.0f, 7.5f, 1.0f);
+        ConfigureLayout(titleActionRow, 54.0f, 5.8f, 1.0f);
         if(auto* rowLayout = EnsureLayout(titleActionRow))
         {
             rowLayout->set_minWidth(54.0f);
-            rowLayout->set_minHeight(7.5f);
+            rowLayout->set_minHeight(5.8f);
         }
 
-        // The combined row spans both the song and artist lines. The title
-        // consumes all space not reserved for the fixed search action and
-        // auto-sizes before masking, preserving two readable lines without
-        // drawing beneath the button.
+        // The title consumes all space not reserved for the fixed search
+        // action and auto-sizes before masking long song/artist combinations.
         detailTitle_ = BSML::Lite::CreateText(
             titleActionRow, "", 3.3f);
-        ConfigureLayout(detailTitle_, 0.0f, 7.5f, 1.0f);
+        ConfigureLayout(detailTitle_, 0.0f, 5.8f, 1.0f);
         detailTitle_->set_enableWordWrapping(false);
         detailTitle_->set_enableAutoSizing(true);
         detailTitle_->set_fontSizeMin(2.2f);
         detailTitle_->set_fontSizeMax(3.3f);
         detailTitle_->set_overflowMode(TMPro::TextOverflowModes::Masking);
-        detailTitle_->set_maxVisibleLines(2);
-        detailTitle_->set_lineSpacing(-16.0f);
+        detailTitle_->set_maxVisibleLines(1);
 
         searchYouTubeButton_ = BSML::Lite::CreateUIButton(
             titleActionRow,
             "Search YouTube",
             {0.0f, 0.0f},
-            {16.5f, 7.4f},
+            {16.5f, 5.7f},
             [this]() { SearchSelectedSongOnYouTube(); });
-        ConfigureLayout(searchYouTubeButton_, 16.5f, 7.4f, 0.0f);
+        ConfigureLayout(searchYouTubeButton_, 16.5f, 5.7f, 0.0f);
         // It is created after the title for straightforward pointer setup;
         // reorder it inside the horizontal group so the action occupies the
         // left edge and the song/artist block receives the remaining width.
@@ -816,7 +864,7 @@ namespace BigScreen {
             searchYouTubeButton_,
             "Opens YouTube in the Quest browser and searches for this song and artist.");
         auto* titleBottomSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
-        ConfigureLayout(titleBottomSpacer, -1.0f, 0.7f, 1.0f);
+        ConfigureLayout(titleBottomSpacer, -1.0f, 0.3f, 1.0f);
 
         // Keep local-video management to one compact row in the child editor.
         // Browsing is intentionally moved to the wide center screen so long
@@ -1069,7 +1117,12 @@ namespace BigScreen {
         // attached to the thumbnail/download row instead of the song heading.
         detailText_ = BSML::Lite::CreateText(
             editorBody, "", 2.35f);
-        ConfigureLayout(detailText_, -1.0f, 7.0f, 1.0f);
+        ConfigureLayout(detailText_, -1.0f, 5.5f, 1.0f);
+        detailText_->set_enableWordWrapping(false);
+        detailText_->set_enableAutoSizing(true);
+        detailText_->set_fontSizeMin(1.9f);
+        detailText_->set_fontSizeMax(2.35f);
+        detailText_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
         downloadProgressTrack_ = BSML::Lite::CreateImage(
             editorBody,
             BSML::Utilities::ImageResources::GetBlankSprite());
@@ -1091,23 +1144,25 @@ namespace BigScreen {
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
 
-        // ToggleSetting is a full-width settings-row prefab. Keep Fit to Song
-        // on its own row, followed by the two numeric timing controls. The
-        // lead-in appearance belongs directly beneath the offset it describes.
-        auto* timingToggleObject = ConstructLayout(
-            "<vertical tags='big-screen-timing-toggles' spacing='0.2' "
-            "horizontal-fit='Unconstrained'/>",
-            editorRoot->get_transform(),
-            "big-screen-timing-toggles");
-        auto* timingToggleColumn = timingToggleObject
-            ? timingToggleObject->GetComponent<UnityEngine::UI::VerticalLayoutGroup*>()
-            : BSML::Lite::CreateVerticalLayoutGroup(editorBody);
-        ConfigureGroup(timingToggleColumn);
-        timingToggleColumn->set_spacing(0.2f);
-        timingToggleColumn->set_childForceExpandWidth(true);
-        ConfigureLayout(timingToggleColumn, -1.0f, 7.8f, 1.0f);
+        // Keep all four synchronization settings in one full-width group. The
+        // group overlaps the unused row margins while each native control
+        // retains its complete height. This is intentionally different from the old
+        // one-control wrapper that caused Fit to Song to size differently.
+        auto* timingControlsGroup =
+            BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(timingControlsGroup);
+        timingControlsGroup->set_spacing(TimingControlSpacing);
+        timingControlsGroup->set_childForceExpandWidth(true);
+        const float timingControlsHeight =
+            (TimingControlHeight * TimingControlCount) +
+            (TimingControlSpacing * (TimingControlCount - 1.0f));
+        ConfigureLayout(timingControlsGroup, -1.0f, timingControlsHeight, 1.0f);
+        if(auto* timingLayout = EnsureLayout(timingControlsGroup))
+            timingLayout->set_minHeight(timingControlsHeight);
+        const BSML::Lite::TransformWrapper timingControlsBody(timingControlsGroup);
+
         fitToggle_ = BSML::Lite::CreateToggle(
-            timingToggleColumn,
+            timingControlsBody,
             "Fit to Song",
             false,
             [this](bool enabled)
@@ -1131,15 +1186,14 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(fitToggle_, -1.0f, 7.8f, 1.0f);
-        StyleToggleRow(fitToggle_);
+        EnforceTimingControlHeight(fitToggle_);
+        StyleToggleRow(fitToggle_, "Fit to Song");
         fitTimingHint_ = BSML::Lite::AddHoverHint(
             fitToggle_,
             std::string(FitTimingHint));
-        timingRows_.push_back(timingToggleColumn->get_gameObject());
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorBody, "Playback Speed", 2, 0.05f, 1.0f,
+            timingControlsBody, "Playback Speed", 2, 0.05f, 1.0f,
             0.05f, 8.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 rate_ = value;
@@ -1153,14 +1207,13 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(rateSetting_, -1.0f, 8.0f, 1.0f);
-        timingRows_.push_back(rateSetting_->get_gameObject());
+        EnforceTimingControlHeight(rateSetting_);
         rateTimingHint_ = BSML::Lite::AddHoverHint(
             rateSetting_,
             std::string(RateTimingHint));
 
         offsetSetting_ = BSML::Lite::CreateIncrementSetting(
-            editorBody, "Video Playback Offset", 2, 0.25f, 0.0f,
+            timingControlsBody, "Video Playback Offset", 2, 0.25f, 0.0f,
             -60.0f, 60.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 offset_ = value;
@@ -1182,14 +1235,13 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(offsetSetting_, -1.0f, 8.0f, 1.0f);
-        timingRows_.push_back(offsetSetting_->get_gameObject());
+        EnforceTimingControlHeight(offsetSetting_);
         offsetTimingHint_ = BSML::Lite::AddHoverHint(
             offsetSetting_,
             std::string(OffsetTimingHint));
 
         blackLeadInToggle_ = BSML::Lite::CreateToggle(
-            editorBody,
+            timingControlsBody,
             "Lead-In Background",
             false,
             [this](bool enabled)
@@ -1205,12 +1257,14 @@ namespace BigScreen {
                     RefreshDetails();
                 }
             });
-        ConfigureLayout(blackLeadInToggle_, -1.0f, 7.8f, 1.0f);
-        StyleToggleRow(blackLeadInToggle_);
+        EnforceTimingControlHeight(blackLeadInToggle_);
+        StyleToggleRow(blackLeadInToggle_, "Lead-In Background");
         leadInTimingHint_ = BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             std::string(LeadInTimingHint));
-        timingRows_.push_back(blackLeadInToggle_->get_gameObject());
+        // RefreshDetails hides the complete group so its reserved height also
+        // collapses when no downloaded or local video is available.
+        timingRows_.push_back(timingControlsGroup->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
         // alter video synchronization. The title, scrubber, transport button,
@@ -1227,7 +1281,7 @@ namespace BigScreen {
         ConfigureGroup(playbackPanel);
         playbackPanel->set_spacing(0.15f);
         playbackPanel->set_childForceExpandWidth(true);
-        ConfigureLayout(playbackPanel, -1.0f, 11.2f, 1.0f);
+        ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         auto* playbackPanelBackground = playbackPanel->get_gameObject()
             ->GetComponent<HMUI::ImageView*>();
@@ -1239,12 +1293,34 @@ namespace BigScreen {
         }
         const BSML::Lite::TransformWrapper playbackBody(playbackPanel);
 
+        // Preserve the original title-row allocation so the playback controls
+        // below do not move, but render the title independently across the
+        // panel's top edge. Roughly two thirds of the glyph height sits above
+        // the rounded background and one third overlaps it like a section tab.
+        auto* playbackTitleSpacer = BSML::Lite::CreateText(
+            playbackBody, "", 1.0f);
+        // Fix the top allocation at the measured on-headset position. The
+        // flexible spacer below Playback absorbs any parent height variation,
+        // preventing Unity from expanding this spacer and undoing the offset.
+        ConfigureLayout(playbackTitleSpacer, -1.0f, 3.60f, 0.0f);
         auto* playbackGroupTitle = BSML::Lite::CreateText(
-            playbackBody,
+            playbackPanel->get_transform(),
             "Playback Position",
             3.0f);
-        ConfigureLayout(playbackGroupTitle, -1.0f, 2.8f, 1.0f);
+        if(auto* titleLayout = EnsureLayout(playbackGroupTitle))
+            titleLayout->set_ignoreLayout(true);
         playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
+        playbackGroupTitle->set_enableWordWrapping(false);
+        if(auto titleRect = playbackGroupTitle->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            titleRect->set_anchorMin({0.0f, 1.0f});
+            titleRect->set_anchorMax({1.0f, 1.0f});
+            titleRect->set_pivot({0.5f, 0.5f});
+            titleRect->set_anchoredPosition({0.0f, 0.5f});
+            titleRect->set_sizeDelta({-2.0f, 3.0f});
+            titleRect->SetAsLastSibling();
+        }
 
         auto* playbackRow = BSML::Lite::CreateHorizontalLayoutGroup(playbackBody);
         ConfigureGroup(playbackRow);
@@ -1253,16 +1329,39 @@ namespace BigScreen {
         // what shifted the Play button and the scrubber's right edge.
         playbackRow->set_spacing(1.25f);
         playbackRow->set_padding(UnityEngine::RectOffset::New_ctor(1, 1, 0, 0));
+        // The transport button is shorter than its row. Center every child on
+        // the row's vertical axis so the button sits evenly within the rounded
+        // Playback Position background instead of hugging one edge.
+        playbackRow->set_childAlignment(UnityEngine::TextAnchor::MiddleLeft);
         ConfigureLayout(playbackRow, -1.0f, 7.8f, 1.0f);
+        auto* playbackBottomSpacer = BSML::Lite::CreateText(
+            playbackBody, "", 1.0f);
+        ConfigureLayout(playbackBottomSpacer, -1.0f, 0.0f, 1.0f, 1.0f);
+        // Keep the row and scrubber untouched. A dedicated transport column
+        // uses asymmetric fractional spacers around the 5.8-unit button. The
+        // 0.75 top / 1.25 bottom split fills the 7.8-unit row exactly and moves
+        // only the button 0.25 units above its mathematically centered position.
+        auto* transportColumn = BSML::Lite::CreateVerticalLayoutGroup(playbackRow);
+        ConfigureGroup(transportColumn);
+        transportColumn->set_spacing(0.0f);
+        transportColumn->set_childAlignment(UnityEngine::TextAnchor::MiddleCenter);
+        ConfigureLayout(transportColumn, 8.5f, 7.8f, 0.0f);
+        auto* transportTopSpacer = BSML::Lite::CreateText(transportColumn, "", 1.0f);
+        ConfigureLayout(transportTopSpacer, 8.5f, 0.75f, 0.0f);
         playPauseButton_ = BSML::Lite::CreateUIButton(
-            playbackRow,
+            transportColumn,
             "▶",
             "PlayButton",
             {0.0f, 0.0f},
-            {10.0f, 7.6f},
+            {8.5f, 6.0f},
             [this]() { TogglePreviewPlayback(); });
-        ConfigureLayout(playPauseButton_, 10.0f, 7.4f, 0.0f);
-        BSML::Lite::SetButtonTextSize(playPauseButton_, 4.0f);
+        // The stock button sprite extends slightly beyond its LayoutElement.
+        // Leave enough inset for that visual edge to remain inside the rounded
+        // playback panel while retaining a generous VR pointer target.
+        ConfigureLayout(playPauseButton_, 8.5f, 5.8f, 0.0f);
+        auto* transportBottomSpacer = BSML::Lite::CreateText(transportColumn, "", 1.0f);
+        ConfigureLayout(transportBottomSpacer, 8.5f, 1.25f, 0.0f);
+        BSML::Lite::SetButtonTextSize(playPauseButton_, 3.6f);
         auto transportColors = playPauseButton_->get_colors();
         transportColors.set_normalColor({0.05f, 0.55f, 0.90f, 1.0f});
         transportColors.set_highlightedColor({0.20f, 0.75f, 1.0f, 1.0f});
@@ -1596,7 +1695,7 @@ namespace BigScreen {
             deleteForeverText->set_color(UnityEngine::Color::get_white());
 
         auto* storageSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
-        ConfigureLayout(storageSpacer, -1.0f, 2.0f, 1.0f);
+        ConfigureLayout(storageSpacer, -1.0f, 0.8f, 1.0f);
         storageSpacer_ = storageSpacer->get_gameObject();
 
         // Match the playback area's visual hierarchy: a full-width rounded
@@ -1614,7 +1713,10 @@ namespace BigScreen {
         ConfigureGroup(storagePanel);
         storagePanel->set_spacing(0.3f);
         storagePanel->set_childForceExpandWidth(true);
-        ConfigureLayout(storagePanel, -1.0f, 12.5f, 1.0f);
+        // Keep this preferred-only: a hard minimum steals height from Playback
+        // in Beat Saber's fixed side controller. The compact title allocation
+        // below moves the values inside this existing backing instead.
+        ConfigureLayout(storagePanel, -1.0f, 17.5f, 1.0f);
         storagePanel_ = storagePanel->get_gameObject();
         if(playbackPanelBackground)
             if(auto* storagePanelBackground = storagePanel->get_gameObject()
@@ -1630,7 +1732,10 @@ namespace BigScreen {
             storageBody,
             "Video Storage",
             3.0f);
-        ConfigureLayout(storageGroupTitle, -1.0f, 3.8f, 1.0f);
+        // Reducing only the title's allocation raises it slightly and moves
+        // the value row upward, containing its descenders without making the
+        // panel larger or changing any interactive control.
+        ConfigureLayout(storageGroupTitle, -1.0f, 3.4f, 1.0f);
         storageGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         // The button occupies the far-right edge. Local Videos participates in
@@ -1641,17 +1746,23 @@ namespace BigScreen {
         storageRow->set_spacing(0.6f);
         ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
         detailMapStorage_ = BSML::Lite::CreateText(
-            storageRow, "Downloaded Video\n0.0 MB", 2.15f);
+            storageRow, StorageMetricText("Downloaded Video", "0.0 MB"), 2.15f);
         ConfigureLayout(detailMapStorage_, 0.0f, 7.0f, 1.0f);
         detailLocalStorage_ = BSML::Lite::CreateText(
-            storageRow, "Local Videos\n0.0 MB", 2.15f);
+            storageRow, StorageMetricText("Local Videos", "0.0 MB"), 2.15f);
         ConfigureLayout(detailLocalStorage_, 0.0f, 7.0f, 1.0f);
         detailLibraryStorage_ = BSML::Lite::CreateText(
-            storageRow, "All Downloads\n0.0 MB", 2.15f);
+            storageRow, StorageMetricText("All Downloads", "0.0 MB"), 2.15f);
         ConfigureLayout(detailLibraryStorage_, 0.0f, 7.0f, 1.0f);
         detailFreeStorage_ = BSML::Lite::CreateText(
-            storageRow, "Free Space\n0.0 MB", 2.15f);
+            storageRow, StorageMetricText("Free Space", "0.0 MB"), 2.15f);
         ConfigureLayout(detailFreeStorage_, 0.0f, 7.0f, 1.0f);
+        // Explicitly preserve rich-text parsing for the line-height tag. The
+        // columns retain their existing horizontal spacing and widths.
+        for(auto* storageText : {
+                detailMapStorage_, detailLocalStorage_, detailLibraryStorage_,
+                detailFreeStorage_})
+            if(storageText) storageText->set_richText(true);
         removeButton_ = BSML::Lite::CreateUIButton(
             storageRow,
             "<color=#FF3838>Remove Video</color>",
@@ -2908,14 +3019,17 @@ namespace BigScreen {
         const auto freeBytes = VideoLibrary::Instance().FreeBytes();
         if(detailLibraryStorage_)
             detailLibraryStorage_->set_text(
-                "All Downloads\n" + Utility::FormatStorageSize(libraryBytes));
+                StorageMetricText(
+                    "All Downloads", Utility::FormatStorageSize(libraryBytes)));
         if(detailFreeStorage_)
             detailFreeStorage_->set_text(
-                "Free Space\n" + Utility::FormatStorageSize(freeBytes));
+                StorageMetricText(
+                    "Free Space", Utility::FormatStorageSize(freeBytes)));
         if(!selected_ || !detailText_)
         {
             if(detailMapStorage_)
-                detailMapStorage_->set_text("Downloaded Video\n0.0 MB");
+                detailMapStorage_->set_text(
+                    StorageMetricText("Downloaded Video", "0.0 MB"));
             if(detailLocalStorage_)
                 detailLocalStorage_->get_gameObject()->SetActive(false);
             if(storageSpacer_)
@@ -2947,11 +3061,14 @@ namespace BigScreen {
             downloadedVideoBytes > 0 || hasLocalVideos;
         if(detailMapStorage_)
             detailMapStorage_->set_text(
-                "Downloaded Video\n" + Utility::FormatStorageSize(downloadedVideoBytes));
+                StorageMetricText(
+                    "Downloaded Video",
+                    Utility::FormatStorageSize(downloadedVideoBytes)));
         if(detailLocalStorage_)
         {
             detailLocalStorage_->set_text(
-                "Local Videos\n" + Utility::FormatStorageSize(localVideoBytes));
+                StorageMetricText(
+                    "Local Videos", Utility::FormatStorageSize(localVideoBytes)));
             detailLocalStorage_->get_gameObject()->SetActive(hasLocalVideos);
         }
         if(storageSpacer_)
@@ -2963,7 +3080,8 @@ namespace BigScreen {
             const auto name = selected_->songName ? std::string(selected_->songName) : "Unknown Song";
             const auto author = selected_->songAuthorName
                 ? std::string(selected_->songAuthorName) : std::string{};
-            detailTitle_->set_text(author.empty() ? name : name + "\n" + author);
+            detailTitle_->set_text(
+                author.empty() ? name : name + " — " + author);
         }
         if(removeConfirmationText_)
         {
@@ -3127,11 +3245,13 @@ namespace BigScreen {
                  download.state == DownloadState::Downloading ||
                   download.state == DownloadState::Cancelled ||
                   download.state == DownloadState::Failed);
-            const bool validatedCompletedTransfer = currentUrlWasProbed &&
-                !download.metadataOnly &&
-                download.state == DownloadState::Completed;
-            const bool showTierButtons =
-                (validatedProbe || validatedCompletedTransfer) &&
+            // A completed transfer has already replaced/assigned the active
+            // file. Keeping the prior probe's tier list visible made the
+            // editor look as though the same video still needed downloading,
+            // especially when a local override had just been replaced. Hide
+            // every download action immediately; a later URL check can expose
+            // fresh replacement choices again.
+            const bool showTierButtons = validatedProbe &&
                 !download.availableHeights.empty();
             const bool showDownloadButton = validatedTransferState ||
                 (validatedProbe && download.availableHeights.empty());

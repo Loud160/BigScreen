@@ -53,6 +53,16 @@ int main()
     Expect(IsValidYouTubeVideoId("TcHvEFxk_78"), "valid video IDs should be accepted");
     Expect(!IsValidYouTubeVideoId("abc"), "short video IDs should be rejected");
     using namespace BigScreen::CoreLogic;
+    Expect(IsReleaseVersionNewer("0.7.0-alpha.1", "v0.7.0"),
+           "a stable release supersedes the matching alpha build");
+    Expect(IsReleaseVersionNewer("0.7.0", "0.7.1"),
+           "a later patch release is detected");
+    Expect(IsReleaseVersionNewer("1.0.0-alpha.2", "1.0.0-alpha.10"),
+           "numeric prerelease identifiers use numeric ordering");
+    Expect(!IsReleaseVersionNewer("0.8.0", "v0.7.9+build.4"),
+           "an older GitHub tag is not presented as an update");
+    Expect(!IsReleaseVersionNewer("0.7.0", "latest"),
+           "a malformed release tag is rejected safely");
     Expect(StableVideoKey("custom_level_123") == StableVideoKey("custom_level_123"),
            "stable keys must be deterministic");
     Expect(StableVideoKey("custom_level_123") != StableVideoKey("custom_level_124"),
