@@ -1,0 +1,549 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
+#
+# Part of Big Screen.
+# Distributed under GPL-3.0-only with additional terms under GPLv3
+# section 7(b)/(c) and an interoperability permission under section 7;
+# see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
+<#
+.SYNOPSIS
+Collects a freshness-labelled Big Screen, Beat Saber, and Quest crash bundle.
+
+.DESCRIPTION
+The collector deliberately does not treat the newest available file as proof
+that it belongs to the reported crash. It compares file and event timestamps
+against the Quest's own clock and a user-selected incident window. Fresh data,
+older context, and missing categories are separated in both REPORT.txt and the
+archive directory structure.
+#>
+[CmdletBinding()]
+param(
+    [ValidateRange(1, 1440)]
+    [Nullable[int]] $SinceMinutes = $null,
+
+    [switch] $NoExplorer,
+
+    [string] $OutputRoot = ""
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = "Stop"
+
+$script:PackageName = "com.beatgames.beatsaber"
+$script:ModDataRoot = "/sdcard/ModData/$($script:PackageName)"
+$script:BigScreenLogRoot = "$($script:ModDataRoot)/BigScreen/Logs"
+$script:Manifest = New-Object System.Collections.Generic.List[object]
+$script:ReportLines = New-Object System.Collections.Generic.List[string]
+$script:Adb = $null
+$script:DeviceNowEpoch = 0L
+$script:CutoffEpoch = 0L
+$script:DeviceOffset = "+00:00"
+$script:StageRoot = $null
+
+function Add-ReportLine([string] $Text = "") {
+    $script:ReportLines.Add($Text)
+}
+
+function Write-Utf8File([string] $Path, [string] $Text) {
+    $parent = Split-Path -Parent $Path
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    # UTF8 without a BOM keeps the files friendly to Windows PowerShell, modern
+    # editors, GitHub, and command-line crash-analysis tools.
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Text, $encoding)
+}
+
+function Find-Adb {
+    $command = Get-Command adb.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path $PSScriptRoot "../platform-tools/adb.exe"))
+    $candidates.Add((Join-Path $PSScriptRoot "../../platform-tools/adb.exe"))
+
+    foreach ($sdkRoot in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)) {
+        if ($sdkRoot) { $candidates.Add((Join-Path $sdkRoot "platform-tools/adb.exe")) }
+    }
+    if ($env:LOCALAPPDATA) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Android/Sdk/platform-tools/adb.exe"))
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs/SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"))
+        $candidates.Add((Join-Path $env:LOCALAPPDATA "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"))
+    }
+    foreach ($programRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if ($programRoot) {
+            $candidates.Add((Join-Path $programRoot "SideQuest/resources/app.asar.unpacked/build/platform-tools/adb.exe"))
+        }
+    }
+    if ($env:APPDATA) {
+        $qpmRoot = Join-Path $env:APPDATA "QPM-RS"
+        if (Test-Path -LiteralPath $qpmRoot) {
+            Get-ChildItem -LiteralPath $qpmRoot -Filter adb.exe -File -Recurse -ErrorAction SilentlyContinue |
+                ForEach-Object { $candidates.Add($_.FullName) }
+        }
+    }
+
+    return $candidates |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+        Select-Object -First 1
+}
+
+function Invoke-Adb {
+    param(
+        [Parameter(Mandatory=$true)] [string[]] $Arguments,
+        [switch] $AllowFailure
+    )
+    $output = & $script:Adb @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+    if (-not $AllowFailure -and $exitCode -ne 0) {
+        throw "ADB failed while running: adb $($Arguments -join ' ')`n$text"
+    }
+    return [pscustomobject]@{ ExitCode = $exitCode; Text = $text }
+}
+
+function Invoke-AdbShell([string] $Command, [switch] $AllowFailure) {
+    return Invoke-Adb -Arguments @("shell", $Command) -AllowFailure:$AllowFailure
+}
+
+function Convert-DeviceTimestampToEpoch([string] $Timestamp) {
+    try {
+        $value = [DateTimeOffset]::ParseExact(
+            "$Timestamp $($script:DeviceOffset)",
+            "yyyy-MM-dd HH:mm:ss zzz",
+            [Globalization.CultureInfo]::InvariantCulture)
+        return $value.ToUnixTimeSeconds()
+    } catch {
+        return $null
+    }
+}
+
+function Get-AgeText([Nullable[long]] $Epoch) {
+    if ($null -eq $Epoch) { return "unknown age" }
+    $seconds = [Math]::Max(0L, $script:DeviceNowEpoch - [long]$Epoch)
+    if ($seconds -lt 120) { return "$seconds seconds old" }
+    $minutes = [Math]::Round($seconds / 60.0, 1)
+    if ($minutes -lt 120) { return "$minutes minutes old" }
+    return "$([Math]::Round($minutes / 60.0, 1)) hours old"
+}
+
+function Get-Freshness([Nullable[long]] $Epoch) {
+    if ($null -eq $Epoch) { return "UNKNOWN" }
+    if ([long]$Epoch -ge $script:CutoffEpoch -and [long]$Epoch -le ($script:DeviceNowEpoch + 120)) {
+        return "FRESH"
+    }
+    return "OLDER CONTEXT"
+}
+
+function Add-ManifestEntry {
+    param(
+        [string] $Category,
+        [string] $Name,
+        [string] $Status,
+        [string] $Source,
+        [Nullable[long]] $Epoch,
+        [string] $ArchivePath,
+        [string] $Note
+    )
+    $isoTime = $null
+    if ($null -ne $Epoch) {
+        $isoTime = [DateTimeOffset]::FromUnixTimeSeconds([long]$Epoch).ToString("o")
+    }
+    $script:Manifest.Add([pscustomobject]@{
+        category = $Category
+        name = $Name
+        status = $Status
+        source = $Source
+        deviceEpoch = if ($null -ne $Epoch) { [long]$Epoch } else { $null }
+        utcTime = $isoTime
+        age = Get-AgeText $Epoch
+        archivePath = $ArchivePath
+        note = $Note
+    })
+}
+
+function Get-StatusDirectory([string] $Category, [string] $Status) {
+    $statusName = switch ($Status) {
+        "FRESH" { "Fresh" }
+        "OLDER CONTEXT" { "Older-Context" }
+        default { "Unavailable" }
+    }
+    $path = Join-Path $script:StageRoot (Join-Path $Category $statusName)
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
+    return $path
+}
+
+function Add-TextArtifact {
+    param(
+        [string] $Category,
+        [string] $Name,
+        [string] $Text,
+        [Nullable[long]] $Epoch,
+        [string] $Source,
+        [string] $Note
+    )
+    $status = Get-Freshness $Epoch
+    $directory = Get-StatusDirectory $Category $status
+    $path = Join-Path $directory $Name
+    Write-Utf8File $path $Text
+    $relative = $path.Substring($script:StageRoot.Length + 1).Replace("\", "/")
+    Add-ManifestEntry $Category $Name $status $Source $Epoch $relative $Note
+    return $status
+}
+
+function Add-MissingMarker {
+    param([string] $Category, [string] $Name, [string] $Explanation)
+    $directory = Get-StatusDirectory $Category "NOT FOUND"
+    $path = Join-Path $directory $Name
+    Write-Utf8File $path ($Explanation + "`r`n")
+    $relative = $path.Substring($script:StageRoot.Length + 1).Replace("\", "/")
+    Add-ManifestEntry $Category $Name "NOT FOUND" "" $null $relative $Explanation
+}
+
+function Get-RemoteFileInfo([string] $RemotePath) {
+    # All callers pass fixed Quest paths owned by this script. Keeping those
+    # paths single-quoted prevents shell expansion without accepting arbitrary
+    # shell input from the user.
+    $result = Invoke-AdbShell "if [ -f '$RemotePath' ]; then stat -c '%Y|%s' '$RemotePath'; fi" -AllowFailure
+    if ($result.ExitCode -ne 0 -or -not $result.Text.Trim()) { return $null }
+    if ($result.Text.Trim() -notmatch '^(\d+)\|(\d+)$') { return $null }
+    return [pscustomobject]@{
+        Path = $RemotePath
+        Epoch = [long] $Matches[1]
+        Size = [long] $Matches[2]
+    }
+}
+
+function Pull-RemoteArtifact {
+    param(
+        [string] $Category,
+        [string] $RemotePath,
+        [Nullable[long]] $EvidenceEpoch,
+        [string] $Name,
+        [string] $Note
+    )
+    $info = Get-RemoteFileInfo $RemotePath
+    if (-not $info) { return $false }
+    $epoch = if ($null -ne $EvidenceEpoch) { [long]$EvidenceEpoch } else { [long]$info.Epoch }
+    $status = Get-Freshness $epoch
+    $directory = Get-StatusDirectory $Category $status
+    $destination = Join-Path $directory $Name
+    $pull = Invoke-Adb -Arguments @("pull", $RemotePath, $destination) -AllowFailure
+    if ($pull.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $destination)) { return $false }
+    $relative = $destination.Substring($script:StageRoot.Length + 1).Replace("\", "/")
+    Add-ManifestEntry $Category $Name $status $RemotePath $epoch $relative $Note
+    return $true
+}
+
+function Get-LatestTimestampedEntry([string] $RemotePath) {
+    $tail = Invoke-AdbShell "if [ -f '$RemotePath' ]; then tail -n 500 '$RemotePath'; fi" -AllowFailure
+    if ($tail.ExitCode -ne 0) { return $null }
+    $latest = $null
+    foreach ($match in [regex]::Matches($tail.Text, '(?m)^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]')) {
+        $parsed = Convert-DeviceTimestampToEpoch $match.Groups[1].Value
+        if ($null -ne $parsed -and ($null -eq $latest -or $parsed -gt $latest)) {
+            $latest = $parsed
+        }
+    }
+    return $latest
+}
+
+function Select-EpochLogRecords([string] $Text) {
+    $fresh = New-Object System.Collections.Generic.List[string]
+    $older = New-Object System.Collections.Generic.List[string]
+    $currentTarget = $null
+    $latestEpoch = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match '^\s*(\d{10})(?:\.\d+)') {
+            $epoch = [long] $Matches[1]
+            if ($null -eq $latestEpoch -or $epoch -gt $latestEpoch) { $latestEpoch = $epoch }
+            $currentTarget = if ($epoch -ge $script:CutoffEpoch) { $fresh } else { $older }
+        }
+        if ($null -ne $currentTarget) { $currentTarget.Add($line) }
+    }
+    return [pscustomobject]@{
+        Fresh = ($fresh -join "`r`n").Trim()
+        Older = ($older -join "`r`n").Trim()
+        LatestEpoch = $latestEpoch
+    }
+}
+
+function Split-TimestampedBlocks([string] $Text, [string] $StartPattern) {
+    $blocks = New-Object System.Collections.Generic.List[object]
+    $current = New-Object System.Collections.Generic.List[string]
+    $currentEpoch = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match $StartPattern) {
+            if ($current.Count -gt 0 -and $null -ne $currentEpoch) {
+                $blocks.Add([pscustomobject]@{ Epoch = $currentEpoch; Text = ($current -join "`r`n").Trim() })
+            }
+            $current.Clear()
+            $currentEpoch = Convert-DeviceTimestampToEpoch $Matches[1]
+        }
+        if ($null -ne $currentEpoch) { $current.Add($line) }
+    }
+    if ($current.Count -gt 0 -and $null -ne $currentEpoch) {
+        $blocks.Add([pscustomobject]@{ Epoch = $currentEpoch; Text = ($current -join "`r`n").Trim() })
+    }
+    return $blocks
+}
+
+function Get-LatestCrashExitBlock([string] $Text) {
+    $blocks = $Text -split '(?m)(?=\s*ApplicationExitInfo #\d+:)'
+    $crashes = New-Object System.Collections.Generic.List[object]
+    foreach ($block in $blocks) {
+        if ($block -notmatch 'timestamp=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)') { continue }
+        $timestamp = $Matches[1]
+        # Android prints either symbolic reasons or a numeric value followed by
+        # the symbol, for example "reason=2 (SIGNALED)" on Quest. SIGNALED and
+        # native/Java crash reasons are evidence. USER REQUESTED, package
+        # updates, and normal exits are retained in raw context only.
+        if ($block -notmatch 'reason=(?:\d+\s+\()?((?:CRASH NATIVE)|SIGNALED|CRASH|ANR)\)?') { continue }
+        try {
+            $date = [DateTimeOffset]::ParseExact(
+                "$timestamp $($script:DeviceOffset)",
+                "yyyy-MM-dd HH:mm:ss.fff zzz",
+                [Globalization.CultureInfo]::InvariantCulture)
+            $epoch = $date.ToUnixTimeSeconds()
+            $crashes.Add([pscustomobject]@{ Epoch = $epoch; Text = $block.Trim() })
+        } catch { }
+    }
+    return $crashes | Sort-Object Epoch -Descending | Select-Object -First 1
+}
+
+try {
+    if ($null -eq $SinceMinutes) {
+        $answer = Read-Host "How many minutes ago did the problem happen? Press Enter for 30"
+        if ([string]::IsNullOrWhiteSpace($answer)) {
+            $SinceMinutes = 30
+        } else {
+            $parsedMinutes = 0
+            if (-not [int]::TryParse($answer, [ref]$parsedMinutes) -or
+                $parsedMinutes -lt 1 -or $parsedMinutes -gt 1440) {
+                throw "Enter a whole number from 1 through 1440 minutes."
+            }
+            $SinceMinutes = $parsedMinutes
+        }
+    }
+
+    $script:Adb = Find-Adb
+    if (-not $script:Adb) {
+        throw "ADB was not found. Install Android platform-tools or SideQuest, then run this collector again. You do not need to learn ADB commands."
+    }
+
+    Write-Host "`nChecking the Quest connection..." -ForegroundColor Cyan
+    $devices = Invoke-Adb -Arguments @("devices")
+    $authorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sdevice$" })
+    $unauthorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sunauthorized$" })
+    if ($authorized.Count -eq 0) {
+        if ($unauthorized.Count -gt 0) {
+            throw "The Quest is connected but has not authorized this computer. Put on the headset, accept USB debugging, and try again."
+        }
+        throw "No authorized Quest was found. Connect it by USB, turn it on, and accept USB debugging in the headset. Close ModsBeforeFriday or SideQuest if either is currently using the connection."
+    }
+    if ($authorized.Count -gt 1) {
+        throw "More than one Android device is connected. Disconnect the extra device so the collector cannot pull logs from the wrong headset."
+    }
+
+    $epochText = (Invoke-AdbShell "date +%s").Text.Trim()
+    if ($epochText -notmatch '^\d+$') { throw "The Quest did not return a usable clock value." }
+    $script:DeviceNowEpoch = [long] $epochText
+    $script:CutoffEpoch = $script:DeviceNowEpoch - ([long]$SinceMinutes * 60L)
+    $offsetText = (Invoke-AdbShell "date +%z" -AllowFailure).Text.Trim()
+    if ($offsetText -match '^([+-]\d{2})(\d{2})$') {
+        $script:DeviceOffset = "$($Matches[1]):$($Matches[2])"
+    }
+
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    if (-not $OutputRoot) { $OutputRoot = Join-Path $repoRoot "BigScreen Support Logs" }
+    New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+    $stamp = [DateTimeOffset]::FromUnixTimeSeconds($script:DeviceNowEpoch).ToString("yyyyMMdd-HHmmss")
+    $script:StageRoot = Join-Path ([IO.Path]::GetTempPath()) ("BigScreen-Support-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $script:StageRoot | Out-Null
+    $zipPath = Join-Path $OutputRoot "BigScreen-Support-$stamp.zip"
+
+    Add-ReportLine "BIG SCREEN SUPPORT LOG REPORT"
+    Add-ReportLine "================================"
+    Add-ReportLine "Collection window: last $SinceMinutes minutes"
+    Add-ReportLine "Quest collection time (UTC): $([DateTimeOffset]::FromUnixTimeSeconds($script:DeviceNowEpoch).ToString('u'))"
+    Add-ReportLine "Fresh-data cutoff (UTC): $([DateTimeOffset]::FromUnixTimeSeconds($script:CutoffEpoch).ToString('u'))"
+    Add-ReportLine ""
+    Add-ReportLine "FRESH means the timestamp falls inside the selected incident window."
+    Add-ReportLine "OLDER CONTEXT is included for comparison but must not be mistaken for this incident."
+    Add-ReportLine "NOT FOUND means that source had no usable record. One layer can be missing even when another caught the crash."
+    Add-ReportLine ""
+
+    Write-Host "Collecting headset and Beat Saber details..." -ForegroundColor Cyan
+    $model = (Invoke-AdbShell "getprop ro.product.model" -AllowFailure).Text.Trim()
+    $build = (Invoke-AdbShell "getprop ro.build.display.id" -AllowFailure).Text.Trim()
+    $uptime = (Invoke-AdbShell "cat /proc/uptime" -AllowFailure).Text.Trim()
+    $packageDump = (Invoke-AdbShell "dumpsys package $($script:PackageName) | grep -E 'versionName=|versionCode=' | head -n 4" -AllowFailure).Text.Trim()
+    $metadata = @(
+        "Quest model: $model",
+        "Quest OS build: $build",
+        "Quest uptime: $uptime",
+        "Beat Saber package: $($script:PackageName)",
+        $packageDump,
+        "Collector window: $SinceMinutes minutes"
+    ) -join "`r`n"
+    Write-Utf8File (Join-Path $script:StageRoot "DEVICE-AND-GAME.txt") ($metadata + "`r`n")
+
+    Write-Host "Collecting Big Screen diagnostics..." -ForegroundColor Cyan
+    $bigScreenCurrent = "$($script:BigScreenLogRoot)/error-history.log"
+    $bigScreenEntryEpoch = Get-LatestTimestampedEntry $bigScreenCurrent
+    # A zero evidence time intentionally classifies a session-header-only file
+    # as older context. Its current mtime is not evidence that an error occurred.
+    $bigScreenClassificationEpoch = if ($null -ne $bigScreenEntryEpoch) { $bigScreenEntryEpoch } else { 0L }
+    $pulledBigScreen = Pull-RemoteArtifact "Big-Screen" $bigScreenCurrent $bigScreenClassificationEpoch "error-history.log" "Freshness is based on the newest timestamped error, not file modification time; Big Screen adds a session header on every start."
+    if (-not $pulledBigScreen) {
+        Add-MissingMarker "Big-Screen" "NO_BIG_SCREEN_ERROR_HISTORY.txt" "Big Screen's persistent error history was not present or could not be read."
+    } elseif ($bigScreenClassificationEpoch -lt $script:CutoffEpoch) {
+        Add-MissingMarker "Big-Screen" "NO_FRESH_BIG_SCREEN_ERROR.txt" "Big Screen had no timestamped error inside the selected incident window. Its history was included only as older context."
+    }
+    $previousPath = "$($script:BigScreenLogRoot)/error-history.previous.log"
+    $previousEpoch = Get-LatestTimestampedEntry $previousPath
+    $previousClassificationEpoch = if ($null -ne $previousEpoch) { $previousEpoch } else { 0L }
+    [void](Pull-RemoteArtifact "Big-Screen" $previousPath $previousClassificationEpoch "error-history.previous.log" "Rotated Big Screen error history; normally older context.")
+    $performancePath = "$($script:BigScreenLogRoot)/performance-history.log"
+    [void](Pull-RemoteArtifact "Big-Screen" $performancePath ([Nullable[long]]$null) "performance-history.log" "Optional playback and gameplay performance context.")
+
+    Write-Host "Collecting Beat Saber logs and process-exit evidence..." -ForegroundColor Cyan
+    foreach ($logName in @("PaperLog.log", "beatsaber-hook.log")) {
+        $remote = "$($script:ModDataRoot)/logs/$logName"
+        [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) $logName "Standard Beat Saber/mod log. A fresh write is context, not by itself proof of a crash.")
+    }
+
+    $tombstoneListing = Invoke-AdbShell "find /sdcard/Android/data/$($script:PackageName)/files -maxdepth 1 -type f -name 'tombstone_*' -printf '%T@|%p\n' 2>/dev/null | sort -nr" -AllowFailure
+    $latestTombstone = $null
+    foreach ($line in ($tombstoneListing.Text -split "`r?`n")) {
+        if ($line -match '^(\d+)(?:\.\d+)?\|(.+)$') {
+            $latestTombstone = [pscustomobject]@{ Epoch = [long]$Matches[1]; Path = $Matches[2].Trim() }
+            break
+        }
+    }
+    if ($latestTombstone) {
+        [void](Pull-RemoteArtifact "Beat-Saber" $latestTombstone.Path ([Nullable[long]]$latestTombstone.Epoch) (Split-Path -Leaf $latestTombstone.Path) "Newest Beat Saber app tombstone. Check its freshness label before associating it with the incident.")
+        if ($latestTombstone.Epoch -lt $script:CutoffEpoch) {
+            Add-MissingMarker "Beat-Saber" "NO_FRESH_BEAT_SABER_TOMBSTONE.txt" "The newest Beat Saber app tombstone is older than the selected incident window. It was included only under Older-Context."
+        }
+    } else {
+        Add-MissingMarker "Beat-Saber" "NO_BEAT_SABER_TOMBSTONE.txt" "No Beat Saber app tombstone was present."
+    }
+
+    $exitInfo = Invoke-AdbShell "dumpsys activity exit-info $($script:PackageName)" -AllowFailure
+    Write-Utf8File (Join-Path $script:StageRoot "Beat-Saber/exit-info-all-context.txt") ($exitInfo.Text + "`r`n")
+    $latestCrashExit = Get-LatestCrashExitBlock $exitInfo.Text
+    if ($latestCrashExit) {
+        $status = Add-TextArtifact "Beat-Saber" "latest-crash-exit-info.txt" $latestCrashExit.Text ([Nullable[long]]$latestCrashExit.Epoch) "dumpsys activity exit-info" "Android's recorded Beat Saber process exit; normal user-requested exits are excluded from crash selection."
+        if ($status -ne "FRESH") {
+            Add-MissingMarker "Beat-Saber" "NO_FRESH_CRASH_EXIT.txt" "Android's newest recorded Beat Saber crash exit is older than the selected incident window."
+        }
+    } else {
+        Add-MissingMarker "Beat-Saber" "NO_RECORDED_CRASH_EXIT.txt" "Android had no Beat Saber process exit classified as SIGNALED, CRASH, native crash, or ANR."
+    }
+
+    Write-Host "Collecting Quest OS crash evidence..." -ForegroundColor Cyan
+    $crashLogcat = Invoke-Adb -Arguments @("logcat", "-b", "crash", "-d", "-v", "epoch") -AllowFailure
+    $crashRecords = Select-EpochLogRecords $crashLogcat.Text
+    if ($crashRecords.Fresh) {
+        [void](Add-TextArtifact "Quest-OS" "logcat-crash-buffer.txt" $crashRecords.Fresh ([Nullable[long]]$crashRecords.LatestEpoch) "logcat -b crash" "Fresh records from Android's dedicated crash buffer.")
+    } else {
+        Add-MissingMarker "Quest-OS" "NO_FRESH_LOGCAT_CRASH.txt" "Android's crash log buffer contained no records inside the selected incident window."
+        if ($crashRecords.Older) {
+            [void](Add-TextArtifact "Quest-OS" "logcat-crash-buffer-older.txt" $crashRecords.Older ([Nullable[long]]$crashRecords.LatestEpoch) "logcat -b crash" "Older crash-buffer context; do not associate it with this incident without corroboration.")
+        }
+    }
+
+    $targetedLogcat = Invoke-Adb -Arguments @(
+        "logcat", "-d", "-v", "epoch",
+        "AndroidRuntime:E", "DEBUG:F", "libc:F", "ActivityManager:I", "Unity:D", "bigscreen:V", "*:S"
+    ) -AllowFailure
+    $targetedRecords = Select-EpochLogRecords $targetedLogcat.Text
+    if ($targetedRecords.Fresh) {
+        [void](Add-TextArtifact "Quest-OS" "targeted-recent-logcat.txt" $targetedRecords.Fresh ([Nullable[long]]$targetedRecords.LatestEpoch) "targeted Android logcat" "Recent fatal/runtime/Unity/Big Screen log messages only; unrelated full system logcat is not collected.")
+    }
+
+    $dropboxIndex = Invoke-AdbShell "dumpsys dropbox" -AllowFailure
+    $dropboxLines = New-Object System.Collections.Generic.List[string]
+    $latestDropboxEpoch = $null
+    foreach ($line in ($dropboxIndex.Text -split "`r?`n")) {
+        if ($line -match '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(.+)$') {
+            $epoch = Convert-DeviceTimestampToEpoch $Matches[1]
+            if ($null -ne $epoch -and $epoch -ge $script:CutoffEpoch -and
+                $Matches[2] -match '(crash|tombstone|watchdog|ANR|last_kmsg)') {
+                $dropboxLines.Add($line)
+                if ($null -eq $latestDropboxEpoch -or $epoch -gt $latestDropboxEpoch) { $latestDropboxEpoch = $epoch }
+            }
+        }
+    }
+    if ($dropboxLines.Count -gt 0) {
+        [void](Add-TextArtifact "Quest-OS" "dropbox-crash-index.txt" ($dropboxLines -join "`r`n") ([Nullable[long]]$latestDropboxEpoch) "dumpsys dropbox" "Fresh Quest DropBox crash/tombstone/ANR metadata. Binary tombstones are represented by their index entry when Android cannot print them as text.")
+    } else {
+        Add-MissingMarker "Quest-OS" "NO_FRESH_DROPBOX_CRASH.txt" "Quest DropBox contained no crash, tombstone, watchdog, ANR, or last-kmsg entry inside the selected incident window."
+    }
+
+    foreach ($tag in @("data_app_crash", "system_app_crash", "system_server_crash", "SYSTEM_SERVER_WATCHDOG", "SYSTEM_LAST_KMSG")) {
+        $printed = Invoke-AdbShell "dumpsys dropbox --print $tag" -AllowFailure
+        if ($printed.ExitCode -ne 0 -or -not $printed.Text.Trim()) { continue }
+        $blocks = Split-TimestampedBlocks $printed.Text '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+'
+        $freshBlocks = @($blocks | Where-Object { $_.Epoch -ge $script:CutoffEpoch })
+        if ($freshBlocks.Count -gt 0) {
+            $latest = ($freshBlocks | Measure-Object -Property Epoch -Maximum).Maximum
+            $body = ($freshBlocks | ForEach-Object { $_.Text }) -join "`r`n`r`n========================================`r`n`r`n"
+            [void](Add-TextArtifact "Quest-OS" ("dropbox-" + $tag + ".txt") $body ([Nullable[long]]$latest) "dumpsys dropbox --print $tag" "Printable fresh Quest DropBox entries for $tag.")
+        }
+    }
+
+    Add-ReportLine "COLLECTED ARTIFACTS"
+    Add-ReportLine "-------------------"
+    foreach ($entry in $script:Manifest) {
+        Add-ReportLine ("[{0}] {1} / {2} - {3}" -f $entry.status, $entry.category, $entry.name, $entry.age)
+        if ($entry.note) { Add-ReportLine ("    " + $entry.note) }
+    }
+    Add-ReportLine ""
+    Add-ReportLine "PRIVACY NOTE"
+    Add-ReportLine "------------"
+    Add-ReportLine "Logs can contain map/song names, local file paths, video URLs, usernames, and other diagnostic context. Review the extracted text files before sharing the ZIP publicly."
+    Add-ReportLine ""
+    Add-ReportLine "Send the entire ZIP to the Big Screen maintainer. Do not rename an OLDER CONTEXT artifact as a current crash."
+
+    Write-Utf8File (Join-Path $script:StageRoot "REPORT.txt") (($script:ReportLines -join "`r`n") + "`r`n")
+    $manifestObject = [pscustomobject]@{
+        collectorVersion = 1
+        package = $script:PackageName
+        windowMinutes = $SinceMinutes
+        deviceCollectionEpoch = $script:DeviceNowEpoch
+        cutoffEpoch = $script:CutoffEpoch
+        # PowerShell 7 can throw "Argument types do not match" when @(...)
+        # enumerates a generic List[object] inside an object initializer. An
+        # explicit array conversion behaves consistently in 5.1 and 7+.
+        artifacts = [object[]]$script:Manifest
+    }
+    Write-Utf8File (Join-Path $script:StageRoot "manifest.json") ($manifestObject | ConvertTo-Json -Depth 6)
+
+    Write-Host "Creating the support ZIP..." -ForegroundColor Cyan
+    if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+    Compress-Archive -Path (Join-Path $script:StageRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal
+
+    Write-Host "`nSupport bundle created:" -ForegroundColor Green
+    Write-Host $zipPath -ForegroundColor White
+    Write-Host "`nReview REPORT.txt first. It explains which records are fresh, stale, or missing." -ForegroundColor Yellow
+    Write-Host "Logs can contain song names, paths, URLs, or usernames; review them before posting publicly." -ForegroundColor Yellow
+
+    if (-not $NoExplorer) {
+        Start-Process explorer.exe -ArgumentList "/select,`"$zipPath`""
+    }
+    exit 0
+} catch {
+    Write-Host "`nERROR: $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.InvocationInfo.PositionMessage) {
+        Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor DarkGray
+    }
+    exit 1
+} finally {
+    if ($script:StageRoot -and (Test-Path -LiteralPath $script:StageRoot) -and
+        ([IO.Path]::GetFileName($script:StageRoot) -like "BigScreen-Support-*")) {
+        Remove-Item -LiteralPath $script:StageRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

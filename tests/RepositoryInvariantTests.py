@@ -27,6 +27,10 @@ strip_script = (root / "cmake" / "strip.cmake").read_text(encoding="utf-8")
 bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
     encoding="utf-8")
 build_launcher = (root / "Build-And-Deploy.bat").read_text(encoding="utf-8")
+log_collector_launcher = (root / "Collect-BigScreen-Logs.bat").read_text(
+    encoding="utf-8")
+log_collector = (root / "scripts/collect-crash-logs.ps1").read_text(
+    encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
 ndk_install = (root / "scripts/install-pinned-ndk.sh").read_text(
     encoding="utf-8")
@@ -245,6 +249,7 @@ first_party_patterns = {
 first_party_files: set[pathlib.Path] = {
     root / "CMakeLists.txt",
     root / "Build-And-Deploy.bat",
+    root / "Collect-BigScreen-Logs.bat",
 }
 
 # Build and deployment scripts must be portable across developer machines.
@@ -256,7 +261,7 @@ windows_absolute_path = re.compile(r"(?i)(?<![a-z0-9])[a-z]:[\\/]")
 for host_script in (
     list((root / "scripts").glob("*.ps1"))
     + list((root / "scripts").glob("*.py"))
-    + [root / "Build-And-Deploy.bat"]
+    + [root / "Build-And-Deploy.bat", root / "Collect-BigScreen-Logs.bat"]
 ):
     assert not windows_absolute_path.search(
         host_script.read_text(encoding="utf-8")), host_script
@@ -309,6 +314,28 @@ for launcher_disclosure in (
     "certifi 2026.7.22",
 ):
     assert launcher_disclosure in build_launcher
+
+# The user-facing support collector must remain portable and must preserve the
+# distinction between a current incident and whatever stale file happens to be
+# newest. These are deliberate support contracts, not implementation details.
+assert '%~dp0scripts\\collect-crash-logs.ps1' in log_collector_launcher
+for collector_contract in (
+    '"/sdcard/ModData/$($script:PackageName)"',
+    '"$($script:ModDataRoot)/BigScreen/Logs"',
+    "error-history.previous.log",
+    "find /sdcard/Android/data/$($script:PackageName)/files",
+    "dumpsys activity exit-info",
+    '"logcat", "-b", "crash"',
+    "dumpsys dropbox",
+    "OLDER CONTEXT",
+    "NO_FRESH_BIG_SCREEN_ERROR.txt",
+    "NO_FRESH_BEAT_SABER_TOMBSTONE.txt",
+    "NO_FRESH_LOGCAT_CRASH.txt",
+    "Compress-Archive",
+    "REPORT.txt",
+    "manifest.json",
+):
+    assert collector_contract in log_collector
 for bootstrap_contract in (
     "Programs/QPM/qpm.exe",
     "restore",

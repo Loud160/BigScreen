@@ -1,5 +1,34 @@
 # Troubleshooting
 
+## Collecting a support bundle
+
+On Windows, double-click **`Collect-BigScreen-Logs.bat`** in the repository or
+source archive. Enter approximately how many minutes ago the problem occurred;
+pressing Enter uses 30 minutes. The collector finds ADB automatically when it
+is available through Android platform-tools, SideQuest, QPM, or the Android SDK.
+No ADB commands are required.
+
+The resulting `BigScreen-Support-<date>-<time>.zip` is saved beneath
+`BigScreen Support Logs`. Send the complete ZIP when reporting a problem. Its
+`REPORT.txt` separates each source into:
+
+- **FRESH** — timestamped inside the selected incident window;
+- **OLDER CONTEXT** — useful for comparison, but not evidence of this crash;
+- **NOT FOUND** — the Quest had no usable record from that layer.
+
+This distinction matters because Big Screen, Beat Saber, and Android do not
+always fail together. Big Screen also opens its persistent history on every
+startup, so the collector evaluates the newest timestamped error inside that
+file rather than incorrectly treating its file-modification time as a crash.
+Android process-exit records distinguish signaled/crash exits from ordinary
+force-closes, and app tombstones are discovered dynamically rather than by a
+fixed filename.
+
+The collector is read-only. It does not stop Beat Saber, clear logcat, change
+settings, or alter files on the Quest. Logs can contain song/map names, file
+paths, video URLs, or usernames; review the extracted text before posting the
+ZIP publicly.
+
 Big Screen logs to Beat Saber's standard mod log folder:
 
 `/sdcard/ModData/com.beatgames.beatsaber/logs`

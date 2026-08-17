@@ -19,6 +19,7 @@ __pycache__/
 # images under docs/ with descriptive names instead of committing these
 # root-level development captures.
 /diagnostics/
+/BigScreen Support Logs/
 /bigscreen-*.png
 /bigscreen-*.jpg
 /bigscreen-live-settings.json

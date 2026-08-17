@@ -105,6 +105,15 @@ release manually:
 Beat Saber must already be patched for mods, and the Big Screen release must
 match the Beat Saber version installed on the headset.
 
+### Create a crash support bundle
+
+Windows users can double-click **[Collect-BigScreen-Logs.bat](Collect-BigScreen-Logs.bat)**
+after a problem. It automatically finds ADB, asks when the problem occurred,
+and creates one ZIP containing freshness-labelled Big Screen, Beat Saber, and
+Quest OS diagnostics. No ADB commands or manual file hunting are required.
+See [Troubleshooting](docs/TROUBLESHOOTING.md#collecting-a-support-bundle) for
+what is collected, stale-log protection, and privacy guidance.
+
 ## Built for standalone Quest use
 
 Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. YouTube downloads
