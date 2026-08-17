@@ -35,6 +35,24 @@ if (-not $?) {
 }
 
 $mod = "./mod.json"
+. (Join-Path $PSScriptRoot "sync-runtime-manifest.ps1")
+
+# Older Big Screen packagers wrote mod.json with Windows PowerShell's UTF-8
+# byte-order mark. Normalize an existing generated manifest before validation
+# so upgrading the build scripts repairs the workspace instead of requiring a
+# manual deletion. Later validation rejects any writer that reintroduces it.
+if (Test-Path -LiteralPath $mod -PathType Leaf) {
+    $resolvedModPath = (Resolve-Path $mod).Path
+    $existingModTimestampUtc =
+        (Get-Item -LiteralPath $resolvedModPath).LastWriteTimeUtc
+    $existingModJson = [System.IO.File]::ReadAllText($resolvedModPath)
+    Write-BigScreenUtf8NoBom -Path $resolvedModPath -Content $existingModJson
+    # Normalization is not a metadata refresh. Preserve the prior timestamp so
+    # validate-modjson.ps1 still asks QPM to regenerate the manifest whenever
+    # mod.template.json or qpm.shared.json is newer.
+    [System.IO.File]::SetLastWriteTimeUtc(
+        $resolvedModPath, $existingModTimestampUtc)
+}
 
 # Refuse to package a stale or incorrectly linked comparison build even when
 # createqmod.ps1 is called independently from build.ps1.
@@ -76,7 +94,10 @@ $requiredLibraries = @(
 
 $ErrorActionPreference = "Stop"
 $modJson.libraryFiles = $requiredLibraries
-$modJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $mod -Encoding UTF8
+$serializedModJson = $modJson | ConvertTo-Json -Depth 10
+Write-BigScreenUtf8NoBom `
+    -Path (Resolve-Path $mod).Path `
+    -Content $serializedModJson
 
 # QMOD fileCopies install pure Python and native extension modules into the
 # mod-owned durable runtime folder. The shared synchronizer is also used by
@@ -89,7 +110,6 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $?) {
     exit 1
 }
-. (Join-Path $PSScriptRoot "sync-runtime-manifest.ps1")
 $runtimeSourcePaths = @(Sync-BigScreenRuntimeManifest `
     -ModJsonPath (Resolve-Path $mod).Path `
     -RuntimeStage $runtimeStage)

@@ -54,6 +54,20 @@ elseif (-not (Test-Path -Path $mod)) {
 
 Write-Output "Creating qmod from mod.json"
 
+# JSON permits Unicode text, but Mods Before Friday's manifest importer expects
+# the first byte to be `{` and rejects a UTF-8 BOM as an invalid value at line 1
+# column 1. Validate the actual bytes rather than relying on PowerShell's
+# BOM-tolerant ConvertFrom-Json parser.
+$resolvedMod = (Resolve-Path $mod).Path
+$modBytes = [System.IO.File]::ReadAllBytes($resolvedMod)
+if ($modBytes.Length -ge 3 -and
+    $modBytes[0] -eq 0xEF -and
+    $modBytes[1] -eq 0xBB -and
+    $modBytes[2] -eq 0xBF) {
+    Write-Output "Error: mod.json must be UTF-8 without a byte-order mark for Mods Before Friday compatibility."
+    exit 1
+}
+
 # Always perform an offline structural check. Windows PowerShell 5.1 lacks
 # Test-Json, but release packaging must still fail on missing critical fields.
 try {

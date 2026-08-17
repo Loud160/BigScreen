@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0-alpha.4 — Mods Before Friday package fix
+
+- Fixed the generated QMOD manifest using a UTF-8 byte-order mark that Mods
+  Before Friday rejected with `expected value at line 1 column 1`. Big Screen's
+  packaging path now writes strict BOM-free UTF-8 on Windows PowerShell 5.1 and
+  newer PowerShell versions.
+- Added byte-level manifest validation and repository invariants so a QMOD can
+  no longer pass release packaging if its `mod.json` would fail MDF import.
+
 ## 0.7.0-alpha.3 — Showcase menu re-entry fix
 
 - Fixed reopening Big Screen after playing the bundled Showcase throwing a

@@ -523,6 +523,12 @@ assert '$packagedDependency = Join-Path "extern/libs" $fileName' in copy_script
 for installer in (copy_script, create_qmod):
     assert "sync-runtime-manifest.ps1" in installer
     assert "Sync-BigScreenRuntimeManifest" in installer
+assert "Write-BigScreenUtf8NoBom" in create_qmod
+assert "SetLastWriteTimeUtc" in create_qmod
+assert "Write-BigScreenUtf8NoBom" in runtime_manifest_sync
+assert "System.Text.UTF8Encoding($false)" in runtime_manifest_sync
+assert "modBytes[0] -eq 0xEF" in validate_mod_json
+assert "Mods Before Friday compatibility" in validate_mod_json
 for clean_install_runtime in (
     "python314.zip",
     "yt-dlp-shipped",

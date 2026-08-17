@@ -6,6 +6,25 @@
 # section 7(b)/(c) and an interoperability permission under section 7;
 # see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 
+function Write-BigScreenUtf8NoBom {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Content
+    )
+
+    # Windows PowerShell 5.1's `Set-Content -Encoding UTF8` prepends a byte
+    # order mark. PowerShell and QPM accept that marker, but Mods Before
+    # Friday's strict JSON reader treats it as an invalid first token and
+    # reports "expected value at line 1 column 1". Use the explicit .NET
+    # encoding so every generated manifest is portable across both parsers.
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 function Sync-BigScreenRuntimeManifest {
     [CmdletBinding()]
     param(
@@ -102,8 +121,8 @@ function Sync-BigScreenRuntimeManifest {
     else {
         $modJson | Add-Member -NotePropertyName fileCopies -NotePropertyValue @($copies)
     }
-    $modJson | ConvertTo-Json -Depth 10 |
-        Set-Content -LiteralPath $ModJsonPath -Encoding UTF8
+    $serializedModJson = $modJson | ConvertTo-Json -Depth 10
+    Write-BigScreenUtf8NoBom -Path $ModJsonPath -Content $serializedModJson
 
     # Write-Host keeps this progress message out of the function's return
     # pipeline; QMOD packaging consumes that pipeline as the source-path list.
