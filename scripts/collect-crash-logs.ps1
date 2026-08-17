@@ -94,8 +94,20 @@ function Invoke-Adb {
         [Parameter(Mandatory=$true)] [string[]] $Arguments,
         [switch] $AllowFailure
     )
-    $output = & $script:Adb @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    # ADB writes normal lifecycle notices such as "daemon not running;
+    # starting now" to stderr even when the command succeeds. Windows
+    # PowerShell converts redirected native stderr into ErrorRecord objects;
+    # with the script's stop-on-error policy, that used to abort a legitimate
+    # first run before ADB could finish starting. Native commands are judged by
+    # their exit code here, while stderr remains captured for useful failures.
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $script:Adb @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $priorErrorActionPreference
+    }
     $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
     if (-not $AllowFailure -and $exitCode -ne 0) {
         throw "ADB failed while running: adb $($Arguments -join ' ')`n$text"
