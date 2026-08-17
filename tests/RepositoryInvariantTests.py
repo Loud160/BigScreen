@@ -1447,6 +1447,9 @@ core_workflow = (root / ".github" / "workflows" / "core-tests.yml").read_text(
 )
 assert "Fernthedev/qpm-action" not in build_workflow
 assert "QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip" in build_workflow
+assert "permissions:\n  contents: write" in build_workflow
+assert 'library="lib${module_id}.so"' in build_workflow
+assert './build/debug/${{ steps.libname.outputs.NAME }}' in build_workflow
 assert '-S $repositoryRoot -B $buildDirectory' in build_script
 assert '& $cmakeExe --build $buildDirectory' in build_script
 assert build_script.count('if (-not $?)') >= 3
