@@ -115,7 +115,10 @@ int main()
     // deeper six-screen corkscrew remains visible through the entrance.
     assert(corkscrewTunnel.panels[0].position.y > 30.0f);
     assert(corkscrewTunnel.panels[0].scale.x < 1.0f);
-    const auto openTunnel = Sample(SecondsAtBeat(317.0));
+    // Sample immediately before the authored 316.7-beat shatter window ends.
+    // Sampling at beat 317 contradicted the timeline boundary below and only
+    // appeared to pass in MSVC Release builds because assert() is compiled out.
+    const auto openTunnel = Sample(SecondsAtBeat(316.69));
     assert(VisibleCount(openTunnel) == 12);
     // The falling fracture occupies slot zero while the new formation shifts
     // up one slot. Its nearest center screen remains overhead and substantially
