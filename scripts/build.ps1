@@ -64,6 +64,7 @@ if (-not $cmakeExe) {
 # Build and verify both isolated LGPL FFmpeg runtimes. The in-game selector is
 # meaningful only when one QMOD contains both complete ABI-isolated sets.
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$buildDirectory = Join-Path $repositoryRoot "build"
 $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
 foreach ($runtime in @(
     @{ Version = "4.4.8"; Directory = "extern/ffmpeg-lgpl"; Tag = "44" },
@@ -189,7 +190,7 @@ if ($LASTEXITCODE -ne 0) {
 # dependency deprecation warnings; project errors and compiler diagnostics are
 # unchanged.
 & $cmakeExe -Wno-deprecated -G "Ninja" -DCMAKE_BUILD_TYPE="RelWithDebInfo" `
-    -DBIGSCREEN_UP_DOWN_SHOWCASE=ON -B build
+    -DBIGSCREEN_UP_DOWN_SHOWCASE=ON -S $repositoryRoot -B $buildDirectory
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
@@ -203,20 +204,31 @@ $nativeBuildStarted = Get-Date
 # heartbeat during single, internally silent operations such as ThinLTO and the
 # final native link. The linker does not expose a truthful sub-percentage, so
 # elapsed time is more useful than a fabricated progress bar.
-$nativeBuildProcess = Start-Process `
-    -FilePath $cmakeExe `
-    -ArgumentList @("--build", "build") `
-    -WorkingDirectory $repositoryRoot `
-    -NoNewWindow `
-    -PassThru
-while (-not $nativeBuildProcess.WaitForExit(15000)) {
-    $elapsed = [int]((Get-Date) - $nativeBuildStarted).TotalSeconds
-    Write-Output "Still building Big Screen... $elapsed seconds elapsed. The current compiler or linker step is still running."
-}
-$nativeBuildProcess.WaitForExit()
-$nativeBuildProcess.Refresh()
-if ($nativeBuildProcess.ExitCode -ne 0) {
-    exit $nativeBuildProcess.ExitCode
+if ($env:OS -eq "Windows_NT") {
+    $nativeBuildProcess = Start-Process `
+        -FilePath $cmakeExe `
+        -ArgumentList @("--build", "build") `
+        -WorkingDirectory $repositoryRoot `
+        -NoNewWindow `
+        -PassThru
+    while (-not $nativeBuildProcess.WaitForExit(15000)) {
+        $elapsed = [int]((Get-Date) - $nativeBuildStarted).TotalSeconds
+        Write-Output "Still building Big Screen... $elapsed seconds elapsed. The current compiler or linker step is still running."
+    }
+    $nativeBuildProcess.WaitForExit()
+    $nativeBuildProcess.Refresh()
+    if ($nativeBuildProcess.ExitCode -ne 0) {
+        exit $nativeBuildProcess.ExitCode
+    }
+} else {
+    # Start-Process argument forwarding differs between Windows PowerShell and
+    # PowerShell Core on Linux. CI does not need the Windows-only heartbeat, so
+    # invoke CMake directly with the absolute build path and preserve its exit
+    # code and normal Ninja progress output.
+    & $cmakeExe --build $buildDirectory
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 
 # Prove that each separately compiled decoder retained requirements for its

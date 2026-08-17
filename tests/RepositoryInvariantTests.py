@@ -1446,6 +1446,9 @@ core_workflow = (root / ".github" / "workflows" / "core-tests.yml").read_text(
 )
 assert "Fernthedev/qpm-action" not in build_workflow
 assert "QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip" in build_workflow
+assert '-S $repositoryRoot -B $buildDirectory' in build_script
+assert '& $cmakeExe --build $buildDirectory' in build_script
+assert 'draft: false' in build_workflow
 assert "4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df" in build_workflow
 assert "qpm restore" in build_workflow
 assert "uses: seanmiddleditch/gha-setup-ninja" not in build_workflow

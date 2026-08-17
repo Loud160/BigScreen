@@ -142,7 +142,10 @@ namespace BigScreen {
         {
             if(!stream)
                 return 0;
-#if LIBAVFORMAT_VERSION_MAJOR >= 61
+#if LIBAVFORMAT_VERSION_MAJOR >= 60
+            // FFmpeg 6 moved stream side data onto AVCodecParameters. Using
+            // that API also avoids the deprecated AVStream accessor that the
+            // Linux host-test build deliberately rejects via -Werror.
             const auto* sideData = av_packet_side_data_get(
                 stream->codecpar->coded_side_data,
                 stream->codecpar->nb_coded_side_data,
@@ -153,7 +156,17 @@ namespace BigScreen {
             const std::size_t sideDataSize = sideData ? sideData->size : 0;
             if(!matrix || sideDataSize < sizeof(int32_t) * 9)
                 return 0;
+#elif LIBAVFORMAT_VERSION_MAJOR >= 59
+            // FFmpeg 5 changed the legacy accessor's size parameter from int
+            // to size_t while retaining the AVStream storage location.
+            std::size_t sideDataSize = 0;
+            const auto* matrix = reinterpret_cast<const int32_t*>(
+                av_stream_get_side_data(
+                    stream, AV_PKT_DATA_DISPLAYMATRIX, &sideDataSize));
+            if(!matrix || sideDataSize < sizeof(int32_t) * 9)
+                return 0;
 #else
+            // The bundled FFmpeg 4 decoder uses the original int-sized API.
             int sideDataSize = 0;
             const auto* matrix = reinterpret_cast<const int32_t*>(
                 av_stream_get_side_data(
