@@ -99,6 +99,13 @@ namespace BigScreen {
         std::optional<bool> allowCustomPlatform;
         bool mergePropGroups = false;
         std::optional<bool> colorBlending;
+        // Cinema's mapper `bloom` field: how strongly the video screen feeds
+        // Big Screen's Cinema-style bloom pre-pass (the deliberate glow drawn
+        // around the frame). Cinema's default is 1.0 and authored values are
+        // clamped to 0..2 by CoreLogic::CinemaBloomIntensity. This drives the
+        // separate pre-pass only; the screen surface itself always clears the
+        // game's own bloom-emission weight so the picture can never white out.
+        float bloomIntensity = 1.0f;
 
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;

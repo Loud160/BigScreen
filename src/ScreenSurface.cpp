@@ -15,6 +15,7 @@
 #include <span>
 #include <vector>
 
+#include "BigScreen/CinemaBloomRenderer.hpp"
 #include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -770,6 +771,26 @@ namespace BigScreen {
         videoFilter->set_sharedMesh(videoMesh_);
         videoRenderer->set_material(material_);
 
+        // Cinema-style frame glow: register the primary video surface with
+        // the bloom pre-pass so the picture can glow around its frame. This
+        // is deliberate extra rendering, mirroring PC Cinema; the screen's
+        // own material clears the game's bloom-emission weight, so without
+        // this registration the screen produces no glow at all. Shared
+        // showcase clones are not registered: dozens of animated panels
+        // each running two Kawase blurs per camera per frame is not a
+        // sustainable Quest cost, and the showcase supplies its own effects.
+        mapperBloom_ = config.bloomIntensity;
+        if(!sharedTexture)
+        {
+            CinemaBloomRenderer::Instance().RegisterSource(
+                videoObject_,
+                mapperBloom_,
+                screenWidth_,
+                screenHeight_,
+                true);
+            bloomRegistered_ = true;
+        }
+
         // A screen starts hidden so an uninitialized gray/black texture is not
         // exposed during a negative mapper offset or while FFmpeg seeks to the
         // opening frame. Do this directly: visible_ already starts false, so
@@ -1203,6 +1224,18 @@ namespace BigScreen {
         screenHeight_ = config.screenHeight;
         geometryConfig_ = config;
         geometryAspectRatio_ = aspectRatio;
+        // Live layout edits change the glow footprint without recreating the
+        // surface; keep the bloom pre-pass boost in sync with the new size.
+        mapperBloom_ = config.bloomIntensity;
+        if(bloomRegistered_)
+        {
+            CinemaBloomRenderer::Instance().UpdateSource(
+                videoObject_,
+                mapperBloom_,
+                screenWidth_,
+                screenHeight_,
+                true);
+        }
 
         // Diagnostics is an overlay inside the lower part of the screen. Its
         // RectTransform is centered on X, so placing the object at the old
@@ -2246,6 +2279,14 @@ namespace BigScreen {
 
     void ScreenSurface::Destroy()
     {
+        // Unregister BEFORE the video object is destroyed so the bloom
+        // pre-pass never draws a dying surface during the same frame.
+        if(bloomRegistered_)
+        {
+            CinemaBloomRenderer::Instance().UnregisterSource(videoObject_);
+            bloomRegistered_ = false;
+        }
+        mapperBloom_ = 1.0f;
         DestroyFractureResources();
         DestroyIfAlive(diagnosticsObject_);
         diagnosticsText_ = nullptr;

@@ -190,6 +190,12 @@ namespace BigScreen {
         bool opaqueScreenBody_ = false;
         bool textureHasAuthoredAlpha_ = false;
         bool colorBlending_ = false;
+        // Cinema-style frame glow state. Only the primary surface registers
+        // with the bloom pre-pass (shared showcase clones would each run two
+        // Kawase blurs per camera per frame). mapperBloom_ carries the map's
+        // authored `bloom` value, defaulting to Cinema's neutral 1.0.
+        bool bloomRegistered_ = false;
+        float mapperBloom_ = 1.0f;
         // True while the video material runs on Unity's UI/Default shader,
         // which premultiplies by final alpha inside its fragment stage. The
         // black lead-in must then use an opaque-black TINT over the shared

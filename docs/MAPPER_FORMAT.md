@@ -77,10 +77,15 @@ The following picture fields are supported:
 - `transparency`, which controls Cinema's opaque light-blocking body behind the
   picture. It does not change picture opacity or the player's letterbox option.
 
-PC Cinema's `bloom` field is currently ignored. Big Screen does not apply the
-mapper's requested bloom amount, and compatibility-cycle JSON files containing
-that field do not validate Bloom behavior on Quest. Unknown fields are ignored
-rather than treated as fatal configuration errors.
+PC Cinema's `bloom` field is parsed and drives Big Screen's Cinema-style frame
+glow: the video picture is drawn into a separate pre-pass, blurred with the
+game's own Kawase renderer, and added to Beat Saber's bloom texture, so the
+glow follows the video content exactly as on PC. The default is Cinema's 1.0
+and authored values are clamped to Cinema's 0..2 range; `"bloom": 0` disables
+the glow for that map. This is independent from the game's own bloom, whose
+per-pixel emission weight the screen deliberately clears so the picture can
+never white out. Unknown fields are ignored rather than treated as fatal
+configuration errors.
 
 Color correction and vignette run on the decoder worker after FFmpeg color
 conversion and container orientation. Vignette pixels outside the authored

@@ -16,6 +16,7 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/CinemaBloomRenderer.hpp"
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
 #include "BigScreen/PlaybackSession.hpp"
@@ -86,6 +87,7 @@
 #include "System/Collections/Generic/LinkedListNode_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/Application.hpp"
+#include "UnityEngine/Camera.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/MeshRenderer.hpp"
@@ -998,6 +1000,20 @@ namespace {
                il2cpp_utils::try_cast<GlobalNamespace::LightTranslationBeatmapEventData>(eventData).has_value() ||
                il2cpp_utils::try_cast<GlobalNamespace::ColorBoostBeatmapEventData>(eventData).has_value() ||
                il2cpp_utils::try_cast<GlobalNamespace::FxBeatmapEventData>(eventData).has_value();
+    }
+
+    MAKE_HOOK_MATCH(
+        Camera_FireOnPreRender,
+        &UnityEngine::Camera::FireOnPreRender,
+        void,
+        UnityEngine::Camera* camera)
+    {
+        // Let Beat Saber initialize and render its camera-owned bloom target
+        // first, then add Big Screen's optional Cinema-compatible video pass.
+        // With no registered source this returns immediately, so ordinary
+        // maps and lightweight-bloom mode pay only one empty-vector check.
+        Camera_FireOnPreRender(camera);
+        BigScreen::CinemaBloomRenderer::Instance().OnCameraPreRender(camera);
     }
 
     MAKE_HOOK_MATCH(
@@ -1960,6 +1976,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // SIGSEGV whenever a video map exited. Reintroduce this feature only with
     // controls proven visible and a lifecycle that does not use that failed
     // custom-setting hierarchy.
+    INSTALL_HOOK(PaperLogger, Camera_FireOnPreRender);
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

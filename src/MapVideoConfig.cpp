@@ -161,6 +161,9 @@ namespace BigScreen {
         // soft-additive default merely because the original file contained
         // some other mapper presentation field.
         colorBlending = false;
+        // Disabling mapper visual effects returns the glow strength to
+        // Cinema's neutral default rather than keeping an authored value.
+        bloomIntensity = defaults.bloomIntensity;
         additionalScreens.clear();
     }
 
@@ -327,6 +330,11 @@ namespace BigScreen {
         config.mapperTransparency = OptionalBool(document, "transparency");
         config.opaqueScreenBody = config.mapperTransparency.has_value() &&
             !*config.mapperTransparency;
+        // Cinema's mapper `bloom` field. 1.0 is Cinema's default when the
+        // field is absent; CoreLogic::CinemaBloomIntensity clamps authored
+        // values to Cinema's documented 0..2 range at use time.
+        config.bloomIntensity =
+            static_cast<float>(NumberOr(document, "bloom", 1.0));
         config.requestedEnvironment = OptionalString(document, "environmentName");
 
         if(const auto* correction = Member(document, "colorCorrection");

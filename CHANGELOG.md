@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Restored the Cinema-style frame glow as a deliberate separate pre-pass
+  (`CinemaBloomRenderer`, ported from PC Cinema's CustomBloomPrePass). The
+  screen surface clears the game's bloom-emission weight so the picture can
+  never white out, which also means the game's own bloom can no longer make
+  the screen glow; the pre-pass draws the video with the exact material the
+  player sees into a linear HDR target, blurs it with the game's own Kawase
+  renderer using Cinema's shared-prefix double blur, and adds the result to
+  Beat Saber's bloom texture. The mapper `bloom` field is now parsed and
+  drives the glow intensity (Cinema default 1.0, clamped to 0..2; `0`
+  disables it). Only the primary video surface feeds the pre-pass; shared
+  showcase clone panels do not, keeping the showcase's per-frame cost flat.
+
 - Fixed the video screen turning solid white on maps with bloom-heavy
   lighting (for example YY.exe). The game's bloom composite reads
   framebuffer alpha as a per-pixel emission weight, and the embedded video

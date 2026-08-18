@@ -931,6 +931,43 @@ namespace BigScreen::CoreLogic {
         return opaqueScreenBody || (!transparent && !videoCoversFrame);
     }
 
+    /// Matches PC Cinema's mapper-bloom normalization. Cinema accepts a
+    /// fractional intensity and clamps authored values to the 0..2 range
+    /// before deriving the camera-specific blur boost.
+    inline constexpr float CinemaBloomIntensity(float authoredValue)
+    {
+        return std::clamp(authoredValue, 0.0f, 2.0f);
+    }
+
+    /// Pure counterpart of Cinema's camera-relative bloom boost. Keeping the
+    /// calculation independent from Unity makes its safety limits and PC
+    /// compatibility testable on the host before the render callback runs.
+    inline float CinemaBloomBoost(
+        float screenWidth,
+        float screenHeight,
+        float cameraDistance,
+        float cameraFieldOfView,
+        float cameraAngle,
+        float authoredIntensity)
+    {
+        constexpr float BaseFactor = 0.045f;
+        constexpr float CenterAttenuationFloor = 0.3f;
+        const float area = std::max(
+            0.0001f,
+            std::abs(screenWidth * screenHeight));
+        const float distance = std::max(0.0001f, cameraDistance);
+        const float fieldOfView = std::max(0.0001f, cameraFieldOfView);
+        float boost = BaseFactor /
+            std::sqrt(std::sqrt(area) / distance);
+        boost *= std::sqrt(CinemaBloomIntensity(authoredIntensity));
+        const float attenuation = std::max(
+            CenterAttenuationFloor,
+            std::max(0.0f, cameraAngle) / (fieldOfView * 0.5f));
+        boost /= attenuation + (1.0f - CenterAttenuationFloor);
+        boost *= fieldOfView / 100.0f;
+        return std::isfinite(boost) ? boost : 0.0f;
+    }
+
     /// A Library preview normally holds Beat Saber's audio until FFmpeg has
     /// uploaded the picture for the requested song position. Negative media
     /// time and a configured post-roll are different: neither interval is

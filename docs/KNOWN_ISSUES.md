@@ -26,9 +26,9 @@ but the complete feature set has not passed a clean on-device regression pass.
 
 In particular:
 
-- the PC Cinema `bloom` field is not parsed or applied by Big Screen;
-- the experimental compatibility-cycle files that contain `bloom` values do
-  not test Bloom behavior on Quest;
+- the PC Cinema `bloom` field is now parsed and drives the Cinema-style
+  frame-glow pre-pass (CinemaBloomRenderer); its visual result still needs
+  the on-device Bloom matrix below;
 - `colorBlending` and opaque/transparency presentation depend on the selected
   video material and therefore belong in the same on-device test matrix;
 - environment cloning, requested environments, additional screens, Chroma

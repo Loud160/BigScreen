@@ -584,6 +584,39 @@ assert 'ConfigureVideoBlend(material, 4, 1, 0, 10, false, 3000)' in \
 # opacity settings.
 assert 'config.colorBlending.value_or(false)' in screen_surface_source
 assert 'config.colorBlending.value_or(\n' not in screen_surface_source
+# The Cinema-style frame glow is a separate deliberate pre-pass, not the
+# game's own bloom: the screen clears the game's emission weight, so the
+# ONLY glow the picture can produce is CinemaBloomRenderer drawing the
+# video into a linear HDR temporary, blurring it with the game's Kawase
+# renderer (shared-prefix double blur, NOT the convenience DoubleBlur,
+# which saturates white on Quest), and additively blitting into the bloom
+# pre-pass texture. The mapper's `bloom` field drives its intensity with
+# Cinema's default of 1.0 and 0..2 clamp. Only the primary surface
+# registers; shared showcase clones would each run two blurs per camera
+# per frame.
+cinema_bloom_source = (root / "src/CinemaBloomRenderer.cpp").read_text(
+    encoding="utf-8")
+assert 'RGB111110Float' in cinema_bloom_source
+assert 'GetBlurKernel' in cinema_bloom_source
+assert '->DoubleBlur(' not in cinema_bloom_source
+assert 'SetDataToShaders' in cinema_bloom_source
+assert '"SmoothCamera"' in cinema_bloom_source
+assert 'INSTALL_HOOK(PaperLogger, Camera_FireOnPreRender);' in main_source
+camera_hook = main_source.split('Camera_FireOnPreRender,', 1)[1]
+assert camera_hook.index('Camera_FireOnPreRender(camera);') < \
+    camera_hook.index('OnCameraPreRender(camera);')
+assert 'if(!sharedTexture)' in screen_surface_source
+register_block = screen_surface_source.split('if(!sharedTexture)', 1)[1]
+assert 'RegisterSource(' in register_block.split('gameObject_->SetActive', 1)[0]
+assert 'UnregisterSource(videoObject_);' in screen_surface_source
+assert screen_surface_source.index('UnregisterSource(videoObject_);') < \
+    screen_surface_source.index('DestroyIfAlive(videoObject_);')
+map_video_config_source = (root / "src/MapVideoConfig.cpp").read_text(
+    encoding="utf-8")
+assert 'NumberOr(document, "bloom", 1.0)' in map_video_config_source
+assert 'bloomIntensity = defaults.bloomIntensity;' in map_video_config_source
+assert 'constexpr float BaseFactor = 0.045f;' in core_logic
+assert 'CinemaBloomIntensity' in core_logic
 assert 'UnityEngine.AssetBundle::LoadFromMemory_Internal' in screen_surface_source
 assert 'assets/bigscreen_video_shader' in cmake
 assert '--output-target elf64-aarch64' in cmake
