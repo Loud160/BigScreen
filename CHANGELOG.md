@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Fixed the video screen turning solid white on maps with bloom-heavy
+  lighting (for example YY.exe). The game's bloom composite reads
+  framebuffer alpha as a per-pixel emission weight, and the embedded video
+  shader was preserving whatever emission the map's lighting had written
+  behind the screen; bright video RGB times that preserved weight bloomed
+  to white. The embedded shader now clears the weight where video covers
+  it, exactly like Cinema on PC: opaque screens force it to zero,
+  transparent and soft-additive screens attenuate it by coverage. The
+  `UI/Default` method cannot write alpha at all, so it can only preserve
+  the map's emission and may still wash out on such maps; the embedded
+  method is the correct selection for bloom-heavy content.
+- Fixed showcase and other screen-placing maps rendering see-through
+  additive screens with no solid body that ignored the player's opacity
+  settings. Cinema's soft-additive blending was inferred for any map with
+  mapper presentation fields; it now requires the map file to explicitly
+  set `"colorBlending": true`. When a map does not set the field, the
+  mod's own configured presentation wins.
+
 - Restored the downloader's original YouTube-only security boundary. Mapper
   metadata, pasted addresses, URL probes, UI text, tests, and documentation now
   accept only HTTPS YouTube/youtu.be addresses.

@@ -70,7 +70,10 @@ The following picture fields are supported:
 - `colorCorrection`: `brightness`, `contrast`, `saturation`, `exposure`,
   `gamma`, and `hue`, with Cinema's documented ranges;
 - `vignette`: rectangular or elliptical `type`, `radius`, and `softness`;
-- `colorBlending`, including Cinema's soft-additive default;
+- `colorBlending`: Cinema-style soft-additive picture blending, applied only
+  when the map file explicitly sets it to `true`. Unlike PC Cinema, an absent
+  field does NOT enable blending — the player's own presentation settings
+  win, so maps that merely place a screen keep a solid, opaque picture body;
 - `transparency`, which controls Cinema's opaque light-blocking body behind the
   picture. It does not change picture opacity or the player's letterbox option.
 

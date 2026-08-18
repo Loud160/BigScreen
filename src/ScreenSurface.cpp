@@ -173,6 +173,8 @@ namespace BigScreen {
             UnityEngine::Material* material,
             int sourceColor,
             int destinationColor,
+            int sourceAlpha,
+            int destinationAlpha,
             bool writeDepth,
             int renderQueue)
         {
@@ -180,11 +182,20 @@ namespace BigScreen {
                 return;
             material->SetInt("_SrcColor", sourceColor);
             material->SetInt("_DestColor", destinationColor);
-            // Preserve Beat Saber's existing framebuffer alpha for every
-            // video mode. Source alpha still controls RGB transparency and
-            // vignette edges through the separate color blend equation.
-            material->SetInt("_SrcAlpha", 0);  // Zero
-            material->SetInt("_DestAlpha", 1); // One
+            // Beat Saber's bloom composite reads the framebuffer's ALPHA
+            // channel as a per-pixel emission weight. The screen must CLEAR
+            // that weight where video covers it - Cinema parity - rather
+            // than preserve it: maps whose lighting writes strong emission
+            // behind the screen (YY.exe and other bloom-heavy maps)
+            // otherwise multiply the bright video RGB into a solid white
+            // rectangle even though the video itself never writes alpha.
+            // Opaque screens force the weight to zero (Zero/Zero);
+            // transparent and soft-additive screens attenuate it by video
+            // coverage (Zero/OneMinusSrcAlpha) so emission still shows
+            // through genuinely see-through pixels. Source alpha continues
+            // to drive RGB transparency through the separate color equation.
+            material->SetInt("_SrcAlpha", sourceAlpha);
+            material->SetInt("_DestAlpha", destinationAlpha);
             material->SetInt("_ZWrite", writeDepth ? 1 : 0);
             material->set_renderQueue(renderQueue);
         }
@@ -377,14 +388,19 @@ namespace BigScreen {
                 // PC Cinema.
                 material->set_color(
                     UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity});
-                ConfigureVideoBlend(material, 4, 1, false, 3000);
+                // Color: OneMinusDstColor/One. Alpha: Zero/OneMinusSrcAlpha
+                // clears the bloom-emission weight by video coverage.
+                ConfigureVideoBlend(material, 4, 1, 0, 10, false, 3000);
             }
             else if(pictureTransparent)
             {
                 material->set_color(
                     UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity});
                 if(family == VideoShaderFamily::BloomSafe)
-                    ConfigureVideoBlend(material, 5, 10, false, 3000);
+                    // Color: SrcAlpha/OneMinusSrcAlpha. Alpha:
+                    // Zero/OneMinusSrcAlpha attenuates the bloom-emission
+                    // weight by video coverage.
+                    ConfigureVideoBlend(material, 5, 10, 0, 10, false, 3000);
                 else
                 {
                     material->SetInt("_SrcBlend", 5);  // SrcAlpha
@@ -397,7 +413,9 @@ namespace BigScreen {
             {
                 material->set_color(UnityEngine::Color::get_white());
                 if(family == VideoShaderFamily::BloomSafe)
-                    ConfigureVideoBlend(material, 1, 0, true, 2000);
+                    // Color: One/Zero. Alpha: Zero/Zero forces the
+                    // bloom-emission weight to zero under the opaque screen.
+                    ConfigureVideoBlend(material, 1, 0, 0, 0, true, 2000);
                 else
                 {
                     material->SetInt("_SrcBlend", 1); // One
@@ -1360,11 +1378,14 @@ namespace BigScreen {
         const float nextOpacity = std::clamp(config.videoOpacity, 0.0f, 1.0f);
         opaqueScreenBody_ = config.opaqueScreenBody;
         textureHasAuthoredAlpha_ = config.vignette.has_value();
-        // PC Cinema enables soft additive blending by default unless a mapper
-        // explicitly opts out. User-layout configs clear this optional field,
-        // so ordinary Big Screen videos retain perfect visibility.
-        colorBlending_ = config.colorBlending.value_or(
-            config.hasMapperPresentation);
+        // Cinema's soft-additive blending is applied ONLY when the map file
+        // explicitly sets "colorBlending": true. It must never be inferred
+        // from other mapper presentation fields: any map that merely places
+        // the screen (including Big Screen's own showcase) would otherwise
+        // get see-through additive screens with no solid body, overriding
+        // the player's own opacity settings. When the map does not set the
+        // field, the mod's configured presentation wins.
+        colorBlending_ = config.colorBlending.value_or(false);
         const bool pictureTransparent = nextOpacity < 0.999f ||
             textureHasAuthoredAlpha_ || colorBlending_;
         const auto videoShader = ResolveVideoShader(pictureTransparent);

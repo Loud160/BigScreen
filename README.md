@@ -373,6 +373,29 @@ paths are wired; their complete current behavior with Bloom on and off still
 requires the on-device matrix in
 [Current development checkpoint](docs/KNOWN_ISSUES.md).
 
+Why the two paths treat Bloom differently: Beat Saber's bloom composite reads
+the framebuffer's **alpha channel as a per-pixel emission weight**. A shader
+that writes opaque alpha over the picture makes the game bloom the video into
+a solid white rectangle. The `UI/Default` path avoids this by being unable to
+write alpha at all (`_ColorMask = RGB`) — but that also means it can only
+*preserve* whatever emission the map's lighting already wrote behind the
+screen, so bloom-heavy maps (for example YY.exe) can still wash it out. The
+embedded shader's separate alpha blend equation instead actively **clears**
+the emission weight where video covers the screen — Cinema parity: opaque
+screens force it to zero (alpha blend Zero/Zero), transparent and
+soft-additive screens attenuate it by coverage (Zero/OneMinusSrcAlpha) —
+which is why the embedded method is the correct selection for bloom-heavy
+content. Preserving destination alpha (Zero/One) instead of clearing it was
+the cause of the 2026-08-18 white-screen-on-bloom-maps regression; the
+invariant tests pin the clearing blend factors.
+
+Cinema's soft-additive picture blending (`colorBlending`) is applied only
+when the map file explicitly sets it to `true`. It is never inferred from
+other mapper presentation fields: that inference gave every screen-placing
+map — including the bundled showcase — see-through additive screens with no
+solid body, overriding the player's opacity settings. An absent field means
+the player's own presentation settings win.
+
 </details>
 
 <details>

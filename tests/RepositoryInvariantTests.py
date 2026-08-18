@@ -561,8 +561,29 @@ assert '_DestAlpha ("Destination Alpha"' in video_shader_source
 assert 'multi_compile _ STEREO_MULTIVIEW_ON STEREO_INSTANCING_ON' in \
     video_shader_source
 assert 'UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO' in video_shader_source
-assert 'material->SetInt("_SrcAlpha", 0)' in screen_surface_source
-assert 'material->SetInt("_DestAlpha", 1)' in screen_surface_source
+# The game's bloom composite reads framebuffer alpha as an emission
+# weight. The embedded shader must CLEAR that weight where video covers it
+# (Cinema parity): opaque screens force it to zero (alpha Zero/Zero) and
+# transparent or soft-additive screens attenuate it by coverage (alpha
+# Zero/OneMinusSrcAlpha). PRESERVING destination alpha instead (Zero/One)
+# turns the picture solid white on maps whose lighting writes strong
+# emission behind the screen, even though the video never writes alpha.
+assert 'material->SetInt("_SrcAlpha", sourceAlpha)' in screen_surface_source
+assert 'material->SetInt("_DestAlpha", destinationAlpha)' in \
+    screen_surface_source
+assert 'ConfigureVideoBlend(material, 1, 0, 0, 0, true, 2000)' in \
+    screen_surface_source
+assert 'ConfigureVideoBlend(material, 5, 10, 0, 10, false, 3000)' in \
+    screen_surface_source
+assert 'ConfigureVideoBlend(material, 4, 1, 0, 10, false, 3000)' in \
+    screen_surface_source
+# Cinema soft-additive blending is applied only when the map file sets
+# "colorBlending": true explicitly. Inferring it from other mapper
+# presentation fields gave every screen-placing map (including the mod's
+# own showcase) see-through additive screens that ignored the player's
+# opacity settings.
+assert 'config.colorBlending.value_or(false)' in screen_surface_source
+assert 'config.colorBlending.value_or(\n' not in screen_surface_source
 assert 'UnityEngine.AssetBundle::LoadFromMemory_Internal' in screen_surface_source
 assert 'assets/bigscreen_video_shader' in cmake
 assert '--output-target elf64-aarch64' in cmake
