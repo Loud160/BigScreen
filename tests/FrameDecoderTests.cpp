@@ -121,9 +121,10 @@ namespace {
             decoder.Recycle(std::move(restoredFrame));
         }
 
-        // Cinema's oval radius zero must create a real ellipse. Check both
-        // RGB and alpha because mapper-authored Cinema screens commonly use
-        // additive blending, where clearing alpha alone does not hide RGB.
+        // Cinema's oval radius zero must create a real ellipse. The runtime
+        // material consumes decoded alpha, so the vignette must clear alpha
+        // without also forcing the hidden RGB texels to black. Keeping RGB
+        // intact avoids the black rectangular fringe seen on Quest.
         BigScreen::FrameVisualEffects ovalVignette;
         ovalVignette.enabled = true;
         ovalVignette.vignetteEnabled = true;
@@ -140,11 +141,8 @@ namespace {
             const auto corner = static_cast<std::size_t>(0);
             const auto center = (static_cast<std::size_t>(ovalFrame.height / 2) *
                 ovalFrame.width + ovalFrame.width / 2) * 4;
-            Expect(ovalFrame.rgba[corner] == 0 &&
-                   ovalFrame.rgba[corner + 1] == 0 &&
-                   ovalFrame.rgba[corner + 2] == 0 &&
-                   ovalFrame.rgba[corner + 3] == 0,
-                   "oval vignette should remove corner RGB and alpha");
+            Expect(ovalFrame.rgba[corner + 3] == 0,
+                   "oval vignette should clear corner alpha");
             Expect(ovalFrame.rgba[center + 3] > 240,
                    "oval vignette should preserve the center");
             decoder.Recycle(std::move(ovalFrame));
@@ -167,11 +165,8 @@ namespace {
             const auto center =
                 (static_cast<std::size_t>(rectangularFrame.height / 2) *
                  rectangularFrame.width + rectangularFrame.width / 2) * 4;
-            Expect(rectangularFrame.rgba[corner] == 0 &&
-                   rectangularFrame.rgba[corner + 1] == 0 &&
-                   rectangularFrame.rgba[corner + 2] == 0 &&
-                   rectangularFrame.rgba[corner + 3] == 0,
-                   "rectangular vignette should remove the outer border");
+            Expect(rectangularFrame.rgba[corner + 3] == 0,
+                   "rectangular vignette should clear the outer-border alpha");
             Expect(rectangularFrame.rgba[center + 3] > 240,
                    "rectangular vignette should preserve the center");
             decoder.Recycle(std::move(rectangularFrame));
