@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.9 — YouTube recovery and screen-presentation safeguards
+
+- Replaced the broken yt-dlp 2026.07.04 Android-VR download path with pinned
+  nightly 2026.08.18.122307, explicitly excluded the `android_vr` extractor
+  client from both metadata probes and transfers, and added MPEG-TS demuxing to
+  both private FFmpeg runtimes. This allows yt-dlp to use the upstream-fixed
+  VISIONOS/HLS path without turning a successful fragmented download into an
+  unreadable video. A provably older dynamically installed yt-dlp package is
+  retired on QMOD upgrade so it cannot mask the repaired shipped baseline.
+- Disabled the unsuccessful Cinema bloom experiment without deleting it. The
+  renderer, camera hook, soft-additive path, and Native Bloom/Cinema Blur UI
+  blocks remain in source under `#if 0`, while the Embedded Video Shader toggle
+  remains available. Mapper `bloom` and `colorBlending` values no longer affect
+  runtime presentation. Both active material paths now use a fixed zero
+  bloom-emission value, and the UI path attenuates emission using actual video
+  opacity/vignette coverage.
+- Fixed the first decoded frame after lead-in overwriting the selected shader's
+  material alpha. That state error could leave YY.exe solid white until moving
+  a bloom slider forced a presentation rebuild.
+- Kept the showcase's unused canvas transparent so its independently cropped,
+  zoomed, and curved video meshes do not expose oversized backing panels under
+  Beat Saber's bloom. Restored the full-size Back to Song List button while
+  retaining metadata refresh as a compact adjacent action.
+- Fixed leaving a mapper/Chroma-positioned library preview retaining that map's
+  screen coordinates on the neutral settings preview. Returning to the song
+  list now reapplies the selected user layout immediately.
+
 - Reworked the Cinema-style frame glow as a deliberate separate pre-pass
   (`CinemaBloomRenderer`, ported from PC Cinema's CustomBloomPrePass). The
   visible screen clears the game's bloom-emission weight, while a dedicated

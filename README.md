@@ -75,7 +75,7 @@ the copyrighted song is not bundled in the QMOD.
 
 | Source | Workflow |
 |---|---|
-| **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, `video.json`, or playlist `customData.cinema`. Media/timing fields and a substantial subset of PC Cinema presentation fields are implemented, including the mapper `bloom` glow intensity. The new presentation path remains under Quest testing. A URL-only map receives a Cinema-style download control on song selection. |
+| **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, `video.json`, or playlist `customData.cinema`. Media/timing, geometry, color correction, vignette, and other supported presentation fields are read; map-driven bloom and soft-additive blending are currently ignored for stability. A URL-only map receives a Cinema-style download control on song selection. |
 | **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL, verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
 | **Local Quest storage** | Browse readable shared-storage folders and assign a compatible MP4 or WebM without renaming or copying it. Custom and WIP maps begin in their map folder; built-in songs begin in Big Screen's Video Import folder. |
 
@@ -365,34 +365,26 @@ Unity's `UI/Default` shader with RGB-only picture writes, and an embedded
 can be compiled.
 
 Off selects Unity's `UI/Default` shader with RGB-only picture writes. On selects
-the embedded `BigScreen/Video` shader, which provides explicit alpha blending,
-depth writes, and Cinema soft-additive blending. If the requested shader cannot
+the embedded `BigScreen/Video` shader, which provides explicit alpha blending
+and depth writes. If the requested shader cannot
 be loaded, the implementation follows a documented fallback ladder and records
 the selected tier in the log. These source-level checks establish how the two
 paths are wired; their complete current behavior with Bloom on and off still
 requires the on-device matrix in
 [Current development checkpoint](docs/KNOWN_ISSUES.md).
 
-Why the implementation separates the visible screen from Bloom: Beat Saber's bloom composite reads
+Beat Saber's bloom composite reads
 the framebuffer's **alpha channel as a per-pixel emission weight**. A shader
 that writes opaque alpha over the picture makes the game bloom the video into
 a solid white rectangle. The embedded shader can clear that emission weight
 through its separate alpha blend equation. `UI/Default` cannot, so its visible
 RGB pass is followed by an invisible alpha-only guard using the embedded
-shader; the guard changes no picture pixels. Cinema glow is then captured
-through a dedicated mono-safe Unity material that samples the same live texture
-and tint, independent of the selected visible material. This prevents the
-stereo embedded pass from being reused in a mono bloom temporary and keeps the
-glow source separate from the main framebuffer-alpha cleanup. These are
-implementation guarantees; the combined result still requires the
-Bloom-on/Bloom-off headset matrix.
-
-Cinema's soft-additive picture blending (`colorBlending`) is applied only
-when the map file explicitly sets it to `true`. It is never inferred from
-other mapper presentation fields: that inference gave every screen-placing
-map — including the bundled showcase — see-through additive screens with no
-solid body, overriding the player's opacity settings. An absent field means
-the player's own presentation settings win.
+shader; the guard changes no picture pixels and uses the picture's actual
+opacity/vignette coverage. Big Screen's experimental Cinema bloom pre-pass and
+its two diagnostic sliders remain preserved in source but are compiled out.
+Mapper `bloom` and `colorBlending` values therefore do not affect the active
+screen. The Embedded Video Shader toggle remains available for comparing the
+two visible-material paths.
 
 </details>
 

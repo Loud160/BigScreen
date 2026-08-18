@@ -93,6 +93,8 @@ for script in (download_script, probe_script, updater_script):
 assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in download_script
 assert "raise KeyboardInterrupt('Video URL check cancelled')" in probe_script
 assert "raise KeyboardInterrupt('yt-dlp update cancelled')" in updater_script
+assert "def version_key(value):" in updater_script
+assert "latest_key <= current_key" in updater_script
 assert updater_script.count("cancelled()") >= 4
 assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in map_package_script
 assert map_package_script.count("cancelled()") >= 4
@@ -149,11 +151,15 @@ for option in (
 ):
     assert option in download_script
 
-# Quest downloads use a deterministic client that does not currently require
-# a Google Video Server PO token. A mid-transfer 403 on a resumable `.part`
-# file gets exactly one clean retry rather than leaving every future attempt
-# stuck on the same rejected byte range.
-assert "'player_client': ['android_vr']" in download_script
+# Android VR media URLs began requiring a Google Video Server PO token in
+# August 2026. Both the probe and transfer must use yt-dlp's current default
+# client selection while explicitly excluding that broken client. A remaining
+# mid-transfer 403 on a resumable `.part` file still receives one clean retry.
+client_policy = "'player_client': ['default', '-android_vr']"
+assert download_script.count(client_policy) == 1
+assert probe_script.count(client_policy) == 1
+assert "'player_client': ['android_vr']" not in download_script
+assert "'player_client': ['android_vr']" not in probe_script
 assert "part_path = job['finalPath'] + '.part'" in download_script
 assert "partial_bytes <= 0" in download_script
 assert "os.remove(part_path)" in download_script

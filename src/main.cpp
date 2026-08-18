@@ -16,7 +16,12 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
+// BLOOM EXPERIMENT DISABLED (2026-08-18): the implementation and hook remain
+// in source below under #if 0 so they can be revisited without reconstructing
+// the experiment. Video playback currently ignores mapper-driven bloom.
+#if 0
 #include "BigScreen/CinemaBloomRenderer.hpp"
+#endif
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
 #include "BigScreen/PlaybackSession.hpp"
@@ -1003,6 +1008,9 @@ namespace {
                il2cpp_utils::try_cast<GlobalNamespace::FxBeatmapEventData>(eventData).has_value();
     }
 
+    // BLOOM EXPERIMENT DISABLED (2026-08-18): retain the complete hook but do
+    // not intercept Beat Saber's bloom pre-pass in a release build.
+#if 0
     MAKE_HOOK_MATCH(
         BloomPrePass_OnPreRender,
         &GlobalNamespace::BloomPrePass::OnPreRender,
@@ -1031,6 +1039,7 @@ namespace {
                 camera, self);
         }
     }
+#endif
 
     MAKE_HOOK_MATCH(
         BeatmapCallbacksController_TriggerBeatmapEvent,
@@ -1992,7 +2001,10 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // SIGSEGV whenever a video map exited. Reintroduce this feature only with
     // controls proven visible and a lifecycle that does not use that failed
     // custom-setting hierarchy.
+    // BLOOM EXPERIMENT DISABLED (2026-08-18): see the preserved hook above.
+#if 0
     INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);
+#endif
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

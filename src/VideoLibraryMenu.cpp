@@ -823,22 +823,22 @@ namespace BigScreen {
         editorHeader->set_spacing(0.8f);
         ConfigureLayout(editorHeader, 54.0f, 7.0f, 1.0f);
         backToListButton_ = BSML::Lite::CreateUIButton(
-            editorHeader, "< Back to Song List", {0.0f, 0.0f}, {39.2f, 7.0f}, [this]() { ShowBrowser(); });
-        ConfigureLayout(backToListButton_, 0.0f, 7.0f, 1.0f);
+            editorHeader, "< Back to Song List", {0.0f, 0.0f}, {45.0f, 7.0f}, [this]() { ShowBrowser(); });
+        ConfigureLayout(backToListButton_, 45.0f, 7.0f, 0.0f);
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
         mapperRefreshButton_ = BSML::Lite::CreateUIButton(
             editorHeader,
-            "Refresh",
+            "↻",
             {0.0f, 0.0f},
-            {14.0f, 7.0f},
+            {8.2f, 7.0f},
             [this]()
             {
                 ErrorManager::Instance().Guard(
                     "refreshing mapper video settings",
                     [this]() { RefreshSelectedMapperMetadata(); });
             });
-        ConfigureLayout(mapperRefreshButton_, 14.0f, 7.0f, 0.0f);
-        SetBrightButtonLabel(mapperRefreshButton_, 2.4f);
+        ConfigureLayout(mapperRefreshButton_, 8.2f, 7.0f, 0.0f);
+        SetBrightButtonLabel(mapperRefreshButton_, 3.4f);
         BSML::Lite::AddHoverHint(
             mapperRefreshButton_,
             "Reloads this map's Cinema JSON or playlist metadata from Quest storage. Use this after copying an edited file back to the Quest.");
@@ -2088,9 +2088,7 @@ namespace BigScreen {
         editorVisible_ = false;
         StopPreviewAudio(true);
         if(navigate_) navigate_(false);
-        if(PlaybackSession::Instance().IsLibraryPreviewActive())
-            PlaybackSession::Instance().Stop();
-        ScreenPreview::Instance().ActivateCurrentState();
+        ScreenPreview::Instance().ActivateUserLayout();
         RebuildVisibleRows(true);
     }
 
@@ -4397,7 +4395,7 @@ namespace BigScreen {
         {
             PaperLogger.error("Video decoder teardown failed while leaving the library: {}", error.what());
         }
-        try { ScreenPreview::Instance().ActivateCurrentState(); }
+        try { ScreenPreview::Instance().ActivateUserLayout(); }
         catch(const std::exception& error)
         {
             PaperLogger.error("Could not restore the settings preview: {}", error.what());

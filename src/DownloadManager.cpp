@@ -37,6 +37,63 @@ namespace BigScreen {
         const std::filesystem::path InternalNativeRuntime{
             "/data/user/0/com.beatgames.beatsaber/code_cache/BigScreen"};
 
+        /// Parses yt-dlp's numeric stable/nightly tags (for example
+        /// 2026.07.04 and 2026.08.18.122307). This is intentionally separate
+        /// from Big Screen's semantic-version parser because yt-dlp nightly
+        /// tags have four numeric components rather than SemVer's three.
+        std::optional<std::vector<std::uint64_t>> DownloaderVersionParts(
+            std::string_view text)
+        {
+            std::vector<std::uint64_t> parts;
+            while(!text.empty())
+            {
+                const auto dot = text.find('.');
+                const auto part = text.substr(0, dot);
+                if(part.empty() || !std::all_of(
+                       part.begin(), part.end(), [](unsigned char value) {
+                           return value >= '0' && value <= '9';
+                       }))
+                    return std::nullopt;
+                std::uint64_t value = 0;
+                const auto parsed = std::from_chars(
+                    part.data(), part.data() + part.size(), value);
+                if(parsed.ec != std::errc{} ||
+                   parsed.ptr != part.data() + part.size())
+                    return std::nullopt;
+                parts.push_back(value);
+                if(dot == std::string_view::npos)
+                    break;
+                text.remove_prefix(dot + 1);
+            }
+            return parts.empty()
+                ? std::nullopt
+                : std::optional<std::vector<std::uint64_t>>{std::move(parts)};
+        }
+
+        bool DownloaderVersionIsOlder(
+            std::string_view candidate,
+            std::string_view reference)
+        {
+            const auto candidateParts = DownloaderVersionParts(candidate);
+            const auto referenceParts = DownloaderVersionParts(reference);
+            if(!candidateParts || !referenceParts)
+                return false;
+            const auto count = std::max(
+                candidateParts->size(), referenceParts->size());
+            for(std::size_t index = 0; index < count; ++index)
+            {
+                const auto left = index < candidateParts->size()
+                    ? (*candidateParts)[index]
+                    : 0;
+                const auto right = index < referenceParts->size()
+                    ? (*referenceParts)[index]
+                    : 0;
+                if(left != right)
+                    return left < right;
+            }
+            return false;
+        }
+
         class ScopedPythonGil final {
         public:
             ScopedPythonGil() : state_(PyGILState_Ensure()) {}
@@ -917,11 +974,15 @@ try:
         'retries': 3,
         'fragment_retries': 3,
         'extractor_retries': 3,
-        # Pin the Android VR client so Quest downloads do not silently switch
-        # to a web client whose Google Video Server streams can require a PO
-        # token. QuickJS/EJS handles JavaScript challenges; PO tokens are a
-        # separate mechanism and are not needed by this client today.
-        'extractor_args': {'youtube': {'player_client': ['android_vr']}},
+        # yt-dlp 2026.07.04 selected android_vr by default. YouTube began
+        # requiring a Google Video Server PO token for that client's media
+        # URLs in August 2026, which made otherwise public videos fail with a
+        # mid-transfer HTTP 403. Let the current extractor choose its supported
+        # client set while explicitly excluding android_vr. The pinned nightly
+        # baseline currently selects VISIONOS and can expose fragmented HLS
+        # streams that avoid the rejected Android-VR URL path.
+        'extractor_args': {
+            'youtube': {'player_client': ['default', '-android_vr']}},
     }
     with yt_dlp.YoutubeDL(dict(common, skip_download=True)) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
@@ -1365,7 +1426,11 @@ try:
             'no_warnings': True,
             'noplaylist': True,
             'skip_download': True,
-            'extractor_args': {'youtube': {'player_client': ['android_vr']}}}) as probe:
+            # Keep metadata probing on the same client policy as the eventual
+            # transfer. Otherwise the UI can offer Android-VR-only formats
+            # that the download worker deliberately refuses to use.
+            'extractor_args': {
+                'youtube': {'player_client': ['default', '-android_vr']}}}) as probe:
         info = probe.extract_info(job['sourceUrl'], download=False)
     cancelled()
     video_id = str(info.get('id') or '')
@@ -1444,6 +1509,11 @@ except BaseException as error:
         constexpr const char* UpdaterScript = R"PY(
 import hashlib, json, os, urllib.request, zipfile
 job = json.loads(BIGSCREEN_JOB)
+def version_key(value):
+    try:
+        return tuple(int(part) for part in str(value).split('.'))
+    except (TypeError, ValueError):
+        return ()
 def cancelled():
     if os.path.exists(job['cancelPath']):
         raise KeyboardInterrupt('yt-dlp update cancelled')
@@ -1467,9 +1537,11 @@ try:
     version = str(release.get('tag_name') or '')
     current = job['currentVersion']
     rejected = job.get('rejectedVersion', '')
+    latest_key = version_key(version)
+    current_key = version_key(current)
     if version and version == rejected:
         publish('up_to_date', 'yt-dlp ' + version + ' was rejected on this headset. Big Screen will wait for a newer release.', version=version)
-    elif version == current and not job['install']:
+    elif version == current or (latest_key and current_key and latest_key <= current_key):
         publish('up_to_date', 'yt-dlp ' + current + ' is current', version=version)
     elif not job['install']:
         publish('update_available', 'yt-dlp ' + version + ' is available. Select Install Update to download it.', version=version)
@@ -1689,6 +1761,43 @@ os.replace(temporary, job['destination'])
             return fail(
                 "BS-DL-INIT-104",
                 "Could not configure the embedded certificate authority bundle.");
+        }
+
+        // A dynamically installed package normally takes precedence over the
+        // immutable QMOD payload. The August 2026 QMOD deliberately ships a
+        // newer emergency baseline because yt-dlp 2026.07.04's Android-VR
+        // client now fails public downloads with HTTP 403. Retaining that old
+        // active package after a QMOD upgrade would silently bypass the fix.
+        // Remove only a well-formed, provably older active package; unknown or
+        // newer versions remain eligible for the existing import/rollback
+        // transaction below.
+        if(Utility::IsRegularFile(active))
+        {
+            std::ifstream versionFile(active.string() + ".version");
+            std::string activeVersion;
+            if(versionFile)
+                std::getline(versionFile, activeVersion);
+            if(DownloaderVersionIsOlder(activeVersion, BundledYtDlpVersion))
+            {
+                std::error_code removeError;
+                std::filesystem::remove(active, removeError);
+                if(!removeError)
+                    std::filesystem::remove(
+                        active.string() + ".version", removeError);
+                if(removeError)
+                {
+                    return fail(
+                        "BS-DL-INIT-114",
+                        "Could not replace the obsolete yt-dlp " +
+                            activeVersion + " runtime: " +
+                            removeError.message());
+                }
+                SetCurrentYtDlpVersion(std::string(BundledYtDlpVersion));
+                PaperLogger.info(
+                    "Replaced obsolete active yt-dlp {} with shipped baseline {}",
+                    activeVersion,
+                    BundledYtDlpVersion);
+            }
         }
 
         // Promote only after every fallible native/certificate prerequisite

@@ -335,8 +335,11 @@ namespace BigScreen {
                 config_->opaqueScreenBody = !*config_->mapperTransparency;
             }
             config_->letterboxTransparent =
-                settings.AdvancedOptionsEnabled() &&
-                settings.LetterboxTransparencyEnabled();
+                (config_->mapperTransparency.has_value() &&
+                 *config_->mapperTransparency) ||
+                config_->vignette.has_value() ||
+                (settings.AdvancedOptionsEnabled() &&
+                 settings.LetterboxTransparencyEnabled());
             if(!config_->cinemaCurvatureDegrees)
             {
                 config_->screenCurvature = settings.CurvedScreenEnabled()
@@ -398,8 +401,11 @@ namespace BigScreen {
         if(settings.RespectMapperSettings() && config_->mapperTransparency)
         {
             config_->opaqueScreenBody = !*config_->mapperTransparency;
-            config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
-                settings.LetterboxTransparencyEnabled();
+            config_->letterboxTransparent =
+                *config_->mapperTransparency ||
+                config_->vignette.has_value() ||
+                (settings.AdvancedOptionsEnabled() &&
+                 settings.LetterboxTransparencyEnabled());
             applyUserVideoControls(true);
         }
         else

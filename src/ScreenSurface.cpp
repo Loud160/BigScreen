@@ -15,7 +15,12 @@
 #include <span>
 #include <vector>
 
+// BLOOM EXPERIMENT DISABLED (2026-08-18): implementation is retained under
+// #if 0 in CinemaBloomRenderer.cpp, but the active surface does not register
+// with it.
+#if 0
 #include "BigScreen/CinemaBloomRenderer.hpp"
+#endif
 #include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -328,17 +333,25 @@ namespace BigScreen {
                     "unavailable; using stock unlit shaders that wash out "
                     "under Bloom");
             }
+#if 0
+            // BLOOM EXPERIMENT DISABLED (2026-08-18): never select this stock
+            // fallback while the no-bloom contract is active. It cannot clear
+            // Beat Saber's framebuffer emission channel and may wash the
+            // entire screen white. Preserve the old fallback for later work.
             auto fallback = UnityEngine::Shader::Find(
                 pictureTransparent ? "Unlit/Transparent" : "Unlit/Texture");
             if(!fallback && pictureTransparent)
                 fallback = UnityEngine::Shader::Find("Unlit/Texture");
             return {fallback ? fallback.unsafePtr() : nullptr,
                     VideoShaderFamily::LegacyUnlit};
+#else
+            (void)pictureTransparent;
+            return {nullptr, VideoShaderFamily::LegacyUnlit};
+#endif
         }
 
-        /// One authoritative mapping from the three presentation modes
-        /// (opaque, transparent, Cinema soft-additive) to material state for
-        /// every shader family a video screen can end up with.
+        /// One authoritative mapping from the active presentation modes to
+        /// material state for every shader family a video screen can use.
         void ApplyVideoMaterialMode(
             UnityEngine::Material* material,
             VideoShaderFamily family,
@@ -349,7 +362,18 @@ namespace BigScreen {
         {
             if(!material)
                 return;
+            // BLOOM EXPERIMENT DISABLED (2026-08-18): keep the original
+            // Cinema soft-additive decision in source, but do not allow a
+            // mapper bloom/color-blending request to make the video surface
+            // emissive or see-through. Both shader choices now honor only
+            // authored alpha and the player's video-opacity setting.
+#if 0
             const bool softAdditive = colorBlending && !authoredAlpha;
+#else
+            (void)colorBlending;
+            (void)authoredAlpha;
+            const bool softAdditive = false;
+#endif
 
             if(family == VideoShaderFamily::UiMasked)
             {
@@ -414,20 +438,16 @@ namespace BigScreen {
             {
                 if(family == VideoShaderFamily::BloomSafe)
                 {
-                    // Keep RGB fully opaque while writing the diagnostic
-                    // native-bloom value directly from the same fragment that
-                    // draws the video. The earlier UI alpha-guard experiment
-                    // proved that a second alpha-only renderer is outside the
-                    // bloom capture path on Quest and cannot control this
-                    // value. Separate color/alpha blend equations let the
-                    // tint alpha become a bloom mask without dimming RGB.
+                    // Keep RGB fully opaque while forcing the framebuffer's
+                    // bloom-emission channel to zero in the same fragment that
+                    // draws the video.
                     material->set_color(UnityEngine::Color{
                         1.0f,
                         1.0f,
                         1.0f,
-                        Settings::Instance().NativeBloomLevel()});
-                    // Color: One/Zero. Alpha: One/Zero copies the selected
-                    // 0..1 bloom mask into the framebuffer.
+                        0.0f});
+                    // Color: One/Zero. Alpha: One/Zero explicitly clears the
+                    // bloom-emission channel without changing opaque RGB.
                     ConfigureVideoBlend(material, 1, 0, 1, 0, true, 2000);
                 }
                 else
@@ -446,6 +466,42 @@ namespace BigScreen {
             else
                 material->DisableKeyword("_ALPHABLEND_ON");
             material->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        }
+
+        bool ConfigureNonEmissiveBackground(
+            UnityEngine::Material* material,
+            bool transparent)
+        {
+            if(!material)
+                return false;
+            auto* shader = FindVideoShader();
+            if(!shader)
+                return false;
+
+            material->set_shader(shader);
+            // White texture plus black RGB/zero alpha gives an unambiguous
+            // black fragment whose alpha is controlled here rather than by a
+            // Unity shared texture's implementation-defined alpha.
+            material->set_mainTexture(
+                UnityEngine::Texture2D::get_whiteTexture());
+            material->set_color(UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
+            material->SetInt("_ColorMask", 15);
+            material->SetInt("_Cull", 2);
+            material->DisableKeyword("_ALPHATEST_ON");
+            material->DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            if(transparent)
+            {
+                ConfigureVideoBlend(material, 5, 10, 0, 10, false, 2999);
+                material->EnableKeyword("_ALPHABLEND_ON");
+            }
+            else
+            {
+                // Opaque black RGB and a fixed zero alpha make the backing
+                // block geometry behind it without ever feeding native bloom.
+                ConfigureVideoBlend(material, 1, 0, 1, 0, true, 1999);
+                material->DisableKeyword("_ALPHABLEND_ON");
+            }
+            return true;
         }
 
         float CurveEdgeShape(float u)
@@ -800,6 +856,10 @@ namespace BigScreen {
         // showcase clones are not registered: dozens of animated panels
         // each running two Kawase blurs per camera per frame is not a
         // sustainable Quest cost, and the showcase supplies its own effects.
+        // BLOOM EXPERIMENT DISABLED (2026-08-18): preserve this implementation
+        // for later investigation, but maps must not inject a bloom pre-pass
+        // into either visible video-material path right now.
+#if 0
         mapperBloom_ = config.bloomIntensity;
         if(!sharedTexture)
         {
@@ -811,6 +871,11 @@ namespace BigScreen {
                 true);
             bloomRegistered_ = true;
         }
+#else
+        (void)sharedTexture;
+        mapperBloom_ = 0.0f;
+        bloomRegistered_ = false;
+#endif
 
         // A screen starts hidden so an uninitialized gray/black texture is not
         // exposed during a negative mapper offset or while FFmpeg seeks to the
@@ -1198,9 +1263,7 @@ namespace BigScreen {
            !(leadInActive_ && leadInBlack_))
         {
             backgroundMaterial_->set_color(
-                !opaqueScreenBody_ && letterboxTransparent_
-                    ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
-                    : UnityEngine::Color::get_black());
+                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
         }
 
         // Publish the complete replacement only after mesh creation succeeds.
@@ -1253,6 +1316,9 @@ namespace BigScreen {
         geometryAspectRatio_ = aspectRatio;
         // Live layout edits change the glow footprint without recreating the
         // surface; keep the bloom pre-pass boost in sync with the new size.
+        // BLOOM EXPERIMENT DISABLED (2026-08-18): keep the live glow update
+        // code available in source without executing it.
+#if 0
         mapperBloom_ = config.bloomIntensity;
         if(bloomRegistered_)
         {
@@ -1263,6 +1329,7 @@ namespace BigScreen {
                 screenHeight_,
                 true);
         }
+#endif
 
         // Diagnostics is an overlay inside the lower part of the screen. Its
         // RectTransform is centered on X, so placing the object at the old
@@ -1294,10 +1361,7 @@ namespace BigScreen {
         const bool pictureTransparent = nextOpacity < 0.999f ||
             textureHasAuthoredAlpha_ || colorBlending_;
         const auto videoShader = ResolveVideoShader(pictureTransparent);
-        auto backgroundShader = UnityEngine::Shader::Find(
-            letterboxTransparent ? "Unlit/Transparent" : "Unlit/Texture");
-        if(!backgroundShader && letterboxTransparent)
-            backgroundShader = UnityEngine::Shader::Find("Unlit/Texture");
+        auto* backgroundShader = FindVideoShader();
         if(!videoShader.shader || !backgroundShader)
             return false;
 
@@ -1307,7 +1371,7 @@ namespace BigScreen {
             videoShader.family == VideoShaderFamily::UiMasked;
         material_->set_mainTexture(texture_);
         backgroundMaterial_->set_mainTexture(
-            UnityEngine::Texture2D::get_blackTexture());
+            UnityEngine::Texture2D::get_whiteTexture());
 
         ApplyVideoMaterialMode(
             material_,
@@ -1317,29 +1381,19 @@ namespace BigScreen {
             pictureTransparent,
             nextOpacity);
 
-        if(letterboxTransparent)
+        // UI/Default cannot write the bloom-weight channel itself. Keep its
+        // fixed alpha-clearing companion synchronized with the same texture
+        // and user-selected opacity; there is deliberately no bloom slider.
+        if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
         {
-            backgroundMaterial_->set_color(
-                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
-            backgroundMaterial_->SetInt("_SrcBlend", 5);
-            backgroundMaterial_->SetInt("_DstBlend", 10);
-            backgroundMaterial_->SetInt("_ZWrite", 0);
-            backgroundMaterial_->DisableKeyword("_ALPHATEST_ON");
-            backgroundMaterial_->EnableKeyword("_ALPHABLEND_ON");
-            backgroundMaterial_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
-            backgroundMaterial_->set_renderQueue(2999);
+            alphaGuardMaterial_->set_mainTexture(texture_);
+            alphaGuardMaterial_->set_color(UnityEngine::Color{
+                1.0f, 1.0f, 1.0f, nextOpacity});
         }
-        else
-        {
-            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
-            backgroundMaterial_->SetInt("_SrcBlend", 1);
-            backgroundMaterial_->SetInt("_DstBlend", 0);
-            backgroundMaterial_->SetInt("_ZWrite", 1);
-            backgroundMaterial_->DisableKeyword("_ALPHATEST_ON");
-            backgroundMaterial_->DisableKeyword("_ALPHABLEND_ON");
-            backgroundMaterial_->DisableKeyword("_ALPHAPREMULTIPLY_ON");
-            backgroundMaterial_->set_renderQueue(1999);
-        }
+
+        if(!ConfigureNonEmissiveBackground(
+               backgroundMaterial_, letterboxTransparent))
+            return false;
 
         // Changing layouts during a negative offset must not expose the first
         // decoded frame early. Preserve an explicitly requested black lead-in
@@ -1359,10 +1413,19 @@ namespace BigScreen {
             else
             {
                 material_->set_mainTexture(
-                    UnityEngine::Texture2D::get_blackTexture());
-                material_->set_color(UnityEngine::Color::get_white());
+                    UnityEngine::Texture2D::get_whiteTexture());
+                material_->set_color(
+                    UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
             }
-            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+            if(!ConfigureNonEmissiveBackground(backgroundMaterial_, false))
+                return false;
+            if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
+            {
+                alphaGuardMaterial_->set_mainTexture(
+                    UnityEngine::Texture2D::get_whiteTexture());
+                alphaGuardMaterial_->set_color(
+                    UnityEngine::Color::get_white());
+            }
         }
 
         letterboxTransparent_ = letterboxTransparent;
@@ -1386,39 +1449,16 @@ namespace BigScreen {
         // the decoded image. This lets rotation, zoom, and pan expose either a
         // solid black letterbox or a genuinely transparent opening without
         // modifying a frame on the CPU for every presentation.
-        auto shader = UnityEngine::Shader::Find(
-            letterboxTransparent ? "Unlit/Transparent" : "Unlit/Texture");
-        if(!shader && letterboxTransparent)
-            shader = UnityEngine::Shader::Find("Unlit/Texture");
+        auto* shader = FindVideoShader();
         if(!shader)
             return false;
 
         backgroundMaterial_ = UnityEngine::Material::New_ctor(shader);
         if(!backgroundMaterial_)
             return false;
-        backgroundMaterial_->set_mainTexture(
-            UnityEngine::Texture2D::get_blackTexture());
         letterboxTransparent_ = letterboxTransparent;
-        if(letterboxTransparent)
-        {
-            backgroundMaterial_->set_color(
-                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
-            backgroundMaterial_->SetInt("_SrcBlend", 5);  // SrcAlpha
-            backgroundMaterial_->SetInt("_DstBlend", 10); // OneMinusSrcAlpha
-            backgroundMaterial_->SetInt("_ZWrite", 0);
-            backgroundMaterial_->EnableKeyword("_ALPHABLEND_ON");
-            backgroundMaterial_->set_renderQueue(2999);
-        }
-        else
-        {
-            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
-            backgroundMaterial_->SetInt("_SrcBlend", 1); // One
-            backgroundMaterial_->SetInt("_DstBlend", 0); // Zero
-            backgroundMaterial_->SetInt("_ZWrite", 1);
-            backgroundMaterial_->DisableKeyword("_ALPHABLEND_ON");
-            backgroundMaterial_->set_renderQueue(1999);
-        }
-        return true;
+        return ConfigureNonEmissiveBackground(
+            backgroundMaterial_, letterboxTransparent);
     }
 
     bool ScreenSurface::CreateUiAlphaGuard()
@@ -1429,13 +1469,13 @@ namespace BigScreen {
         auto* shader = FindVideoShader();
         if(!shader)
         {
-            // Keep the UI fallback usable if the embedded bundle is genuinely
-            // unavailable. The loader already records the actionable error;
-            // without the guard only bloom-heavy scenes may wash out.
+            // Do not create a screen that can bloom white. The embedded bundle
+            // is a packaged runtime requirement even when UI/Default draws the
+            // visible picture because this guard enforces zero emission.
             PaperLogger.error(
                 "UI/Default video alpha guard is unavailable because the "
                 "embedded BigScreen/Video shader did not load");
-            return true;
+            return false;
         }
 
         alphaGuardMaterial_ = UnityEngine::Material::New_ctor(shader);
@@ -1444,20 +1484,18 @@ namespace BigScreen {
         if(!alphaGuardMaterial_ || !alphaGuardObject_)
             return false;
 
-        alphaGuardMaterial_->set_mainTexture(
-            UnityEngine::Texture2D::get_whiteTexture());
+        alphaGuardMaterial_->set_mainTexture(texture_);
         alphaGuardMaterial_->set_color(UnityEngine::Color{
             1.0f,
             1.0f,
             1.0f,
-            Settings::Instance().NativeBloomLevel()});
-        // Preserve RGB and replace only framebuffer alpha immediately after
-        // UI/Default. The diagnostic Native Bloom Level therefore controls
-        // Beat Saber's emission mask without intentionally dimming the video.
-        // ColorMask A makes the RGB blend equation irrelevant; One/Zero copies
-        // the requested alpha into the bloom-weight channel.
+            opacity_});
+        // Preserve RGB and attenuate framebuffer alpha only where the video
+        // is visible. Opaque video pixels clear bloom emission; transparent
+        // opacity/vignette pixels retain the corresponding amount behind the
+        // screen. This is fixed behavior and is no longer slider-controlled.
         ConfigureVideoBlend(
-            alphaGuardMaterial_, 0, 1, 1, 0, false, 3001);
+            alphaGuardMaterial_, 0, 1, 0, 10, false, 3001);
         alphaGuardMaterial_->SetInt("_ColorMask", 8); // Alpha only.
 
         alphaGuardObject_->set_layer(videoObject_->get_layer());
@@ -1498,7 +1536,14 @@ namespace BigScreen {
         // get see-through additive screens with no solid body, overriding
         // the player's own opacity settings. When the map does not set the
         // field, the mod's configured presentation wins.
+        // BLOOM EXPERIMENT DISABLED (2026-08-18): retain the parsed Cinema
+        // value for future compatibility work, but do not let it change the
+        // visible material into a soft-additive surface.
+#if 0
         colorBlending_ = config.colorBlending.value_or(false);
+#else
+        colorBlending_ = false;
+#endif
         const bool pictureTransparent = nextOpacity < 0.999f ||
             textureHasAuthoredAlpha_ || colorBlending_;
         const auto videoShader = ResolveVideoShader(pictureTransparent);
@@ -1558,26 +1603,16 @@ namespace BigScreen {
         // sending identical texture/color updates through IL2CPP every frame.
         if(leadInActive_)
         {
-            material_->set_mainTexture(texture_);
-            material_->set_color(
-                UnityEngine::Color{1.0f, 1.0f, 1.0f, opacity_});
-            if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_))
-                backgroundMaterial_->set_color(
-                    !opaqueScreenBody_ && letterboxTransparent_
-                        ? UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f}
-                        : UnityEngine::Color::get_black());
-            if(auto* backgroundRenderer =
-                   gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
-            {
-                backgroundRenderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
-                        opaqueScreenBody_,
-                        letterboxTransparent_,
-                        false,
-                        videoCoversFrame_,
-                        textureHasAuthoredAlpha_));
-            }
+            // Clear the lead-in state before rebuilding presentation. The old
+            // code wrote {1,1,1,opacity} directly here, which replaced the
+            // embedded shader's fixed zero bloom-emission alpha on the first
+            // decoded frame. Bloom-heavy maps consequently turned solid white
+            // until moving a diagnostic slider forced another rebuild.
             leadInActive_ = false;
             leadInBlack_ = false;
+            if(!ApplyPresentation(letterboxTransparent_, opacity_))
+                return false;
+            material_->set_mainTexture(texture_);
         }
 
         // LoadRawTextureData copies into Unity's CPU-side texture buffer. Apply
@@ -1622,14 +1657,22 @@ namespace BigScreen {
         else
         {
             material_->set_mainTexture(
-                UnityEngine::Texture2D::get_blackTexture());
-            material_->set_color(UnityEngine::Color::get_white());
+                UnityEngine::Texture2D::get_whiteTexture());
+            material_->set_color(
+                UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
         }
         // Lead-In Background describes the complete frame, not just the
         // transformed/cropped video polygon. Make the independent letterbox
         // layer opaque until Upload restores its configured transparency.
-        if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_))
-            backgroundMaterial_->set_color(UnityEngine::Color::get_black());
+        if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_) &&
+           !ConfigureNonEmissiveBackground(backgroundMaterial_, false))
+            return;
+        if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
+        {
+            alphaGuardMaterial_->set_mainTexture(
+                UnityEngine::Texture2D::get_whiteTexture());
+            alphaGuardMaterial_->set_color(UnityEngine::Color::get_white());
+        }
         if(auto* backgroundRenderer =
                gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
             backgroundRenderer->set_enabled(true);
@@ -2031,9 +2074,7 @@ namespace BigScreen {
             crackTriangles[triangle + 5] = static_cast<std::int32_t>(vertex + 3);
         }
         crackMesh_ = UnityEngine::Mesh::New_ctor();
-        auto shader = UnityEngine::Shader::Find("Unlit/Transparent");
-        if(!shader)
-            shader = UnityEngine::Shader::Find("Unlit/Texture");
+        auto* shader = FindVideoShader();
         if(!crackMesh_ || !shader)
             return false;
         crackMesh_->set_vertices(dynamicCrackVertices_);
@@ -2055,9 +2096,10 @@ namespace BigScreen {
         crackTexture_->Apply(false, false);
         crackMaterial_->set_mainTexture(crackTexture_);
         crackMaterial_->set_color(UnityEngine::Color::get_white());
-        crackMaterial_->SetInt("_SrcBlend", 5);
-        crackMaterial_->SetInt("_DstBlend", 10);
-        crackMaterial_->SetInt("_ZWrite", 0);
+        // Preserve crack-texture alpha for RGB blending, but force the
+        // framebuffer alpha channel to zero so the overlay cannot bloom.
+        ConfigureVideoBlend(crackMaterial_, 5, 10, 0, 0, false, 3100);
+        crackMaterial_->SetInt("_ColorMask", 15);
         crackMaterial_->SetInt("_Cull", 0);
         crackMaterial_->EnableKeyword("_ALPHABLEND_ON");
         crackMaterial_->set_renderQueue(3100);
@@ -2374,11 +2416,16 @@ namespace BigScreen {
     {
         // Unregister BEFORE the video object is destroyed so the bloom
         // pre-pass never draws a dying surface during the same frame.
+        // BLOOM EXPERIMENT DISABLED (2026-08-18): registration is compiled
+        // out above, but retain the matching cleanup code for restoration.
+#if 0
         if(bloomRegistered_)
         {
             CinemaBloomRenderer::Instance().UnregisterSource(videoObject_);
             bloomRegistered_ = false;
         }
+#endif
+        bloomRegistered_ = false;
         mapperBloom_ = 1.0f;
         DestroyFractureResources();
         DestroyIfAlive(diagnosticsObject_);

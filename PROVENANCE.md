@@ -35,7 +35,10 @@ amalgamated source into Big Screen under its MIT license. The exact release URL
 and SHA-256 are pinned in `scripts/fetch-quickjs-ng.ps1`; none of that upstream
 engine source is represented as original Big Screen code.
 
-The shipped yt-dlp 2026.07.04 zipimport runtime includes yt-dlp-ejs 0.8.0.
+The shipped yt-dlp nightly 2026.08.18.122307 zipimport runtime includes
+yt-dlp-ejs 0.8.0. This pinned upstream nightly temporarily replaces stable
+2026.07.04 because upstream's Android-VR client regression made public media
+downloads fail with HTTP 403.
 `scripts/build-downloader-from-source.ps1` and
 `scripts/build_downloader_runtime.py` provide an independent, hash-pinned
 rebuild from the corresponding upstream source archives. The process rebuilds

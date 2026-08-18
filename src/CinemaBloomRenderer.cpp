@@ -5,6 +5,10 @@
 // Distributed under GPL-3.0-only with additional terms under GPLv3
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
+// BLOOM EXPERIMENT DISABLED (2026-08-18): keep the entire renderer source for
+// future investigation, but compile an empty translation unit. The active
+// runtime does not inject map-authored video bloom into Beat Saber's cameras.
+#if 0
 #include "BigScreen/CinemaBloomRenderer.hpp"
 
 #include <algorithm>
@@ -728,3 +732,4 @@ namespace BigScreen {
             message + "; video playback continued without the PC-style bloom pass");
     }
 }
+#endif

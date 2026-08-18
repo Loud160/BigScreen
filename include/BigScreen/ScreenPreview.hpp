@@ -30,6 +30,11 @@ namespace BigScreen {
         static ScreenPreview& Instance();
 
         void ActivateCurrentState();
+        /// Restores the selected user layout on a neutral screen after leaving
+        /// a mapper-positioned Video Library preview. This deliberately drops
+        /// cached Chroma/Cinema geometry from the preview only; it does not
+        /// alter the map metadata or the user's Respect Mapper Settings choice.
+        void ActivateUserLayout();
         void SetEnabled(bool enabled);
         void Refresh();
         void Suspend();

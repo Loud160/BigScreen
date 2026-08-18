@@ -120,8 +120,14 @@ foreach ($runtime in @(
                 "CONFIG_VP8_MEDIACODEC_DECODER=yes",
                 "CONFIG_VP9_DECODER=yes",
                 "CONFIG_VP9_MEDIACODEC_DECODER=yes",
-                "CONFIG_MATROSKA_DEMUXER=yes")) {
-                if (-not $configText.Contains($required)) {
+                "CONFIG_MATROSKA_DEMUXER=yes",
+                "CONFIG_MPEGTS_DEMUXER=yes")) {
+                # FFmpeg records disabled features as lines such as
+                # !CONFIG_MPEGTS_DEMUXER=yes. A substring check accepts that
+                # negated line and can silently reuse a runtime that lacks the
+                # requested component. Require the complete positive record.
+                if ($configText -notmatch
+                    "(?m)^$([regex]::Escape($required))$") {
                     $ffmpegValid = $false
                     $ffmpegInvalidReason = "the recorded configuration is missing $required"
                     break

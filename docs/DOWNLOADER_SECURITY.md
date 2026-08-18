@@ -1,8 +1,11 @@
 # Downloader update security
 
 Big Screen checks the official `yt-dlp/yt-dlp` GitHub release channel over
-HTTPS. Stable is the default; nightly is opt-in and clearly warned as higher
-risk. The release package is checked against the SHA-256 list published with
+HTTPS. Stable remains the normal update channel and nightly updates are opt-in
+and clearly warned as higher risk. The QMOD temporarily ships pinned official
+nightly 2026.08.18.122307 because upstream identified nightly as the fix for
+stable 2026.07.04's Android-VR HTTP 403 regression. A stable check never offers
+an older package as a downgrade. The release package is checked against the SHA-256 list published with
 that same release, inspected as an archive, checked for the expected module,
 and staged without replacing the working package.
 
@@ -29,7 +32,10 @@ from blocking all future work.
 
 Metadata probing reports only compatible exact resolution tiers. A selected
 tier is pinned into the job rather than delegated to yt-dlp's changing `best`
-policy: H.264/MP4 is required through 1080p and VP9/WebM at 1440p. A replacement
+policy: H.264 is required through 1080p and VP9 at 1440p. Both probing and
+transfer explicitly exclude the `android_vr` client. Current yt-dlp may deliver
+the selected H.264 tier through fragmented HLS, whose concatenated MPEG-TS
+payload is supported directly by Big Screen's private FFmpeg runtimes. A replacement
 downloads to a sibling staging file and is atomically promoted only after the
 transfer completes; the prior assignment is restored if publication or the
 manifest commit fails.

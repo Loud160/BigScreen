@@ -169,6 +169,22 @@ namespace BigScreen {
             Refresh();
     }
 
+    void ScreenPreview::ActivateUserLayout()
+    {
+        // A mapper such as YY.exe may move the live preview surface through
+        // Chroma. PlaybackSession::Stop destroys that surface but deliberately
+        // retains the prepared mapper configuration. Reusing it here places
+        // the settings preview back at the mapper location until another song
+        // happens to rebuild it. Replace only ScreenPreview's cached baseline
+        // with neutral geometry so CreateWorldScreen applies the user's saved
+        // layout immediately on return to the song list.
+        PlaybackSession::Instance().Stop();
+        baseConfig_ = MapVideoConfig{};
+
+        if(Settings::Instance().ModEnabled())
+            Refresh();
+    }
+
     void ScreenPreview::SetEnabled(bool enabled)
     {
         enabled = enabled && Settings::Instance().ModEnabled();

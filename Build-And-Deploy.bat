@@ -35,7 +35,7 @@ echo   * Android NDK r27d for Linux/WSL from dl.google.com
 echo   * FFmpeg 4.4.8 and 9.0.1 source from ffmpeg.org
 echo   * CPython 3.14.7 Android runtime from python.org
 echo   * QuickJS-NG 0.16.1 from its official GitHub release
-echo   * yt-dlp 2026.07.04 with yt-dlp-ejs 0.8.0 from GitHub
+echo   * yt-dlp nightly 2026.08.18.122307 with yt-dlp-ejs 0.8.0 from GitHub
 echo   * certifi 2026.7.22 from Python Package Index
 echo   * Google Android SDK Platform Tools 37.0.0 if ADB is missing
 echo.

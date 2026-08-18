@@ -53,8 +53,17 @@ namespace BigScreen {
         // wave. Provision their reusable mesh at the demonstrated 64-column
         // ceiling up front so enabling the effect never allocates mid-song.
         config.screenSegments = 64;
+        // The showcase deliberately changes picture crop, zoom, and geometry
+        // independently. Keep only the unused canvas transparent; enabling its
+        // full backing mesh creates oversized panels that move independently
+        // of the cropped picture and makes the choreography appear incorrectly
+        // scaled.
         config.letterboxTransparent = true;
-        config.videoOpacity = 0.75f;
+        // Showcase panels overlap by design. The picture itself must remain
+        // fully opaque so a panel behind another panel cannot show through its
+        // black video pixels. Per-cue fades are still applied later through
+        // SetOpacity(state.opacity).
+        config.videoOpacity = 1.0f;
         config.videoRotation = 0.0f;
         config.videoZoom = 1.0f;
         config.videoOffsetX = 0.0f;
@@ -217,7 +226,14 @@ namespace BigScreen {
                             index + 1);
                         return false;
                     }
-                    if(!panels_[index].SetOpacity(state.opacity))
+                    // Showcase panels frequently overlap, pass one another,
+                    // and expose black portions of the source video. Timeline
+                    // opacity values below one made those black pixels reveal
+                    // panels and environment geometry behind them. Keep every
+                    // visible Showcase picture fully opaque; timeline
+                    // visibility still controls entrances/exits, and the glass
+                    // system retains its own crack/shard animation.
+                    if(!panels_[index].SetOpacity(1.0f))
                     {
                         PaperLogger.error(
                             "Unity rejected showcase opacity for panel {}",

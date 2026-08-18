@@ -329,7 +329,7 @@ for launcher_disclosure in (
     "FFmpeg 4.4.8 and 9.0.1",
     "CPython 3.14.7",
     "QuickJS-NG 0.16.1",
-    "yt-dlp 2026.07.04",
+    "yt-dlp nightly 2026.08.18.122307",
     "certifi 2026.7.22",
 ):
     assert launcher_disclosure in build_launcher
@@ -473,7 +473,7 @@ for documented_dependency in (
     "FFmpeg | 9.0.1",
     "CPython Android runtime | 3.14.7",
     "QuickJS-NG amalgamation | 0.16.1",
-    "yt-dlp | 2026.07.04",
+    "yt-dlp | nightly 2026.08.18.122307",
     "certifi | 2026.7.22",
 ):
     assert documented_dependency in dependency_guide
@@ -504,6 +504,7 @@ for required_media_option in (
     "--enable-decoder=vp9",
     "--enable-decoder=vp9_mediacodec",
     "--enable-demuxer=matroska",
+    "--enable-demuxer=mpegts",
 ):
     assert required_media_option in ffmpeg_build
 for required_config_gate in (
@@ -511,6 +512,7 @@ for required_config_gate in (
     "CONFIG_MEDIACODEC",
     "CONFIG_H264_DECODER",
     "CONFIG_H264_MEDIACODEC_DECODER",
+    "CONFIG_MPEGTS_DEMUXER",
 ):
     assert required_config_gate in ffmpeg_build
 for runtime_tag in ("44", "9"):
@@ -563,57 +565,46 @@ assert 'ColorMask [_ColorMask]' in video_shader_source
 assert 'multi_compile _ STEREO_MULTIVIEW_ON STEREO_INSTANCING_ON' in \
     video_shader_source
 assert 'UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO' in video_shader_source
-# The native-bloom diagnostic must be written directly by the embedded
-# shader's video fragment. RGB remains opaque while the independent alpha
-# equation copies the selected 0..1 mask. Transparent and soft-additive modes
-# continue attenuating destination alpha by video coverage.
+# Both selectable picture paths must suppress map-driven bloom without a
+# player-facing diagnostic slider. The embedded path draws opaque RGB while
+# copying a fixed zero into the bloom-emission channel. Transparent/vignette
+# presentation attenuates that channel by actual video coverage.
 assert 'material->SetInt("_SrcAlpha", sourceAlpha)' in screen_surface_source
 assert 'material->SetInt("_DestAlpha", destinationAlpha)' in \
     screen_surface_source
 assert 'ConfigureVideoBlend(material, 5, 10, 0, 10, false, 3000)' in \
     screen_surface_source
-assert 'ConfigureVideoBlend(material, 4, 1, 0, 10, false, 3000)' in \
-    screen_surface_source
-assert 'Settings::Instance().NativeBloomLevel()' in screen_surface_source
 assert 'ConfigureVideoBlend(material, 1, 0, 1, 0, true, 2000)' in \
     screen_surface_source
-# UI/Default can preserve RGB while omitting framebuffer alpha writes, but it
-# cannot independently control alpha already emitted by map lighting. A second
+# UI/Default preserves RGB while omitting framebuffer alpha writes. Its second
 # embedded-shader pass follows the exact video mesh, writes alpha only, and
-# runs immediately after the UI picture. Its diagnostic slider deliberately
-# replaces framebuffer alpha with the selected 0..1 native-bloom level while
-# preserving RGB. The pass must follow geometry and fracture mesh swaps as
-# well as normal creation/destruction.
+# clears/attenuates map emission by the picture's actual opacity or vignette.
+# It is fixed behavior rather than a user-adjustable bloom level.
 assert 'bool ScreenSurface::CreateUiAlphaGuard()' in screen_surface_source
 assert '"Big Screen Video Alpha Guard"' in screen_surface_source
 assert 'alphaGuardMaterial_->SetInt("_ColorMask", 8)' in screen_surface_source
-assert 'Settings::Instance().NativeBloomLevel()' in screen_surface_source
-assert 'alphaGuardMaterial_, 0, 1, 1, 0, false, 3001' in \
+assert 'alphaGuardMaterial_, 0, 1, 0, 10, false, 3001' in \
     screen_surface_source
 assert screen_surface_source.count(
     'alphaGuardFilter->set_sharedMesh(videoMesh_)') >= 1
 assert 'guardFilter->set_sharedMesh(fractureMesh_)' in screen_surface_source
 assert 'DestroyIfAlive(alphaGuardObject_);' in screen_surface_source
 assert 'DestroyIfAlive(alphaGuardMaterial_);' in screen_surface_source
-# Cinema soft-additive blending is applied only when the map file sets
-# "colorBlending": true explicitly. Inferring it from other mapper
-# presentation fields gave every screen-placing map (including the mod's
-# own showcase) see-through additive screens that ignored the player's
-# opacity settings.
+# The parsed Cinema soft-additive flag is retained in a disabled block for
+# future work, but active presentation forces it off so maps cannot make the
+# picture unexpectedly emissive or see-through.
 assert 'config.colorBlending.value_or(false)' in screen_surface_source
-assert 'config.colorBlending.value_or(\n' not in screen_surface_source
-# The Cinema-style frame glow is a separate deliberate pre-pass, not the
-# game's own bloom: the screen clears the game's emission weight, so the
-# ONLY glow the picture can produce is CinemaBloomRenderer drawing the
-# video into a linear HDR temporary, blurring it with the game's Kawase
-# renderer (shared-prefix double blur, NOT the convenience DoubleBlur,
-# which saturates white on Quest), and additively blitting into the bloom
-# pre-pass texture. The mapper's `bloom` field drives its intensity with
-# Cinema's default of 1.0 and 0..2 clamp. Only the primary surface
-# registers; shared showcase clones would each run two blurs per camera
-# per frame.
+assert 'const bool softAdditive = false;' in screen_surface_source
+assert 'colorBlending_ = false;' in screen_surface_source
+# Preserve the complete Cinema bloom experiment in source, but compile it and
+# every runtime hook/registration call out. This is intentionally different
+# from deleting the implementation: it remains available for a later branch
+# without affecting current video presentation.
 cinema_bloom_source = (root / "src/CinemaBloomRenderer.cpp").read_text(
     encoding="utf-8")
+assert 'BLOOM EXPERIMENT DISABLED (2026-08-18)' in cinema_bloom_source
+assert '#if 0' in cinema_bloom_source
+assert cinema_bloom_source.rstrip().endswith('#endif')
 assert 'RGB111110Float' in cinema_bloom_source
 assert 'GetBlurKernel' in cinema_bloom_source
 assert '->DoubleBlur(' not in cinema_bloom_source
@@ -641,6 +632,8 @@ capture_block = cinema_bloom_source.split(
 assert 'if(!material->SetPass(0))' not in capture_block
 assert '"SmoothCamera"' in cinema_bloom_source
 assert 'INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);' in main_source
+assert '#if 0\n    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);\n#endif' \
+    in main_source
 bloom_hook = main_source.split('BloomPrePass_OnPreRender,', 1)[1]
 assert bloom_hook.index('BloomPrePass_OnPreRender(self);') < \
     bloom_hook.index('OnCameraPreRender(')
@@ -657,6 +650,14 @@ assert 'NumberOr(document, "bloom", 1.0)' in map_video_config_source
 assert 'bloomIntensity = defaults.bloomIntensity;' in map_video_config_source
 assert 'constexpr float BaseFactor = 0.045f;' in core_logic
 assert 'CinemaBloomIntensity' in core_logic
+# The two diagnostic sliders remain recoverable in source but must not be
+# created in the Misc tab. The shader selector is the only visible control.
+disabled_bloom_ui = settings_menu_source.split(
+    'BLOOM EXPERIMENT DISABLED (2026-08-18): retain the diagnostic UI', 1
+)[1].split('#endif', 1)[0]
+assert '"Native Bloom Level"' in disabled_bloom_ui
+assert '"Cinema Blur Level"' in disabled_bloom_ui
+assert '"Embedded Video Shader"' in settings_menu_source
 assert 'UnityEngine.AssetBundle::LoadFromMemory_Internal' in screen_surface_source
 assert 'assets/bigscreen_video_shader' in cmake
 assert '--output-target elf64-aarch64' in cmake

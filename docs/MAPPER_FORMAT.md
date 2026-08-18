@@ -70,31 +70,26 @@ The following picture fields are supported:
 - `colorCorrection`: `brightness`, `contrast`, `saturation`, `exposure`,
   `gamma`, and `hue`, with Cinema's documented ranges;
 - `vignette`: rectangular or elliptical `type`, `radius`, and `softness`;
-- `colorBlending`: Cinema-style soft-additive picture blending, applied only
-  when the map file explicitly sets it to `true`. Unlike PC Cinema, an absent
-  field does NOT enable blending — the player's own presentation settings
-  win, so maps that merely place a screen keep a solid, opaque picture body;
+- `colorBlending`: parsed for compatibility but currently ignored. The
+  experimental Cinema soft-additive path is preserved in source and compiled
+  out so a map cannot unexpectedly make the picture emissive or see-through;
 - `transparency`, which controls Cinema's opaque light-blocking body behind the
   picture. It does not change picture opacity or the player's letterbox option.
 
-PC Cinema's `bloom` field is parsed and drives Big Screen's Cinema-style frame
-glow: the video picture is drawn into a separate pre-pass, blurred with the
-game's own Kawase renderer, and added to Beat Saber's bloom texture, so the
-glow follows the video content exactly as on PC. The default is Cinema's 1.0
-and authored values are clamped to Cinema's 0..2 range; `"bloom": 0` disables
-the glow for that map. This is independent from the game's own bloom, whose
-per-pixel emission weight the embedded screen—or the UI screen's invisible
-alpha-only guard—clears independently from the visible RGB picture. Unknown
-fields are ignored rather than treated as fatal configuration errors. The
-combined visible-screen/glow behavior remains part of the Quest retest matrix.
+PC Cinema's `bloom` field is parsed and retained in the normalized map data but
+currently has no runtime effect. Big Screen's experimental Cinema-style glow
+renderer is preserved under disabled compile blocks rather than deleted. Both
+visible-material paths instead suppress the video's bloom-emission weight so
+bloom-heavy map lighting cannot wash the picture into a solid white rectangle.
+Unknown fields are ignored rather than treated as fatal configuration errors.
 
 Color correction and vignette run on the decoder worker after FFmpeg color
 conversion and container orientation. Vignette pixels outside the authored
 shape have both RGB and alpha cleared, and the independent rectangular backing
 is removed so an ellipse or rounded rectangle does not retain a black box.
 An all-default correction object uses the normal fast path. Additional screens
-reuse the one uploaded video texture. `colorBlending`, opaque-body behavior, and
-authored alpha ultimately depend on the active video material and must be
+reuse the one uploaded video texture. Opaque-body behavior and authored alpha
+ultimately depend on the active video material and must be
 verified with both selectable material paths during the Quest regression pass.
 
 ## Environment behavior

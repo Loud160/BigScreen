@@ -36,7 +36,8 @@ under their own terms. None of those components is relicensed by Big Screen.
   dynamically links two private Android ARM64 runtimes. Their checked configure
   records exclude `--enable-gpl`, `--enable-version3`, and `--enable-nonfree`.
   The builds contain only the documented software/MediaCodec decoders,
-  MP4/MOV/Matroska demuxing, local-file/JNI integration, and frame scaling.
+  MP4/MOV, Matroska/WebM, and MPEG-TS demuxing, local-file/JNI integration,
+  and frame scaling.
   The QMOD includes the LGPL text, exact build configuration, and source-change
   records for both versions.
 - **beatsaber-hook 6.4.2** — MIT License. The QMOD includes the resolved runtime

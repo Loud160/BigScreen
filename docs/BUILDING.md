@@ -137,7 +137,8 @@ source path is also tracked in this repository:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-downloader-from-source.ps1
 ```
 
-The script downloads the pinned yt-dlp 2026.07.04 and yt-dlp-ejs 0.8.0 source
+The script downloads the pinned yt-dlp nightly 2026.08.18.122307 and
+yt-dlp-ejs 0.8.0 source
 archives, verifies their hashes, invokes yt-dlp-ejs's own `hatch_build.py` and
 committed lockfile, checks the resulting solver hashes, and packages yt-dlp's
 Python sources with those solvers. It then compares every archive entry and
@@ -161,7 +162,7 @@ modules and must not appear as direct `DT_NEEDED` entries in
 `libbigscreen.so`. The build script stages them for packaging without placing
 them in QPM's recursively linked input directory.
 
-`scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV and Matroska/WebM demuxing; the local-file protocol; and `libswscale`. It explicitly omits GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container.
+`scripts/build.ps1` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. Set `ANDROID_NDK_ROOT` to a Linux NDK r27d directory when it is not installed at the script's documented default, or run `scripts/install-pinned-ndk.sh` to fetch and hash-check the official r27d archive. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV, Matroska/WebM, and MPEG-TS demuxing; the local-file protocol; and `libswscale`. It explicitly omits GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container. MPEG-TS support accepts the fragmented HLS payload selected by current yt-dlp clients when direct Android-VR streams require an unavailable Google Video Server PO token.
 
 A clean native build can take several minutes. Ninja's final progress item
 combines the main `libbigscreen.so` link, ThinLTO optimization, debug-symbol

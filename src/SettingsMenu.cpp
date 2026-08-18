@@ -667,8 +667,14 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             embeddedVideoShaderToggle_,
-            "Experimental: chooses how the visible video picture is drawn. Off uses the game's UI shader with an invisible alpha guard. On uses Big Screen's embedded shader with explicit alpha blending, depth writes, and Cinema soft-additive blending. Both methods use the same separate Cinema glow pass for maps that request bloom. If a required shader cannot load, Big Screen uses its fallback path and logs the selected method. An active Video Library preview switches immediately; gameplay uses the selection on the next map. Test both methods with Bloom on and off.");
+            "Experimental: chooses how the visible video picture is drawn. Off uses the game's UI shader with an invisible alpha guard. On uses Big Screen's embedded shader with explicit alpha blending and depth writes. Map-driven bloom and soft-additive blending are disabled in both modes. If a required shader cannot load, Big Screen uses its fallback path and logs the selected method. An active Video Library preview switches immediately; gameplay uses the selection on the next map.");
 
+        // BLOOM EXPERIMENT DISABLED (2026-08-18): retain the diagnostic UI
+        // source for later investigation, but do not expose either slider to
+        // players. The Embedded Video Shader toggle above remains available.
+        // Map-authored bloom is ignored by the runtime while this block is
+        // compiled out.
+#if 0
         nativeBloomLevelSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
             "Native Bloom Level",
@@ -713,6 +719,7 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             cinemaBloomLevelSlider_,
             "Experimental diagnostic control for Big Screen's separate Cinema-style Kawase blur. Set it to 0 to remove only Big Screen's added blur while leaving Beat Saber's native bloom level unchanged. The value updates live without restarting the preview; pause on a bright frame for the clearest comparison.");
+#endif
 
         hardwareDecodingToggle_ = BSML::Lite::CreateToggle(
             performanceParent,

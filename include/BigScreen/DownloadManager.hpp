@@ -23,7 +23,10 @@
 #include "BigScreen/VideoLibrary.hpp"
 
 namespace BigScreen {
-    inline constexpr std::string_view BundledYtDlpVersion = "2026.07.04";
+    // This pinned nightly contains yt-dlp's upstream fix for the August 2026
+    // Android-VR HTTP 403 regression. Return to a stable baseline after the
+    // next stable yt-dlp release incorporates that fix.
+    inline constexpr std::string_view BundledYtDlpVersion = "2026.08.18.122307";
     enum class DownloadState {
         Idle,
         Probing,

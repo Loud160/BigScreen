@@ -17,9 +17,10 @@ $ErrorActionPreference = "Stop"
 
 # These pins intentionally mirror fetch-downloader-runtime.ps1. Update them as
 # one reviewed change whenever Big Screen moves to another downloader release.
-$ytDlpVersion = "2026.07.04"
-$ytDlpSourceSha256 = "31c32457d1a573a341bb0929386c624fe47339a5338829e6e9c9454bdfa7397a"
-$ytDlpReleaseSha256 = "495be29ff4d9d4e9be7eabdfef225221e5d5282e77f2f505abc6dca80349f3fd"
+$ytDlpVersion = "2026.08.18.122307"
+$ytDlpSourceSha256 = "e9169887a9863bc635e1d3760f90cb37588dad2111064d454c790aaaa121349a"
+$ytDlpReleaseSha256 = "7c2e017b19c249447445e776913d54bcea81b85b21b51d50ff36b7b8cae956e1"
+$ytDlpRepository = "yt-dlp/yt-dlp-nightly-builds"
 $ejsVersion = "0.8.0"
 $ejsSourceSha256 = "2704dfcac899fcb443d3b80cb8bb6337c5eb98d09ebf0760295d1c58e9461e53"
 $ejsCoreSha256 = "18da6ce0758b416e7ae645084f4f8801f9f9d59d6c477c05eaa0ff94ebd8cc00"
@@ -75,7 +76,7 @@ function Expand-VerifiedTar([string] $Archive, [string] $Destination) {
 }
 
 Get-VerifiedFile `
-    "https://github.com/yt-dlp/yt-dlp/releases/download/$ytDlpVersion/yt-dlp.tar.gz" `
+    "https://github.com/$ytDlpRepository/releases/download/$ytDlpVersion/yt-dlp.tar.gz" `
     $ytDlpArchive `
     $ytDlpSourceSha256
 Get-VerifiedFile `
@@ -83,7 +84,7 @@ Get-VerifiedFile `
     $ejsArchive `
     $ejsSourceSha256
 Get-VerifiedFile `
-    "https://github.com/yt-dlp/yt-dlp/releases/download/$ytDlpVersion/yt-dlp" `
+    "https://github.com/$ytDlpRepository/releases/download/$ytDlpVersion/yt-dlp" `
     $releaseRuntime `
     $ytDlpReleaseSha256
 

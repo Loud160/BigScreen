@@ -221,6 +221,7 @@ cd "${build_root}"
     --enable-decoder=vp9_mediacodec \
     --enable-demuxer=mov \
     --enable-demuxer=matroska \
+    --enable-demuxer=mpegts \
     --enable-parser=h264 \
     --enable-parser=hevc \
     --enable-parser=vp8 \
@@ -261,6 +262,7 @@ for required_option in \
     CONFIG_VP9_MEDIACODEC_DECODER \
     CONFIG_MOV_DEMUXER \
     CONFIG_MATROSKA_DEMUXER \
+    CONFIG_MPEGTS_DEMUXER \
     CONFIG_H264_PARSER \
     CONFIG_HEVC_PARSER \
     CONFIG_VP8_PARSER \
