@@ -207,7 +207,7 @@ namespace BigScreen {
         enum class VideoShaderFamily {
             // Experimental embedded BigScreen/Video material.
             BloomSafe,
-            // Experimental Unity UI/Default path with RGB-only color writes.
+            // Experimental Unity UI/Default picture path with RGB-only writes.
             UiMasked,
             // Stock unlit shaders as the absolute last resort when even
             // UI/Default is missing, which no shipping Unity player should
@@ -412,13 +412,27 @@ namespace BigScreen {
             }
             else
             {
-                material->set_color(UnityEngine::Color::get_white());
                 if(family == VideoShaderFamily::BloomSafe)
-                    // Color: One/Zero. Alpha: Zero/Zero forces the
-                    // bloom-emission weight to zero under the opaque screen.
-                    ConfigureVideoBlend(material, 1, 0, 0, 0, true, 2000);
+                {
+                    // Keep RGB fully opaque while writing the diagnostic
+                    // native-bloom value directly from the same fragment that
+                    // draws the video. The earlier UI alpha-guard experiment
+                    // proved that a second alpha-only renderer is outside the
+                    // bloom capture path on Quest and cannot control this
+                    // value. Separate color/alpha blend equations let the
+                    // tint alpha become a bloom mask without dimming RGB.
+                    material->set_color(UnityEngine::Color{
+                        1.0f,
+                        1.0f,
+                        1.0f,
+                        Settings::Instance().NativeBloomLevel()});
+                    // Color: One/Zero. Alpha: One/Zero copies the selected
+                    // 0..1 bloom mask into the framebuffer.
+                    ConfigureVideoBlend(material, 1, 0, 1, 0, true, 2000);
+                }
                 else
                 {
+                    material->set_color(UnityEngine::Color::get_white());
                     material->SetInt("_SrcBlend", 1); // One
                     material->SetInt("_DstBlend", 0); // Zero
                     material->SetInt("_ZWrite", 1);
@@ -771,11 +785,18 @@ namespace BigScreen {
         videoFilter->set_sharedMesh(videoMesh_);
         videoRenderer->set_material(material_);
 
+        if(!CreateUiAlphaGuard())
+        {
+            Destroy();
+            return false;
+        }
+
         // Cinema-style frame glow: register the primary video surface with
         // the bloom pre-pass so the picture can glow around its frame. This
-        // is deliberate extra rendering, mirroring PC Cinema; the screen's
-        // own material clears the game's bloom-emission weight, so without
-        // this registration the screen produces no glow at all. Shared
+        // is deliberate extra rendering, mirroring PC Cinema. The visible
+        // embedded material, or the UI path's separate alpha guard, prevents
+        // the main framebuffer from treating the picture itself as a bloom
+        // emitter; this registered capture supplies the intended glow. Shared
         // showcase clones are not registered: dozens of animated panels
         // each running two Kawase blurs per camera per frame is not a
         // sustainable Quest cost, and the showcase supplies its own effects.
@@ -1128,7 +1149,11 @@ namespace BigScreen {
 
         auto* filter = gameObject_->GetComponent<UnityEngine::MeshFilter*>();
         auto* videoFilter = videoObject_->GetComponent<UnityEngine::MeshFilter*>();
-        if(!filter || !videoFilter)
+        auto* alphaGuardFilter = alphaGuardObject_
+            ? alphaGuardObject_->GetComponent<UnityEngine::MeshFilter*>()
+            : nullptr;
+        if(!filter || !videoFilter ||
+           (alphaGuardObject_ && !alphaGuardFilter))
             return false;
 
         const float aspectRatio =
@@ -1183,6 +1208,8 @@ namespace BigScreen {
         // operation, preventing the gray flash caused by recreating a screen.
         filter->set_sharedMesh(mesh_);
         videoFilter->set_sharedMesh(videoMesh_);
+        if(alphaGuardFilter)
+            alphaGuardFilter->set_sharedMesh(videoMesh_);
         if(auto* backgroundRenderer =
                gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
         {
@@ -1391,6 +1418,59 @@ namespace BigScreen {
             backgroundMaterial_->DisableKeyword("_ALPHABLEND_ON");
             backgroundMaterial_->set_renderQueue(1999);
         }
+        return true;
+    }
+
+    bool ScreenSurface::CreateUiAlphaGuard()
+    {
+        if(!videoMaterialUiMasked_)
+            return true;
+
+        auto* shader = FindVideoShader();
+        if(!shader)
+        {
+            // Keep the UI fallback usable if the embedded bundle is genuinely
+            // unavailable. The loader already records the actionable error;
+            // without the guard only bloom-heavy scenes may wash out.
+            PaperLogger.error(
+                "UI/Default video alpha guard is unavailable because the "
+                "embedded BigScreen/Video shader did not load");
+            return true;
+        }
+
+        alphaGuardMaterial_ = UnityEngine::Material::New_ctor(shader);
+        alphaGuardObject_ = UnityEngine::GameObject::New_ctor(
+            "Big Screen Video Alpha Guard");
+        if(!alphaGuardMaterial_ || !alphaGuardObject_)
+            return false;
+
+        alphaGuardMaterial_->set_mainTexture(
+            UnityEngine::Texture2D::get_whiteTexture());
+        alphaGuardMaterial_->set_color(UnityEngine::Color{
+            1.0f,
+            1.0f,
+            1.0f,
+            Settings::Instance().NativeBloomLevel()});
+        // Preserve RGB and replace only framebuffer alpha immediately after
+        // UI/Default. The diagnostic Native Bloom Level therefore controls
+        // Beat Saber's emission mask without intentionally dimming the video.
+        // ColorMask A makes the RGB blend equation irrelevant; One/Zero copies
+        // the requested alpha into the bloom-weight channel.
+        ConfigureVideoBlend(
+            alphaGuardMaterial_, 0, 1, 1, 0, false, 3001);
+        alphaGuardMaterial_->SetInt("_ColorMask", 8); // Alpha only.
+
+        alphaGuardObject_->set_layer(videoObject_->get_layer());
+        alphaGuardObject_->get_transform()->SetParent(
+            videoObject_->get_transform(), false);
+        auto* filter =
+            alphaGuardObject_->AddComponent<UnityEngine::MeshFilter*>();
+        auto* renderer =
+            alphaGuardObject_->AddComponent<UnityEngine::MeshRenderer*>();
+        if(!filter || !renderer)
+            return false;
+        filter->set_sharedMesh(videoMesh_);
+        renderer->set_material(alphaGuardMaterial_);
         return true;
     }
 
@@ -1616,6 +1696,8 @@ namespace BigScreen {
             material_->SetInt("_Cull", cullMode);
         if(backgroundMaterial_)
             backgroundMaterial_->SetInt("_Cull", cullMode);
+        if(alphaGuardMaterial_)
+            alphaGuardMaterial_->SetInt("_Cull", cullMode);
     }
 
     bool ScreenSurface::SetDeformation(
@@ -1790,6 +1872,12 @@ namespace BigScreen {
         {
             if(auto* filter = videoObject_->GetComponent<UnityEngine::MeshFilter*>())
                 filter->set_sharedMesh(videoMesh_);
+            if(UnityW<UnityEngine::GameObject>::isAlive(alphaGuardObject_))
+            {
+                if(auto* guardFilter = alphaGuardObject_->GetComponent<
+                       UnityEngine::MeshFilter*>())
+                    guardFilter->set_sharedMesh(videoMesh_);
+            }
         }
         if(UnityW<UnityEngine::Material>::isAlive(material_) &&
            UnityW<UnityEngine::Texture2D>::isAlive(texture_))
@@ -2258,9 +2346,14 @@ namespace BigScreen {
         if(!fractureMeshActive_)
         {
             auto* filter = videoObject_->GetComponent<UnityEngine::MeshFilter*>();
-            if(!filter)
+            auto* guardFilter = alphaGuardObject_
+                ? alphaGuardObject_->GetComponent<UnityEngine::MeshFilter*>()
+                : nullptr;
+            if(!filter || (alphaGuardObject_ && !guardFilter))
                 return false;
             filter->set_sharedMesh(fractureMesh_);
+            if(guardFilter)
+                guardFilter->set_sharedMesh(fractureMesh_);
             fractureMeshActive_ = true;
         }
         if(!UpdateFractureVertices(fracture))
@@ -2293,6 +2386,7 @@ namespace BigScreen {
         // Destroying the GameObject also destroys its MeshFilter and Renderer.
         // Mesh, material, and texture were created as standalone Unity objects,
         // so they are released explicitly when gameplay ends or a level changes.
+        DestroyIfAlive(alphaGuardObject_);
         DestroyIfAlive(videoObject_);
         DestroyIfAlive(gameObject_);
         if(ownsTexture_)
@@ -2300,6 +2394,7 @@ namespace BigScreen {
         else
             texture_ = nullptr;
         DestroyIfAlive(material_);
+        DestroyIfAlive(alphaGuardMaterial_);
         DestroyIfAlive(mesh_);
         DestroyIfAlive(videoMesh_);
         DestroyIfAlive(backgroundMaterial_);

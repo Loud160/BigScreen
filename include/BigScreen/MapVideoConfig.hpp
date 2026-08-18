@@ -103,8 +103,9 @@ namespace BigScreen {
         // Big Screen's Cinema-style bloom pre-pass (the deliberate glow drawn
         // around the frame). Cinema's default is 1.0 and authored values are
         // clamped to 0..2 by CoreLogic::CinemaBloomIntensity. This drives the
-        // separate pre-pass only; the screen surface itself always clears the
-        // game's own bloom-emission weight so the picture can never white out.
+        // separate pre-pass only. The visible embedded shader, or the Unity UI
+        // path's alpha-only guard, independently clears the game's framebuffer
+        // bloom-emission weight without contributing picture glow directly.
         float bloomIntensity = 1.0f;
 
         double offsetSeconds = 0.0;

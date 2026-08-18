@@ -83,9 +83,10 @@ game's own Kawase renderer, and added to Beat Saber's bloom texture, so the
 glow follows the video content exactly as on PC. The default is Cinema's 1.0
 and authored values are clamped to Cinema's 0..2 range; `"bloom": 0` disables
 the glow for that map. This is independent from the game's own bloom, whose
-per-pixel emission weight the screen deliberately clears so the picture can
-never white out. Unknown fields are ignored rather than treated as fatal
-configuration errors.
+per-pixel emission weight the embedded screen—or the UI screen's invisible
+alpha-only guard—clears independently from the visible RGB picture. Unknown
+fields are ignored rather than treated as fatal configuration errors. The
+combined visible-screen/glow behavior remains part of the Quest retest matrix.
 
 Color correction and vignette run on the decoder worker after FFmpeg color
 conversion and container orientation. Vignette pixels outside the authored

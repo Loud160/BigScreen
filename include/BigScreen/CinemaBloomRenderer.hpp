@@ -15,22 +15,26 @@
 #include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 
 namespace UnityEngine { class Camera; }
-namespace GlobalNamespace { class KawaseBlurRendererSO; }
+namespace GlobalNamespace {
+    class BloomPrePass;
+    class KawaseBlurRendererSO;
+}
 
 namespace BigScreen {
     /// Ports PC Cinema's CustomBloomPrePass: after Beat Saber renders its own
-    /// camera-owned bloom target, the registered video screens are drawn with
-    /// the exact material the player sees into a linear HDR temporary, blurred
-    /// with the game's own Kawase renderer, and additively blitted into the
-    /// bloom pre-pass texture. This is the ONLY way the video screen can glow:
-    /// the screen surface itself deliberately clears the framebuffer's
-    /// bloom-emission alpha where video covers it (see ScreenSurface), because
-    /// letting the game's own composite read the screen turns the picture
-    /// solid white instead of producing a frame glow.
+    /// camera-owned bloom target, each registered screen's live texture and
+    /// tint are drawn through a dedicated mono-safe capture material into a
+    /// linear HDR temporary, blurred with the game's own Kawase renderer, and
+    /// additively blitted into the bloom pre-pass texture. The capture material
+    /// is deliberately independent from the visible stereo material. The
+    /// screen surface separately clears the framebuffer's bloom-emission alpha
+    /// where video covers it (see ScreenSurface), preventing the game's normal
+    /// bloom composite from washing the picture out.
     ///
     /// Every method must be called from Unity's main thread. OnCameraPreRender
-    /// is invoked from the Camera.FireOnPreRender hook for every camera; with
-    /// no registered sources it returns after one empty-vector check.
+    /// is invoked immediately after each BloomPrePass.OnPreRender owns and
+    /// finalizes its camera target; with no registered sources it returns
+    /// after one empty-vector check.
     class CinemaBloomRenderer final {
     public:
         static CinemaBloomRenderer& Instance();
@@ -39,8 +43,9 @@ namespace BigScreen {
         CinemaBloomRenderer& operator=(const CinemaBloomRenderer&) = delete;
 
         /// Registers (or refreshes) a video screen object as a bloom source.
-        /// The object's own MeshRenderer material and MeshFilter mesh are
-        /// drawn, so the glow always matches what the player currently sees.
+        /// The object's live MeshRenderer texture/tint and MeshFilter mesh are
+        /// sampled through the capture material so the glow follows the current
+        /// frame without reusing a stereo-only pass in the mono bloom target.
         void RegisterSource(
             UnityEngine::GameObject* videoObject,
             float intensity,
@@ -60,7 +65,9 @@ namespace BigScreen {
         /// Renders every registered source's bloom contribution for this
         /// camera. Never throws: failures are rate-limited into the error
         /// history and playback continues without the glow pass.
-        void OnCameraPreRender(UnityEngine::Camera* camera) noexcept;
+        void OnCameraPreRender(
+            UnityEngine::Camera* camera,
+            GlobalNamespace::BloomPrePass* prePass) noexcept;
 
     private:
         CinemaBloomRenderer() = default;
@@ -71,17 +78,24 @@ namespace BigScreen {
             float width = 1.0f;
             float height = 1.0f;
             bool pcStyle = true;
+            bool successfulCaptureLogged = false;
+            bool pixelSignalLogged = false;
         };
 
         GlobalNamespace::KawaseBlurRendererSO* ResolveBlurRenderer();
         bool EnsureAdditiveMaterial(
             GlobalNamespace::KawaseBlurRendererSO* renderer);
-        void RenderSource(UnityEngine::Camera* camera, Source& source);
+        bool EnsureCaptureMaterial();
+        void RenderSource(
+            UnityEngine::Camera* camera,
+            GlobalNamespace::BloomPrePass* prePass,
+            Source& source);
         void ReportFailure(const char* detail) noexcept;
 
         std::vector<Source> sources_{};
         UnityW<GlobalNamespace::KawaseBlurRendererSO> blurRenderer_ = nullptr;
         UnityW<UnityEngine::Material> additiveMaterial_ = nullptr;
+        UnityW<UnityEngine::Material> captureMaterial_ = nullptr;
         std::chrono::steady_clock::time_point lastFailure_{};
     };
 }

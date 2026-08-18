@@ -237,6 +237,8 @@ namespace BigScreen {
         highFrameRateWarningModal_ = nullptr;
         ffmpeg9Toggle_ = nullptr;
         embeddedVideoShaderToggle_ = nullptr;
+        nativeBloomLevelSlider_ = nullptr;
+        cinemaBloomLevelSlider_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceWarningModal_ = nullptr;
@@ -665,7 +667,52 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             embeddedVideoShaderToggle_,
-            "Chooses how the video screen is drawn. Off uses the game's UI shader with RGB-only writes and does not provide Cinema soft-additive blending. On uses Big Screen's embedded shader with explicit alpha blending, depth writes, and Cinema blending. If the requested shader cannot be loaded, Big Screen uses its fallback path and logs the selected method. An active Video Library preview switches immediately; gameplay uses the selection on the next map. This is an experimental comparison option that requires on-device testing with Bloom on and off.");
+            "Experimental: chooses how the visible video picture is drawn. Off uses the game's UI shader with an invisible alpha guard. On uses Big Screen's embedded shader with explicit alpha blending, depth writes, and Cinema soft-additive blending. Both methods use the same separate Cinema glow pass for maps that request bloom. If a required shader cannot load, Big Screen uses its fallback path and logs the selected method. An active Video Library preview switches immediately; gameplay uses the selection on the next map. Test both methods with Bloom on and off.");
+
+        nativeBloomLevelSlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "Native Bloom Level",
+            0.1f,
+            settings.NativeBloomLevel(),
+            0.0f,
+            1.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetNativeBloomLevel(value);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        nativeBloomLevelSlider_->digits = 1;
+        nativeBloomLevelSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            nativeBloomLevelSlider_,
+            "Experimental diagnostic control for the bloom-emission value written directly by Big Screen's embedded video shader. This is independent from the Cinema blur below. Turn Embedded Video Shader on, then adjust this from 0 to 1 to test whether Beat Saber's native bloom is turning the video surface white. The stock UI shader cannot expose an independent bloom value. An active Video Library preview restarts immediately.");
+
+        cinemaBloomLevelSlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "Cinema Blur Level",
+            0.1f,
+            settings.CinemaBloomLevel(),
+            0.0f,
+            2.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                // CinemaBloomRenderer reads this setting for every rendered frame.
+                // Do not rebuild the preview here: restarting playback changes the
+                // video frame being compared and can make a smooth bloom adjustment
+                // appear to jump abruptly at the high end of the slider.
+                Settings::Instance().SetCinemaBloomLevel(value);
+            });
+        cinemaBloomLevelSlider_->digits = 1;
+        cinemaBloomLevelSlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            cinemaBloomLevelSlider_,
+            "Experimental diagnostic control for Big Screen's separate Cinema-style Kawase blur. Set it to 0 to remove only Big Screen's added blur while leaving Beat Saber's native bloom level unchanged. The value updates live without restarting the preview; pause on a bright frame for the clearest comparison.");
 
         hardwareDecodingToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -2503,6 +2550,10 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             embeddedVideoShaderToggle_,
             settings.EmbeddedVideoShaderEnabled());
+        if(nativeBloomLevelSlider_)
+            nativeBloomLevelSlider_->set_Value(settings.NativeBloomLevel());
+        if(cinemaBloomLevelSlider_)
+            cinemaBloomLevelSlider_->set_Value(settings.CinemaBloomLevel());
         SetToggleWithoutNotification(
             hardwareDecodingToggle_, settings.HardwareDecodingEnabled());
         SetToggleWithoutNotification(
@@ -2803,6 +2854,10 @@ namespace BigScreen {
             ffmpeg9Toggle_->set_interactable(enabled);
         if(embeddedVideoShaderToggle_)
             embeddedVideoShaderToggle_->set_interactable(enabled);
+        if(nativeBloomLevelSlider_)
+            nativeBloomLevelSlider_->set_interactable(enabled);
+        if(cinemaBloomLevelSlider_)
+            cinemaBloomLevelSlider_->set_interactable(enabled);
         if(hardwareDecodingToggle_)
             hardwareDecodingToggle_->set_interactable(enabled);
         if(automaticPerformanceToggle_)

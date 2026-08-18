@@ -8,14 +8,23 @@ Last reviewed: August 18, 2026
 
 ## Video screen and Bloom status
 
-The current code contains two selectable video-material paths and recent fixes
-intended to make them compatible with Quest stereo rendering and Beat Saber's
-Bloom pipeline. This documentation audit did not independently run the current
-build on the headset, so it does not claim that either path currently succeeds
-or fails. The presence of the embedded shader AssetBundle, a successful native
-build, an XR/multiview shader variant, or a logged shader tier proves only that
-the implementation is present and selected. Visual behavior must be established
-by a fresh test matrix with Bloom on and off.
+The current code contains two selectable visible video-material paths, a new
+alpha-only guard for the Unity UI path, and a dedicated mono-safe material for
+capturing the video into Cinema's bloom pre-pass. This arrangement is intended
+to combine the two partial results observed on Quest: a visible embedded-shader
+picture and the glow produced when the Unity material populated the pre-pass.
+The current combined result has not yet been tested on the headset. The presence
+of the AssetBundle, a successful native build, an XR/multiview shader variant,
+or a logged shader tier proves only that the implementation is present and
+selected. Visual behavior must be established by a fresh test matrix with Bloom
+on and off and with both visible-material selections.
+
+The August 18 port also corrects a callback-context difference from PC Cinema:
+the Quest renderer explicitly loads the view matrix returned by Beat Saber's
+bloom renderer before drawing the world-space screen. A successful pass writes
+one diagnostic line naming the visible shader, capture shader, render-target
+size, and calculated boost so a blank capture can be distinguished from a
+material-selection problem in field logs.
 
 ## Cinema compatibility status
 

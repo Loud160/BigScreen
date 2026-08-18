@@ -131,6 +131,8 @@ namespace BigScreen {
         bool EmbeddedVideoShaderEnabled() const {
             return embeddedVideoShaderEnabled_;
         }
+        float NativeBloomLevel() const { return nativeBloomLevel_; }
+        float CinemaBloomLevel() const { return cinemaBloomLevel_; }
         bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
@@ -204,6 +206,8 @@ namespace BigScreen {
         void SetPlaybackFpsLimit(int value);
         void SetUseFfmpeg9(bool value);
         void SetEmbeddedVideoShaderEnabled(bool value);
+        void SetNativeBloomLevel(float value);
+        void SetCinemaBloomLevel(float value);
         void SetHardwareDecodingEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
@@ -274,14 +278,17 @@ namespace BigScreen {
         // New installations use the current bundled runtime. FFmpeg 4.4.8
         // remains available from the menu as a compatibility/A-B option.
         bool useFfmpeg9_ = true;
-        // Selects how the video screen is drawn. OFF (default) uses Unity's
-        // shipped UI/Default shader with an RGB color mask: bloom can never
-        // white the picture out, the screen contributes no glow, and depth
-        // writes plus Cinema soft-additive blending are unavailable. ON uses
-        // Big Screen's embedded full-featured shader; if it fails to load,
-        // the UI/Default method is used automatically. Both methods remain
-        // available side by side through the Misc tab toggle.
+        // Selects how the visible video picture is drawn. OFF (default) uses
+        // Unity's UI/Default shader and an invisible embedded alpha-only guard.
+        // ON uses Big Screen's embedded full-featured shader directly. Both
+        // paths feed mapper bloom through the same mono-safe capture material;
+        // if an embedded resource cannot load, the documented fallback ladder
+        // keeps the UI path usable and records the failure for diagnosis.
         bool embeddedVideoShaderEnabled_ = false;
+        // Diagnostic controls keep Beat Saber's framebuffer-alpha bloom and
+        // Big Screen's Cinema/Kawase contribution independently adjustable.
+        float nativeBloomLevel_ = 1.0f;
+        float cinemaBloomLevel_ = 1.0f;
         // Compatible videos use the Quest's MediaCodec decoder by default.
         // Formats that permit software decoding still fall back safely when
         // MediaCodec cannot open the file.

@@ -126,6 +126,11 @@ namespace BigScreen {
             const MapVideoConfig& config,
             UnityEngine::Texture2D* sharedTexture = nullptr);
         bool CreateBackgroundMaterial(bool letterboxTransparent);
+        /// UI/Default cannot use independent RGB/alpha blend equations. This
+        /// invisible pass follows the video mesh and clears only framebuffer
+        /// alpha after the UI picture is drawn, preventing Beat Saber's bloom
+        /// composite from treating the complete video as an emitter.
+        bool CreateUiAlphaGuard();
         /// Applies picture opacity and letterbox transparency without
         /// replacing the decoded texture or restarting playback.
         bool ApplyPresentation(
@@ -172,6 +177,8 @@ namespace BigScreen {
         UnityEngine::Mesh* videoMesh_ = nullptr;
         UnityEngine::Material* material_ = nullptr;
         UnityEngine::Material* backgroundMaterial_ = nullptr;
+        UnityEngine::GameObject* alphaGuardObject_ = nullptr;
+        UnityEngine::Material* alphaGuardMaterial_ = nullptr;
         UnityEngine::Texture2D* texture_ = nullptr;
         UnityEngine::GameObject* crackObject_ = nullptr;
         UnityEngine::Mesh* crackMesh_ = nullptr;

@@ -137,6 +137,8 @@ namespace BigScreen {
         BSML::ModalView* highFrameRateWarningModal_ = nullptr;
         BSML::ToggleSetting* ffmpeg9Toggle_ = nullptr;
         BSML::ToggleSetting* embeddedVideoShaderToggle_ = nullptr;
+        BSML::SliderSetting* nativeBloomLevelSlider_ = nullptr;
+        BSML::SliderSetting* cinemaBloomLevelSlider_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::ModalView* automaticPerformanceWarningModal_ = nullptr;

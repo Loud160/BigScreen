@@ -554,6 +554,8 @@ assert 'Blend [_SrcColor] [_DestColor], [_SrcAlpha] [_DestAlpha]' in \
     video_shader_source
 assert '_SrcAlpha ("Source Alpha"' in video_shader_source
 assert '_DestAlpha ("Destination Alpha"' in video_shader_source
+assert '_ColorMask ("Color Mask"' in video_shader_source
+assert 'ColorMask [_ColorMask]' in video_shader_source
 # Quest renders single-pass multiview, and the bundle project has no XR
 # configuration, so the stereo variants MUST be requested explicitly in the
 # shader. A mono-only variant binds successfully and then rasterizes nothing
@@ -561,22 +563,38 @@ assert '_DestAlpha ("Destination Alpha"' in video_shader_source
 assert 'multi_compile _ STEREO_MULTIVIEW_ON STEREO_INSTANCING_ON' in \
     video_shader_source
 assert 'UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO' in video_shader_source
-# The game's bloom composite reads framebuffer alpha as an emission
-# weight. The embedded shader must CLEAR that weight where video covers it
-# (Cinema parity): opaque screens force it to zero (alpha Zero/Zero) and
-# transparent or soft-additive screens attenuate it by coverage (alpha
-# Zero/OneMinusSrcAlpha). PRESERVING destination alpha instead (Zero/One)
-# turns the picture solid white on maps whose lighting writes strong
-# emission behind the screen, even though the video never writes alpha.
+# The native-bloom diagnostic must be written directly by the embedded
+# shader's video fragment. RGB remains opaque while the independent alpha
+# equation copies the selected 0..1 mask. Transparent and soft-additive modes
+# continue attenuating destination alpha by video coverage.
 assert 'material->SetInt("_SrcAlpha", sourceAlpha)' in screen_surface_source
 assert 'material->SetInt("_DestAlpha", destinationAlpha)' in \
-    screen_surface_source
-assert 'ConfigureVideoBlend(material, 1, 0, 0, 0, true, 2000)' in \
     screen_surface_source
 assert 'ConfigureVideoBlend(material, 5, 10, 0, 10, false, 3000)' in \
     screen_surface_source
 assert 'ConfigureVideoBlend(material, 4, 1, 0, 10, false, 3000)' in \
     screen_surface_source
+assert 'Settings::Instance().NativeBloomLevel()' in screen_surface_source
+assert 'ConfigureVideoBlend(material, 1, 0, 1, 0, true, 2000)' in \
+    screen_surface_source
+# UI/Default can preserve RGB while omitting framebuffer alpha writes, but it
+# cannot independently control alpha already emitted by map lighting. A second
+# embedded-shader pass follows the exact video mesh, writes alpha only, and
+# runs immediately after the UI picture. Its diagnostic slider deliberately
+# replaces framebuffer alpha with the selected 0..1 native-bloom level while
+# preserving RGB. The pass must follow geometry and fracture mesh swaps as
+# well as normal creation/destruction.
+assert 'bool ScreenSurface::CreateUiAlphaGuard()' in screen_surface_source
+assert '"Big Screen Video Alpha Guard"' in screen_surface_source
+assert 'alphaGuardMaterial_->SetInt("_ColorMask", 8)' in screen_surface_source
+assert 'Settings::Instance().NativeBloomLevel()' in screen_surface_source
+assert 'alphaGuardMaterial_, 0, 1, 1, 0, false, 3001' in \
+    screen_surface_source
+assert screen_surface_source.count(
+    'alphaGuardFilter->set_sharedMesh(videoMesh_)') >= 1
+assert 'guardFilter->set_sharedMesh(fractureMesh_)' in screen_surface_source
+assert 'DestroyIfAlive(alphaGuardObject_);' in screen_surface_source
+assert 'DestroyIfAlive(alphaGuardMaterial_);' in screen_surface_source
 # Cinema soft-additive blending is applied only when the map file sets
 # "colorBlending": true explicitly. Inferring it from other mapper
 # presentation fields gave every screen-placing map (including the mod's
@@ -600,11 +618,33 @@ assert 'RGB111110Float' in cinema_bloom_source
 assert 'GetBlurKernel' in cinema_bloom_source
 assert '->DoubleBlur(' not in cinema_bloom_source
 assert 'SetDataToShaders' in cinema_bloom_source
+# The visible embedded material is a stereo camera pass and cannot reliably
+# rasterize into Cinema's ordinary mono temporary. Bloom capture therefore
+# always uses a dedicated UI/Default material with the live texture and tint;
+# the visible screen still uses whichever method the player selected.
+assert 'bool CinemaBloomRenderer::EnsureCaptureMaterial()' in \
+    cinema_bloom_source
+assert 'Shader::Find("UI/Default")' in cinema_bloom_source
+assert 'capture->set_mainTexture(material->get_mainTexture())' in \
+    cinema_bloom_source
+assert 'const auto visibleTint = material->get_color();' in \
+    cinema_bloom_source
+assert 'visibleTint.b,\n                1.0f});' in cinema_bloom_source
+# Unlike PC Cinema's managed Camera.onPreRender delegate, the native hook does
+# not promise to preserve Unity's current camera model-view GL state after the
+# original callback returns. The port must consume the view matrix it already
+# asks BloomPrePassRendererSO to provide before drawing the world-space mesh.
+assert 'UnityEngine::GL::set_modelview(view);' in cinema_bloom_source
+assert 'if(!capture->SetPass(0))' in cinema_bloom_source
+capture_block = cinema_bloom_source.split(
+    'Capture the visible picture through a dedicated mono-safe', 1)[1]
+assert 'if(!material->SetPass(0))' not in capture_block
 assert '"SmoothCamera"' in cinema_bloom_source
-assert 'INSTALL_HOOK(PaperLogger, Camera_FireOnPreRender);' in main_source
-camera_hook = main_source.split('Camera_FireOnPreRender,', 1)[1]
-assert camera_hook.index('Camera_FireOnPreRender(camera);') < \
-    camera_hook.index('OnCameraPreRender(camera);')
+assert 'INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);' in main_source
+bloom_hook = main_source.split('BloomPrePass_OnPreRender,', 1)[1]
+assert bloom_hook.index('BloomPrePass_OnPreRender(self);') < \
+    bloom_hook.index('OnCameraPreRender(')
+assert 'OnCameraPreRender(\n                camera, self);' in bloom_hook
 assert 'if(!sharedTexture)' in screen_surface_source
 register_block = screen_surface_source.split('if(!sharedTexture)', 1)[1]
 assert 'RegisterSource(' in register_block.split('gameObject_->SetActive', 1)[0]

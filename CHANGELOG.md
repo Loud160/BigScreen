@@ -2,29 +2,36 @@
 
 ## Unreleased
 
-- Restored the Cinema-style frame glow as a deliberate separate pre-pass
+- Reworked the Cinema-style frame glow as a deliberate separate pre-pass
   (`CinemaBloomRenderer`, ported from PC Cinema's CustomBloomPrePass). The
-  screen surface clears the game's bloom-emission weight so the picture can
-  never white out, which also means the game's own bloom can no longer make
-  the screen glow; the pre-pass draws the video with the exact material the
-  player sees into a linear HDR target, blurs it with the game's own Kawase
-  renderer using Cinema's shared-prefix double blur, and adds the result to
-  Beat Saber's bloom texture. The mapper `bloom` field is now parsed and
-  drives the glow intensity (Cinema default 1.0, clamped to 0..2; `0`
-  disables it). Only the primary video surface feeds the pre-pass; shared
+  visible screen clears the game's bloom-emission weight, while a dedicated
+  mono-safe capture material reads the same video texture and tint into a
+  linear HDR target. This separates the two partial results seen on Quest: the
+  Unity UI material populated the bloom pass but could leave the picture white,
+  while the embedded stereo material preserved the picture but did not populate
+  the mono bloom temporary. The pass blurs the independent capture with the
+  game's own Kawase renderer and adds it to Beat Saber's bloom texture. The
+  mapper `bloom` field drives intensity (Cinema default 1.0, clamped to 0..2;
+  `0` disables it). Only the primary video surface feeds the pre-pass; shared
   showcase clone panels do not, keeping the showcase's per-frame cost flat.
+  The Quest port now loads Beat Saber's supplied camera view matrix explicitly
+  before drawing the world-space screen into the glow source. PC Cinema could
+  inherit that state from its managed `Camera.onPreRender` delegate; Big
+  Screen's native hook cannot safely make the same assumption.
 
-- Fixed the video screen turning solid white on maps with bloom-heavy
+- Added framebuffer-alpha protection for maps with bloom-heavy
   lighting (for example YY.exe). The game's bloom composite reads
   framebuffer alpha as a per-pixel emission weight, and the embedded video
   shader was preserving whatever emission the map's lighting had written
   behind the screen; bright video RGB times that preserved weight bloomed
   to white. The embedded shader now clears the weight where video covers
-  it, exactly like Cinema on PC: opaque screens force it to zero,
+  it: opaque embedded screens force it to zero,
   transparent and soft-additive screens attenuate it by coverage. The
-  `UI/Default` method cannot write alpha at all, so it can only preserve
-  the map's emission and may still wash out on such maps; the embedded
-  method is the correct selection for bloom-heavy content.
+  `UI/Default` method cannot use a separate alpha blend equation, so an
+  invisible embedded alpha-only guard now follows its video mesh and clears
+  alpha after the UI picture without changing RGB. Both selectable visible
+  materials therefore use the same bloom-capture and alpha-protection model.
+  The combined result still requires on-device verification.
 - Fixed showcase and other screen-placing maps rendering see-through
   additive screens with no solid body that ignored the player's opacity
   settings. Cinema's soft-additive blending was inferred for any map with

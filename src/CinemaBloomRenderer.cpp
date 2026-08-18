@@ -9,11 +9,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <string>
 
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/Settings.hpp"
 #include "GlobalNamespace/BloomPrePass.hpp"
 #include "GlobalNamespace/BloomPrePassEffectContainerSO.hpp"
 #include "GlobalNamespace/BloomPrePassEffectSO.hpp"
@@ -22,6 +24,7 @@
 #include "GlobalNamespace/KawaseBlurRendererSO.hpp"
 #include "UnityEngine/Camera.hpp"
 #include "UnityEngine/Color.hpp"
+#include "UnityEngine/Color32.hpp"
 #include "UnityEngine/GL.hpp"
 #include "UnityEngine/Graphics.hpp"
 #include "UnityEngine/Material.hpp"
@@ -29,12 +32,16 @@
 #include "UnityEngine/Mesh.hpp"
 #include "UnityEngine/MeshFilter.hpp"
 #include "UnityEngine/MeshRenderer.hpp"
+#include "UnityEngine/Object.hpp"
 #include "UnityEngine/RenderTexture.hpp"
 #include "UnityEngine/RenderTextureDescriptor.hpp"
 #include "UnityEngine/RenderTextureFormat.hpp"
 #include "UnityEngine/RenderTextureReadWrite.hpp"
+#include "UnityEngine/Rect.hpp"
 #include "UnityEngine/Resources.hpp"
 #include "UnityEngine/Shader.hpp"
+#include "UnityEngine/Texture2D.hpp"
+#include "UnityEngine/TextureFormat.hpp"
 #include "UnityEngine/Transform.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "main.hpp"
@@ -238,6 +245,55 @@ namespace BigScreen {
                 GammaCorrect,
                 GlobalNamespace::KawaseBlurRendererSO_WeightsType::None);
         }
+
+        struct PixelSignal final {
+            std::uint8_t maximum = 0;
+            std::uint64_t rgbTotal = 0;
+            std::size_t nonBlackPixels = 0;
+            std::size_t pixelCount = 0;
+        };
+
+        PixelSignal ReadPixelSignal(
+            UnityEngine::RenderTexture* texture,
+            int width,
+            int height)
+        {
+            PixelSignal signal{};
+            if(!texture || width < 1 || height < 1)
+                return signal;
+
+            UnityEngine::RenderTexture::set_active(texture);
+            auto* readback = UnityEngine::Texture2D::New_ctor(
+                width,
+                height,
+                UnityEngine::TextureFormat::RGBA32,
+                false,
+                true);
+            if(!readback)
+                return signal;
+
+            readback->ReadPixels(
+                UnityEngine::Rect(0.0f, 0.0f,
+                                  static_cast<float>(width),
+                                  static_cast<float>(height)),
+                0,
+                0,
+                false);
+            const auto pixels = readback->GetPixels32();
+            signal.pixelCount = pixels.size();
+            for(const auto& pixel : pixels)
+            {
+                const auto maximum = std::max({pixel.r, pixel.g, pixel.b});
+                signal.maximum = std::max(signal.maximum, maximum);
+                signal.rgbTotal += static_cast<std::uint64_t>(pixel.r) +
+                    static_cast<std::uint64_t>(pixel.g) +
+                    static_cast<std::uint64_t>(pixel.b);
+                if(maximum != 0)
+                    ++signal.nonBlackPixels;
+            }
+            UnityEngine::Object::Destroy(readback);
+            return signal;
+        }
     }
 
     CinemaBloomRenderer& CinemaBloomRenderer::Instance()
@@ -338,8 +394,41 @@ namespace BigScreen {
             additiveMaterial_.unsafePtr());
     }
 
+    bool CinemaBloomRenderer::EnsureCaptureMaterial()
+    {
+        if(UnityW<UnityEngine::Material>::isAlive(captureMaterial_.unsafePtr()))
+            return true;
+
+        // The visible screen may use BigScreen/Video's stereo multiview pass.
+        // Reusing that pass while DrawMeshNow targets Cinema's ordinary mono
+        // temporary renders no pixels on Quest. UI/Default is already proven
+        // to render in this callback, so keep one capture-only material and
+        // copy the live texture/tint into it before each source is drawn. This
+        // material never reaches the main camera framebuffer and therefore
+        // cannot reintroduce the UI screen's alpha/bloom conflict.
+        auto shader = UnityEngine::Shader::Find("UI/Default");
+        if(!shader)
+            return false;
+        captureMaterial_ = UnityEngine::Material::New_ctor(shader);
+        if(!UnityW<UnityEngine::Material>::isAlive(
+               captureMaterial_.unsafePtr()))
+            return false;
+
+        auto* material = captureMaterial_.ptr();
+        material->SetInt("_ColorMask", 15); // RGBA in the private source RT.
+        material->SetInt("unity_GUIZTestMode", 4); // LEqual.
+        material->SetInt("_StencilComp", 8); // Always.
+        material->SetInt("_Stencil", 0);
+        material->SetInt("_StencilOp", 0);
+        material->SetInt("_StencilWriteMask", 255);
+        material->SetInt("_StencilReadMask", 255);
+        material->SetInt("_UseUIAlphaClip", 0);
+        return true;
+    }
+
     void CinemaBloomRenderer::OnCameraPreRender(
-        UnityEngine::Camera* camera) noexcept
+        UnityEngine::Camera* camera,
+        GlobalNamespace::BloomPrePass* prePass) noexcept
     {
         try
         {
@@ -350,7 +439,7 @@ namespace BigScreen {
                     return !UnityW<UnityEngine::GameObject>::isAlive(
                         source.videoObject.unsafePtr());
                 });
-            if(!camera || sources_.empty())
+            if(!camera || !prePass || sources_.empty())
                 return;
 
             const std::string cameraName(camera->get_name());
@@ -367,7 +456,7 @@ namespace BigScreen {
                 if(!UnityW<UnityEngine::GameObject>::isAlive(object) ||
                    !object->get_activeInHierarchy())
                     continue;
-                RenderSource(camera, source);
+                RenderSource(camera, prePass, source);
             }
         }
         catch(const std::exception& exception)
@@ -382,6 +471,7 @@ namespace BigScreen {
 
     void CinemaBloomRenderer::RenderSource(
         UnityEngine::Camera* camera,
+        GlobalNamespace::BloomPrePass* prePass,
         Source& source)
     {
         auto* object = source.videoObject.unsafePtr();
@@ -397,9 +487,6 @@ namespace BigScreen {
            !material || !mesh || !transform)
             return;
 
-        auto* prePass = camera->GetComponent<GlobalNamespace::BloomPrePass*>();
-        if(!prePass)
-            return;
         auto* prePassRenderer =
             prePass->__cordl_internal_get__bloomPrepassRenderer().ptr();
         auto* effectContainer =
@@ -412,7 +499,8 @@ namespace BigScreen {
             : nullptr;
         auto* blurRenderer = ResolveBlurRenderer();
         if(!prePassRenderer || !effect || !renderData || !destination ||
-           !blurRenderer || !EnsureAdditiveMaterial(blurRenderer))
+           !blurRenderer || !EnsureAdditiveMaterial(blurRenderer) ||
+           !EnsureCaptureMaterial())
             return;
 
         const int width = effect->get_textureWidth();
@@ -463,12 +551,38 @@ namespace BigScreen {
         UnityEngine::GL::Clear(true, true, UnityEngine::Color::get_black());
         {
             MatrixGuard matrix;
-            // Match Cinema's capture contract: draw the exact material the
-            // player sees into a linear HDR target. Bloom strength belongs in
-            // the blur boost, not a color property that an opaque shader may
-            // ignore.
+            // Capture the visible picture through a dedicated mono-safe
+            // material. The live material remains authoritative for the main
+            // screen, but cannot be reused here: BigScreen/Video's stereo pass
+            // targets the Quest camera and does not rasterize into this mono
+            // temporary. UI/Default samples the same texture and tint, so the
+            // blur remains driven by the displayed frame and authored alpha.
+            auto* capture = captureMaterial_.ptr();
+            capture->set_mainTexture(material->get_mainTexture());
+            const auto visibleTint = material->get_color();
+            // UI/Default premultiplies RGB by tint alpha. The embedded
+            // material deliberately uses tint alpha as an independent native
+            // bloom mask, so copying that alpha here made Native Bloom 0.2
+            // darken Cinema's private source to 20% and quantize most Kawase
+            // results to black. Copy only the visible RGB correction and keep
+            // this off-screen capture fully opaque. The two sliders must be
+            // genuinely independent.
+            capture->set_color(UnityEngine::Color{
+                visibleTint.r,
+                visibleTint.g,
+                visibleTint.b,
+                1.0f});
+            // PC Cinema executes from Camera.onPreRender while Unity's camera
+            // model-view matrix is already current. Big Screen reaches this
+            // code after its native Camera.FireOnPreRender hook returns, so
+            // relying on inherited GL state draws the world-space mesh with a
+            // stale/identity view and commonly places it outside the capture
+            // texture. Beat Saber already supplied the matching view matrix;
+            // load it explicitly so this port is independent of callback GL
+            // state and works for both visible-material selections.
+            UnityEngine::GL::set_modelview(view);
             UnityEngine::GL::LoadProjectionMatrix(projection);
-            if(!material->SetPass(0))
+            if(!capture->SetPass(0))
                 return;
             UnityEngine::Graphics::DrawMeshNow(
                 mesh,
@@ -495,9 +609,25 @@ namespace BigScreen {
             Distance(screenPosition, cameraPosition),
             camera->get_fieldOfView(),
             cameraAngle,
-            source.intensity);
+            source.intensity * Settings::Instance().CinemaBloomLevel());
         if(boost <= 0.0f)
             return;
+
+        if(!source.successfulCaptureLogged)
+        {
+            source.successfulCaptureLogged = true;
+            auto* visibleShader = material->get_shader().ptr();
+            auto* captureShader = captureMaterial_->get_shader().ptr();
+            PaperLogger.info(
+                "Cinema bloom capture reached the blur pass for camera '{}' "
+                "(visible shader '{}', capture shader '{}', {}x{}, boost {:.5f})",
+                camera->get_name(),
+                visibleShader ? visibleShader->get_name() : StringW("<none>"),
+                captureShader ? captureShader->get_name() : StringW("<none>"),
+                width,
+                height,
+                boost);
+        }
 
         if(source.pcStyle)
         {
@@ -524,8 +654,57 @@ namespace BigScreen {
                 boost,
                 BloomDownsample);
         }
-        UnityEngine::Graphics::Blit(
-            blurTexture.Get(), destination, additiveMaterial_.ptr());
+
+        // One readback per registered screen is intentionally diagnostic, not
+        // a playback loop. It tells us whether failure is in mesh capture,
+        // Kawase blur, or the final camera-owned bloom composite. Remove this
+        // probe once the Quest-specific render fault is isolated.
+        if(!source.pixelSignalLogged)
+        {
+            source.pixelSignalLogged = true;
+            const auto captured = ReadPixelSignal(
+                sourceTexture.Get(), width, height);
+            const auto blurred = ReadPixelSignal(
+                blurTexture.Get(),
+                std::max(1, width >> BloomDownsample),
+                std::max(1, height >> BloomDownsample));
+            const auto destinationBefore = ReadPixelSignal(
+                destination,
+                destination->get_width(),
+                destination->get_height());
+            UnityEngine::Graphics::Blit(
+                blurTexture.Get(), destination, additiveMaterial_.ptr());
+            const auto destinationAfter = ReadPixelSignal(
+                destination,
+                destination->get_width(),
+                destination->get_height());
+            PaperLogger.info(
+                "Cinema bloom pixel signal: capture max={} nonblack={}/{} "
+                "rgbTotal={}; blur max={} nonblack={}/{} rgbTotal={}; "
+                "destination before max={} nonblack={}/{} rgbTotal={}; "
+                "after max={} nonblack={}/{} rgbTotal={}",
+                captured.maximum,
+                captured.nonBlackPixels,
+                captured.pixelCount,
+                captured.rgbTotal,
+                blurred.maximum,
+                blurred.nonBlackPixels,
+                blurred.pixelCount,
+                blurred.rgbTotal,
+                destinationBefore.maximum,
+                destinationBefore.nonBlackPixels,
+                destinationBefore.pixelCount,
+                destinationBefore.rgbTotal,
+                destinationAfter.maximum,
+                destinationAfter.nonBlackPixels,
+                destinationAfter.pixelCount,
+                destinationAfter.rgbTotal);
+        }
+        else
+        {
+            UnityEngine::Graphics::Blit(
+                blurTexture.Get(), destination, additiveMaterial_.ptr());
+        }
         GlobalNamespace::BloomPrePassRendererSO::SetDataToShaders(
             stereoEyeOffset,
             textureToScreenRatio,

@@ -320,6 +320,10 @@ namespace BigScreen {
         useFfmpeg9_ = ReadBool(document, "useFfmpeg9", true);
         embeddedVideoShaderEnabled_ = ReadBool(
             document, "embeddedVideoShaderEnabled", false);
+        nativeBloomLevel_ = std::clamp(
+            ReadFloat(document, "nativeBloomLevel", 1.0f), 0.0f, 1.0f);
+        cinemaBloomLevel_ = std::clamp(
+            ReadFloat(document, "cinemaBloomLevel", 1.0f), 0.0f, 2.0f);
         hardwareDecodingEnabled_ = ReadBool(
             document, "hardwareDecodingEnabled", true);
         automaticPerformanceEnabled_ = ReadBool(
@@ -711,6 +715,20 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetNativeBloomLevel(float value)
+    {
+        nativeBloomLevel_ = std::clamp(
+            std::round(value * 10.0f) / 10.0f, 0.0f, 1.0f);
+        Save();
+    }
+
+    void Settings::SetCinemaBloomLevel(float value)
+    {
+        cinemaBloomLevel_ = std::clamp(
+            std::round(value * 10.0f) / 10.0f, 0.0f, 2.0f);
+        Save();
+    }
+
     void Settings::SetAutomaticPerformanceEnabled(bool value)
     {
         automaticPerformanceEnabled_ = value;
@@ -982,6 +1000,8 @@ namespace BigScreen {
             document,
             "embeddedVideoShaderEnabled",
             embeddedVideoShaderEnabled_);
+        Replace(document, "nativeBloomLevel", nativeBloomLevel_);
+        Replace(document, "cinemaBloomLevel", cinemaBloomLevel_);
         Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);

@@ -44,6 +44,7 @@
 #include "GlobalNamespace/BeatmapEventData.hpp"
 #include "GlobalNamespace/BeatmapObjectSpawnController.hpp"
 #include "GlobalNamespace/BloomPrePassLight.hpp"
+#include "GlobalNamespace/BloomPrePass.hpp"
 #include "GlobalNamespace/ColorBoostBeatmapEventData.hpp"
 #include "GlobalNamespace/DirectionalLight.hpp"
 #include "GlobalNamespace/EnvironmentInfoSO.hpp"
@@ -1003,17 +1004,32 @@ namespace {
     }
 
     MAKE_HOOK_MATCH(
-        Camera_FireOnPreRender,
-        &UnityEngine::Camera::FireOnPreRender,
+        BloomPrePass_OnPreRender,
+        &GlobalNamespace::BloomPrePass::OnPreRender,
         void,
-        UnityEngine::Camera* camera)
+        GlobalNamespace::BloomPrePass* self)
     {
-        // Let Beat Saber initialize and render its camera-owned bloom target
-        // first, then add Big Screen's optional Cinema-compatible video pass.
-        // With no registered source this returns immediately, so ordinary
-        // maps and lightweight-bloom mode pay only one empty-vector check.
-        Camera_FireOnPreRender(camera);
-        BigScreen::CinemaBloomRenderer::Instance().OnCameraPreRender(camera);
+        // Inject only after this BloomPrePass has finished rendering and
+        // publishing its camera-owned destination. Camera.FireOnPreRender is
+        // too broad on Quest: the component can subsequently rebuild the
+        // target and discard Big Screen's otherwise valid blurred pixels.
+        BloomPrePass_OnPreRender(self);
+        if(self)
+        {
+            static std::vector<GlobalNamespace::BloomPrePass*> loggedInstances;
+            if(std::find(loggedInstances.begin(), loggedInstances.end(), self) ==
+               loggedInstances.end())
+            {
+                loggedInstances.push_back(self);
+                PaperLogger.info(
+                    "Observed BloomPrePass instance {} with mode {}",
+                    static_cast<void*>(self),
+                    self->__cordl_internal_get__mode().value__);
+            }
+            auto* camera = self->GetComponent<UnityEngine::Camera*>();
+            BigScreen::CinemaBloomRenderer::Instance().OnCameraPreRender(
+                camera, self);
+        }
     }
 
     MAKE_HOOK_MATCH(
@@ -1976,7 +1992,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // SIGSEGV whenever a video map exited. Reintroduce this feature only with
     // controls proven visible and a lifecycle that does not use that failed
     // custom-setting hierarchy.
-    INSTALL_HOOK(PaperLogger, Camera_FireOnPreRender);
+    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);

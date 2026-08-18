@@ -358,13 +358,13 @@ configurations and source transformations are recorded for reproducibility.
 <details>
 <summary><strong>Video shader methods and Beat Saber's Bloom</strong></summary>
 
-The current tree contains two experimental video-material paths: Unity's
-`UI/Default` shader with RGB-only color writes, and an embedded
+The current tree contains two experimental visible video-material paths:
+Unity's `UI/Default` shader with RGB-only picture writes, and an embedded
 `BigScreen/Video` AssetBundle shader. The bundle project is pinned to Unity
 2022.3.33f1 and configures Oculus Android Multiview so required stereo variants
 can be compiled.
 
-Off selects Unity's `UI/Default` shader with RGB-only color writes. On selects
+Off selects Unity's `UI/Default` shader with RGB-only picture writes. On selects
 the embedded `BigScreen/Video` shader, which provides explicit alpha blending,
 depth writes, and Cinema soft-additive blending. If the requested shader cannot
 be loaded, the implementation follows a documented fallback ladder and records
@@ -373,21 +373,19 @@ paths are wired; their complete current behavior with Bloom on and off still
 requires the on-device matrix in
 [Current development checkpoint](docs/KNOWN_ISSUES.md).
 
-Why the two paths treat Bloom differently: Beat Saber's bloom composite reads
+Why the implementation separates the visible screen from Bloom: Beat Saber's bloom composite reads
 the framebuffer's **alpha channel as a per-pixel emission weight**. A shader
 that writes opaque alpha over the picture makes the game bloom the video into
-a solid white rectangle. The `UI/Default` path avoids this by being unable to
-write alpha at all (`_ColorMask = RGB`) — but that also means it can only
-*preserve* whatever emission the map's lighting already wrote behind the
-screen, so bloom-heavy maps (for example YY.exe) can still wash it out. The
-embedded shader's separate alpha blend equation instead actively **clears**
-the emission weight where video covers the screen — Cinema parity: opaque
-screens force it to zero (alpha blend Zero/Zero), transparent and
-soft-additive screens attenuate it by coverage (Zero/OneMinusSrcAlpha) —
-which is why the embedded method is the correct selection for bloom-heavy
-content. Preserving destination alpha (Zero/One) instead of clearing it was
-the cause of the 2026-08-18 white-screen-on-bloom-maps regression; the
-invariant tests pin the clearing blend factors.
+a solid white rectangle. The embedded shader can clear that emission weight
+through its separate alpha blend equation. `UI/Default` cannot, so its visible
+RGB pass is followed by an invisible alpha-only guard using the embedded
+shader; the guard changes no picture pixels. Cinema glow is then captured
+through a dedicated mono-safe Unity material that samples the same live texture
+and tint, independent of the selected visible material. This prevents the
+stereo embedded pass from being reused in a mono bloom temporary and keeps the
+glow source separate from the main framebuffer-alpha cleanup. These are
+implementation guarantees; the combined result still requires the
+Bloom-on/Bloom-off headset matrix.
 
 Cinema's soft-additive picture blending (`colorBlending`) is applied only
 when the map file explicitly sets it to `true`. It is never inferred from

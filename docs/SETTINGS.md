@@ -226,7 +226,7 @@ This is an experimental comparison option. It selects which bundled decoder runt
 
 #### Embedded Video Shader — default: Off
 
-Selects between two video-material paths for the next gameplay session and recreates an active Video Library preview. Off selects Unity's `UI/Default` shader with RGB-only color writes. On selects the embedded `BigScreen/Video` shader, which supports explicit alpha blending, depth writes, and Cinema soft-additive blending. If the requested shader cannot be loaded, Big Screen follows its fallback ladder and records the selected tier. The current behavior of both paths must be confirmed with Bloom on and off during the checkpoint retest; see [Current development checkpoint](KNOWN_ISSUES.md).
+Selects between two visible video-material paths for the next gameplay session and recreates an active Video Library preview. Off selects Unity's `UI/Default` shader for the picture and follows it with an invisible alpha-only guard so map lighting cannot turn the video into a bloom emitter. On selects the embedded `BigScreen/Video` shader, which supports explicit alpha blending, depth writes, and Cinema soft-additive blending. Both selections feed Cinema glow through the same dedicated capture material. If a requested resource cannot be loaded, Big Screen follows its fallback ladder and records the selected tier. The current behavior of both paths must be confirmed with Bloom on and off during the checkpoint retest; see [Current development checkpoint](KNOWN_ISSUES.md).
 
 #### Hardware Video Decoding — default: On
 

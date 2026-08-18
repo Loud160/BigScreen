@@ -17,6 +17,7 @@ Shader "BigScreen/Video"
         [Enum(UnityEngine.Rendering.BlendMode)] _DestAlpha ("Destination Alpha", Float) = 1
         [Enum(Off, 0, On, 1)] _ZWrite ("Depth Write", Float) = 1
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
+        _ColorMask ("Color Mask", Float) = 15
     }
 
     SubShader
@@ -30,7 +31,7 @@ Shader "BigScreen/Video"
             // Big Screen always preserves the destination alpha instead of
             // replacing it with the video's opaque texture alpha.
             Blend [_SrcColor] [_DestColor], [_SrcAlpha] [_DestAlpha]
-            ColorMask RGBA
+            ColorMask [_ColorMask]
             ZWrite [_ZWrite]
             ZTest LEqual
             Cull [_Cull]
