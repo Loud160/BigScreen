@@ -23,10 +23,16 @@ install system applications or elevate itself. Install these tools first:
 | WSL 2 with Ubuntu or compatible Linux | `build-essential curl xz-utils unzip` | Builds the two private LGPL FFmpeg runtimes with Linux-host Android tools. |
 | Android platform-tools/ADB or SideQuest | Any version compatible with the connected Quest | Required only for direct deployment, restart, logs, and device verification. Not required to compile a QMOD. |
 | Git for Windows | Current supported release | Recommended for cloning and updating the repository. A downloaded source archive can also build. |
+| Unity Editor | 2022.3.33f1 exactly | Required only when rebuilding `assets/bigscreen_video_shader` after changing its tracked Unity project inputs. The committed bundle is sufficient for an ordinary clean QMOD build. |
 
 Python 3 is optional but recommended for the Python host/invariant tests. Node
 24 and pnpm 11.16.0 are required only for the independent yt-dlp/yt-dlp-ejs
 source-reproducibility audit; neither is used by a normal Quest build.
+
+The complete small Unity shader project is versioned under
+`tools/video-shader`, including its `Packages`, `ProjectSettings`, and XR asset
+configuration. `Build`, `Library`, `Logs`, `Temp`, IDE files, and `UserSettings`
+are generated locally and intentionally ignored.
 
 Inside Ubuntu/WSL, install the required Linux commands once:
 
@@ -67,13 +73,13 @@ archives are rejected if their committed checksum does not match.
 |---|---:|---|---|---|
 | Windows Android NDK | r27d (`27.3.13750724`) | QPM/Google Android repository | QPM's per-user NDK cache; selected path written to ignored `ndkpath.txt` | QPM resolves/downloads it; bootstrap verifies `source.properties` and the CMake toolchain. Build-only. |
 | Linux Android NDK | r27d (`27.3.13750724`) | `https://dl.google.com/android/repository/android-ndk-r27d-linux.zip` | `~/.cache/bigscreen-toolchains/android-ndk-r27d` inside WSL | Pinned SHA-256 in `install-pinned-ndk.sh`. Build-only. |
-| FFmpeg | 4.4.8 | `https://ffmpeg.org/releases/ffmpeg-4.4.8.tar.xz` | WSL cache plus `extern/ffmpeg-lgpl` outputs | Pinned SHA-256; configured as private LGPL-only decoding/scaling libraries and packaged in the QMOD. |
-| FFmpeg | 9.0.1 | `https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz` | WSL cache plus `extern/ffmpeg-lgpl-9.0.1` outputs | Pinned SHA-256; configured as the comparison LGPL-only runtime and packaged in the QMOD. |
-| CPython Android runtime | 3.14.7 ARM64 | `https://www.python.org/ftp/python/3.14.7/python-3.14.7-aarch64-linux-android.tar.gz` | `extern/downloader` and `build/downloader` | Pinned SHA-256 and required-file validation; runtime libraries and standard library are packaged. |
-| QuickJS-NG amalgamation | 0.16.1 | `https://github.com/quickjs-ng/quickjs/releases/download/v0.16.1/quickjs-amalgam.zip` | `extern/quickjs-ng` | Pinned SHA-256; compiled into Big Screen for yt-dlp's JavaScript challenge solver. |
-| yt-dlp | 2026.07.04 | `https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp` | `extern/downloader` and `build/downloader` | Pinned SHA-256 plus archive-content validation; packaged as the shipped downloader baseline. |
+| FFmpeg | 4.4.8 | `https://ffmpeg.org/releases/ffmpeg-4.4.8.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl` outputs | Pinned SHA-256; configured as private LGPL-only decoding/scaling libraries and packaged in the QMOD. |
+| FFmpeg | 9.0.1 | `https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl-9.0.1` outputs | Pinned SHA-256; configured as the comparison LGPL-only runtime and packaged in the QMOD. |
+| CPython Android runtime | 3.14.7 ARM64 | `https://www.python.org/ftp/python/3.14.7/python-3.14.7-aarch64-linux-android.tar.gz` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 and required-file validation; runtime libraries and standard library are packaged. |
+| QuickJS-NG amalgamation | 0.16.1 | `https://github.com/quickjs-ng/quickjs/releases/download/v0.16.1/quickjs-amalgam.zip` | `.cache/dependencies/quickjs-ng` | Pinned SHA-256; compiled into Big Screen for yt-dlp's JavaScript challenge solver. |
+| yt-dlp | 2026.07.04 | `https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 plus archive-content validation; packaged as the shipped downloader baseline. |
 | yt-dlp-ejs | 0.8.0 | Bundled inside the verified yt-dlp release above | Inside the yt-dlp package | Version and both solver payloads are required before packaging. No separate normal-build download. |
-| certifi | 2026.7.22 | Python Package Index (`files.pythonhosted.org`) | `extern/downloader` and `build/downloader/certifi` | Pinned SHA-256; CA bundle packaged for HTTPS certificate validation. |
+| certifi | 2026.7.22 | Python Package Index (`files.pythonhosted.org`) | `.cache/dependencies/downloader` and `build/downloader/certifi` | Pinned SHA-256; CA bundle packaged for HTTPS certificate validation. |
 | QMOD JSON schema | Commit `eadb8d8d21caa1f8586b61da3c950a2953ebd399` | QuestPatcher.QMod on GitHub | `.cache/qmod-schema-<revision>.json` | Revision-pinned and SHA-256-verified schema reused by PowerShell 7 validation. Build-only. |
 
 The exact SHA-256 values live beside the URLs in:
@@ -133,8 +139,14 @@ the BAT. It can also be run directly before either manual build command.
 
 ## Cache behavior and clean builds
 
-A normal rerun verifies and reuses downloaded inputs. `-clean` removes the
-repository's CMake build output, not the versioned download caches. `-Force`
+A normal rerun verifies and reuses downloaded inputs. Big Screen's portable
+dependency cache lives under `.cache/dependencies` inside the repository so it
+moves with a complete working folder but remains separate from QPM's generated
+`extern/` directory. QPM may replace `extern/` during a restore; it cannot
+delete the private FFmpeg, QuickJS, CPython, yt-dlp, or certifi caches.
+
+`-clean` removes the repository's CMake build output, not the versioned
+download caches. `-Force`
 on an individual fetch script deliberately re-downloads that script's direct
 artifacts and is intended for a reviewed dependency update or cache repair.
 
@@ -144,9 +156,10 @@ while that stamp matches and every required generated header/library remains
 present. Changing the lockfile, deleting the stamp, or removing a required QPM
 input causes the next approved run to restore the package set again.
 
-Deleting ignored `extern/`, `build*`, QPM's NDK cache, or the WSL toolchain
+Deleting ignored `.cache/dependencies`, QPM's NDK cache, or the WSL toolchain
 cache makes the corresponding dependencies missing and causes the next
-approved build to retrieve or rebuild them again.
+approved build to retrieve or rebuild them again. Deleting `extern/` alone
+causes a QPM restore but no longer discards Big Screen's private downloads.
 
 ## Expected upstream build warnings
 

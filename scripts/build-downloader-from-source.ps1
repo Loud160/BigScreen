@@ -26,7 +26,11 @@ $ejsCoreSha256 = "18da6ce0758b416e7ae645084f4f8801f9f9d59d6c477c05eaa0ff94ebd8cc
 $ejsLibrarySha256 = "c55987fe697e5b9ee18830163f7af85327e9bb5c3e674b969d38c8d205eaa577"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$sourceRoot = Join-Path $repositoryRoot "extern/downloader-source"
+& (Join-Path $PSScriptRoot "initialize-dependency-cache.ps1")
+if (-not $?) {
+    throw "Could not initialize Big Screen's portable dependency cache."
+}
+$sourceRoot = Join-Path $repositoryRoot ".cache/dependencies/downloader-source"
 $ytDlpArchive = Join-Path $sourceRoot "yt-dlp-$ytDlpVersion.tar.gz"
 $ejsArchive = Join-Path $sourceRoot "yt-dlp-ejs-$ejsVersion.tar.gz"
 $ytDlpExtractRoot = Join-Path $sourceRoot "yt-dlp-$ytDlpVersion-source"

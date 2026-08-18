@@ -10,6 +10,7 @@
 #include "BigScreen/CoreLogic.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -85,6 +86,18 @@ namespace BigScreen {
                 : std::nullopt;
         }
 
+        std::optional<float> OptionalClampedFloat(
+            const JsonValue& object,
+            std::string_view name,
+            float minimum,
+            float maximum)
+        {
+            const JsonValue* value = Member(object, name);
+            if(!value || !value->IsNumber())
+                return std::nullopt;
+            return std::clamp(value->GetFloat(), minimum, maximum);
+        }
+
         std::optional<std::string> OptionalString(const JsonValue& object, std::string_view name)
         {
             const JsonValue* value = Member(object, name);
@@ -108,6 +121,12 @@ namespace BigScreen {
 
     void MapVideoConfig::ResetPresentationToDefaults()
     {
+        ResetScreenGeometryToDefaults();
+        ResetMapperVisualEffects();
+    }
+
+    void MapVideoConfig::ResetScreenGeometryToDefaults()
+    {
         const MapVideoConfig defaults;
         screenPosition = defaults.screenPosition;
         screenRotation = defaults.screenRotation;
@@ -118,15 +137,31 @@ namespace BigScreen {
         cinemaCurveYAxis = defaults.cinemaCurveYAxis;
         maintainAspectRatioWhenCurved = defaults.maintainAspectRatioWhenCurved;
         screenSegments = defaults.screenSegments;
-        letterboxTransparent = defaults.letterboxTransparent;
-        videoOpacity = defaults.videoOpacity;
         videoRotation = defaults.videoRotation;
         videoZoom = defaults.videoZoom;
         videoOffsetX = defaults.videoOffsetX;
         videoOffsetY = defaults.videoOffsetY;
         videoTilt = defaults.videoTilt;
         stretchVideoToFit = defaults.stretchVideoToFit;
+    }
+
+    void MapVideoConfig::ResetMapperVisualEffects()
+    {
+        const MapVideoConfig defaults;
+        letterboxTransparent = defaults.letterboxTransparent;
+        opaqueScreenBody = defaults.opaqueScreenBody;
+        videoOpacity = defaults.videoOpacity;
         mapperTransparency.reset();
+        colorCorrection.reset();
+        vignette.reset();
+        // An absent colorBlending field means "use Cinema's default" while
+        // an explicit false means "do not use mapper blending." Preserve that
+        // distinction when Respect Mapper Settings is disabled; resetting the
+        // optional entirely would cause ScreenSurface to re-enable Cinema's
+        // soft-additive default merely because the original file contained
+        // some other mapper presentation field.
+        colorBlending = false;
+        additionalScreens.clear();
     }
 
     std::optional<MapVideoConfig> MapVideoConfig::LoadDefinitionFromLevel(
@@ -158,9 +193,33 @@ namespace BigScreen {
         if(metadata.empty())
             return std::nullopt;
 
+        return LoadDefinitionFromFile(levelDirectory, metadata, error);
+    }
+
+    std::optional<MapVideoConfig> MapVideoConfig::LoadDefinitionFromFile(
+        const std::filesystem::path& levelDirectory,
+        const std::filesystem::path& metadata,
+        std::string& error)
+    {
+        error.clear();
+        if(!IsRegularFile(metadata))
+        {
+            error = "The requested map video metadata file does not exist";
+            return std::nullopt;
+        }
+
+        const auto normalizedMetadata = metadata.lexically_normal();
+        const auto normalizedLevel = levelDirectory.lexically_normal();
+        if(!Utility::IsPathInside(normalizedMetadata, normalizedLevel))
+        {
+            error = "The requested map video metadata resolves outside the custom level directory";
+            return std::nullopt;
+        }
+
         constexpr std::uintmax_t MaximumMetadataBytes = 1024 * 1024;
         std::error_code sizeError;
-        const auto metadataSize = std::filesystem::file_size(metadata, sizeError);
+        const auto metadataSize = std::filesystem::file_size(
+            normalizedMetadata, sizeError);
         if(sizeError || metadataSize > MaximumMetadataBytes)
         {
             error = sizeError
@@ -169,10 +228,10 @@ namespace BigScreen {
             return std::nullopt;
         }
 
-        std::ifstream stream(metadata, std::ios::binary);
+        std::ifstream stream(normalizedMetadata, std::ios::binary);
         if(!stream)
         {
-            error = "Could not open " + metadata.string();
+            error = "Could not open " + normalizedMetadata.string();
             return std::nullopt;
         }
 
@@ -183,14 +242,17 @@ namespace BigScreen {
         document.Parse(json.data(), json.size());
         if(document.HasParseError() || !document.IsObject())
         {
-            error = "Invalid JSON in " + metadata.string();
+            error = "Invalid JSON in " + normalizedMetadata.string();
             return std::nullopt;
         }
 
         const auto videoFile = OptionalString(document, "videoFile");
         const auto videoId = OptionalString(document, "videoID");
         const auto videoUrl = OptionalString(document, "videoUrl");
-        if(!videoFile && !videoId && !videoUrl)
+        const bool forceEnvironmentModifications = BoolOr(
+            document, "forceEnvironmentModifications", false);
+        if(!videoFile && !videoId && !videoUrl &&
+           !forceEnvironmentModifications)
         {
             error = "The map video metadata has no videoFile, videoID, or videoUrl";
             return std::nullopt;
@@ -226,7 +288,7 @@ namespace BigScreen {
         }
 
         MapVideoConfig config;
-        config.metadataPath = metadata;
+        config.metadataPath = normalizedMetadata;
         config.declaredVideoPath = resolvedVideo;
         if(!resolvedVideo.empty() && IsRegularFile(resolvedVideo))
             config.videoPath = resolvedVideo;
@@ -237,8 +299,10 @@ namespace BigScreen {
         config.configByMapper = BoolOr(document, "configByMapper", false);
         config.disableDefaultModifications = BoolOr(
             document, "disableDefaultModifications", false);
-        config.forceEnvironmentModifications = BoolOr(
-            document, "forceEnvironmentModifications", false);
+        config.forceEnvironmentModifications = forceEnvironmentModifications;
+        config.allowCustomPlatform = OptionalBool(document, "allowCustomPlatform");
+        config.mergePropGroups = BoolOr(document, "mergePropGroups", false);
+        config.colorBlending = OptionalBool(document, "colorBlending");
         config.offsetSeconds = NumberOr(document, "offset", 0.0) / 1000.0;
         config.playbackRate = std::clamp(NumberOr(document, "playbackSpeed", 1.0), 0.05, 8.0);
         config.declaredDurationSeconds = std::max(0.0, NumberOr(document, "duration", 0.0));
@@ -253,19 +317,77 @@ namespace BigScreen {
            curvature && curvature->IsNumber())
         {
             config.cinemaCurvatureDegrees = std::clamp(
-                curvature->GetFloat(), 0.0f, 360.0f);
+                curvature->GetFloat(), 0.0f, 180.0f);
         }
         config.cinemaCurveYAxis = BoolOr(document, "curveYAxis", false);
         config.screenSegments = std::clamp(
             static_cast<int>(NumberOr(document, "screenSubsurfaces", 32.0)),
             1,
-            512);
+            256);
         config.mapperTransparency = OptionalBool(document, "transparency");
-        config.letterboxTransparent = config.mapperTransparency.value_or(false);
-        config.videoOpacity = config.mapperTransparency.value_or(false)
-            ? 0.75f
-            : 1.0f;
+        config.opaqueScreenBody = config.mapperTransparency.has_value() &&
+            !*config.mapperTransparency;
         config.requestedEnvironment = OptionalString(document, "environmentName");
+
+        if(const auto* correction = Member(document, "colorCorrection");
+           correction && correction->IsObject())
+        {
+            CinemaColorCorrection parsed;
+            parsed.brightness = OptionalClampedFloat(
+                *correction, "brightness", 0.0f, 2.0f).value_or(1.0f);
+            parsed.contrast = OptionalClampedFloat(
+                *correction, "contrast", 0.0f, 5.0f).value_or(1.0f);
+            parsed.saturation = OptionalClampedFloat(
+                *correction, "saturation", 0.0f, 5.0f).value_or(1.0f);
+            parsed.hue = OptionalClampedFloat(
+                *correction, "hue", -360.0f, 360.0f).value_or(0.0f);
+            parsed.exposure = OptionalClampedFloat(
+                *correction, "exposure", 0.0f, 5.0f).value_or(1.0f);
+            parsed.gamma = OptionalClampedFloat(
+                *correction, "gamma", 0.0f, 5.0f).value_or(1.0f);
+            config.colorCorrection = parsed;
+        }
+
+        if(const auto* vignette = Member(document, "vignette");
+           vignette && vignette->IsObject())
+        {
+            CinemaVignette parsed;
+            if(auto type = OptionalString(*vignette, "type"))
+            {
+                std::transform(type->begin(), type->end(), type->begin(),
+                    [](unsigned char value) {
+                        return static_cast<char>(std::tolower(value));
+                    });
+                if(*type == "oval" || *type == "elliptical" || *type == "ellipse")
+                    parsed.type = "elliptical";
+            }
+            parsed.radius = OptionalClampedFloat(
+                *vignette, "radius", 0.0f, 1.0f).value_or(1.0f);
+            parsed.softness = OptionalClampedFloat(
+                *vignette, "softness", 0.0f, 1.0f).value_or(0.005f);
+            config.vignette = parsed;
+        }
+
+        if(const auto* screens = Member(document, "additionalScreens");
+           screens && screens->IsArray())
+        {
+            constexpr rapidjson::SizeType MaximumAdditionalScreens = 32;
+            config.additionalScreens.reserve(
+                std::min(screens->Size(), MaximumAdditionalScreens));
+            rapidjson::SizeType processed = 0;
+            for(const auto& item : screens->GetArray())
+            {
+                if(processed++ >= MaximumAdditionalScreens)
+                    break;
+                if(!item.IsObject())
+                    continue;
+                CinemaAdditionalScreen screen;
+                screen.position = OptionalVector(item, "position");
+                screen.rotation = OptionalVector(item, "rotation");
+                screen.scale = OptionalVector(item, "scale");
+                config.additionalScreens.push_back(std::move(screen));
+            }
+        }
 
         if(const auto* environment = Member(document, "environment");
            environment && environment->IsArray())
@@ -303,7 +425,8 @@ namespace BigScreen {
             Member(document, "screenPosition") ||
             Member(document, "screenRotation") ||
             Member(document, "screenHeight") ||
-            Member(document, "screenCurvature");
+            Member(document, "screenCurvature") ||
+            !config.additionalScreens.empty();
         config.hasMapperEnvironmentPresentation =
             Member(document, "environmentName") ||
             Member(document, "disableDefaultModifications") ||
@@ -315,7 +438,10 @@ namespace BigScreen {
             Member(document, "screenSubsurfaces") ||
             Member(document, "curveYAxis") ||
             Member(document, "transparency") ||
-            config.mapperTransparency.has_value();
+            config.mapperTransparency.has_value() ||
+            config.colorCorrection.has_value() ||
+            config.vignette.has_value() ||
+            config.colorBlending.has_value();
 
         const double stopAt = NumberOr(document, "endVideoAt", 0.0);
         if(stopAt > 0.0)

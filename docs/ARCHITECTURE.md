@@ -116,9 +116,41 @@ allows rotation, zoom, pan, perspective tilt, stretching, and black or fully
 transparent letterboxing without rewriting decoded pixels. Letterbox alpha and
 picture opacity are independent: the background renderer can be removed while
 the decoded picture stays opaque, or the picture can blend over either kind of
-background. Output is scaled before entering the mailbox, reducing CPU memory
-traffic and Unity texture-upload cost. Fully opaque picture/background modes
-write depth; alpha-blended picture or background modes use transparent queues.
+background. Normal playback preserves the selected file's native dimensions;
+only explicitly bounded utility previews may request a smaller decoder output.
+Decoded RGBA frames enter the one-frame mailbox at that selected size. Queue and
+depth behavior depends on the active video material. Both selectable paths are
+included in the current on-device regression matrix; see `KNOWN_ISSUES.md`.
+
+The current Cinema interoperability implementation is normalized by
+`MapVideoConfig` before it reaches
+Unity. Mapper screen ownership and Chroma environment ownership are independent:
+Respect Mapper Settings selects Cinema geometry/effects/environment entries,
+while Allow Chroma Override yields the broader scene only after map-wide Chroma
+detection. Additional Cinema screens are lightweight `ScreenSurface` instances
+that share the primary `Texture2D`; they add geometry/material work but never a
+second decoder or RGBA upload. Color correction and vignette run in the decoder
+worker after swscale and container rotation, with default-valued metadata taking
+the no-processing fast path. The worker factors color correction into cached
+byte-contribution and gamma lookup tables and builds each resolution-specific
+vignette mask only when its settings change; later frames do not repeat the
+original full-picture `pow`, ellipse-distance, or smooth-step calculations.
+Authored vignette alpha removes the independent rectangular backing and requires
+the active video material to consume the generated alpha. Additional Cinema
+screens reuse the primary screen's uploaded video texture without another
+decode or texture upload. The parser/worker paths have host coverage, but the
+complete presentation path still requires the on-device checks listed in
+`KNOWN_ISSUES.md`.
+
+Cinema environment clones are created before Chroma's delayed prop-group pass,
+temporarily offset unless `mergePropGroups` requests merging, then transformed
+in a final mapper pass. Cloned Beat Saber lights are explicitly registered with
+the active `LightWithIdManager`. Environment-only
+`forceEnvironmentModifications` sessions skip FFmpeg and screen creation
+entirely. Big Screen does not poll map or playlist files during playback. The
+Video Library's explicit Refresh action rebuilds the one-per-session playlist
+index and invalidates the selected song's cached mapper definition after an
+edited file has been copied back to the Quest.
 
 The bundled Up & Down showcase can additionally deform its shared-texture
 surfaces without changing the normal screen path or decoder. Each showcase

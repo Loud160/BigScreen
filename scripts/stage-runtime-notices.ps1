@@ -13,8 +13,8 @@ $ErrorActionPreference = "Stop"
 # normal copy.ps1 path fail immediately after a clean compile.
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runtimeStage = Join-Path $repositoryRoot "build/downloader"
-$ffmpeg44Runtime = Join-Path $repositoryRoot "extern/ffmpeg-lgpl"
-$ffmpeg9Runtime = Join-Path $repositoryRoot "extern/ffmpeg-lgpl-9.0.1"
+$ffmpeg44Runtime = Join-Path $repositoryRoot ".cache/dependencies/ffmpeg-lgpl"
+$ffmpeg9Runtime = Join-Path $repositoryRoot ".cache/dependencies/ffmpeg-lgpl-9.0.1"
 $noticeSources = @{
     "BIGSCREEN-LICENSE.txt" = Join-Path $repositoryRoot "LICENSE"
     "BIGSCREEN-ADDITIONAL-TERMS.md" = Join-Path $repositoryRoot "LICENSE-ADDITIONAL-TERMS.md"

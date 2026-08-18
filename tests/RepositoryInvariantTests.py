@@ -88,6 +88,13 @@ thumbnail_picker_source = (root / "src/ThumbnailPickerMenu.cpp").read_text(
     encoding="utf-8"
 )
 main_source = (root / "src/main.cpp").read_text(encoding="utf-8")
+screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
+    encoding="utf-8")
+video_shader_source = (
+    root / "tools/video-shader/Assets/BigScreenVideo.shader"
+).read_text(encoding="utf-8")
+video_shader_build = (root / "scripts/build-video-shader.ps1").read_text(
+    encoding="utf-8")
 menu_flow_source = (root / "src/MenuFlowCoordinator.cpp").read_text(
     encoding="utf-8"
 )
@@ -127,6 +134,15 @@ showcase_timeline_source = (root / "src/UpDownShowcaseTimeline.cpp").read_text(
     encoding="utf-8"
 )
 screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
+    encoding="utf-8"
+)
+cinema_environment_source = (root / "src/CinemaEnvironment.cpp").read_text(
+    encoding="utf-8"
+)
+cinema_screen_group_source = (root / "src/CinemaScreenGroup.cpp").read_text(
+    encoding="utf-8"
+)
+cinema_interop_source = (root / "src/CinemaInterop.cpp").read_text(
     encoding="utf-8"
 )
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
@@ -342,6 +358,16 @@ for collector_contract in (
     "AdbWasRunningAtStart",
     "AdbPromptTimeoutSeconds = 300",
     "Stopping the ADB server started by this collector",
+    # The legacy pre-paper2 file locations went stale when the project moved
+    # to paper2_scotland2, which silently blinded support ZIPs to the mod's
+    # live log lines. The collector must label the legacy files as legacy,
+    # attempt the current paper2 locations, and always capture the recent
+    # logcat buffer, which paper2 mirrors regardless of file-sink state.
+    "legacy-$logName",
+    "logs/paper2",
+    '"logcat", "-d", "-t", "6000"',
+    "logcat-recent.txt",
+    "NO_LOGCAT_BUFFER.txt",
 ):
     assert collector_contract in log_collector
 for adb_lifecycle_contract in (
@@ -516,6 +542,118 @@ assert '"Uses the Quest\'s dedicated MediaCodec decoders by default' in settings
 assert 'automaticPerformanceWarningModal_->Show()' in settings_menu_source
 assert '"Enable Automatic Performance?\\n\\nAutomatic Performance is an experimental feature' in settings_menu_source
 assert 'Settings::Instance().SetAutomaticPerformanceEnabled(true)' in settings_menu_source
+
+# Beat Saber's post-processing consumes render-target alpha as an emission
+# weight. The stock Unity video material therefore cannot return unnoticed:
+# the embedded shader must preserve destination alpha independently from its
+# configurable RGB blend, and installation cannot depend on a loose sidecar.
+video_shader_asset = root / "assets/bigscreen_video_shader"
+assert video_shader_asset.is_file()
+assert video_shader_asset.stat().st_size > 1024
+assert 'Blend [_SrcColor] [_DestColor], [_SrcAlpha] [_DestAlpha]' in \
+    video_shader_source
+assert '_SrcAlpha ("Source Alpha"' in video_shader_source
+assert '_DestAlpha ("Destination Alpha"' in video_shader_source
+# Quest renders single-pass multiview, and the bundle project has no XR
+# configuration, so the stereo variants MUST be requested explicitly in the
+# shader. A mono-only variant binds successfully and then rasterizes nothing
+# in either eye: the screen silently never appears, with Bloom in any state.
+assert 'multi_compile _ STEREO_MULTIVIEW_ON STEREO_INSTANCING_ON' in \
+    video_shader_source
+assert 'UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO' in video_shader_source
+assert 'material->SetInt("_SrcAlpha", 0)' in screen_surface_source
+assert 'material->SetInt("_DestAlpha", 1)' in screen_surface_source
+assert 'UnityEngine.AssetBundle::LoadFromMemory_Internal' in screen_surface_source
+assert 'assets/bigscreen_video_shader' in cmake
+assert '--output-target elf64-aarch64' in cmake
+# The shader bundle must be built with the game's exact Unity runtime.
+# Beat Saber 1.40.8 ships Unity 2022.3.33f1 (read from the APK's
+# globalgamemanagers); a bundle from a newer editor can be rejected by
+# AssetBundle.LoadFromMemory at runtime.
+assert '2022.3.33f1' in video_shader_build
+assert '2022.3.50f1' not in video_shader_build
+# AssetBundle shader variants follow the BUILDING project's XR settings, so
+# the shader project must carry XR Plugin Management with the Oculus loader
+# active for Android in Multiview mode, or Unity strips the stereo variants
+# (and the bundle renders nothing on the Quest) despite the multi_compile
+# request in the shader source. The build script must configure this itself
+# and refuse to build without it.
+video_shader_manifest = (
+    root / "tools/video-shader/Packages/manifest.json"
+).read_text(encoding="utf-8")
+video_shader_editor = (
+    root / "tools/video-shader/Assets/Editor/BuildBigScreenVideoShader.cs"
+).read_text(encoding="utf-8")
+assert '"com.unity.xr.management"' in video_shader_manifest
+assert '"com.unity.xr.oculus"' in video_shader_manifest
+assert 'EnsureAndroidMultiviewXr' in video_shader_editor
+assert 'XRPackageMetadataStore.AssignLoader' in video_shader_editor
+assert 'StereoRenderingModeAndroid.Multiview' in video_shader_editor
+assert video_shader_editor.index('EnsureAndroidMultiviewXr();') < \
+    video_shader_editor.index('BuildPipeline.BuildAssetBundles')
+assert 'Packages/manifest.json' in copy_script
+# These are structural regression checks only. They prove that both selectable
+# material paths and their fallback ladder remain wired; visual behavior still
+# requires the on-device matrix documented in docs/KNOWN_ISSUES.md.
+assert 'ResolveVideoShader' in screen_surface_source
+assert 'UnityEngine::Shader::Find("UI/Default")' in screen_surface_source
+assert 'material->SetInt("_ColorMask", 14)' in screen_surface_source
+resolve_video_shader = screen_surface_source.split(
+    'VideoShaderChoice ResolveVideoShader', 1)[1]
+assert 'Settings::Instance().EmbeddedVideoShaderEnabled()' in \
+    resolve_video_shader
+assert resolve_video_shader.index('EmbeddedVideoShaderEnabled()') \
+    < resolve_video_shader.index('FindVideoShader()')
+assert resolve_video_shader.index('FindVideoShader()') \
+    < resolve_video_shader.index('UnityEngine::Shader::Find("UI/Default")')
+assert "UI/Default was unexpectedly missing" in screen_surface_source
+# The method toggle must exist in the Misc tab, persist through Settings,
+# and apply immediately to an active preview via the proven recreation path.
+assert '"embeddedVideoShaderEnabled", false' in settings_source
+assert 'Replace(\n            document,\n            "embeddedVideoShaderEnabled",' \
+    in settings_source
+assert 'bool embeddedVideoShaderEnabled_ = false;' in settings_header
+assert '"Embedded Video Shader"' in settings_menu_source
+assert 'SetEmbeddedVideoShaderEnabled(enabled);' in settings_menu_source
+embedded_shader_toggle = settings_menu_source.split(
+    '"Embedded Video Shader"', 1)[1]
+assert 'ApplyDisplaySettingsAndRefreshPreview();' in \
+    embedded_shader_toggle.split('BSML::Lite::AddHoverHint', 1)[0]
+assert 'static bool loadFailed = false;' in screen_surface_source
+assert screen_surface_source.count('loadFailed = true;') >= 6
+assert 'ApplyVideoMaterialMode' in screen_surface_source
+# UI/Default premultiplies by final alpha inside its fragment stage, so the
+# opacity tint must scale ONLY alpha (RGB too would darken twice), the
+# black lead-in must tint the white texture (the shared black texture's
+# transparent alpha premultiplies to an invisible quad), and ZTest must be
+# pinned because the shader reads it from a uGUI-owned int property.
+assert 'blended ? opacity : 1.0f' in screen_surface_source
+assert 'unity_GUIZTestMode' in screen_surface_source
+assert 'videoMaterialUiMasked_' in screen_surface_source
+assert screen_surface_source.count(
+    'UnityEngine::Texture2D::get_whiteTexture()') >= 2
+# The active shader tier is logged once on the first main-menu tick so the
+# deploy script (and any support-log reader) can see which tier is running
+# without a video ever being started. The log prefix is a stable contract:
+# scripts/copy.ps1 polls logcat for exactly this text after every deploy.
+assert 'LogVideoShaderTierOnce' in screen_surface_source
+assert '"Video shader tier: {}"' in screen_surface_source
+assert 'LogVideoShaderTierOnce();' in main_source
+# The one-click bat must never deploy a stale shader bundle: copy.ps1
+# rebuilds assets/bigscreen_video_shader whenever any shader source input is
+# newer, and refuses to deploy if the rebuild cannot run (missing Unity).
+# After install it polls logcat for the tier line and archives the boot log.
+assert 'build-video-shader.ps1' in copy_script
+assert 'Deploying with a stale shader bundle is refused' in copy_script
+assert 'Video shader tier: ' in copy_script
+# The deployment helper reports the selected tier but explicitly sends the
+# tester back to the Bloom-on/Bloom-off headset check instead of presenting a
+# source-level shader match as visual validation.
+assert 'identifies the selected shader path' in copy_script
+assert 'verify the picture on the headset with Bloom on and off' in copy_script
+assert 'last-deploy-bigscreen.log' in copy_script
+assert 'logcat -c' in copy_script
+assert copy_script.index('logcat -c') < copy_script.index('restart-game.ps1')
 assert "bool showMenuEnvironment_ = true;" in settings_header
 assert '"showMenuEnvironment",\n            true' in settings_source
 assert 'Replace(document, "showMenuEnvironment", showMenuEnvironment_)' in settings_source
@@ -683,12 +821,27 @@ assert 'CodecPolicy{"VP9", "vp9", "vp9_mediacodec", CoreLogic::VideoCodecKind::V
 assert "std::once_flag registration" in frame_decoder_source
 assert "RegisterJavaVmForThisRuntime(javaVm)" in frame_decoder_source
 assert "const auto applyUserVideoControls" in playback_source
-assert playback_source.count("applyUserVideoControls();") >= 2
+assert playback_source.count("applyUserVideoControls(") >= 3
 assert "config_->letterboxTransparent =" in playback_source
 assert "bool PlaybackSession::MapperScreenPresentationActive() const" in playback_source
-assert "chromaMapDetected_ &&" in playback_source
+assert "Settings::Instance().RespectMapperSettings()" in playback_source
 assert "baseConfig_->hasMapperScreenGeometry" in playback_source
 assert "bool PlaybackSession::MapperEnvironmentPresentationActive() const" in playback_source
+assert "CinemaEnvironment::Prepare(*config_)" in playback_source
+assert "cinemaScreens_.Create(" in playback_source
+assert "ApplyVisualEffects(destination)" in frame_decoder_source
+assert '"Respect Mapper Settings"' in settings_menu_source
+assert '"CinemaScreen (" + std::to_string(index)' in cinema_screen_group_source
+assert "LightWithIdManager" in cinema_environment_source
+assert "environmentOnlySession_" in playback_source
+assert "ReloadMapperConfigIfChanged" not in playback_source
+assert "RefreshMapperMetadata" in video_library_source
+assert "RefreshSelectedMapperMetadata" in library_menu_source
+assert "bigscreen_cinema_allows_custom_platform" in cinema_interop_source
+assert 'StringOr(song, "levelid")' in video_library_source
+assert "IsYouTubeUrl(url_)" in library_menu_source
+assert "CoreLogic::ScreenBackgroundVisible(" in screen_surface_source
+assert "textureHasAuthoredAlpha_" in screen_surface_source
 assert "static_cast<AVPixelFormat>(decoded_->format)" in frame_decoder_source
 assert "AV_FRAME_CROP_UNALIGNED" in frame_decoder_source
 assert "sws_setColorspaceDetails" in frame_decoder_source
@@ -1063,11 +1216,18 @@ assert "localtime_s" in error_manager_source
 assert "localtime_r" in error_manager_source
 assert "std::localtime" not in error_manager_source
 
-# A stale copy in the opposite Scotland2 phase loads Big Screen twice and
-# initializes CPython twice, which aborts Beat Saber during startup.
+# A stale copy in the opposite Scotland2 phase can load Big Screen twice and
+# initialize CPython twice, which aborts Beat Saber during startup. The legacy
+# root-level Mods path is not loaded by Scotland2, but removing it prevents an
+# unused manual deployment from being mistaken for the active build. Every
+# deployed native mod is hash-verified so a successful copy cannot silently
+# leave an older binary active on the headset.
 assert 'Modloader/mods/$fileName' in copy_script
 assert 'Modloader/early_mods/$fileName' in copy_script
-assert copy_script.count("adb shell rm -f --") == 2
+assert 'ModData/com.beatgames.beatsaber/Mods/$fileName' in copy_script
+assert "function Assert-QuestFileMatches" in copy_script
+assert "Assert-QuestFileMatches -LocalPath $sourcePath" in copy_script
+assert "Verified active Quest file:" in copy_script
 
 # Every per-screen field must be both loaded and written. Reset deliberately
 # reconstructs Settings{} so new member initializers remain the defaults list.
@@ -1196,7 +1356,8 @@ assert 'document.RemoveMember((prefix + "Transparency").c_str())' in settings_so
 # User layout geometry must start from Big Screen's neutral canvas when Chroma
 # ownership is disabled. The settings reset cannot repair a mapper position if
 # playback keeps using that mapper position as its baseline.
-assert "ResetPresentationToDefaults" in playback_source
+assert "ResetScreenGeometryToDefaults" in playback_source
+assert "ResetMapperVisualEffects" in playback_source
 assert "ResetPresentationToDefaults" in (
     root / "src/ScreenPreview.cpp"
 ).read_text(encoding="utf-8")

@@ -110,6 +110,7 @@ namespace BigScreen {
         float VideoTilt() const { return ActiveLayout().videoTilt; }
         bool StretchVideoToFit() const { return ActiveLayout().stretchVideoToFit; }
         bool UndockedScreenEnabled() const { return ActiveLayout().undocked; }
+        bool RespectMapperSettings() const { return respectMapperSettings_; }
         bool AllowChromaOverride() const { return allowChromaOverride_; }
         bool LetterboxTransparencyEnabled() const {
             return ActiveLayout().letterboxTransparency;
@@ -127,6 +128,9 @@ namespace BigScreen {
         bool HideSpectrogramBars() const { return hideSpectrogramBars_; }
         int PlaybackFpsLimit() const { return playbackFpsLimit_; }
         bool UseFfmpeg9() const { return useFfmpeg9_; }
+        bool EmbeddedVideoShaderEnabled() const {
+            return embeddedVideoShaderEnabled_;
+        }
         bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
@@ -183,6 +187,7 @@ namespace BigScreen {
             float positionX, float positionY, float positionZ,
             float rotationX, float rotationY, float rotationZ,
             float width, float height);
+        void SetRespectMapperSettings(bool value);
         void SetAllowChromaOverride(bool value);
         void SetLetterboxTransparencyEnabled(bool value);
         void SetVideoOpacity(float value);
@@ -198,6 +203,7 @@ namespace BigScreen {
         void SetHideSpectrogramBars(bool value);
         void SetPlaybackFpsLimit(int value);
         void SetUseFfmpeg9(bool value);
+        void SetEmbeddedVideoShaderEnabled(bool value);
         void SetHardwareDecodingEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
@@ -242,6 +248,11 @@ namespace BigScreen {
         bool menuPreviewEnabled_ = true;
         std::array<ScreenLayoutProfile, 5> screenLayouts_{};
         int activeScreenLayout_ = 0;
+        // Mapper-authored Cinema presentation is honored by default. Turning
+        // this off keeps the mapper's media identity and synchronization but
+        // deliberately replaces its screen/effect presentation with the
+        // player's selected Big Screen layout.
+        bool respectMapperSettings_ = true;
         // Only maps that actually contain mapper-authored Cinema presentation
         // fields can take ownership; ordinary video maps remain on the selected
         // Big Screen layout even though compatibility defaults to enabled.
@@ -263,6 +274,14 @@ namespace BigScreen {
         // New installations use the current bundled runtime. FFmpeg 4.4.8
         // remains available from the menu as a compatibility/A-B option.
         bool useFfmpeg9_ = true;
+        // Selects how the video screen is drawn. OFF (default) uses Unity's
+        // shipped UI/Default shader with an RGB color mask: bloom can never
+        // white the picture out, the screen contributes no glow, and depth
+        // writes plus Cinema soft-additive blending are unavailable. ON uses
+        // Big Screen's embedded full-featured shader; if it fails to load,
+        // the UI/Default method is used automatically. Both methods remain
+        // available side by side through the Misc tab toggle.
+        bool embeddedVideoShaderEnabled_ = false;
         // Compatible videos use the Quest's MediaCodec decoder by default.
         // Formats that permit software decoding still fall back safely when
         // MediaCodec cannot open the file.
@@ -293,5 +312,6 @@ namespace BigScreen {
         std::array<ScreenLayoutProfile, 5> screenEditLayouts_{};
         int screenEditActiveLayout_ = 0;
         bool screenEditAllowChromaOverride_ = true;
+        bool screenEditRespectMapperSettings_ = true;
     };
 }

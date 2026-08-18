@@ -22,7 +22,11 @@ $archiveSha256 = "153f1940c5f61a59ab62703a6d13cf71ba0b2d2ba597683fe5315f14a64ed7
 $archiveUrl = "https://github.com/quickjs-ng/quickjs/releases/download/v$quickJsVersion/quickjs-amalgam.zip"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$dependencyRoot = Join-Path $repositoryRoot "extern/quickjs-ng"
+& (Join-Path $PSScriptRoot "initialize-dependency-cache.ps1")
+if (-not $?) {
+    throw "Could not initialize Big Screen's portable dependency cache."
+}
+$dependencyRoot = Join-Path $repositoryRoot ".cache/dependencies/quickjs-ng"
 $archive = Join-Path $dependencyRoot "quickjs-amalgam-$quickJsVersion.zip"
 $sourceRoot = Join-Path $dependencyRoot "source"
 $readyFile = Join-Path $dependencyRoot "quickjs-$quickJsVersion.ready"

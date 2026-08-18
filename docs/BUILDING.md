@@ -41,6 +41,14 @@ is [Build dependencies and network downloads](DEPENDENCIES.md).
 - **Node.js 24 and pnpm 11.16.0** only for independently rebuilding the pinned
   yt-dlp/yt-dlp-ejs payload from source. A normal build uses the verified
   official payload and does not require Node.js.
+- **Unity Editor 2022.3.33f1** only when rebuilding the experimental embedded
+  video shader after changing files in its tracked project. Ordinary clean
+  `build.ps1`/`createqmod.ps1` runs embed the committed
+  `assets/bigscreen_video_shader` and do not launch Unity; the direct deploy
+  helper may request Unity when a tracked shader input appears newer. The
+  repository includes the authored `Packages`, `ProjectSettings`,
+  XR configuration, shader, and editor build script needed for reproduction;
+  only Unity's generated caches remain untracked.
 
 ### One-time Windows/WSL setup
 
@@ -196,9 +204,8 @@ gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback
 interval. The performance overlay and results summary identify the runtime
 that actually opened the runtime/backend and report presented-frame loss, decode
-delay, automatic reductions, and RGBA allocation count. Keep 4.4.8 as the
-default until 9.0.1 is at least equivalent in repeated Quest 2 and Quest 3
-tests.
+delay, automatic reductions, and RGBA allocation count. FFmpeg 9.0.1 is the
+current default; FFmpeg 4.4.8 remains available for compatibility comparisons.
 
 ## Host tests
 

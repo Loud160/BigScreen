@@ -291,6 +291,8 @@ namespace BigScreen {
         }
         activeScreenLayout_ = std::clamp(
             ReadInt(document, "activeScreenLayout", 0), 0, 4);
+        respectMapperSettings_ = ReadBool(
+            document, "respectMapperSettings", true);
         allowChromaOverride_ = ReadBool(document, "allowChromaOverride", true);
         mapLightShowEnabled_ = ReadBool(document, "mapLightShowEnabled", true);
         hideBackWallLights_ = ReadBool(document, "hideBackWallLights", true);
@@ -316,6 +318,8 @@ namespace BigScreen {
         playbackFpsLimit_ = NormalizePlaybackFps(
             ReadInt(document, "playbackFpsLimit", 30));
         useFfmpeg9_ = ReadBool(document, "useFfmpeg9", true);
+        embeddedVideoShaderEnabled_ = ReadBool(
+            document, "embeddedVideoShaderEnabled", false);
         hardwareDecodingEnabled_ = ReadBool(
             document, "hardwareDecodingEnabled", true);
         automaticPerformanceEnabled_ = ReadBool(
@@ -695,6 +699,12 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetEmbeddedVideoShaderEnabled(bool value)
+    {
+        embeddedVideoShaderEnabled_ = value;
+        Save();
+    }
+
     void Settings::SetHardwareDecodingEnabled(bool value)
     {
         hardwareDecodingEnabled_ = value;
@@ -722,6 +732,12 @@ namespace BigScreen {
             std::round(value * 10.0f) / 10.0f,
             0.5f,
             10.0f);
+        Save();
+    }
+
+    void Settings::SetRespectMapperSettings(bool value)
+    {
+        respectMapperSettings_ = value;
         Save();
     }
 
@@ -845,6 +861,7 @@ namespace BigScreen {
         screenEditLayouts_ = screenLayouts_;
         screenEditActiveLayout_ = activeScreenLayout_;
         screenEditAllowChromaOverride_ = allowChromaOverride_;
+        screenEditRespectMapperSettings_ = respectMapperSettings_;
         screenEditDirty_ = false;
         screenEditActive_ = true;
     }
@@ -867,6 +884,7 @@ namespace BigScreen {
         screenLayouts_ = screenEditLayouts_;
         activeScreenLayout_ = screenEditActiveLayout_;
         allowChromaOverride_ = screenEditAllowChromaOverride_;
+        respectMapperSettings_ = screenEditRespectMapperSettings_;
         screenEditActive_ = false;
         screenEditDirty_ = false;
     }
@@ -941,6 +959,7 @@ namespace BigScreen {
             Replace(document, (prefix + "UndockedHeight").c_str(), layout.undockedHeight);
         }
         Replace(document, "allowChromaOverride", allowChromaOverride_);
+        Replace(document, "respectMapperSettings", respectMapperSettings_);
         Replace(document, "mapLightShowEnabled", mapLightShowEnabled_);
         Replace(document, "hideBackWallLights", hideBackWallLights_);
         Replace(document, "hideRingLights", hideRingLights_);
@@ -959,6 +978,10 @@ namespace BigScreen {
         // older configuration is loaded and written by this version.
         document.RemoveMember("resolutionHeight");
         Replace(document, "useFfmpeg9", useFfmpeg9_);
+        Replace(
+            document,
+            "embeddedVideoShaderEnabled",
+            embeddedVideoShaderEnabled_);
         Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);

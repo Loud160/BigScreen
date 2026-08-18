@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -45,6 +46,23 @@ namespace BigScreen {
         double durationSeconds = 0.0;
     };
 
+    /// ABI-neutral Cinema picture processing passed into either FFmpeg
+    /// backend. The worker applies it after RGBA conversion, keeping millions
+    /// of per-pixel operations away from Unity's gameplay thread.
+    struct FrameVisualEffects {
+        bool enabled = false;
+        float brightness = 1.0f;
+        float contrast = 1.0f;
+        float saturation = 1.0f;
+        float hue = 0.0f;
+        float exposure = 1.0f;
+        float gamma = 1.0f;
+        bool vignetteEnabled = false;
+        bool vignetteElliptical = false;
+        float vignetteRadius = 1.0f;
+        float vignetteSoftness = 0.005f;
+    };
+
     /// ABI-neutral contract shared by the separately compiled FFmpeg 4.4 and
     /// FFmpeg 9 decoder implementations. No FFmpeg type crosses this boundary:
     /// each implementation is compiled with the exact headers matching its
@@ -57,9 +75,17 @@ namespace BigScreen {
             int maximumOutputHeight,
             bool preferHardwareDecoding,
             void* javaVm,
+            const FrameVisualEffects& visualEffects,
             std::string& error) = 0;
         virtual void Close() = 0;
         virtual void Request(double mediaSeconds) = 0;
+        /// Replaces CPU-side Cinema picture processing without reopening the
+        /// stream. The decoder worker snapshots the small settings structure
+        /// before touching a frame, so a ten-second test phase can change
+        /// color correction or vignette safely while MediaCodec/FFmpeg stays
+        /// warm.
+        virtual void UpdateVisualEffects(
+            const FrameVisualEffects& visualEffects) = 0;
         virtual bool TryTake(VideoFrame& destination) = 0;
         virtual void Recycle(VideoFrame&& frame) = 0;
         virtual std::optional<std::string> TakeError() = 0;
@@ -131,6 +157,7 @@ namespace BigScreen {
             int maximumOutputHeight,
             bool preferHardwareDecoding,
             void* javaVm,
+            const FrameVisualEffects& visualEffects,
             std::string& error) override;
         /// Host fixture tests exercise the proven software path without an
         /// Android VM. Keep their call site explicit and source-compatible.
@@ -144,6 +171,7 @@ namespace BigScreen {
                 maximumOutputHeight,
                 false,
                 nullptr,
+                {},
                 error);
         }
         void Close() override;
@@ -151,6 +179,8 @@ namespace BigScreen {
         /// Publishes the newest externally-clocked target. The worker may
         /// intentionally coalesce obsolete targets so playback stays current.
         void Request(double mediaSeconds) override;
+        void UpdateVisualEffects(
+            const FrameVisualEffects& visualEffects) override;
         bool TryTake(VideoFrame& destination) override;
         /// Returns a consumed RGBA allocation to the decoder. Keeping a small
         /// pool avoids allocating and freeing a multi-megabyte 1080p vector for
@@ -205,6 +235,11 @@ namespace BigScreen {
         double CurrentFrameTime() const;
         double CurrentFrameDuration() const;
         bool ConvertCurrentFrame(VideoFrame& destination, std::string& error);
+        void ApplyVisualEffects(VideoFrame& destination);
+        void RebuildVisualEffectCache(
+            const FrameVisualEffects& effects,
+            int width,
+            int height);
         void Publish(VideoFrame&& frame);
         VideoFrame AcquireOutputFrame();
         void RecycleBufferLocked(std::vector<std::uint8_t>&& buffer);
@@ -272,6 +307,29 @@ namespace BigScreen {
         bool softwareFallbackAllowed_ = true;
         std::string softwareFallbackBlockedReason_;
         std::string codecName_ = "unknown";
+        mutable std::mutex visualEffectsMutex_;
+        FrameVisualEffects visualEffects_{};
+
+        /// Worker-owned lookup data for mapper color correction and vignette.
+        /// Cinema evaluates these operations in a GPU shader on PC. Quest does
+        /// not currently ship Big Screen's own shader bundle, so doing the
+        /// equivalent work on decoded RGBA pictures remains the compatible
+        /// fallback. Building the expensive gamma and vignette curves only
+        /// when settings or dimensions change prevents each video frame from
+        /// repeating millions of pow(), sqrt(), and smooth-step operations.
+        struct VisualEffectCache {
+            bool valid = false;
+            bool colorCorrection = false;
+            bool vignette = false;
+            int width = 0;
+            int height = 0;
+            FrameVisualEffects effects{};
+            std::array<std::array<std::array<std::int32_t, 256>, 3>, 3>
+                colorContribution{};
+            std::array<std::int32_t, 3> colorBias{};
+            std::array<std::uint8_t, 4097> gamma{};
+            std::vector<std::uint8_t> vignetteMask;
+        } visualEffectCache_;
     };
 #else
     /// Runtime-selecting facade used by gameplay and menu previews. Selecting
@@ -287,9 +345,18 @@ namespace BigScreen {
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
+            const FrameVisualEffects& visualEffects,
             std::string& error);
+        bool Open(
+            const std::filesystem::path& videoPath,
+            int maximumOutputHeight,
+            std::string& error)
+        {
+            return Open(videoPath, maximumOutputHeight, {}, error);
+        }
         void Close();
         void Request(double mediaSeconds);
+        void UpdateVisualEffects(const FrameVisualEffects& visualEffects);
         bool TryTake(VideoFrame& destination);
         void Recycle(VideoFrame&& frame);
         std::optional<std::string> TakeError();
@@ -328,6 +395,7 @@ namespace BigScreen {
         bool hardwareRequested_ = false;
         bool hardwareFallbackAttempted_ = false;
         void* javaVm_ = nullptr;
+        FrameVisualEffects visualEffects_{};
         double accumulatedWorkerCpuMilliseconds_ = 0.0;
         std::uint64_t accumulatedBufferAllocations_ = 0;
         double retainedPeakDecodeMilliseconds_ = 0.0;

@@ -12,7 +12,7 @@ This index separates ordinary player instructions from mapper and developer mate
 
 ## Mappers
 
-- [Mapper video metadata](MAPPER_FORMAT.md) — supported JSON filenames and Cinema-compatible fields.
+- [Mapper video metadata](MAPPER_FORMAT.md) — implemented Cinema media/timing and experimental presentation compatibility, including unsupported-field boundaries.
 
 ## Developers and distributors
 
@@ -22,5 +22,9 @@ This index separates ordinary player instructions from mapper and developer mate
 - [Building and packaging](BUILDING.md) — toolchain, host tests, Quest build, QMOD contents, and CI.
 - [Release checklist](RELEASE_CHECKLIST.md) — the minimum checks before publishing a build.
 - [External code-review resolution](CODE_REVIEW_RESOLUTION.md) — accepted fixes, rejected findings, and explicitly deferred follow-up from the August 2026 audit.
+- [Current development checkpoint](KNOWN_ISSUES.md) — unverified behavior and the required Quest retest matrix for the current preservation checkpoint.
+- [Self-updating core feasibility](SELF_UPDATING_FEASIBILITY.md) — analysis of a signed A/B core updater, startup health confirmation, automatic rollback, Android restrictions, and QMOD compatibility. This feature is not implemented.
+- [Quest and PC dual-platform feasibility](DUAL_PLATFORM_ARCHITECTURE_FEASIBILITY.md) — recommended shared C++ core, Quest and PC host boundaries, PC decoding pipeline, and why a Rust rewrite is not recommended.
+- [GPU video-pipeline feasibility](GPU_VIDEO_PIPELINE_FEASIBILITY.md) — research into YUV upload, SurfaceTexture, and AHardwareBuffer/Vulkan paths. No replacement pipeline is implemented.
 - [Future work](FUTURE_WORK.md) — intentionally deferred ideas and known areas for wider testing.
 - [Third-party notices](../THIRD_PARTY_NOTICES.md) and [provenance](../PROVENANCE.md).

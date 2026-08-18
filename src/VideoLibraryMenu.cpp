@@ -818,10 +818,30 @@ namespace BigScreen {
                 UnityEngine::UI::ContentSizeFitter::FitMode::Unconstrained);
         StretchToPanel(editorRoot->get_rectTransform());
 
+        auto* editorHeader = BSML::Lite::CreateHorizontalLayoutGroup(editorRoot);
+        ConfigureGroup(editorHeader);
+        editorHeader->set_spacing(0.8f);
+        ConfigureLayout(editorHeader, 54.0f, 7.0f, 1.0f);
         backToListButton_ = BSML::Lite::CreateUIButton(
-            editorRoot, "< Back to Song List", {0.0f, 0.0f}, {45.0f, 7.0f}, [this]() { ShowBrowser(); });
-        ConfigureLayout(backToListButton_, -1.0f, 7.0f, 1.0f);
+            editorHeader, "< Back to Song List", {0.0f, 0.0f}, {39.2f, 7.0f}, [this]() { ShowBrowser(); });
+        ConfigureLayout(backToListButton_, 0.0f, 7.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(backToListButton_, 3.1f);
+        mapperRefreshButton_ = BSML::Lite::CreateUIButton(
+            editorHeader,
+            "Refresh",
+            {0.0f, 0.0f},
+            {14.0f, 7.0f},
+            [this]()
+            {
+                ErrorManager::Instance().Guard(
+                    "refreshing mapper video settings",
+                    [this]() { RefreshSelectedMapperMetadata(); });
+            });
+        ConfigureLayout(mapperRefreshButton_, 14.0f, 7.0f, 0.0f);
+        SetBrightButtonLabel(mapperRefreshButton_, 2.4f);
+        BSML::Lite::AddHoverHint(
+            mapperRefreshButton_,
+            "Reloads this map's Cinema JSON or playlist metadata from Quest storage. Use this after copying an edited file back to the Quest.");
 
         // Place editor rows directly on the full-panel root. The BSML
         // ScrollView template carries its own narrow viewport geometry, which
@@ -2362,6 +2382,52 @@ namespace BigScreen {
                 error.what());
             detailText_->set_text("Could not read the Quest clipboard.");
         }
+    }
+
+    void VideoLibraryMenu::RefreshSelectedMapperMetadata()
+    {
+        if(!selected_ || !selected_->levelID)
+        {
+            transientStatus_ = "Select a song before refreshing mapper settings.";
+            RefreshDetails();
+            return;
+        }
+
+        const std::string levelId(selected_->levelID);
+        VideoLibrary::Instance().RefreshMapperMetadata(levelId);
+        ClearThumbnail();
+
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto* timing = EditorTimingConfig(descriptor);
+        url_ = descriptor.downloadUrl.value_or("");
+        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
+            descriptor.downloadOrigin == VideoOrigin::Mapper;
+        offset_ = timing ? timing->offsetSeconds : 0.0;
+        rate_ = timing ? timing->playbackRate : 1.0;
+        fitToSong_ = timing ? timing->fitToSong : false;
+        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
+
+        if(urlInput_)
+        {
+            suppressUrlCallback_ = true;
+            urlInput_->SetText(url_);
+            suppressUrlCallback_ = false;
+            RefreshUrlTextColor();
+        }
+        suppressTimingCallbacks_ = true;
+        if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
+        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
+        SetToggleWithoutNotification(fitToggle_, fitToSong_);
+        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
+        suppressTimingCallbacks_ = false;
+
+        transientStatus_ = descriptor.mapperDefinition
+            ? "Mapper video settings refreshed from Quest storage."
+            : "No Cinema mapper settings were found for this song.";
+        RefreshLocalVideoStatus();
+        StartSelectedPreview();
+        RefreshDetails();
+        RefreshPlaybackControls();
     }
 
     void VideoLibraryMenu::SearchSelectedSongOnYouTube()

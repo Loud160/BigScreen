@@ -26,6 +26,13 @@ video to **OST, DLC, custom, and WIP songs**, whether the mapper included one or
 the player chose their own. Normal use—including YouTube downloads, local-file
 selection, timing, screen setup, and playback—happens entirely inside the headset.
 
+> **Current development warning (August 18, 2026):** this repository is a
+> preservation checkpoint containing substantial recent shader, screen, and
+> Cinema-compatibility work. Its current on-device behavior has not been
+> independently established by this documentation audit, and the complete mod
+> must be retested on Quest before it is treated as a release candidate. See
+> [Current development checkpoint](docs/KNOWN_ISSUES.md).
+
 ## The screen is part of the experience
 
 Big Screen is not limited to placing a fixed rectangle behind the notes. Its
@@ -39,8 +46,8 @@ video part of the map's visual presentation instead of a passive background.
 | **Undock it** | Grab, move, angle, and freely resize an advanced screen in 3D space, then save its placement. |
 | **Frame the picture** | Rotate, zoom, pan, perspective-tilt, stretch, letterbox, or crop the video without changing the screen canvas. |
 | **Blend it into the map** | Control video opacity and letterbox transparency, retain map lighting, or hide environmental objects and light groups that obstruct large screens. |
-| **Save five layouts** | Keep five independent screen configurations and switch layouts from Big Screen, song selection, or the pause menu. |
-| **Respect authored visuals** | Cinema timing metadata and optional Chroma placement can take control when a map was designed around a specific video presentation. |
+| **Save five layouts** | Keep five independent screen configurations and switch layouts from Big Screen or song selection. Beat Saber 1.40.8 does not currently expose Big Screen pause-menu controls. |
+| **Respect authored visuals** | The current development tree can parse Cinema-authored placement, curvature, additional screens, color correction, vignette, environment selection, and object changes—or retain only mapper media/timing. This new compatibility path still requires complete on-device regression testing. |
 
 ### A proof of concept for animated video choreography
 
@@ -68,7 +75,7 @@ the copyrighted song is not bundled in the QMOD.
 
 | Source | Workflow |
 |---|---|
-| **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, or `video.json`. A URL-only map receives a Cinema-style download control on song selection. |
+| **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, `video.json`, or playlist `customData.cinema`. Media/timing fields and a substantial subset of PC Cinema presentation fields are implemented; mapper `bloom` is not. The new presentation path remains under Quest testing. A URL-only map receives a Cinema-style download control on song selection. |
 | **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL, verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
 | **Local Quest storage** | Browse readable shared-storage folders and assign a compatible MP4 or WebM without renaming or copying it. Custom and WIP maps begin in their map folder; built-in songs begin in Big Screen's Video Import folder. |
 
@@ -207,6 +214,19 @@ opposite Scotland2 load phase, installs the complete runtime, and asks Beat
 Saber to restart. The console remains open and reports either success or the
 exact failed step.
 
+The deploy step also keeps the experimental embedded video shader bundle
+(`assets/bigscreen_video_shader`) current: when any source under
+`tools/video-shader/` has changed, it rebuilds the bundle automatically with
+Unity **2022.3.33f1** (the exact engine Beat Saber 1.40.8 ships) and refuses to
+deploy a stale bundle. Unity is only required when those shader sources have
+changed or appear newer than the bundle; `build.ps1`/`createqmod.ps1` use the
+committed bundle and do not launch Unity. The
+complete Unity project inputs—including `Packages`, `ProjectSettings`, and XR
+assets—are versioned so a clean clone can reproduce the bundle. After the game
+restarts, the console prints the selected shader tier and archives that boot's
+Big Screen log lines to `diagnostics/last-deploy-bigscreen.log`. That tier is a
+diagnostic only; it does not prove that the screen rendered correctly on-device.
+
 After deployment, ADB is stopped automatically when the launcher started it.
 If ADB was already active, the launcher asks whether to stop it and defaults to
 **No** after five minutes so it cannot silently disrupt an existing session.
@@ -230,6 +250,7 @@ workflow requires the following tools:
 | **WSL 2 with Ubuntu** | Builds Big Screen's private LGPL FFmpeg libraries in a Linux environment. |
 | **Android NDK r27d (`27.3.13750724`)** | QPM manages the Windows copy used for the mod; `scripts/install-pinned-ndk.sh` installs the matching Linux copy used by FFmpeg inside WSL. Do not substitute another revision. |
 | **Android platform-tools/ADB or SideQuest** | Required only for direct deployment to a connected Quest; it is not required to build the QMOD. |
+| **Unity Editor 2022.3.33f1** | Required only after changing the experimental shader project; ordinary clean builds use the committed bundle. |
 
 Windows PowerShell 5.1 is already included with supported Windows versions.
 Python 3 is optional but recommended because it enables the downloader and
@@ -335,6 +356,26 @@ configurations and source transformations are recorded for reproducibility.
 </details>
 
 <details>
+<summary><strong>Video shader methods and Beat Saber's Bloom</strong></summary>
+
+The current tree contains two experimental video-material paths: Unity's
+`UI/Default` shader with RGB-only color writes, and an embedded
+`BigScreen/Video` AssetBundle shader. The bundle project is pinned to Unity
+2022.3.33f1 and configures Oculus Android Multiview so required stereo variants
+can be compiled.
+
+Off selects Unity's `UI/Default` shader with RGB-only color writes. On selects
+the embedded `BigScreen/Video` shader, which provides explicit alpha blending,
+depth writes, and Cinema soft-additive blending. If the requested shader cannot
+be loaded, the implementation follows a documented fallback ladder and records
+the selected tier in the log. These source-level checks establish how the two
+paths are wired; their complete current behavior with Bloom on and off still
+requires the on-device matrix in
+[Current development checkpoint](docs/KNOWN_ISSUES.md).
+
+</details>
+
+<details>
 <summary><strong>Standalone downloader runtime</strong></summary>
 
 The QMOD includes CPython 3.14.7 for Android ARM64, a pinned yt-dlp baseline,
@@ -395,16 +436,17 @@ licenses/               Redistributable third-party license texts
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [External code-review resolution](docs/CODE_REVIEW_RESOLUTION.md)
 - [Known limitations and future work](docs/FUTURE_WORK.md)
+- [Current development checkpoint and required retesting](docs/KNOWN_ISSUES.md)
 - [Complete documentation index](docs/README.md)
 
 ## Development status
 
-Big Screen is an unreleased alpha. Its capabilities are implemented and the
-1.40.8 branch passes host tests, a clean ARM64 Quest build, dependency/ELF
-checks, and QMOD validation. It is not release-verified until the remaining
-hands-on Quest 2/Quest 3, map, UI, Chroma/Noodle, Replay, downloader, decoder,
-and recovery checks in the [release checklist](docs/RELEASE_CHECKLIST.md) have
-been completed on Beat Saber 1.40.8.
+Big Screen is an unreleased alpha. This checkpoint contains substantial recent
+work and is **not** release-ready even when host tests, the ARM64 Quest build,
+dependency/ELF checks, and QMOD validation pass. Everything requires a fresh
+on-device regression pass; see
+[current development checkpoint](docs/KNOWN_ISSUES.md) and the
+[release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## License
 

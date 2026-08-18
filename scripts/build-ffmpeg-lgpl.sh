@@ -63,10 +63,11 @@ build_root="${cache_root}/build-${ffmpeg_version}-android-arm64"
 # copy the completed installation into the repository only after `make
 # install` succeeds.
 native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"
+portable_dependency_root="${repository_root}/.cache/dependencies"
 if [[ "${ffmpeg_version}" == "4.4.8" ]]; then
-    install_root="${repository_root}/extern/ffmpeg-lgpl"
+    install_root="${portable_dependency_root}/ffmpeg-lgpl"
 else
-    install_root="${repository_root}/extern/ffmpeg-lgpl-${ffmpeg_version}"
+    install_root="${portable_dependency_root}/ffmpeg-lgpl-${ffmpeg_version}"
 fi
 archive_path="${cache_root}/${ffmpeg_archive}"
 archive_download_path="${archive_path}.download.$$"

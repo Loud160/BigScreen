@@ -488,9 +488,36 @@ try {
     [void](Pull-RemoteArtifact "Big-Screen" $performancePath ([Nullable[long]]$null) "performance-history.log" "Optional playback and gameplay performance context.")
 
     Write-Host "Collecting Beat Saber logs and process-exit evidence..." -ForegroundColor Cyan
+    # The legacy Paper 3 files stopped being written when the project moved to
+    # paper2_scotland2; they are kept only as historical context. The paper2
+    # directory candidates cover the current file sink, including Big Screen's
+    # own per-context log registered through RegisterFileContextId.
     foreach ($logName in @("PaperLog.log", "beatsaber-hook.log")) {
         $remote = "$($script:ModDataRoot)/logs/$logName"
-        [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) $logName "Standard Beat Saber/mod log. A fresh write is context, not by itself proof of a crash.")
+        [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) "legacy-$logName" "LEGACY pre-paper2 log location; expected to be stale. Kept for historical comparison only.")
+    }
+    foreach ($paper2Dir in @("$($script:ModDataRoot)/logs/paper2", "$($script:ModDataRoot)/logs2")) {
+        foreach ($logName in @("PaperLog.log", "BigScreen.log")) {
+            $remote = "$paper2Dir/$logName"
+            [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) ("paper2-" + ($paper2Dir -split '/')[-1] + "-$logName") "Current paper2 mod log candidate. This is where Big Screen's live log lines (including shader selection) are written.")
+        }
+    }
+
+    # Paper2 mirrors every mod log line to Android's logcat, which is the one
+    # source that is always fresh regardless of file-sink location or state.
+    # Capture the recent buffer so a support ZIP always contains the mod's
+    # live lines (shader selection, screen creation, decoder startup).
+    Write-Host "Capturing recent logcat buffer..." -ForegroundColor Cyan
+    $logcatDump = Invoke-Adb -Arguments @("logcat", "-d", "-t", "6000") -AllowFailure
+    if ($logcatDump -and $logcatDump.ExitCode -eq 0 -and
+        -not [string]::IsNullOrWhiteSpace($logcatDump.Text)) {
+        $logcatDirectory = Get-StatusDirectory "Quest-OS" "FRESH"
+        $logcatPath = Join-Path $logcatDirectory "logcat-recent.txt"
+        Write-Utf8File $logcatPath $logcatDump.Text
+        $logcatRelative = $logcatPath.Substring($script:StageRoot.Length + 1).Replace("\", "/")
+        Add-ManifestEntry "Quest-OS" "logcat-recent.txt" "FRESH" "adb logcat -d -t 6000" $script:DeviceNowEpoch $logcatRelative "Recent Android log buffer captured at collection time. Contains every mod's live log lines, including Big Screen's shader-tier and screen-creation messages."
+    } else {
+        Add-MissingMarker "Quest-OS" "NO_LOGCAT_BUFFER.txt" "The Android log buffer could not be read."
     }
 
     $tombstoneListing = Invoke-AdbShell "find /sdcard/Android/data/$($script:PackageName)/files -maxdepth 1 -type f -name 'tombstone_*' -printf '%T@|%p\n' 2>/dev/null | sort -nr" -AllowFailure

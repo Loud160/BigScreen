@@ -23,8 +23,8 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "Big Screen-ffmpeg-comparison.
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "build/libbigscreen.so") `
     -Destination $artifactRoot -Force
 foreach ($record in @(
-    @{ Source = "extern/ffmpeg-lgpl/BUILD-INFO.txt"; Name = "FFmpeg-4.4.8-BUILD-INFO.txt" },
-    @{ Source = "extern/ffmpeg-lgpl-9.0.1/BUILD-INFO.txt"; Name = "FFmpeg-9.0.1-BUILD-INFO.txt" })) {
+    @{ Source = ".cache/dependencies/ffmpeg-lgpl/BUILD-INFO.txt"; Name = "FFmpeg-4.4.8-BUILD-INFO.txt" },
+    @{ Source = ".cache/dependencies/ffmpeg-lgpl-9.0.1/BUILD-INFO.txt"; Name = "FFmpeg-9.0.1-BUILD-INFO.txt" })) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $record.Source) `
         -Destination (Join-Path $artifactRoot $record.Name) -Force
 }

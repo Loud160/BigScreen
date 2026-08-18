@@ -42,6 +42,12 @@ namespace BigScreen {
         ScreenSurface(const ScreenSurface&) = delete;
         ScreenSurface& operator=(const ScreenSurface&) = delete;
 
+        /// Resolves and logs the active video shader tier once per session,
+        /// without creating a screen. Called from the first main-menu tick so
+        /// the deploy pipeline can read the tier from logcat immediately
+        /// after every install instead of waiting for a screen to exist.
+        static void LogVideoShaderTierOnce() noexcept;
+
         bool Create(const MapVideoConfig& config, int videoWidth, int videoHeight);
         /// Creates another independently transformable panel backed by an
         /// existing owner's Texture2D. The clone owns its meshes/materials but
@@ -117,7 +123,7 @@ namespace BigScreen {
         bool CreateMaterialAndTexture(
             int width,
             int height,
-            float videoOpacity,
+            const MapVideoConfig& config,
             UnityEngine::Texture2D* sharedTexture = nullptr);
         bool CreateBackgroundMaterial(bool letterboxTransparent);
         /// Applies picture opacity and letterbox transparency without
@@ -181,6 +187,15 @@ namespace BigScreen {
         int textureHeight_ = 0;
         bool ownsTexture_ = false;
         bool letterboxTransparent_ = false;
+        bool opaqueScreenBody_ = false;
+        bool textureHasAuthoredAlpha_ = false;
+        bool colorBlending_ = false;
+        // True while the video material runs on Unity's UI/Default shader,
+        // which premultiplies by final alpha inside its fragment stage. The
+        // black lead-in must then use an opaque-black TINT over the shared
+        // white texture; Unity's shared black texture has transparent alpha
+        // and would leave the lead-in invisible instead of black.
+        bool videoMaterialUiMasked_ = false;
         // True only when the current, untransformed video polygon covers the
         // complete frame. In that case drawing the black backing mesh is both
         // unnecessary and capable of depth-fighting on very large canvases.

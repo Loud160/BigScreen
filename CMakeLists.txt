@@ -73,9 +73,9 @@ RECURSE_FILES(c_file_list ${SOURCE_DIR}/*.c)
 list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]FrameDecoder\\.cpp$")
 
 set(BIGSCREEN_FFMPEG44_DIR
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl)
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/ffmpeg-lgpl)
 set(BIGSCREEN_FFMPEG9_DIR
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/ffmpeg-lgpl-9.0.1)
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/ffmpeg-lgpl-9.0.1)
 
 # FFmpeg 4.4 and 9 expose incompatible public structure layouts. Compile the
 # same proven worker twice with matching headers and isolate each copy in a
@@ -144,8 +144,38 @@ add_library(
         SHARED
         ${cpp_file_list}
         ${c_file_list}
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/quickjs-ng/source/quickjs-amalgam.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/quickjs-ng/source/quickjs-amalgam.c
 )
+
+# The ordinary Unity unlit shader writes opaque video alpha into Beat Saber's
+# main render target. Beat Saber's post-processing interprets that alpha as an
+# emission weight, which turns the complete screen white whenever the game's
+# bloom is enabled. Embed Big Screen's tiny Android video-material bundle into
+# libbigscreen.so so every installation has the corrected shader without a
+# second runtime file that can be omitted or left stale.
+set(BIGSCREEN_VIDEO_SHADER_ASSET
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets/bigscreen_video_shader)
+if(NOT EXISTS ${BIGSCREEN_VIDEO_SHADER_ASSET})
+        message(FATAL_ERROR
+                "Missing embedded video shader asset: ${BIGSCREEN_VIDEO_SHADER_ASSET}")
+endif()
+set(BIGSCREEN_VIDEO_SHADER_OBJECT
+        ${CMAKE_CURRENT_BINARY_DIR}/bigscreen_video_shader.o)
+add_custom_command(
+        OUTPUT ${BIGSCREEN_VIDEO_SHADER_OBJECT}
+        COMMAND ${CMAKE_OBJCOPY}
+                bigscreen_video_shader
+                ${BIGSCREEN_VIDEO_SHADER_OBJECT}
+                --input-target binary
+                --output-target elf64-aarch64
+                --set-section-flags binary=alloc,load,readonly,data,contents
+        DEPENDS ${BIGSCREEN_VIDEO_SHADER_ASSET}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        COMMENT "Embed Big Screen's Android video shader")
+set_source_files_properties(${BIGSCREEN_VIDEO_SHADER_OBJECT} PROPERTIES
+        GENERATED TRUE
+        EXTERNAL_OBJECT TRUE)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${BIGSCREEN_VIDEO_SHADER_OBJECT})
 
 # Keep warnings actionable by applying them only to Big Screen's C++ sources.
 # The target also compiles upstream inline-hook code; enabling project policy
@@ -191,7 +221,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${EXTERN_DIR}/includes/rapidjson/rapidjson/include)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/quickjs-ng/source)
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/quickjs-ng/source)
 
 # QuickJS-NG is compiled into libbigscreen.so instead of shipped as a qjs
 # executable. Android forbids execve from both /sdcard and Beat Saber's writable
@@ -204,7 +234,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
 # downloader. Link against the exact staged ABI and package the library beside
 # the mod; pure Python files are installed into Big Screen's ModData folder.
 set(BIGSCREEN_PYTHON_PREFIX
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern/downloader/python-3.14.7/prefix)
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/downloader/python-3.14.7/prefix)
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${BIGSCREEN_PYTHON_PREFIX}/include/python3.14)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE

@@ -52,11 +52,11 @@ add_executable(
     bigscreen-quickjs-tests
     QuickJsEngineTests.cpp
     ../src/QuickJsEngine.cpp
-    ../extern/quickjs-ng/source/quickjs-amalgam.c)
+    ../.cache/dependencies/quickjs-ng/source/quickjs-amalgam.c)
 target_compile_features(bigscreen-quickjs-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-quickjs-tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../include"
-    "${CMAKE_CURRENT_LIST_DIR}/../extern/quickjs-ng/source")
+    "${CMAKE_CURRENT_LIST_DIR}/../.cache/dependencies/quickjs-ng/source")
 if(NOT WIN32)
     target_link_libraries(bigscreen-quickjs-tests PRIVATE m)
 elseif(MSVC)

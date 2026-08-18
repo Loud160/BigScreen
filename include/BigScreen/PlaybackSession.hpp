@@ -12,8 +12,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "BigScreen/FrameDecoder.hpp"
+#include "BigScreen/CinemaScreenGroup.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
@@ -125,15 +127,16 @@ namespace BigScreen {
         /// gameplay level with a different ID is never disturbed.
         void ClearPreparedPreviewForLevel(std::string_view levelId);
 
-        bool HasPreparedVideo() const { return config_.has_value(); }
-        /// True only when Allow Chroma Override is enabled, the map actually
-        /// uses Chroma, and its video metadata authors custom screen geometry.
-        /// Only this predicate may suppress the player's canvas controls.
+        bool HasPreparedVideo() const {
+            return config_.has_value() && !environmentOnlySession_;
+        }
+        bool HasPreparedPresentation() const { return config_.has_value(); }
+        /// True when the showcase owns its authored canvas or Respect Mapper
+        /// Settings is enabled and Cinema metadata authors screen geometry.
         bool MapperScreenPresentationActive() const;
-        /// True only when Allow Chroma Override is enabled and the video map
-        /// is actually detected as using Chroma. Cinema environment metadata
-        /// alone does not claim the gameplay scene. This intentionally does
-        /// not imply ownership of the video canvas.
+        /// True when Cinema's explicit environment data is respected or an
+        /// actually detected Chroma map is allowed to retain its environment.
+        /// This intentionally does not imply ownership of the video canvas.
         bool MapperEnvironmentPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
@@ -178,7 +181,13 @@ namespace BigScreen {
         PlaybackSession() = default;
         void RebuildEffectiveConfig(
             PlaybackContext intendedContext = PlaybackContext::None);
+        static FrameVisualEffects VisualEffectsFor(
+            const MapVideoConfig& config);
         bool OpenDecoder(std::string& error);
+        bool LoadCinemaCompatibilityCycle();
+        bool ApplyCinemaCompatibilityCyclePhase(
+            std::size_t phaseIndex,
+            double songTimeSeconds);
         bool ApplyAutomaticPerformanceReduction();
         bool ApplyAutomaticPerformanceRecovery();
         void ApplyAutomaticPerformanceFpsLimit(int nextFps);
@@ -206,8 +215,17 @@ namespace BigScreen {
         std::optional<MapVideoConfig> config_;
         FrameDecoder decoder_;
         ScreenSurface surface_;
+        CinemaScreenGroup cinemaScreens_;
         ShowcaseSurfaceGroup showcase_;
         bool showcaseEligible_ = false;
+        // The bundled no-note WIP cycle is a private validation fixture, not a
+        // general mapper timeline. Every phase is loaded from an ordinary
+        // Cinema JSON object and applied through the production screen,
+        // decoder, additional-screen and environment paths.
+        bool cinemaCompatibilityCycleEligible_ = false;
+        bool cinemaCompatibilityCycleScreenHidden_ = false;
+        std::size_t cinemaCompatibilityCyclePhase_ = 0;
+        std::vector<MapVideoConfig> cinemaCompatibilityCycleConfigs_;
         double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
         bool gameplayDecoderPrewarmed_ = false;
@@ -221,6 +239,14 @@ namespace BigScreen {
         // A decoder failure hides only this session's screen. Beat Saber keeps
         // playing and ErrorManager postpones the explanation until it is safe.
         bool playbackFailed_ = false;
+        // Cinema permits an environment-only configuration when
+        // forceEnvironmentModifications is true. Such a session participates
+        // in scene ownership and cleanup but never opens FFmpeg or constructs
+        // a video surface.
+        bool environmentOnlySession_ = false;
+        // Cinema fades the picture over its final second. Cache the last
+        // applied multiplier so steady playback performs no material writes.
+        float appliedMapperEndFade_ = 1.0f;
         // The presentation limiter lives above FFmpeg so decoder timestamps
         // remain untouched. Native-rate gating still occurs inside FrameDecoder.
         std::optional<std::int64_t> lastPresentationSlot_;

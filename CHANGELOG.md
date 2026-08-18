@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- Restored the downloader's original YouTube-only security boundary. Mapper
+  metadata, pasted addresses, URL probes, UI text, tests, and documentation now
+  accept only HTTPS YouTube/youtu.be addresses.
+- Removed active-map Cinema JSON polling. Playlist metadata is indexed once per
+  game session, and the selected-song editor now provides an explicit Refresh
+  button that rebuilds that index and reloads the selected map's metadata only
+  when the user requests it.
+- Added an experimental `BigScreen/Video` AssetBundle shader project pinned to
+  Unity 2022.3.33f1, with Oculus Android Multiview configuration and a tracked
+  build script. The complete authored Unity project inputs are kept in source
+  control so a clean clone can reproduce the bundle.
+- Added a development-only Embedded Video Shader selector, a `UI/Default`
+  RGB-only alternative, an explicit fallback ladder, and shader-tier
+  diagnostics. The source and bundle checks establish the intended material
+  configuration but do not replace the full Bloom-on/Bloom-off Quest retest in
+  `docs/KNOWN_ISSUES.md`.
+- Added a Cinema-compatibility implementation for mapper screen geometry,
+  additional screens, color correction, vignette, and explicit environment
+  instructions, plus an explicit Video Library Refresh action. This work has
+  host coverage but has not completed its Quest regression pass. PC Cinema's
+  `bloom` field is not parsed or applied.
+- This is a preservation checkpoint with serious outstanding quality concerns;
+  every feature must be retested on Quest before the tree is treated as
+  releasable.
+
 ## 0.7.0-alpha.7 — Reliable preview completion and runtime hardening
 
 - Fixed Video Library previews intermittently freezing two or three seconds

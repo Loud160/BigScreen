@@ -25,7 +25,11 @@ $certifiVersion = "2026.7.22"
 $certifiSha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$downloadRoot = Join-Path $repositoryRoot "extern/downloader"
+& (Join-Path $PSScriptRoot "initialize-dependency-cache.ps1")
+if (-not $?) {
+    throw "Could not initialize Big Screen's portable dependency cache."
+}
+$downloadRoot = Join-Path $repositoryRoot ".cache/dependencies/downloader"
 $pythonArchive = Join-Path $downloadRoot "python-$pythonVersion-aarch64-linux-android.tar.gz"
 $pythonExtractRoot = Join-Path $downloadRoot "python-$pythonVersion"
 $pythonPrefix = Join-Path $pythonExtractRoot "prefix"

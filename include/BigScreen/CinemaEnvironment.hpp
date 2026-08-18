@@ -13,6 +13,12 @@ namespace BigScreen {
     /// Applies the small, data-driven environment transformation subset used
     /// by Cinema maps. Work occurs once as gameplay starts, never per frame.
     namespace CinemaEnvironment {
+        /// Creates mapper-requested clones early and temporarily offsets them
+        /// before Chroma assigns environment prop groups. This mirrors PC
+        /// Cinema's mergePropGroups behavior and prevents an unmerged clone
+        /// from silently joining its source light group.
+        void Prepare(const MapVideoConfig& config);
         void Apply(const MapVideoConfig& config);
+        void Cleanup();
     }
 }

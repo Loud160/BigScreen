@@ -30,6 +30,15 @@
 #include "main.hpp"
 
 namespace BigScreen {
+    namespace {
+        constexpr std::string_view CinemaCycleSongName =
+            "Big Screen Cinema Effects Cycle";
+        constexpr std::string_view CinemaCycleFolderName =
+            "Big Screen Cinema Test 00 - Quest Effects Cycle";
+        constexpr double CinemaCyclePhaseSeconds = 10.0;
+        constexpr std::size_t CinemaCyclePhaseCount = 14;
+    }
+
     PlaybackSession& PlaybackSession::Instance()
     {
         // The mod is driven entirely by main-thread hooks, so one process-wide
@@ -53,25 +62,25 @@ namespace BigScreen {
         // Chroma/Noodle environment. Treat it as mapper-owned presentation
         // even if the user's global Chroma override preference is off, so Big
         // Screen cannot force Big Mirror or remove lighting/side geometry.
-        return showcaseEligible_ ||
-               (Settings::Instance().AllowChromaOverride() &&
+        return showcaseEligible_ || cinemaCompatibilityCycleEligible_ ||
+               (Settings::Instance().RespectMapperSettings() &&
                 baseConfig_ &&
-                chromaMapDetected_ &&
                 baseConfig_->hasMapperScreenGeometry);
     }
 
     bool PlaybackSession::MapperEnvironmentPresentationActive() const
     {
-        // A Cinema file can name an environment without the beatmap using
-        // Chroma at all. That metadata alone must not bypass Big Screen's
-        // environment settings (V8C is a real example: it requests Big Mirror
-        // but declares only Cinema). Yield the environment only after the
-        // map-wide detector finds an actual Chroma requirement, suggestion, or
-        // non-empty Chroma environment instruction array.
-        return showcaseEligible_ ||
-               (Settings::Instance().AllowChromaOverride() &&
-                baseConfig_ &&
-                chromaMapDetected_);
+        // Cinema environment instructions and Chroma environment ownership
+        // are separate interoperability decisions. Respect Mapper Settings
+        // applies Cinema's explicit environmentName/environment array even on
+        // a Cinema-only map. Allow Chroma Override yields the broader scene to
+        // Chroma only when map-wide detection confirms actual Chroma use.
+        return showcaseEligible_ || cinemaCompatibilityCycleEligible_ ||
+               (baseConfig_ &&
+                ((Settings::Instance().RespectMapperSettings() &&
+                  baseConfig_->hasMapperEnvironmentPresentation) ||
+                 (Settings::Instance().AllowChromaOverride() &&
+                  chromaMapDetected_)));
     }
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const
@@ -122,8 +131,13 @@ namespace BigScreen {
         preparedCharacteristic_.clear();
         preparedDifficulty_ = -1;
         showcaseEligible_ = false;
+        cinemaCompatibilityCycleEligible_ = false;
+        cinemaCompatibilityCycleScreenHidden_ = false;
+        cinemaCompatibilityCyclePhase_ = 0;
+        cinemaCompatibilityCycleConfigs_.clear();
         chromaMapDetected_ = false;
         menuPreviewStartSongTime_ = 0.0;
+        environmentOnlySession_ = false;
 
         // Hooks remain installed for the lifetime of the process, but the
         // master switch makes every entry point inert. Keeping this guard here
@@ -146,7 +160,18 @@ namespace BigScreen {
         menuPreviewStartSongTime_ = std::max(
             0.0,
             static_cast<double>(level->previewStartTime));
-        baseConfig_ = VideoLibrary::Instance().ResolvePlayback(level);
+        const auto descriptor = VideoLibrary::Instance().Describe(level);
+        baseConfig_ = descriptor.playableConfig;
+        if(!baseConfig_ && descriptor.mapperDefinition &&
+           descriptor.mapperDefinition->forceEnvironmentModifications &&
+           descriptor.mapperDefinition->hasMapperEnvironmentPresentation)
+        {
+            // PC Cinema deliberately permits environment-only mapper files.
+            // Keep them out of FFmpeg while still allowing the gameplay scene
+            // transition and delayed environment pass to honor the metadata.
+            baseConfig_ = descriptor.mapperDefinition;
+            environmentOnlySession_ = true;
+        }
 
         if(baseConfig_)
         {
@@ -167,11 +192,18 @@ namespace BigScreen {
                         chromaReason);
                 }
             }
+            cinemaCompatibilityCycleEligible_ =
+                preparedSongName_ == CinemaCycleSongName &&
+                levelDirectory_.filename().string() == CinemaCycleFolderName &&
+                LoadCinemaCompatibilityCycle();
             RefreshDisplaySettings();
 
+            const std::string preparedKind = environmentOnlySession_
+                ? "Cinema environment-only presentation"
+                : "video '" + config_->videoPath.filename().string() + "'";
             PaperLogger.info(
-                "Prepared video '{}' from '{}'",
-                config_->videoPath.filename().string(),
+                "Prepared {} from '{}'",
+                preparedKind,
                 config_->metadataPath.filename().string());
         }
         else
@@ -263,14 +295,15 @@ namespace BigScreen {
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
         // scale adjustments from accumulating on the selected song.
         const auto& settings = Settings::Instance();
-        const auto applyUserVideoControls = [&settings, this]()
+        const auto applyUserVideoControls = [&settings, this](bool applyOpacity)
         {
             // Chroma/Cinema may own the canvas transform, but Big Screen's
             // Video Controls describe how the decoded picture is composed
             // inside that canvas. Keeping these independent lets a mapper
             // place/size/curve the screen without silently disabling the
             // user's rotation, zoom, pan, tilt, or stretch controls.
-            config_->videoOpacity = settings.VideoOpacity();
+            if(applyOpacity)
+                config_->videoOpacity = settings.VideoOpacity();
             if(settings.AdvancedOptionsEnabled())
             {
                 config_->videoRotation = settings.VideoRotation();
@@ -281,10 +314,10 @@ namespace BigScreen {
                 config_->stretchVideoToFit = settings.StretchVideoToFit();
             }
         };
-        // Mapper screen geometry wins only when the map both uses Chroma and
-        // explicitly authors the video canvas. Chroma environment ownership
-        // is evaluated separately; merely using Chroma must not make the
-        // player's Screen Canvas controls inert.
+        // Cinema screen ownership and Chroma environment ownership are
+        // independent. A mapper-authored Cinema canvas does not require
+        // Chroma, and merely using Chroma must not make the player's Screen
+        // Canvas controls inert.
         (void)intendedContext;
         if(MapperScreenPresentationActive())
         {
@@ -297,6 +330,10 @@ namespace BigScreen {
             // legacy `transparency` field is present. Treating that field as a
             // forced black background made the visible control lie and left
             // black bars around videos in mapper-positioned screens.
+            if(config_->mapperTransparency)
+            {
+                config_->opaqueScreenBody = !*config_->mapperTransparency;
+            }
             config_->letterboxTransparent =
                 settings.AdvancedOptionsEnabled() &&
                 settings.LetterboxTransparencyEnabled();
@@ -308,9 +345,9 @@ namespace BigScreen {
                     settings.CurvedScreenEnabled() &&
                     settings.MaintainCurveAspectRatio();
             }
-            applyUserVideoControls();
+            applyUserVideoControls(true);
             PaperLogger.info(
-                "Allow Chroma Override is yielding custom screen geometry to this Chroma map");
+                "Respect Mapper Settings is applying this map's Cinema screen presentation");
             return;
         }
 
@@ -319,7 +356,11 @@ namespace BigScreen {
         // authored X/Y/Z and scale. The latter left Chroma screens at their
         // custom location even after the visible size changed.
         if(config_->hasMapperPresentation)
-            config_->ResetPresentationToDefaults();
+        {
+            config_->ResetScreenGeometryToDefaults();
+            if(!settings.RespectMapperSettings())
+                config_->ResetMapperVisualEffects();
+        }
 
         const auto& layout = settings.ActiveLayout();
         if(settings.AdvancedOptionsEnabled() && layout.undocked)
@@ -354,9 +395,19 @@ namespace BigScreen {
             settings.MaintainCurveAspectRatio();
         // Letterbox transparency is advanced; picture opacity is deliberately
         // a basic per-layout control and therefore applies in both modes.
-        config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
-            settings.LetterboxTransparencyEnabled();
-        applyUserVideoControls();
+        if(settings.RespectMapperSettings() && config_->mapperTransparency)
+        {
+            config_->opaqueScreenBody = !*config_->mapperTransparency;
+            config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
+                settings.LetterboxTransparencyEnabled();
+            applyUserVideoControls(true);
+        }
+        else
+        {
+            config_->letterboxTransparent = settings.AdvancedOptionsEnabled() &&
+                settings.LetterboxTransparencyEnabled();
+            applyUserVideoControls(true);
+        }
     }
 
     bool PlaybackSession::ApplyActiveScreenLayoutLive()
@@ -398,6 +449,7 @@ namespace BigScreen {
             // frame for Beat Saber's current song time.
             firstFrameUploaded_ = false;
             surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
             showcase_.SetVisible(false);
             showcase_.SetMediaReady(false);
             lastPresentationSlot_.reset();
@@ -405,6 +457,7 @@ namespace BigScreen {
         else
         {
             surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
             showcase_.SetVisible(false);
         }
         PaperLogger.info(
@@ -427,6 +480,25 @@ namespace BigScreen {
         RebuildEffectiveConfig(context);
         if(!config_)
             return;
+
+        if(environmentOnlySession_)
+        {
+            // Environment-only metadata is meaningful during gameplay only.
+            // Menu previews have no gameplay environment to modify and must
+            // remain an inert no-video selection.
+            if(context != PlaybackContext::Gameplay)
+                return;
+            if(Settings::Instance().RespectMapperSettings() &&
+               !config_->environmentModifications.empty())
+                CinemaEnvironment::Prepare(*config_);
+            started_ = true;
+            context_ = context;
+            mapperEnvironmentApplyCountdown_ =
+                MapperEnvironmentPresentationActive() ? 3 : 0;
+            PaperLogger.info(
+                "Started Cinema environment-only gameplay presentation");
+            return;
+        }
 
         std::string error;
         if(context == PlaybackContext::Gameplay && gameplayPrewarmFailed_)
@@ -461,6 +533,31 @@ namespace BigScreen {
             return;
         }
 
+        if(MapperScreenPresentationActive() &&
+           !config_->additionalScreens.empty() &&
+           !cinemaScreens_.Create(
+               *config_,
+               decoder_.Width(),
+               decoder_.Height(),
+               surface_.Texture()))
+        {
+            // Additional panels are presentation enhancement, not a reason to
+            // interrupt a playable map. The primary screen remains available
+            // and the failure is retained in the diagnostic log.
+            PaperLogger.error(
+                "Cinema additional screens could not be created; continuing with the primary screen");
+        }
+
+        if(context == PlaybackContext::Gameplay &&
+           Settings::Instance().RespectMapperSettings() &&
+           !config_->environmentModifications.empty())
+        {
+            // Create clones before the delayed Chroma environment pass. Their
+            // temporary position controls whether Chroma merges their prop
+            // groups; CinemaEnvironment::Apply restores final placement.
+            CinemaEnvironment::Prepare(*config_);
+        }
+
         if(context == PlaybackContext::Gameplay && showcaseEligible_)
         {
             if(!showcase_.Create(
@@ -477,6 +574,7 @@ namespace BigScreen {
             else
             {
                 surface_.SetVisible(false);
+                cinemaScreens_.SetVisible(false);
             }
         }
 
@@ -484,6 +582,7 @@ namespace BigScreen {
         playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
+        appliedMapperEndFade_ = 1.0f;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
         context_ = context;
@@ -507,6 +606,8 @@ namespace BigScreen {
         sampledFrames_ = 0;
         gameplayFrameSamplingFinished_ = false;
         automaticReductions_ = 0;
+        cinemaCompatibilityCyclePhase_ = 0;
+        cinemaCompatibilityCycleScreenHidden_ = false;
         // Gameplay prewarming deliberately runs before Beat Saber's song
         // clock. Exclude that setup work from the map benchmark so video-on
         // and video-off runs cover the same measured interval.
@@ -622,12 +723,147 @@ namespace BigScreen {
         return decoder_.Open(
             config_->videoPath,
             UncappedOutputHeight,
+            VisualEffectsFor(*config_),
             error);
+    }
+
+    FrameVisualEffects PlaybackSession::VisualEffectsFor(
+        const MapVideoConfig& config)
+    {
+        FrameVisualEffects effects;
+        if(config.colorCorrection)
+        {
+            const auto& correction = *config.colorCorrection;
+            effects.brightness = correction.brightness;
+            effects.contrast = correction.contrast;
+            effects.saturation = correction.saturation;
+            effects.hue = correction.hue;
+            effects.exposure = correction.exposure;
+            effects.gamma = correction.gamma;
+            // A mapper may include an all-default colorCorrection object. Do
+            // not turn that harmless metadata into a full RGBA per-pixel pass
+            // on every decoded picture.
+            constexpr float EffectEpsilon = 0.0001f;
+            effects.enabled =
+                std::abs(correction.brightness - 1.0f) > EffectEpsilon ||
+                std::abs(correction.contrast - 1.0f) > EffectEpsilon ||
+                std::abs(correction.saturation - 1.0f) > EffectEpsilon ||
+                std::abs(correction.hue) > EffectEpsilon ||
+                std::abs(correction.exposure - 1.0f) > EffectEpsilon ||
+                std::abs(correction.gamma - 1.0f) > EffectEpsilon;
+        }
+        if(config.vignette)
+        {
+            effects.enabled = true;
+            effects.vignetteEnabled = true;
+            effects.vignetteElliptical =
+                config.vignette->type == "elliptical";
+            effects.vignetteRadius = config.vignette->radius;
+            effects.vignetteSoftness = config.vignette->softness;
+        }
+        return effects;
+    }
+
+    bool PlaybackSession::LoadCinemaCompatibilityCycle()
+    {
+        cinemaCompatibilityCycleConfigs_.clear();
+        cinemaCompatibilityCycleConfigs_.reserve(CinemaCyclePhaseCount);
+        for(std::size_t index = 0; index < CinemaCyclePhaseCount; ++index)
+        {
+            std::ostringstream fileName;
+            fileName << "cinema-cycle-" << std::setw(2) << std::setfill('0')
+                     << index + 1 << ".json";
+            std::string error;
+            auto phase = MapVideoConfig::LoadDefinitionFromFile(
+                levelDirectory_, levelDirectory_ / fileName.str(), error);
+            if(!phase || !phase->HasLocalVideo())
+            {
+                PaperLogger.error(
+                    "Cinema compatibility cycle phase {} could not be loaded: {}",
+                    index + 1,
+                    error.empty() ? "its local MP4 was missing" : error);
+                cinemaCompatibilityCycleConfigs_.clear();
+                return false;
+            }
+            cinemaCompatibilityCycleConfigs_.push_back(std::move(*phase));
+        }
+        PaperLogger.info(
+            "Prepared {} Cinema compatibility phases at {:.0f} seconds each",
+            cinemaCompatibilityCycleConfigs_.size(),
+            CinemaCyclePhaseSeconds);
+        return true;
+    }
+
+    bool PlaybackSession::ApplyCinemaCompatibilityCyclePhase(
+        std::size_t phaseIndex,
+        double songTimeSeconds)
+    {
+        if(phaseIndex >= cinemaCompatibilityCycleConfigs_.size())
+            return false;
+
+        cinemaCompatibilityCyclePhase_ = phaseIndex;
+        config_ = cinemaCompatibilityCycleConfigs_[phaseIndex];
+        decoder_.UpdateVisualEffects(VisualEffectsFor(*config_));
+        appliedMapperEndFade_ = 1.0f;
+        lastPresentationSlot_.reset();
+        firstFrameUploaded_ = false;
+
+        // Every environment phase starts from the scene's original state.
+        // Cleanup now restores non-clone transforms/visibility in addition to
+        // destroying clones, so the ten-second tests cannot contaminate one
+        // another.
+        CinemaEnvironment::Cleanup();
+        if(!config_->environmentModifications.empty())
+        {
+            CinemaEnvironment::Prepare(*config_);
+            CinemaEnvironment::Apply(*config_);
+        }
+
+        cinemaScreens_.Destroy();
+        if(phaseIndex + 1 == CinemaCyclePhaseCount)
+        {
+            // Test 14 is intentionally environment-only. Keep the valid
+            // decoder warm but issue no requests/uploads during this final
+            // phase, exactly matching its expected absence of a screen.
+            cinemaCompatibilityCycleScreenHidden_ = true;
+            surface_.SetVisible(false);
+            PaperLogger.info(
+                "Cinema compatibility phase {}/{}: environment-only screen hidden",
+                phaseIndex + 1,
+                CinemaCyclePhaseCount);
+            return true;
+        }
+
+        cinemaCompatibilityCycleScreenHidden_ = false;
+        surface_.Destroy();
+        if(!surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
+        {
+            PaperLogger.error(
+                "Cinema compatibility phase {} could not rebuild the primary screen",
+                phaseIndex + 1);
+            return false;
+        }
+        if(!config_->additionalScreens.empty() &&
+           !cinemaScreens_.Create(
+               *config_, decoder_.Width(), decoder_.Height(), surface_.Texture()))
+        {
+            PaperLogger.error(
+                "Cinema compatibility phase {} could not create its additional screens",
+                phaseIndex + 1);
+        }
+        decoder_.Request(std::max(0.0, songTimeSeconds));
+        PaperLogger.info(
+            "Cinema compatibility phase {}/{} applied from '{}'",
+            phaseIndex + 1,
+            CinemaCyclePhaseCount,
+            config_->metadataPath.filename().string());
+        return true;
     }
 
     void PlaybackSession::PrewarmGameplay()
     {
-        if(!Settings::Instance().ModEnabled() || !config_ || started_)
+        if(!Settings::Instance().ModEnabled() || !config_ || started_ ||
+           environmentOnlySession_)
             return;
         std::string error;
         gameplayDecoderPrewarmed_ = OpenDecoder(error);
@@ -652,6 +888,44 @@ namespace BigScreen {
     {
         if(!Settings::Instance().ModEnabled() || !started_ || !config_)
             return;
+
+        if(cinemaCompatibilityCycleEligible_ &&
+           context_ == PlaybackContext::Gameplay &&
+           !cinemaCompatibilityCycleConfigs_.empty())
+        {
+            const auto requestedPhase = std::min(
+                static_cast<std::size_t>(std::max(
+                    0.0,
+                    std::floor(songTimeSeconds / CinemaCyclePhaseSeconds))),
+                cinemaCompatibilityCycleConfigs_.size() - 1);
+            if(requestedPhase != cinemaCompatibilityCyclePhase_)
+            {
+                if(!ApplyCinemaCompatibilityCyclePhase(
+                       requestedPhase, songTimeSeconds))
+                {
+                    playbackFailed_ = true;
+                    surface_.SetVisible(false);
+                    cinemaScreens_.SetVisible(false);
+                    ErrorManager::Instance().ReportInternal(
+                        "changing the Cinema compatibility test phase",
+                        "The test screen could not be rebuilt. Beat Saber will continue without video.");
+                    return;
+                }
+            }
+            if(cinemaCompatibilityCycleScreenHidden_)
+            {
+                lastTickSongTime_ = songTimeSeconds;
+                return;
+            }
+        }
+
+        if(environmentOnlySession_)
+        {
+            if(mapperEnvironmentApplyCountdown_ > 0 &&
+               --mapperEnvironmentApplyCountdown_ == 0)
+                CinemaEnvironment::Apply(*config_);
+            return;
+        }
 
         const bool diagnosticsContext =
             context_ == PlaybackContext::Gameplay ||
@@ -705,6 +979,7 @@ namespace BigScreen {
         {
             playbackFailed_ = true;
             surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
             showcase_.SetVisible(false);
             // The worker has already published its terminal error. Join it and
             // release FFmpeg contexts/RGBA buffers now instead of retaining
@@ -734,6 +1009,7 @@ namespace BigScreen {
         if(context_ == PlaybackContext::Gameplay && !gameplayScreenEnabled_)
         {
             surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
             showcase_.SetVisible(false);
             lastTickSongTime_ = songTimeSeconds;
             return;
@@ -746,16 +1022,19 @@ namespace BigScreen {
             {
                 showcase_.Destroy();
                 surface_.SetVisible(firstFrameUploaded_);
+                cinemaScreens_.SetVisible(firstFrameUploaded_);
                 PaperLogger.error(
                     "Up & Down showcase update failed; restored ordinary video playback");
             }
             else if(showcase_.TimelineActive())
             {
                 surface_.SetVisible(false);
+                cinemaScreens_.SetVisible(false);
             }
             else
             {
                 surface_.SetVisible(firstFrameUploaded_);
+                cinemaScreens_.SetVisible(firstFrameUploaded_);
             }
         }
 
@@ -769,15 +1048,41 @@ namespace BigScreen {
         if(mediaTime < 0.0)
         {
             surface_.ShowLeadIn(config_->blackDuringLeadIn);
+            cinemaScreens_.ShowLeadIn(config_->blackDuringLeadIn);
             // Lead-in intentionally has no video deadlines. Rebase the song
             // clock every tick so frame zero does not inherit the elapsed
             // transparent/black interval as an artificial burst of misses.
             lastTickSongTime_ = songTimeSeconds;
             return;
         }
+
+        // PC Cinema fades mapper video brightness during the final second.
+        // Big Screen uses the equivalent alpha transition on the picture
+        // material, including all additional screens sharing that picture.
+        // Looping media has no final frame, so its natural duration does not
+        // trigger this effect; an explicit endVideoAt still does.
+        const double configuredEnd = config_->stopAtVideoSecond.value_or(
+            config_->loop ? 0.0 : decoder_.DurationSeconds());
+        const float endFade = configuredEnd > 0.0 &&
+                              mediaTime >= configuredEnd - 1.0
+            ? std::clamp(
+                static_cast<float>(configuredEnd - mediaTime), 0.0f, 1.0f)
+            : 1.0f;
+        if(std::abs(endFade - appliedMapperEndFade_) >= 0.001f)
+        {
+            const float opacity = config_->videoOpacity * endFade;
+            if(!surface_.SetOpacity(opacity) ||
+               !cinemaScreens_.SetOpacity(opacity))
+            {
+                PaperLogger.error(
+                    "Cinema end fade could not update the video material");
+            }
+            appliedMapperEndFade_ = endFade;
+        }
         if(config_->stopAtVideoSecond && mediaTime > *config_->stopAtVideoSecond)
         {
             surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
             lastTickSongTime_ = songTimeSeconds;
             return;
         }
@@ -1009,17 +1314,20 @@ namespace BigScreen {
                     {
                         showcase_.Destroy();
                         surface_.SetVisible(true);
+                        cinemaScreens_.SetVisible(true);
                         PaperLogger.error(
                             "Up & Down showcase activation failed after first frame; restored ordinary playback");
                     }
                     else
                     {
                         surface_.SetVisible(false);
+                        cinemaScreens_.SetVisible(false);
                     }
                 }
                 else
                 {
                     surface_.SetVisible(true);
+                    cinemaScreens_.SetVisible(true);
                 }
             }
             else
@@ -1092,11 +1400,12 @@ namespace BigScreen {
     void PlaybackSession::Stop()
     {
         const bool gameplaySession =
-            started_ && context_ == PlaybackContext::Gameplay;
+            started_ && context_ == PlaybackContext::Gameplay &&
+            !environmentOnlySession_;
         const bool recordGameplayPerformance =
             gameplaySession &&
             Settings::Instance().PerformanceDiagnosticsEnabled();
-        if(started_)
+        if(started_ && !environmentOnlySession_)
             CaptureDiagnosticsSummary();
         if(recordGameplayPerformance)
         {
@@ -1120,7 +1429,9 @@ namespace BigScreen {
         // Shared panels release their materials before the primary owner
         // destroys the one decoded texture they all reference.
         showcase_.Destroy();
+        cinemaScreens_.Destroy();
         surface_.Destroy();
+        CinemaEnvironment::Cleanup();
         if(context_ == PlaybackContext::Gameplay)
             PerformancePanel::Instance().SuspendGameplay();
         decoder_.Close();
@@ -1141,6 +1452,7 @@ namespace BigScreen {
         playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
+        appliedMapperEndFade_ = 1.0f;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
         context_ = PlaybackContext::None;

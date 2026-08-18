@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <chrono>
 #include <unordered_set>
+#include <unordered_map>
 
 #include "main.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
@@ -40,6 +41,196 @@ namespace BigScreen {
     namespace {
         constexpr auto LibraryRoot =
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen";
+
+        const rapidjson::Value* Member(
+            const rapidjson::Value& value, const char* name);
+        std::string StringOr(
+            const rapidjson::Value& value, const char* name);
+
+        struct PlaylistCinemaEntry {
+            std::string json;
+            std::filesystem::path playlistPath;
+        };
+
+        using PlaylistCinemaIndex =
+            std::unordered_map<std::string, PlaylistCinemaEntry>;
+        std::mutex PlaylistCinemaIndexMutex;
+        std::optional<PlaylistCinemaIndex> CachedPlaylistCinemaIndex;
+
+        std::string Lowercase(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+            return value;
+        }
+
+        PlaylistCinemaIndex BuildPlaylistCinemaIndex()
+        {
+            std::unordered_map<std::string, PlaylistCinemaEntry> entries;
+            const std::array<std::filesystem::path, 3> roots{
+                "/sdcard/ModData/com.beatgames.beatsaber/Mods/PlaylistManager/Playlists",
+                "/sdcard/ModData/com.beatgames.beatsaber/Mods/PlaylistCore/Playlists",
+                "/sdcard/Playlists"};
+            constexpr std::uintmax_t MaximumPlaylistBytes = 8 * 1024 * 1024;
+            constexpr std::size_t MaximumPlaylistFiles = 256;
+            std::size_t scannedFiles = 0;
+
+            for(const auto& root : roots)
+            {
+                std::error_code error;
+                if(!std::filesystem::is_directory(root, error))
+                    continue;
+                for(std::filesystem::recursive_directory_iterator iterator(
+                        root,
+                        std::filesystem::directory_options::skip_permission_denied,
+                        error), end;
+                    !error && iterator != end && scannedFiles < MaximumPlaylistFiles;
+                    iterator.increment(error))
+                {
+                    if(!iterator->is_regular_file(error))
+                        continue;
+                    const auto extension = Lowercase(
+                        iterator->path().extension().string());
+                    if(extension != ".bplist" && extension != ".json")
+                        continue;
+                    ++scannedFiles;
+                    const auto bytes = iterator->file_size(error);
+                    if(error || bytes > MaximumPlaylistBytes)
+                        continue;
+                    std::ifstream stream(iterator->path(), std::ios::binary);
+                    if(!stream)
+                        continue;
+                    const std::string json{
+                        std::istreambuf_iterator<char>(stream),
+                        std::istreambuf_iterator<char>()};
+                    rapidjson::Document document;
+                    document.Parse(json.data(), json.size());
+                    if(document.HasParseError() || !document.IsObject())
+                        continue;
+                    const auto* songs = Member(document, "songs");
+                    if(!songs)
+                        songs = Member(document, "Songs");
+                    if(!songs || !songs->IsArray())
+                        continue;
+
+                    for(const auto& song : songs->GetArray())
+                    {
+                        if(!song.IsObject())
+                            continue;
+                        std::string identity = StringOr(song, "levelId");
+                        if(identity.empty()) identity = StringOr(song, "levelID");
+                        if(identity.empty()) identity = StringOr(song, "levelid");
+                        if(identity.empty()) identity = StringOr(song, "hash");
+                        if(identity.empty()) identity = StringOr(song, "Hash");
+                        if(identity.empty())
+                            continue;
+                        const auto* custom = Member(song, "customData");
+                        if(!custom) custom = Member(song, "_customData");
+                        if(!custom || !custom->IsObject())
+                            continue;
+                        const auto* cinema = Member(*custom, "cinema");
+                        if(!cinema || !cinema->IsObject())
+                            continue;
+                        rapidjson::StringBuffer buffer;
+                        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+                        cinema->Accept(writer);
+                        entries.insert_or_assign(
+                            Lowercase(identity),
+                            PlaylistCinemaEntry{
+                                std::string(buffer.GetString(), buffer.GetSize()),
+                                iterator->path()});
+                    }
+                }
+            }
+            if(!entries.empty())
+            {
+                PaperLogger.info(
+                    "Indexed {} Cinema playlist video configuration(s) from {} playlist file(s)",
+                    entries.size(),
+                    scannedFiles);
+            }
+            return entries;
+        }
+
+        void RefreshPlaylistCinemaIndex()
+        {
+            // Build outside the lock because directory traversal can take a
+            // noticeable amount of time. Describe() continues using the last
+            // complete index until this explicit refresh atomically replaces
+            // it; no per-frame or timed filesystem polling is performed.
+            auto refreshed = BuildPlaylistCinemaIndex();
+            std::scoped_lock lock(PlaylistCinemaIndexMutex);
+            CachedPlaylistCinemaIndex = std::move(refreshed);
+        }
+
+        std::optional<MapVideoConfig> LoadPlaylistCinemaDefinition(
+            const std::string& levelId,
+            const std::filesystem::path& runtimeRoot,
+            std::string& error)
+        {
+            std::string key = Lowercase(levelId);
+            const std::string customPrefix = "custom_level_";
+            const std::string customWipPrefix = "custom_level_wip_";
+            std::array<std::string, 3> candidates{
+                key,
+                key.starts_with(customPrefix)
+                    ? key.substr(customPrefix.size()) : key,
+                key.starts_with(customWipPrefix)
+                    ? key.substr(customWipPrefix.size()) : key};
+            std::optional<PlaylistCinemaEntry> found;
+            {
+                std::scoped_lock lock(PlaylistCinemaIndexMutex);
+                if(!CachedPlaylistCinemaIndex)
+                    CachedPlaylistCinemaIndex = BuildPlaylistCinemaIndex();
+                for(const auto& candidate : candidates)
+                {
+                    const auto iterator = CachedPlaylistCinemaIndex->find(candidate);
+                    if(iterator != CachedPlaylistCinemaIndex->end())
+                    {
+                        found = iterator->second;
+                        break;
+                    }
+                }
+            }
+            if(!found)
+                return std::nullopt;
+
+            // Reuse the same hardened Cinema parser instead of maintaining a
+            // weaker playlist-only interpretation. Each level gets an
+            // isolated generated definition, and the source playlist remains
+            // untouched and authoritative.
+            const auto directory = runtimeRoot / "PlaylistMetadata" /
+                CoreLogic::StableVideoKey(levelId);
+            std::filesystem::create_directories(directory);
+            const auto path = directory / "cinema-video.json";
+            const auto temporary = directory / "cinema-video.json.tmp";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                if(!output)
+                {
+                    error = "Could not stage the playlist Cinema configuration";
+                    return std::nullopt;
+                }
+                output.write(found->json.data(),
+                    static_cast<std::streamsize>(found->json.size()));
+            }
+            std::error_code filesystemError;
+            std::filesystem::remove(path, filesystemError);
+            filesystemError.clear();
+            std::filesystem::rename(temporary, path, filesystemError);
+            if(filesystemError)
+            {
+                error = "Could not activate the playlist Cinema configuration: " +
+                    filesystemError.message();
+                return std::nullopt;
+            }
+            auto config = MapVideoConfig::LoadDefinitionFromLevel(directory, error);
+            if(config)
+                config->metadataPath = found->playlistPath;
+            return config;
+        }
 
         const rapidjson::Value* Member(const rapidjson::Value& value, const char* name)
         {
@@ -531,6 +722,31 @@ namespace BigScreen {
             }
         }
 
+        if(!descriptor.mapperDefinition)
+        {
+            std::string playlistError;
+            descriptor.mapperDefinition = LoadPlaylistCinemaDefinition(
+                descriptor.levelId,
+                runtimePath_,
+                playlistError);
+            if(!playlistError.empty())
+            {
+                PaperLogger.error(
+                    "Playlist Cinema metadata rejected for '{}': {}",
+                    descriptor.levelId,
+                    playlistError);
+                ErrorManager::Instance().RecordError(
+                    "Reading playlist Cinema metadata for " + descriptor.levelId,
+                    playlistError);
+            }
+            if(descriptor.mapperDefinition)
+            {
+                descriptor.downloadUrl =
+                    descriptor.mapperDefinition->DownloadUrl();
+                descriptor.downloadOrigin = VideoOrigin::Mapper;
+            }
+        }
+
         std::scoped_lock lock(mutex_);
         const auto found = FindRecord(records_, descriptor.levelId);
         const LevelVideoRecords* saved = found == records_.end() ? nullptr : &found->second;
@@ -627,6 +843,19 @@ namespace BigScreen {
 
         descriptorCache_.insert_or_assign(descriptor.levelId, descriptor);
         return descriptor;
+    }
+
+    void VideoLibrary::RefreshMapperMetadata(const std::string& levelId)
+    {
+        RefreshPlaylistCinemaIndex();
+        std::scoped_lock lock(mutex_);
+        if(levelId.empty())
+            descriptorCache_.clear();
+        else
+            descriptorCache_.erase(levelId);
+        PaperLogger.info(
+            "Refreshed Cinema playlist metadata and invalidated cached mapper settings for '{}'",
+            levelId.empty() ? std::string("all songs") : levelId);
     }
 
     std::optional<MapVideoConfig> VideoLibrary::ResolvePlayback(

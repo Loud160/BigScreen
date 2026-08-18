@@ -105,5 +105,18 @@ build.ninja
 .ninja_log
 extern.cmake
 
+# Unity's Android video-material project keeps its authored Assets, package
+# lock, and ProjectSettings in source so a clean clone contains every pinned
+# input needed to reproduce the bundle. Only generated editor/build caches are
+# ignored.
+/tools/video-shader/Build/
+/tools/video-shader/Library/
+/tools/video-shader/Logs/
+/tools/video-shader/Temp/
+/tools/video-shader/UserSettings/
+/tools/video-shader/*.csproj
+/tools/video-shader/*.sln
+!/tools/video-shader/ProjectSettings/ProjectVersion.txt
+
 # QMOD Schema
 mod.json.schema

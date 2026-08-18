@@ -46,15 +46,19 @@ The menu always displays a blank screen in the placement environment. Changes up
 
 ### Editing Screen Layout — default: Layout 1
 
-Chooses one of five independent layout profiles. It both selects the active layout and chooses which profile the controls edit. Layout can also be changed from song selection and, when Big Screen owns the current screen, from pause.
+Chooses one of five independent layout profiles. It both selects the active layout and chooses which profile the controls edit. Layout can also be changed from song selection. Big Screen does not currently expose pause-menu controls on Beat Saber 1.40.8.
 
 ### Advanced Screen Controls — default: Off
 
 Enables independent video framing and free screen placement for the selected layout after an **I Understand** confirmation. Each of the five layouts saves this switch independently, allowing basic and advanced layouts to coexist. Turning it off ignores that layout's saved letterbox transparency, screen rotation, video transforms, and undocked placement without deleting their values. Video Opacity remains available in basic mode. Extreme settings may reduce performance or interact poorly with authored map effects.
 
+### Respect Mapper Settings — default: On
+
+Applies screen placement, curvature, additional screens, image effects, and explicit Cinema environment changes authored in the map's video metadata. Turn this off to keep the mapper's video identity and synchronization while using the selected Big Screen layout and visual settings. A timing/URL-only Cinema file never claims the screen. User video pan, zoom, rotation, tilt, stretch, opacity, and letterbox behavior remain available inside an authored canvas.
+
 ### Allow Chroma Override — default: On
 
-Preserves the intended environment only for a video map that is actually detected as using Chroma. Cinema metadata by itself—including a requested environment—does not activate this override, so non-Chroma maps continue to use Big Screen's environment settings. The map takes ownership of the screen canvas only when both conditions are true: the map is detected as using Chroma, and its video metadata supplies custom position, rotation, size, or curvature. Otherwise the selected Big Screen layout and its Screen Canvas controls remain active. Video Controls, Video Opacity, and Letterbox Transparency always control how the picture is composed inside whichever canvas is active. Detection is map-wide and works whether the video came from the mapper, YouTube, Video Import, or the map folder. Turn this off to force Big Screen's canvas and environment options. Timing metadata remains honored either way.
+Lets a map that is actually detected as using Chroma retain its Chroma-authored gameplay environment instead of Big Screen's environment override. It does not decide who owns the video screen; that separate decision belongs to Respect Mapper Settings. Detection is map-wide and works whether the video came from the mapper, a supported download, Video Import, or the map folder. Turn this off to use Big Screen's environment options while leaving Cinema screen presentation governed by Respect Mapper Settings.
 
 ### Screen Distance Offset — default: 0, range: -180 to +180
 
@@ -88,11 +92,11 @@ Visible only for curved screens. On keeps the original width-to-height relations
 
 Visible only for curved screens. Positive values wrap edges toward the player; negative values bend them away. Drag the slider for coarse movement or use arrows for 0.05 fine adjustments.
 
-The following controls are visible only when **Advanced Screen Controls** is enabled. Every value belongs to the currently selected layout.
-
 ### Video Opacity — default: 1.00
 
 Sets the opacity of the decoded picture from 0.00 (invisible) to 1.00 (fully opaque). This basic, per-layout control applies to docked and undocked screens. Values below 1.00 use alpha blending so scenery and lights behind the video can show through.
+
+The remaining controls in this section are visible only when **Advanced Screen Controls** is enabled. Every value belongs to the currently selected layout.
 
 ### Letterbox Transparency — default: Off
 
@@ -130,7 +134,7 @@ While undocked, the map-relative Distance, X/Y, Screen Tilt, Screen Size Multipl
 
 Leaving Big Screen, changing layouts/settings, disabling the mod, or opening the Quest system menu cancels unsaved positioning and restores the last saved placement. **Cancel Positioning** provides the same safe exit. Flat/curved controls continue to apply to an undocked screen.
 
-Allow Chroma Override retains priority only when an authored map actually supplies Cinema/Chroma presentation data. With that option on, authored presentation wins; without authored presentation, the selected Big Screen layout—including an undocked screen—wins. Turning Allow Chroma Override off first restores Big Screen's neutral back-wall canvas, then applies the selected layout; mapper X/Y/Z, rotation, and size are not retained as hidden offsets.
+Respect Mapper Settings takes priority when Cinema metadata supplies authored screen geometry. Turning it off restores Big Screen's neutral canvas before applying the selected layout, so mapper X/Y/Z, rotation, and size never survive as hidden offsets. Allow Chroma Override independently controls only the detected Chroma environment.
 
 ## Environment
 
@@ -156,9 +160,9 @@ Disabled child controls do not display hover hints; Map Light Show keeps its own
 
 ### Use Big Mirror Override — default: On
 
-Loads Big Mirror for video maps because its open back-wall area fits a large screen. Off preserves the map's intended environment, which can place scenery in front of the video. A map detected as using Chroma takes environment precedence when Allow Chroma Override is active; Cinema metadata alone does not.
+Loads Big Mirror for video maps because its open back-wall area fits a large screen. Off preserves the map's intended environment, which can place scenery in front of the video. A detected Chroma map takes environment precedence when Allow Chroma Override is active. An explicit Cinema `environmentName` or `environment` array takes precedence when Respect Mapper Settings is active.
 
-### Disable Rotation and Motion — default: Off
+### Disable Rotation and Motion — default: On
 
 On stops supported rotating/moving background components for video maps. This is useful when large scenery distracts from the screen.
 
@@ -220,6 +224,10 @@ Opening the page never starts a download. A missing map gets its own **Download 
 
 This is an experimental comparison option. It selects which bundled decoder runtime opens the next video. Off uses FFmpeg 4.4.8; on uses FFmpeg 9.0.1. It does not change, convert, or redownload the video. If a Video Library preview is active, changing the switch safely recreates playback at the retained song position. A map already in gameplay is never switched underneath its running decoder; the new choice applies when the next playback session starts. The performance overlay and results summary identify the runtime that actually opened.
 
+#### Embedded Video Shader — default: Off
+
+Selects between two video-material paths for the next gameplay session and recreates an active Video Library preview. Off selects Unity's `UI/Default` shader with RGB-only color writes. On selects the embedded `BigScreen/Video` shader, which supports explicit alpha blending, depth writes, and Cinema soft-additive blending. If the requested shader cannot be loaded, Big Screen follows its fallback ladder and records the selected tier. The current behavior of both paths must be confirmed with Bloom on and off during the checkpoint retest; see [Current development checkpoint](KNOWN_ISSUES.md).
+
 #### Hardware Video Decoding — default: On
 
 On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever FFmpeg runtime is selected. MediaCodec output is copied into CPU-readable memory for Big Screen's existing color conversion and Unity texture upload; this preserves every screen shape and effect but is not a zero-copy GPU path. Startup or mid-video hardware failures reopen with software only when the codec and resolution policy permits it. HEVC and content above 1080p instead stop video safely while the map continues. Turn the option off to force the permitted FFmpeg software decoder for H.264, VP8, or VP9 content at no more than 1080p. The live panel, results summary, error history, and power benchmark identify the backend that actually remained active. Changing this option restarts an active Video Library preview at its retained time and applies to gameplay on the next map.
@@ -273,8 +281,10 @@ Use this for controlled A/B tests, not as a permanent gameplay option. Unplug US
 
 ## Pause-menu controls
 
-- **Video Screen:** appears only while a map with an assigned playable video is running. It hides/restores the current screen without changing the global Video In Map setting; map lighting/environment choices stay active.
-- **Screen Layout:** appears when Big Screen, rather than mapper/Chroma presentation, owns the screen. It applies Layout 1–5 live without restarting video or changing the song clock.
+Big Screen does not currently expose pause-menu controls on Beat Saber 1.40.8.
+An earlier hidden-control implementation was removed because it did not render
+and could leave an unsafe Unity UI reference during map exit. Change the active
+layout or Video In Map state before starting the map.
 
 ## Per-video editor controls
 

@@ -212,6 +212,7 @@ namespace BigScreen {
         int maximumOutputHeight,
         bool preferHardwareDecoding,
         void* javaVm,
+        const FrameVisualEffects& visualEffects,
         std::string& error)
     {
         Close();
@@ -227,6 +228,10 @@ namespace BigScreen {
         softwareFallbackBlockedReason_.clear();
         codecName_ = "unknown";
         displayQuarterTurns_ = 0;
+        {
+            std::scoped_lock lock(visualEffectsMutex_);
+            visualEffects_ = visualEffects;
+        }
         error.clear();
         {
             std::scoped_lock lock(errorMutex_);
@@ -565,6 +570,13 @@ namespace BigScreen {
             ++requestVersion_;
         }
         requestChanged_.notify_one();
+    }
+
+    void FrameDecoder::UpdateVisualEffects(
+        const FrameVisualEffects& visualEffects)
+    {
+        std::scoped_lock lock(visualEffectsMutex_);
+        visualEffects_ = visualEffects;
     }
 
     bool FrameDecoder::TryTake(VideoFrame& destination)
@@ -1102,7 +1114,10 @@ namespace BigScreen {
             return false;
         }
         if(displayQuarterTurns_ == 0)
+        {
+            ApplyVisualEffects(destination);
             return true;
+        }
 
         // Apply container display-matrix orientation once to the decoded
         // picture. User Video Rotation remains a separate UV transform on top
@@ -1139,7 +1154,242 @@ namespace BigScreen {
                     destination.rgba.data() + targetOffset);
             }
         }
+        ApplyVisualEffects(destination);
         return true;
+    }
+
+    void FrameDecoder::ApplyVisualEffects(VideoFrame& destination)
+    {
+        FrameVisualEffects effects;
+        {
+            std::scoped_lock lock(visualEffectsMutex_);
+            effects = visualEffects_;
+        }
+        if(!effects.enabled || destination.rgba.empty())
+            return;
+
+        const auto sameEffects = [](const FrameVisualEffects& left,
+                                    const FrameVisualEffects& right)
+        {
+            return left.enabled == right.enabled &&
+                left.brightness == right.brightness &&
+                left.contrast == right.contrast &&
+                left.saturation == right.saturation &&
+                left.hue == right.hue &&
+                left.exposure == right.exposure &&
+                left.gamma == right.gamma &&
+                left.vignetteEnabled == right.vignetteEnabled &&
+                left.vignetteElliptical == right.vignetteElliptical &&
+                left.vignetteRadius == right.vignetteRadius &&
+                left.vignetteSoftness == right.vignetteSoftness;
+        };
+        if(!visualEffectCache_.valid ||
+           visualEffectCache_.width != destination.width ||
+           visualEffectCache_.height != destination.height ||
+           !sameEffects(visualEffectCache_.effects, effects))
+        {
+            RebuildVisualEffectCache(
+                effects, destination.width, destination.height);
+        }
+
+        const auto& cache = visualEffectCache_;
+        if(!cache.colorCorrection && !cache.vignette)
+            return;
+
+        const auto pixelCount = static_cast<std::size_t>(
+            destination.width) * static_cast<std::size_t>(destination.height);
+        for(std::size_t pixel = 0; pixel < pixelCount; ++pixel)
+        {
+            const auto offset = pixel * 4;
+            if(cache.colorCorrection)
+            {
+                const std::uint8_t input[3] = {
+                    destination.rgba[offset],
+                    destination.rgba[offset + 1],
+                    destination.rgba[offset + 2]};
+                for(int output = 0; output < 3; ++output)
+                {
+                    const std::int32_t linear = std::clamp(
+                        cache.colorBias[output] +
+                            cache.colorContribution[output][0][input[0]] +
+                            cache.colorContribution[output][1][input[1]] +
+                            cache.colorContribution[output][2][input[2]],
+                        0,
+                        4096);
+                    destination.rgba[offset + output] = cache.gamma[linear];
+                }
+            }
+
+            if(cache.vignette)
+            {
+                const std::uint32_t mask = cache.vignetteMask[pixel];
+                // The screen now uses a guaranteed alpha-consuming material,
+                // so the invariant mask only needs to touch the alpha byte.
+                // Earlier code premultiplied RGB as a workaround for an
+                // opaque shader fallback; that multiplied memory traffic and
+                // produced a visible black rectangle on Quest.
+                destination.rgba[offset + 3] =
+                    static_cast<std::uint8_t>((
+                        static_cast<std::uint32_t>(
+                            destination.rgba[offset + 3]) * mask + 127u) /
+                        255u);
+            }
+        }
+    }
+
+    void FrameDecoder::RebuildVisualEffectCache(
+        const FrameVisualEffects& effects,
+        int width,
+        int height)
+    {
+        auto& cache = visualEffectCache_;
+        cache.valid = true;
+        cache.width = width;
+        cache.height = height;
+        cache.effects = effects;
+
+        constexpr float EffectEpsilon = 0.0001f;
+        cache.colorCorrection =
+            std::abs(effects.brightness - 1.0f) > EffectEpsilon ||
+            std::abs(effects.contrast - 1.0f) > EffectEpsilon ||
+            std::abs(effects.saturation - 1.0f) > EffectEpsilon ||
+            std::abs(effects.hue) > EffectEpsilon ||
+            std::abs(effects.exposure - 1.0f) > EffectEpsilon ||
+            std::abs(effects.gamma - 1.0f) > EffectEpsilon;
+        cache.vignette = effects.vignetteEnabled && width > 0 && height > 0;
+
+        if(cache.colorCorrection)
+        {
+            constexpr float Pi = 3.14159265358979323846f;
+            constexpr float Luma[3] = {0.299f, 0.587f, 0.114f};
+            constexpr float FixedScale = 4096.0f;
+            const float hueRadians = effects.hue * Pi / 180.0f;
+            const float cosine = std::cos(hueRadians);
+            const float sine = std::sin(hueRadians);
+            const float hue[3][3] = {
+                {Luma[0] + (1-Luma[0])*cosine - Luma[0]*sine,
+                 Luma[1] - Luma[1]*cosine - Luma[1]*sine,
+                 Luma[2] - Luma[2]*cosine + (1-Luma[2])*sine},
+                {Luma[0] - Luma[0]*cosine + 0.143f*sine,
+                 Luma[1] + (1-Luma[1])*cosine + 0.140f*sine,
+                 Luma[2] - Luma[2]*cosine - 0.283f*sine},
+                {Luma[0] - Luma[0]*cosine - (1-Luma[0])*sine,
+                 Luma[1] - Luma[1]*cosine + Luma[1]*sine,
+                 Luma[2] + (1-Luma[2])*cosine + Luma[2]*sine}};
+
+            // Contrast/exposure/brightness and hue/saturation form one affine
+            // RGB transform before gamma. Factor that transform into small
+            // byte-indexed contribution tables so each frame uses integer
+            // lookups instead of recomputing the matrix for every pixel.
+            float saturation[3][3]{};
+            for(int output = 0; output < 3; ++output)
+            {
+                for(int input = 0; input < 3; ++input)
+                {
+                    saturation[output][input] =
+                        (output == input ? effects.saturation : 0.0f) +
+                        (1.0f - effects.saturation) * Luma[input];
+                }
+            }
+
+            float combined[3][3]{};
+            for(int output = 0; output < 3; ++output)
+            {
+                for(int input = 0; input < 3; ++input)
+                {
+                    for(int intermediate = 0; intermediate < 3; ++intermediate)
+                    {
+                        combined[output][input] +=
+                            saturation[output][intermediate] *
+                            hue[intermediate][input];
+                    }
+                }
+            }
+
+            const float gain = effects.brightness * effects.exposure *
+                effects.contrast;
+            const float contrastBias = 0.5f * (1.0f - effects.contrast);
+            for(int output = 0; output < 3; ++output)
+            {
+                float bias = 0.0f;
+                for(int input = 0; input < 3; ++input)
+                {
+                    bias += combined[output][input] * contrastBias;
+                    for(int value = 0; value < 256; ++value)
+                    {
+                        cache.colorContribution[output][input][value] =
+                            static_cast<std::int32_t>(std::lround(
+                                combined[output][input] * gain *
+                                (static_cast<float>(value) / 255.0f) *
+                                FixedScale));
+                    }
+                }
+                cache.colorBias[output] = static_cast<std::int32_t>(
+                    std::lround(bias * FixedScale));
+            }
+
+            const float inverseGamma = 1.0f /
+                std::max(effects.gamma, 0.00001f);
+            for(int value = 0; value <= 4096; ++value)
+            {
+                cache.gamma[value] = static_cast<std::uint8_t>(std::clamp(
+                    std::lround(std::pow(
+                        static_cast<float>(value) / FixedScale,
+                        inverseGamma) * 255.0f),
+                    0l,
+                    255l));
+            }
+        }
+
+        if(!cache.vignette)
+        {
+            cache.vignetteMask.clear();
+            return;
+        }
+
+        cache.vignetteMask.resize(
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+        const float radius = std::clamp(effects.vignetteRadius, 0.0f, 1.0f);
+        const float softness = std::max(
+            effects.vignetteSoftness, 0.00001f);
+        const auto smoothStep = [](float edge0, float edge1, float value)
+        {
+            const float t = std::clamp(
+                (value - edge0) / std::max(edge1 - edge0, 0.00001f),
+                0.0f,
+                1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        };
+        for(int y = 0; y < height; ++y)
+        {
+            const float normalizedY = std::abs(
+                (static_cast<float>(y) + 0.5f) /
+                    static_cast<float>(height) * 2.0f - 1.0f);
+            for(int x = 0; x < width; ++x)
+            {
+                const float normalizedX = std::abs(
+                    (static_cast<float>(x) + 0.5f) /
+                        static_cast<float>(width) * 2.0f - 1.0f);
+                const float rectangularEdge =
+                    std::max(normalizedX, normalizedY);
+                float edge = rectangularEdge;
+                float outer = radius;
+                if(effects.vignetteElliptical)
+                {
+                    const float ellipticalEdge = std::sqrt(
+                        normalizedX*normalizedX + normalizedY*normalizedY);
+                    edge = std::lerp(
+                        ellipticalEdge, rectangularEdge, radius);
+                    outer = 1.0f;
+                }
+                const float inner = std::max(0.0f, outer - softness);
+                const float mask = 1.0f - smoothStep(inner, outer, edge);
+                cache.vignetteMask[
+                    static_cast<std::size_t>(y) * width + x] =
+                    static_cast<std::uint8_t>(std::clamp(
+                        std::lround(mask * 255.0f), 0l, 255l));
+            }
+        }
     }
 
     void FrameDecoder::Publish(VideoFrame&& frame)

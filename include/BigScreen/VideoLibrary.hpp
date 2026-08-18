@@ -136,6 +136,11 @@ namespace BigScreen {
 
         void Initialize();
         VideoDescriptor Describe(GlobalNamespace::BeatmapLevel* level) const;
+        /// Rebuilds the one-per-session Cinema playlist index and forgets the
+        /// cached descriptor for one selected song. This is deliberately an
+        /// explicit UI action: Quest never polls map or playlist files while a
+        /// video is playing.
+        void RefreshMapperMetadata(const std::string& levelId);
         std::optional<MapVideoConfig> ResolvePlayback(
             GlobalNamespace::BeatmapLevel* level) const;
 

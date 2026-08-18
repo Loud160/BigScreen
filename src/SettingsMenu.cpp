@@ -191,6 +191,7 @@ namespace BigScreen {
         previewToggle_ = nullptr;
         screenLayoutResetButton_ = nullptr;
         screenLayoutDropdown_ = nullptr;
+        respectMapperSettingsToggle_ = nullptr;
         allowChromaOverrideToggle_ = nullptr;
         distanceSetting_ = nullptr;
         horizontalSetting_ = nullptr;
@@ -235,6 +236,7 @@ namespace BigScreen {
         playbackFpsDropdown_ = nullptr;
         highFrameRateWarningModal_ = nullptr;
         ffmpeg9Toggle_ = nullptr;
+        embeddedVideoShaderToggle_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceWarningModal_ = nullptr;
@@ -647,6 +649,23 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             ffmpeg9Toggle_,
             "Experimental: selects the default FFmpeg 9.0.1 playback runtime. Turn this off to use FFmpeg 4.4.8 for compatibility or side-by-side testing. An active Video Library preview restarts at the same position; gameplay uses the selection on the next map. This does not change or redownload the video.");
+
+        embeddedVideoShaderToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Embedded Video Shader",
+            settings.EmbeddedVideoShaderEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetEmbeddedVideoShaderEnabled(enabled);
+                // The shader is chosen when a screen's material is created.
+                // Reuse the proven preview recreation path so an active
+                // Video Library preview switches methods immediately;
+                // gameplay uses the selection on the next map.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            embeddedVideoShaderToggle_,
+            "Chooses how the video screen is drawn. Off uses the game's UI shader with RGB-only writes and does not provide Cinema soft-additive blending. On uses Big Screen's embedded shader with explicit alpha blending, depth writes, and Cinema blending. If the requested shader cannot be loaded, Big Screen uses its fallback path and logs the selected method. An active Video Library preview switches immediately; gameplay uses the selection on the next map. This is an experimental comparison option that requires on-device testing with Bloom on and off.");
 
         hardwareDecodingToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -1266,6 +1285,19 @@ namespace BigScreen {
             screenCanvasHeader_->get_transform()->SetSiblingIndex(1);
         }
 
+        respectMapperSettingsToggle_ = BSML::Lite::CreateToggle(
+            screenContainer,
+            "Respect Mapper Settings",
+            settings.RespectMapperSettings(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetRespectMapperSettings(enabled);
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            respectMapperSettingsToggle_,
+            "Uses screen placement, curvature, additional screens, visual effects, and Cinema environment changes supplied by the map author. Turn this off to keep the mapper's video and synchronization while using your selected Big Screen layout instead.");
+
         allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
             "Allow Chroma Override",
@@ -1280,7 +1312,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             allowChromaOverrideToggle_,
-            "Lets a map's Cinema or Chroma data control screen placement and the environment. While active for a map, your Big Screen layout and environment overrides are not applied. Turn it off to use your own settings.");
+            "Lets a map that actually uses Chroma keep its authored environment instead of Big Screen's environment override. Cinema screen placement is controlled separately by Respect Mapper Settings.");
 
         distanceSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -2462,10 +2494,15 @@ namespace BigScreen {
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
         SetToggleWithoutNotification(previewToggle_, settings.MenuPreviewEnabled());
         SetToggleWithoutNotification(
+            respectMapperSettingsToggle_, settings.RespectMapperSettings());
+        SetToggleWithoutNotification(
             allowChromaOverrideToggle_, settings.AllowChromaOverride());
         SetToggleWithoutNotification(
             automaticPerformanceToggle_, settings.AutomaticPerformanceEnabled());
         SetToggleWithoutNotification(ffmpeg9Toggle_, settings.UseFfmpeg9());
+        SetToggleWithoutNotification(
+            embeddedVideoShaderToggle_,
+            settings.EmbeddedVideoShaderEnabled());
         SetToggleWithoutNotification(
             hardwareDecodingToggle_, settings.HardwareDecodingEnabled());
         SetToggleWithoutNotification(
@@ -2691,6 +2728,8 @@ namespace BigScreen {
             screenLayoutResetButton_->set_interactable(enabled);
         if(allowChromaOverrideToggle_)
             allowChromaOverrideToggle_->set_interactable(enabled);
+        if(respectMapperSettingsToggle_)
+            respectMapperSettingsToggle_->set_interactable(enabled);
         if(maintainCurveAspectToggle_)
             maintainCurveAspectToggle_->set_interactable(enabled);
         if(curvatureSlider_)
@@ -2762,6 +2801,8 @@ namespace BigScreen {
             playbackFpsDropdown_->set_interactable(enabled);
         if(ffmpeg9Toggle_)
             ffmpeg9Toggle_->set_interactable(enabled);
+        if(embeddedVideoShaderToggle_)
+            embeddedVideoShaderToggle_->set_interactable(enabled);
         if(hardwareDecodingToggle_)
             hardwareDecodingToggle_->set_interactable(enabled);
         if(automaticPerformanceToggle_)

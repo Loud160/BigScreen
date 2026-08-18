@@ -48,6 +48,16 @@ int main()
             "screenCurvature":45,
             "screenSubsurfaces":64,
             "transparency":true,
+            "allowCustomPlatform":false,
+            "mergePropGroups":true,
+            "colorBlending":false,
+            "colorCorrection":{"brightness":1.25,"hue":45,"gamma":1.5},
+            "vignette":{"type":"oval","radius":0.8,"softness":0.1},
+            "additionalScreens":[{
+                "position":{"x":4,"y":8,"z":12},
+                "rotation":{"x":0,"y":90,"z":0},
+                "scale":{"x":0.5,"y":0.5,"z":0.5}
+            }],
             "disableDefaultModifications":true,
             "environment":[{
                 "name":"Tube",
@@ -82,10 +92,30 @@ int main()
                "Cinema curvature must stay in arc degrees");
         Expect(config->mapperTransparency.value_or(false),
                "explicit mapper transparency should remain distinguishable");
-        Expect(config->letterboxTransparent,
-               "mapper transparency should remove the letterbox background");
-        Expect(Near(config->videoOpacity, 0.75f),
-               "legacy Cinema transparency should retain its 75 percent picture opacity");
+        Expect(!config->opaqueScreenBody,
+               "Cinema transparency should remove the opaque light-blocking body");
+        Expect(Near(config->videoOpacity, 1.0f),
+               "Cinema transparency must not alter decoded picture opacity");
+        Expect(config->allowCustomPlatform && !*config->allowCustomPlatform,
+               "explicit custom-platform suppression should parse");
+        Expect(config->mergePropGroups,
+               "mergePropGroups should parse");
+        Expect(config->colorBlending && !*config->colorBlending,
+               "explicit color-blending disable should parse");
+        Expect(config->colorCorrection &&
+               Near(config->colorCorrection->brightness, 1.25f) &&
+               Near(config->colorCorrection->hue, 45.0f) &&
+               Near(config->colorCorrection->gamma, 1.5f),
+               "Cinema color correction should parse and preserve defaults");
+        Expect(config->vignette &&
+               config->vignette->type == "elliptical" &&
+               Near(config->vignette->radius, 0.8f) &&
+               Near(config->vignette->softness, 0.1f),
+               "Cinema vignette aliases and values should parse");
+        Expect(config->additionalScreens.size() == 1 &&
+               config->additionalScreens.front().position &&
+               Near(config->additionalScreens.front().position->z, 12.0f),
+               "Cinema additional screens should parse");
         Expect(config->environmentModifications.size() == 1,
                "environment array should parse");
         if(!config->environmentModifications.empty())
@@ -109,8 +139,13 @@ int main()
                Near(userLayoutBase.screenHeight, 25.0f),
                "disabling mapper presentation should restore neutral rotation and size");
         Expect(!userLayoutBase.cinemaCurvatureDegrees &&
-               !userLayoutBase.mapperTransparency,
+               !userLayoutBase.mapperTransparency &&
+               !userLayoutBase.colorCorrection &&
+               !userLayoutBase.vignette &&
+               userLayoutBase.additionalScreens.empty(),
                "mapper-only presentation fields should not leak into a user layout");
+        Expect(userLayoutBase.colorBlending && !*userLayoutBase.colorBlending,
+               "presentation reset should explicitly suppress Cinema's default color blending");
         Expect(userLayoutBase.videoId == config->videoId &&
                userLayoutBase.offsetSeconds == config->offsetSeconds &&
                userLayoutBase.hasMapperPresentation,
@@ -127,6 +162,31 @@ int main()
         root, error);
     Expect(timingOnly && !timingOnly->hasMapperPresentation,
            "timing-only metadata should keep the user screen layout");
+
+    // The combined Quest test map stores each ten-second phase in its own
+    // Cinema file. Explicit files must travel through the same validation and
+    // normalization path as the conventional cinema-video.json candidate.
+    const auto explicitPhase = root / "cinema-cycle-02.json";
+    {
+        std::ofstream output(explicitPhase, std::ios::trunc);
+        output << R"({
+            "videoFile":"cinema-cycle-video.mp4",
+            "screenPosition":{"x":7.5,"y":11.0,"z":42.0},
+            "screenHeight":18.0
+        })";
+    }
+    {
+        std::ofstream video(root / "cinema-cycle-video.mp4", std::ios::trunc);
+        video << "fixture";
+    }
+    const auto cyclePhase = BigScreen::MapVideoConfig::LoadDefinitionFromFile(
+        root, explicitPhase, error);
+    Expect(cyclePhase && error.empty(),
+           "an explicit Cinema cycle phase should parse through the normal loader");
+    Expect(cyclePhase && Near(cyclePhase->screenPosition.x, 7.5f) &&
+           Near(cyclePhase->screenPosition.z, 42.0f) &&
+           Near(cyclePhase->screenHeight, 18.0f),
+           "an explicit Cinema cycle phase should preserve mapper geometry");
 
     // Environment-only Cinema data can preserve a Chroma scene without
     // disabling the player's screen layout controls.
@@ -146,6 +206,23 @@ int main()
            "environment metadata should retain environment ownership");
     Expect(environmentOnly && !environmentOnly->hasMapperScreenGeometry,
            "environment metadata must not claim video screen geometry");
+
+    // Cinema explicitly supports an environment-only file when the mapper
+    // opts into forceEnvironmentModifications. This must parse without a
+    // synthetic video URL or local media file.
+    {
+        std::ofstream output(metadata, std::ios::trunc);
+        output << R"({
+            "forceEnvironmentModifications":true,
+            "environment":[{"name":"Floor","active":false}]
+        })";
+    }
+    const auto forcedEnvironmentOnly =
+        BigScreen::MapVideoConfig::LoadDefinitionFromLevel(root, error);
+    Expect(forcedEnvironmentOnly &&
+           forcedEnvironmentOnly->forceEnvironmentModifications &&
+           forcedEnvironmentOnly->videoPath.empty(),
+           "forced environment-only Cinema metadata should parse without media");
 
     // Cinema metadata—including a requested environment—and a Cinema-only
     // suggestion do not mean the beatmap uses Chroma. Playback uses this

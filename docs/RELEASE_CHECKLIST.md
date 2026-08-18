@@ -53,10 +53,16 @@
 - [ ] A probed YouTube URL shows one Video Library button per available source tier; song selection opens the same tier list in a modal. 1440p warns that software decoding is unavailable.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
 - [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
+- [ ] Respect Mapper Settings on/off is independent from Allow Chroma Override and preserves mapper media/timing in both states.
+- [ ] PC Cinema color correction, rectangular/elliptical vignette, color blending, opaque screen body, and end fade work on Quest; Refresh reloads an edited map/playlist file without background polling.
+- [ ] Rectangular and elliptical vignettes show no black rectangular backing; explicit black lead-in and mapper-authored opaque-body behavior remain intact.
+- [ ] Cinema additional screens share the primary video without a second decoder/upload; position, rotation, scale, curvature, and the 32-screen safety limit behave as documented.
+- [ ] Cinema exact-name/parent environment edits, active/transform fields, cloned lights, `mergePropGroups`, requested environments, and environment-only `forceEnvironmentModifications` work without affecting ordinary maps.
+- [ ] Playlist `customData.cinema` resolves for custom and built-in songs, and mapper YouTube URLs probe/download with useful errors.
 - [ ] Advanced video rotation/zoom/pan/tilt/stretch values are layout-scoped, Letterbox Transparency affects only unused canvas, and Video Opacity affects both docked and undocked pictures.
 - [ ] Undocked move/rotate/resize saves only after Save Screen; cancel, focus loss, layout change, and menu exit restore the last saved placement and leave no raycastable overlay.
 - [ ] Environment/light toggles affect only video maps and restore saved child states.
-- [ ] Gameplay pause controls, Replay playback, Replay recording, results/failure diagnostics, and map exit work.
+- [ ] Gameplay pause/resume synchronization, Replay playback, Replay recording, results/failure diagnostics, and map exit work. Big Screen pause-menu controls are intentionally absent on Beat Saber 1.40.8.
 - [ ] Native 480p/720p/1080p/1440p files and 15/30/60 FPS limits produce expected diagnostics; Automatic Performance honors its attack/release timers, configured FPS step, and anti-oscillation limit while restoring prior limits without reopening the decoder or changing saved settings.
 - [ ] The Misc FFmpeg selector restarts an active library preview at its
       retained position, affects the next gameplay decoder, and the overlay /

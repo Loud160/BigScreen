@@ -51,11 +51,13 @@ namespace BigScreen {
     bool FrameDecoder::Open(
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
+        const FrameVisualEffects& visualEffects,
         std::string& error)
     {
         Close();
         videoPath_ = videoPath;
         maximumOutputHeight_ = maximumOutputHeight;
+        visualEffects_ = visualEffects;
         lastRequestedSeconds_ = 0.0;
         useFfmpeg9_ = Settings::Instance().UseFfmpeg9();
         hardwareRequested_ = Settings::Instance().HardwareDecodingEnabled();
@@ -93,6 +95,7 @@ namespace BigScreen {
                maximumOutputHeight,
                attemptHardware,
                javaVm_,
+               visualEffects_,
                error))
         {
             const auto fallbackReason = backend_->HardwareFallbackReason();
@@ -134,6 +137,14 @@ namespace BigScreen {
             lastRequestedSeconds_ = std::max(0.0, mediaSeconds);
             backend_->Request(mediaSeconds);
         }
+    }
+
+    void FrameDecoder::UpdateVisualEffects(
+        const FrameVisualEffects& visualEffects)
+    {
+        visualEffects_ = visualEffects;
+        if(backend_)
+            backend_->UpdateVisualEffects(visualEffects);
     }
 
     bool FrameDecoder::TryTake(VideoFrame& destination)
@@ -332,6 +343,7 @@ namespace BigScreen {
                maximumOutputHeight_,
                false,
                nullptr,
+               visualEffects_,
                recoveryError))
             return false;
 

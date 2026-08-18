@@ -81,8 +81,9 @@ It is the API; the tools are just two editors for it. Decisions needed:
 - Filename and discovery: `bigscreen-movement.json` beside
   `cinema-video.json`? Referenced from cinema-video.json? Per-difficulty
   overrides or one file per map?
-- Hot reload: file mtime watch vs explicit "Reload" control (decide where
-  that control lives — it benefits BOTH tools and hand-editing).
+- Reload workflow: use an explicit Refresh control rather than file polling.
+  Quest files are normally edited elsewhere and copied back as a complete file,
+  so continuous timestamp checks would waste headset CPU and battery.
 - Documentation artifact: a public format spec page with copy-paste examples
   (also what makes LLM-assisted generation of these files practical).
 
@@ -160,10 +161,10 @@ video, the real scale.
 ### 1.3 Risks / honest costs
 - VR UI for timeline+forms is the majority of the work; the playback/pose
   machinery is largely done. Text/number entry in VR stays clumsy — lean on
-  snap, nudge, and hot-reload-assisted PC hand-editing for precision.
+  snap, nudge, and refresh-assisted PC hand-editing for precision.
 - Menu-environment authoring means lighting/context differs from in-map.
 - Quest-only mappers get full authoring (unique selling point); PC mappers
-  may still prefer desktop editing — hot reload serves them either way.
+  may still prefer desktop editing — explicit refresh serves them either way.
 
 ### 1.4 Rough shape of v1 (for scoping discussion)
 Scrub + play-from-here; screen add/clone/select; whole-pose keyframe capture
@@ -205,7 +206,7 @@ their notes and lighting, on the same beat grid and timeline they already use.
   follow the movement data (pose/scale/opacity only — no video, no effects);
   (b) proxy quads with a static thumbnail texture; (c) no 3D preview, numbers
   only. Effects (shatter/wave) would at best be labeled ranges, not previews.
-  The real preview loop remains "copy to Quest / hot reload" — the plugin
+  The real preview loop remains "copy to Quest / press Refresh" — the plugin
   should have a one-click "push to Quest via adb" convenience if feasible.
 - **Editing forms:** per-keyframe numeric entry (precise, the thing VR is bad
   at), easing picker, group/clone management, effect parameter forms with
@@ -239,7 +240,7 @@ rendering, no video.
 
 ## Part 3 — Sequencing recommendation (to pressure-test later)
 
-1. **Format spec + loader + hot reload + validation errors** — ships value
+1. **Format spec + loader + explicit refresh + validation errors** — ships value
    alone (hand-authoring and LLM-generated files become possible) and both
    tools depend on it. Nothing else should start before this is frozen.
 2. **In-mod authoring mode** — most existing code reused, serves Quest-only

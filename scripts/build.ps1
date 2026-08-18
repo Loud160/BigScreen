@@ -65,10 +65,18 @@ if (-not $cmakeExe) {
 # meaningful only when one QMOD contains both complete ABI-isolated sets.
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildDirectory = Join-Path $repositoryRoot "build"
+
+# QPM may replace extern during dependency restore. Keep Big Screen's own
+# downloads in the separate portable cache and migrate legacy caches once.
+& (Join-Path $PSScriptRoot "initialize-dependency-cache.ps1")
+if (-not $?) {
+    throw "Could not initialize Big Screen's portable dependency cache."
+}
+
 $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
 foreach ($runtime in @(
-    @{ Version = "4.4.8"; Directory = "extern/ffmpeg-lgpl"; Tag = "44" },
-    @{ Version = "9.0.1"; Directory = "extern/ffmpeg-lgpl-9.0.1"; Tag = "9" })) {
+    @{ Version = "4.4.8"; Directory = ".cache/dependencies/ffmpeg-lgpl"; Tag = "44" },
+    @{ Version = "9.0.1"; Directory = ".cache/dependencies/ffmpeg-lgpl-9.0.1"; Tag = "9" })) {
     $ffmpegRoot = Join-Path $repositoryRoot $runtime.Directory
     $ffmpegStamp = Join-Path $ffmpegRoot "bigscreen-ffmpeg-$($runtime.Version).ready"
     $ffmpegSums = Join-Path $ffmpegRoot "SHA256SUMS"

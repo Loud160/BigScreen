@@ -35,7 +35,34 @@ namespace BigScreen {
         std::optional<Float3> scale;
     };
 
-    /// The subset of map video metadata Big Screen currently needs.
+    /// Cinema's optional per-video color transform. Defaults intentionally
+    /// describe an unchanged picture so partially specified objects can be
+    /// applied without inventing values for fields the mapper omitted.
+    struct CinemaColorCorrection {
+        float brightness = 1.0f;
+        float contrast = 1.0f;
+        float saturation = 1.0f;
+        float hue = 0.0f;
+        float exposure = 1.0f;
+        float gamma = 1.0f;
+    };
+
+    /// Mapper-authored edge mask used by Cinema's screen shader.
+    struct CinemaVignette {
+        std::string type = "rectangular";
+        float radius = 1.0f;
+        float softness = 0.005f;
+    };
+
+    /// One additional Cinema screen. Missing members inherit the primary
+    /// screen's transform exactly, matching Cinema's clone-based behavior.
+    struct CinemaAdditionalScreen {
+        std::optional<Float3> position;
+        std::optional<Float3> rotation;
+        std::optional<Float3> scale;
+    };
+
+    /// Normalized Cinema-compatible mapper metadata consumed by Big Screen.
     ///
     /// Field names accepted by LoadFromLevel are interoperability inputs. The
     /// runtime owns this normalized representation, so rendering and timing do
@@ -54,9 +81,9 @@ namespace BigScreen {
         std::optional<std::string> title;
         std::optional<std::string> author;
         bool configByMapper = false;
-        // True only when the metadata contains presentation fields rather than
-        // merely a video URL and timing. Allow Chroma Override uses this guard
-        // so ordinary videos continue using the player's selected layout.
+        // True only when metadata contains presentation fields rather than a
+        // video URL/timing alone. Respect Mapper Settings uses the narrower
+        // ownership flags below so ordinary videos keep the selected layout.
         bool hasMapperPresentation = false;
         // Screen ownership is narrower than general presentation ownership.
         // Environment, transparency, and timing fields must not disable Big
@@ -69,6 +96,9 @@ namespace BigScreen {
         bool hasMapperEnvironmentPresentation = false;
         bool disableDefaultModifications = false;
         bool forceEnvironmentModifications = false;
+        std::optional<bool> allowCustomPlatform;
+        bool mergePropGroups = false;
+        std::optional<bool> colorBlending;
 
         double offsetSeconds = 0.0;
         double playbackRate = 1.0;
@@ -94,6 +124,11 @@ namespace BigScreen {
         // controls. letterboxTransparent affects only unused canvas exposed
         // by aspect-ratio preservation, rotation, pan, or zoom.
         bool letterboxTransparent = false;
+        // Cinema's mapper `transparency` flag controls a full opaque body
+        // behind the picture so additive video cannot reveal lights behind
+        // the screen. It is independent from Big Screen's letterbox and
+        // picture-opacity controls.
+        bool opaqueScreenBody = false;
         float videoOpacity = 1.0f;
         // Layout-scoped presentation transforms affect only the image inside
         // the physical screen frame. Screen rotation/placement remains wholly
@@ -105,15 +140,20 @@ namespace BigScreen {
         float videoTilt = 0.0f;
         bool stretchVideoToFit = false;
         std::optional<bool> mapperTransparency;
+        std::optional<CinemaColorCorrection> colorCorrection;
+        std::optional<CinemaVignette> vignette;
         std::optional<std::string> requestedEnvironment;
         std::vector<EnvironmentModification> environmentModifications;
+        std::vector<CinemaAdditionalScreen> additionalScreens;
 
         /// Replaces only mapper-authored presentation geometry with Big
         /// Screen's neutral back-wall canvas. Media identity, download URL,
         /// timing, and mapper ownership markers remain intact. This is used
-        /// when Allow Chroma Override is disabled so user offsets are never
+        /// when Respect Mapper Settings is disabled so user offsets are never
         /// added on top of a mapper's custom screen position.
         void ResetPresentationToDefaults();
+        void ResetScreenGeometryToDefaults();
+        void ResetMapperVisualEffects();
 
         /// Looks for Big Screen's native file first, followed by compatible map
         /// metadata names already present in existing custom levels.
@@ -126,6 +166,16 @@ namespace BigScreen {
         /// whose local media file exists.
         static std::optional<MapVideoConfig> LoadDefinitionFromLevel(
             const std::filesystem::path& levelDirectory,
+            std::string& error);
+
+        /// Parses one explicitly named metadata file inside a level folder.
+        /// The production loader uses this for Big Screen's bundled Quest
+        /// compatibility cycle so every ten-second phase exercises the same
+        /// Cinema parser as an ordinary map rather than duplicating values in
+        /// test-only C++ code.
+        static std::optional<MapVideoConfig> LoadDefinitionFromFile(
+            const std::filesystem::path& levelDirectory,
+            const std::filesystem::path& metadata,
             std::string& error);
 
         std::optional<std::string> DownloadUrl() const;

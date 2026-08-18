@@ -5,6 +5,7 @@
 // Distributed under GPL-3.0-only with additional terms under GPLv3
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -74,6 +75,109 @@ namespace {
             Expect(frame.durationSeconds > 0.0, "frame duration should use real timing or fallback");
             decoder.Recycle(std::move(frame));
         }
+
+        // The Quest compatibility cycle changes Cinema color effects while a
+        // single decoder remains open. Verify that the worker observes the
+        // replacement atomically and that clearing the effect restores normal
+        // picture output without reopening the media.
+        BigScreen::FrameVisualEffects blackout;
+        blackout.enabled = true;
+        blackout.brightness = 0.0f;
+        decoder.UpdateVisualEffects(blackout);
+        decoder.Request(0.37);
+        BigScreen::VideoFrame blackFrame;
+        Expect(WaitForFrame(decoder, blackFrame),
+               "a frame should arrive after changing live visual effects");
+        if(!blackFrame.rgba.empty())
+        {
+            bool allRgbBlack = true;
+            for(std::size_t byte = 0; byte + 3 < blackFrame.rgba.size(); byte += 4)
+            {
+                if(blackFrame.rgba[byte] != 0 ||
+                   blackFrame.rgba[byte + 1] != 0 ||
+                   blackFrame.rgba[byte + 2] != 0)
+                {
+                    allRgbBlack = false;
+                    break;
+                }
+            }
+            Expect(allRgbBlack,
+                   "live zero-brightness replacement should black out RGB output");
+            decoder.Recycle(std::move(blackFrame));
+        }
+
+        decoder.UpdateVisualEffects({});
+        decoder.Request(0.57);
+        BigScreen::VideoFrame restoredFrame;
+        Expect(WaitForFrame(decoder, restoredFrame),
+               "a frame should arrive after clearing live visual effects");
+        if(!restoredFrame.rgba.empty())
+        {
+            const auto hasVisibleRgb = std::any_of(
+                restoredFrame.rgba.begin(), restoredFrame.rgba.end(),
+                [](std::uint8_t value) { return value != 0; });
+            Expect(hasVisibleRgb,
+                   "clearing live visual effects should restore visible picture data");
+            decoder.Recycle(std::move(restoredFrame));
+        }
+
+        // Cinema's oval radius zero must create a real ellipse. Check both
+        // RGB and alpha because mapper-authored Cinema screens commonly use
+        // additive blending, where clearing alpha alone does not hide RGB.
+        BigScreen::FrameVisualEffects ovalVignette;
+        ovalVignette.enabled = true;
+        ovalVignette.vignetteEnabled = true;
+        ovalVignette.vignetteElliptical = true;
+        ovalVignette.vignetteRadius = 0.0f;
+        ovalVignette.vignetteSoftness = 0.1f;
+        decoder.UpdateVisualEffects(ovalVignette);
+        decoder.Request(0.77);
+        BigScreen::VideoFrame ovalFrame;
+        Expect(WaitForFrame(decoder, ovalFrame),
+               "an oval-vignette frame should arrive");
+        if(!ovalFrame.rgba.empty())
+        {
+            const auto corner = static_cast<std::size_t>(0);
+            const auto center = (static_cast<std::size_t>(ovalFrame.height / 2) *
+                ovalFrame.width + ovalFrame.width / 2) * 4;
+            Expect(ovalFrame.rgba[corner] == 0 &&
+                   ovalFrame.rgba[corner + 1] == 0 &&
+                   ovalFrame.rgba[corner + 2] == 0 &&
+                   ovalFrame.rgba[corner + 3] == 0,
+                   "oval vignette should remove corner RGB and alpha");
+            Expect(ovalFrame.rgba[center + 3] > 240,
+                   "oval vignette should preserve the center");
+            decoder.Recycle(std::move(ovalFrame));
+        }
+
+        // Rectangular mode uses radius as its inset boundary. A .72 radius
+        // therefore removes the outer border while leaving the center intact.
+        BigScreen::FrameVisualEffects rectangularVignette = ovalVignette;
+        rectangularVignette.vignetteElliptical = false;
+        rectangularVignette.vignetteRadius = 0.72f;
+        rectangularVignette.vignetteSoftness = 0.16f;
+        decoder.UpdateVisualEffects(rectangularVignette);
+        decoder.Request(0.97);
+        BigScreen::VideoFrame rectangularFrame;
+        Expect(WaitForFrame(decoder, rectangularFrame),
+               "a rectangular-vignette frame should arrive");
+        if(!rectangularFrame.rgba.empty())
+        {
+            const auto corner = static_cast<std::size_t>(0);
+            const auto center =
+                (static_cast<std::size_t>(rectangularFrame.height / 2) *
+                 rectangularFrame.width + rectangularFrame.width / 2) * 4;
+            Expect(rectangularFrame.rgba[corner] == 0 &&
+                   rectangularFrame.rgba[corner + 1] == 0 &&
+                   rectangularFrame.rgba[corner + 2] == 0 &&
+                   rectangularFrame.rgba[corner + 3] == 0,
+                   "rectangular vignette should remove the outer border");
+            Expect(rectangularFrame.rgba[center + 3] > 240,
+                   "rectangular vignette should preserve the center");
+            decoder.Recycle(std::move(rectangularFrame));
+        }
+
+        decoder.UpdateVisualEffects({});
 
         // Exercise the exact long-running preview transition: drain beyond the
         // final timestamp, then seek backward as the menu audio loops. A true

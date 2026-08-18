@@ -23,6 +23,13 @@ $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
+# Preserve Big Screen's existing private dependency downloads before QPM is
+# allowed to replace its generated extern directory.
+& (Join-Path $PSScriptRoot "initialize-dependency-cache.ps1")
+if (-not $?) {
+    throw "Could not initialize Big Screen's portable dependency cache."
+}
+
 function Find-QpmExecutable {
     $command = Get-Command qpm -ErrorAction SilentlyContinue
     if ($command) {
@@ -156,7 +163,13 @@ try {
             }
         }
         New-Item -ItemType Directory -Force -Path $qpmRestoreCache | Out-Null
-        $qpmLockHash | Set-Content -LiteralPath $qpmRestoreStamp -Encoding Ascii
+        # QPM may normalize qpm.shared.json while restoring it. Hash the final
+        # file rather than saving the pre-restore hash; otherwise every later
+        # BAT run treats the unchanged lockfile as stale and restores again.
+        $restoredQpmLockHash = (Get-FileHash -Algorithm SHA256 `
+            -LiteralPath $qpmLock).Hash.ToLowerInvariant()
+        $restoredQpmLockHash | Set-Content `
+            -LiteralPath $qpmRestoreStamp -Encoding Ascii
     }
 
     # QPM owns the Windows-host NDK used by CMake/Clang. Resolve writes the

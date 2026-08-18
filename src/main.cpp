@@ -1704,6 +1704,10 @@ namespace {
             });
 
         BigScreen::ErrorManager::Instance().Guard("updating menu video UI", [&]() {
+            // One-shot on the first menu tick: publish the active video
+            // shader tier to the log so every deployment can verify it from
+            // logcat without opening a menu or starting a video.
+            BigScreen::ScreenSurface::LogVideoShaderTierOnce();
             BigScreen::SelectionVideoToggle::Instance().TickDownloadUi();
             // The remaining objects belong exclusively to Big Screen's own
             // retained flow. A MenuCore soft restart can destroy that scene

@@ -50,6 +50,8 @@ int main()
            "lookalike hosts should be rejected");
     Expect(!IsSupportedYouTubeUrl("https://youtube.com@evil.invalid/video"),
            "userinfo host confusion should be rejected");
+    Expect(!IsSupportedYouTubeUrl("https://vimeo.com/123456"),
+           "non-YouTube video providers should stay blocked");
     Expect(IsValidYouTubeVideoId("TcHvEFxk_78"), "valid video IDs should be accepted");
     Expect(!IsValidYouTubeVideoId("abc"), "short video IDs should be rejected");
     using namespace BigScreen::CoreLogic;
@@ -328,16 +330,22 @@ int main()
     Expect(clampedZoom.width == 12.0f && clampedZoom.height == 12.0f,
            "video zoom is capped at the documented 3x limit");
 
-    Expect(!ScreenBackgroundVisible(true, false),
+    Expect(!ScreenBackgroundVisible(false, true, false),
            "letterbox transparency removes the black background renderer");
-    Expect(ScreenBackgroundVisible(false, false),
-           "opaque letterboxes retain the black background renderer");
-    Expect(ScreenBackgroundVisible(true, true),
-           "a requested black lead-in overrides transparent letterboxing");
-    Expect(!ScreenBackgroundVisible(false, false, true),
-           "a full-frame picture removes an unnecessary opaque backing mesh");
     Expect(ScreenBackgroundVisible(false, false, false),
+           "opaque letterboxes retain the black background renderer");
+    Expect(ScreenBackgroundVisible(false, true, true),
+           "a requested black lead-in overrides transparent letterboxing");
+    Expect(!ScreenBackgroundVisible(false, false, false, true),
+           "a full-frame picture removes an unnecessary opaque backing mesh");
+    Expect(ScreenBackgroundVisible(false, false, false, false),
            "an uncovered opaque frame retains its black letterbox backing");
+    Expect(!ScreenBackgroundVisible(false, false, false, false, true),
+           "a mapper vignette removes the independent rectangular backing");
+    Expect(!ScreenBackgroundVisible(true, false, false, false, true),
+           "a mapper vignette also overrides the normal opaque screen body");
+    Expect(ScreenBackgroundVisible(true, false, true, false, true),
+           "a black lead-in temporarily covers an authored vignette");
     Expect(VideoLayerOffset(4.0f, 3.0f) == -0.015f,
            "ordinary canvases retain the established minimum layer offset");
     Expect(VideoLayerOffset(100.0f, 40.0f) == -0.2f,

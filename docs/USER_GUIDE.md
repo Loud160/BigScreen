@@ -6,6 +6,11 @@ Open **Mods > Big Screen > Video Library**. The browser counts songs once, not o
 
 Selecting a song opens its editor. **Back to Song List** returns to the same filter, jump position, order, and song identity.
 
+The editor's **Refresh** button reloads that song's map-folder Cinema JSON and
+rebuilds the one-per-session Cinema playlist index. Use it after copying an
+edited metadata or playlist file back to the Quest. Big Screen does not poll
+those files during preview or gameplay.
+
 ## YouTube search and download
 
 **Search YouTube** launches the Quest browser with the selected song and artist already entered. Return to Beat Saber, copy/paste a result from the Quest clipboard, and confirm the fetched thumbnail. Both normal `https://www.youtube.com/watch?...` links and `https://youtu.be/...` share links are accepted. HTTP, lookalike domains, and arbitrary mapper URLs are rejected.
@@ -51,7 +56,7 @@ Flat and curved layouts both scale from 0.5x through 8.0x. Enlarging a curved sc
 
 For layouts that extend below the menu's visible floor, turn off **General > Show Menu Environment**. The same switch removes the menu scenery, lighting, and floor while preserving Big Screen's UI, preview screen, and controller input. **Show Lane Guides** independently adds thin lane rails, depth marks, and a player-origin marker extending to the default back wall. All menu visuals return to their normal state when Big Screen closes, loses focus, is disabled, or the environment switch is restored. These are menu placement aids only and do not alter gameplay environments.
 
-Allow Chroma Override is enabled by default. Only a map actually detected as using Chroma may retain mapper environment control; Cinema metadata alone, including an environment name, does not bypass Big Screen's environment settings. Environment ownership remains independent from screen ownership. A map disables Big Screen's Screen Canvas controls only when it is detected as using Chroma **and** its video metadata supplies custom position, rotation, size, or curvature. A Chroma map without custom video geometry keeps the selected Big Screen layout, even when the user assigned the video. Turn the option off to discard all mapper-authored screen geometry and use Big Screen's environment behavior. URL/timing-only Cinema metadata never claims the screen canvas.
+Respect Mapper Settings and Allow Chroma Override are enabled by default but own different things. Respect Mapper Settings applies Cinema-authored screen geometry, image effects, additional screens, and explicit Cinema environment instructions. Allow Chroma Override preserves the broader gameplay environment only when the map is actually detected as using Chroma. Turn Respect Mapper Settings off to keep mapper media/timing while using the selected Big Screen screen layout; turn Allow Chroma Override off to use Big Screen's environment options. URL/timing-only Cinema metadata never claims the screen canvas.
 
 ## Performance
 
@@ -69,7 +74,7 @@ Record Power Benchmark creates two analysis files under `/sdcard/ModData/com.bea
 
 The selected-song storage row distinguishes the current map's managed download, local-file bytes when local files exist, total Big Screen video-library usage, and free Quest storage. Values under 1 GB are displayed in MB.
 
-The Misc tab contains Storage, Showcase, and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains Automatic Performance, its frame-loss trigger, separate attack/release timing, FPS step size, anti-oscillation controls, the optional playback-information overlay, and the power benchmark recorder.
+The Misc tab contains Storage, Showcase, and Performance sections. Manage Storage opens a centered review page and stops any active library preview. Scan Storage lists only Big Screen-owned orphan downloads, unused thumbnails, or abandoned temporary files. Every candidate starts checked; uncheck anything you want to keep, then clean only the selected files after confirmation. Assigned downloads, required runtime files, map-folder MP4s, and Video Import MP4s are protected. The Performance section contains the decoder switch, Automatic Performance and its tuning controls, the optional playback-information overlay, and the power benchmark recorder.
 
 **Play Big Screen Showcase** opens an optional center-screen demonstration manager. It lists Chroma, Noodle Extensions, the pinned BeatSaver map, its video, and downloader readiness. Nothing downloads on page open: use **Download Map**, **Recheck Map**, or **Download Video** beside the missing item. **Play Showcase** enables only when everything is ready, then shows the strong-motion warning and starts Lawless Expert+ directly with session-only No Fail. This temporary modifier does not change saved modifiers or affect the map when launched normally. The map is stored in Big Screen's managed `DemoLevels` folder rather than copied over a user's normal custom-map installation. After the run, Beat Saber's ordinary results and navigation controls remain unchanged; reopen Big Screen from Mods to run the showcase again. User video overrides still take priority if the same map is already present.
 

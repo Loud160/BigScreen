@@ -913,11 +913,22 @@ namespace BigScreen::CoreLogic {
     /// second coplanar surface behind it. A requested black lead-in is the sole
     /// deliberate exception and always covers the complete frame.
     inline constexpr bool ScreenBackgroundVisible(
+        bool opaqueScreenBody,
         bool transparent,
         bool blackLeadInActive,
-        bool videoCoversFrame = false)
+        bool videoCoversFrame = false,
+        bool authoredAlphaCutout = false)
     {
-        return blackLeadInActive || (!transparent && !videoCoversFrame);
+        // A mapper-authored vignette supplies the final alpha-defined screen
+        // shape. It must take precedence over the normal opaque-screen body;
+        // otherwise that independent rectangular body remains visible as a
+        // black box around the oval vignette. A deliberate black lead-in is
+        // the only state that temporarily covers the complete frame.
+        if(blackLeadInActive)
+            return true;
+        if(authoredAlphaCutout)
+            return false;
+        return opaqueScreenBody || (!transparent && !videoCoversFrame);
     }
 
     /// A Library preview normally holds Beat Saber's audio until FFmpeg has
@@ -958,7 +969,8 @@ namespace BigScreen::CoreLogic {
     }
 
     /// Accept only HTTPS YouTube addresses. Map metadata is untrusted input,
-    /// so the downloader must never become a general-purpose URL fetcher.
+    /// so the downloader must never become a general-purpose URL fetcher or
+    /// accept user-info/port confusion.
     inline bool IsSupportedYouTubeUrl(std::string_view value)
     {
         while(!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))

@@ -93,6 +93,7 @@ namespace BigScreen {
         void StartResolutionDownload(int height);
         void PasteUrlFromClipboard();
         void SearchSelectedSongOnYouTube();
+        void RefreshSelectedMapperMetadata();
         void RefreshLocalVideoStatus();
         /// Handles the two explicit confirmation choices. Unlinking always
         /// removes the assignment only; deletion additionally removes the
@@ -192,6 +193,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
+        UnityEngine::UI::Button* mapperRefreshButton_ = nullptr;
         UnityEngine::UI::Button* searchYouTubeButton_ = nullptr;
         UnityEngine::UI::Button* pasteUrlButton_ = nullptr;
         UnityEngine::UI::Button* checkUrlButton_ = nullptr;
