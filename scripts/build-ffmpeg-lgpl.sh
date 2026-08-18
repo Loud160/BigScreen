@@ -179,6 +179,10 @@ cd "${build_root}"
 # Screen does not compile or ship FFmpeg's software HEVC decoder. All enabled
 # components remain LGPL and the explicit allowlist below is the license and
 # footprint boundary.
+#
+# The yt-dlp workaround can select fragmented HLS/MPEG-TS media instead of the
+# rejected Android-VR MP4 URL. Keep the MPEG-TS demuxer in both private FFmpeg
+# builds or those successful downloads cannot be opened on Quest.
 "${source_root}/configure" \
     --prefix="${native_install_root}" \
     --target-os=android \

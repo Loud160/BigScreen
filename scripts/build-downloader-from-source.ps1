@@ -15,8 +15,11 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-# These pins intentionally mirror fetch-downloader-runtime.ps1. Update them as
-# one reviewed change whenever Big Screen moves to another downloader release.
+# These pins intentionally mirror fetch-downloader-runtime.ps1. The pinned
+# nightly includes yt-dlp's upstream recovery for the August 2026 YouTube 403
+# regression; the stable 2026.07.04 package still selects the rejected
+# Android-VR media path. Update both scripts as one reviewed change when a
+# later stable release contains the fix and passes Quest testing.
 $ytDlpVersion = "2026.08.18.122307"
 $ytDlpSourceSha256 = "e9169887a9863bc635e1d3760f90cb37588dad2111064d454c790aaaa121349a"
 $ytDlpReleaseSha256 = "7c2e017b19c249447445e776913d54bcea81b85b21b51d50ff36b7b8cae956e1"

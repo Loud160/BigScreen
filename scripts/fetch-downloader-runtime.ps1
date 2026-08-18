@@ -18,6 +18,10 @@ $ErrorActionPreference = "Stop"
 # reproducible and cannot silently package a partial or substituted download.
 $pythonVersion = "3.14.7"
 $pythonSha256 = "6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb"
+# Temporary August 2026 recovery baseline: this nightly contains the upstream
+# extractor changes used with Big Screen's explicit `-android_vr` client
+# exclusion. Do not return this pin to stable 2026.07.04; doing so restores the
+# partial-download HTTP 403 failure on Quest.
 $ytDlpVersion = "2026.08.18.122307"
 $ytDlpSha256 = "7c2e017b19c249447445e776913d54bcea81b85b21b51d50ff36b7b8cae956e1"
 $ytDlpRepository = "yt-dlp/yt-dlp-nightly-builds"

@@ -74,6 +74,11 @@ namespace BigScreen {
             std::string_view candidate,
             std::string_view reference)
         {
+            // Fail closed when either side is not a normal numeric yt-dlp
+            // version. This helper is used only to retire a known-obsolete
+            // active package after a QMOD upgrade; an unrecognized or newer
+            // user-installed package must remain available to the existing
+            // smoke-test/rollback transaction instead of being deleted.
             const auto candidateParts = DownloaderVersionParts(candidate);
             const auto referenceParts = DownloaderVersionParts(reference);
             if(!candidateParts || !referenceParts)
@@ -974,7 +979,8 @@ try:
         'retries': 3,
         'fragment_retries': 3,
         'extractor_retries': 3,
-        # yt-dlp 2026.07.04 selected android_vr by default. YouTube began
+        # WORKAROUND (August 2026): yt-dlp 2026.07.04 selected android_vr by
+        # default. YouTube began
         # requiring a Google Video Server PO token for that client's media
         # URLs in August 2026, which made otherwise public videos fail with a
         # mid-transfer HTTP 403. Let the current extractor choose its supported
@@ -1426,7 +1432,8 @@ try:
             'no_warnings': True,
             'noplaylist': True,
             'skip_download': True,
-            # Keep metadata probing on the same client policy as the eventual
+            # Keep metadata probing on the same August 2026 workaround/client
+            # policy as the eventual
             # transfer. Otherwise the UI can offer Android-VR-only formats
             # that the download worker deliberately refuses to use.
             'extractor_args': {
