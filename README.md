@@ -419,8 +419,10 @@ The Update tab separately displays the installed Big Screen version and active
 yt-dlp version and channel. Big Screen checks both the latest public stable mod
 release and the appropriate yt-dlp channel once per Beat Saber session on
 background workers, without delaying the menu. Nightly yt-dlp users are told
-when stable has caught up and can switch back directly; stable users are never
-automatically moved to nightly. Manual checks always report their result. After
+whether stable has caught up. An older stable release remains selectable for
+users who deliberately want to return, but the confirmation clearly identifies
+that switch as a downgrade; stable users are never automatically moved to
+nightly. Manual checks always report their result. After
 three consecutive YouTube download failures, Big Screen also checks yt-dlp and
 explains whether an available update may address a recent YouTube change. Mod
 updates remain notification-only and are installed through ModsBeforeFriday or

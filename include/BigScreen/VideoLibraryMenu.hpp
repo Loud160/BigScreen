@@ -55,7 +55,6 @@ namespace BigScreen {
         void CreateUi(
             HMUI::ViewController* browserController,
             HMUI::ViewController* editorController,
-            HMUI::ViewController* modalHostViewController,
             std::function<void(bool showEditor)> navigate,
             std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
             std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker);

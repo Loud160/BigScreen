@@ -136,6 +136,10 @@ namespace BigScreen {
         std::string latestNightlyVersion;
         std::string message;
         bool stableReturn = false;
+        /// True when the newest stable release is dated at or after the
+        /// installed nightly. A user may still choose an older stable release,
+        /// but the UI must describe that channel switch as a downgrade.
+        bool stableCaughtUp = false;
 
         bool Active() const {
             return state == YtDlpReleaseCheckState::Checking;

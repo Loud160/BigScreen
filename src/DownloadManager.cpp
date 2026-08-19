@@ -1432,9 +1432,13 @@ def version_key(value):
 def newer(candidate, current):
     left, right = version_key(candidate), version_key(current)
     return bool(left and right and left > right)
-def stable_supersedes_nightly(stable, nightly):
+def stable_has_caught_up(stable, nightly):
     left, right = version_key(stable), version_key(nightly)
-    return bool(len(left) >= 3 and len(right) >= 3 and left[:3] > right[:3])
+    # Stable tags use YYYY.MM.DD while nightly tags append a build suffix.
+    # Compare their release dates: a stable cut on the same date counts as
+    # caught up, while tuple-comparing all fields would incorrectly treat the
+    # shorter stable tag as older forever.
+    return bool(len(left) >= 3 and len(right) >= 3 and left[:3] >= right[:3])
 def latest(repository):
     request = urllib.request.Request(
         'https://api.github.com/repos/' + repository + '/releases/latest',
@@ -1460,6 +1464,7 @@ result = {
     'checkedChannel': '',
     'availableVersion': '',
     'stableReturn': False,
+    'stableCaughtUp': False,
 }
 try:
     current = str(job.get('currentVersion') or '')
@@ -1472,10 +1477,11 @@ try:
     if current_channel == 'nightly' and (automatic or requested_nightly):
         # A newer-dated stable release wins. Only if stable has not caught up
         # do we spend a second request checking the nightly channel.
-        if stable_supersedes_nightly(stable, current):
+        if stable_has_caught_up(stable, current):
             result.update(
                 state='update_available', checkedChannel='stable',
                 availableVersion=stable, stableReturn=True,
+                stableCaughtUp=True,
                 message='A newer stable yt-dlp release is available.')
         else:
             nightly = latest('yt-dlp/yt-dlp-nightly-builds')
@@ -1508,14 +1514,23 @@ try:
         # Explicit stable checks can intentionally return from nightly even if
         # the stable tag sorts lower. Installation treats that as a channel
         # switch rather than an ordinary upgrade.
-        available = newer(stable, current) or current_channel != 'stable'
+        returning_to_stable = current_channel == 'nightly'
+        caught_up = (not returning_to_stable or
+                     stable_has_caught_up(stable, current))
+        available = newer(stable, current) or returning_to_stable
         result.update(
             state='update_available' if available else 'up_to_date',
             checkedChannel='stable',
             availableVersion=stable if available else '',
-            stableReturn=current_channel == 'nightly',
-            message=('A stable yt-dlp release is available.' if available
-                     else 'The installed stable yt-dlp release is current.'))
+            stableReturn=returning_to_stable,
+            stableCaughtUp=caught_up,
+            message=(('Stable has caught up with the installed nightly build.'
+                      if caught_up else
+                      'Stable has not caught up with the installed nightly build.')
+                     if returning_to_stable else
+                     ('A stable yt-dlp release is available.' if available
+                      else 'The installed stable yt-dlp release is current.'))
+                    )
 except urllib.error.HTTPError as error:
     result['message'] = ('GitHub temporarily limited yt-dlp checks.'
                          if error.code in (403, 429)
@@ -3610,6 +3625,10 @@ os.replace(temporary, job['destination'])
                     result.HasMember("stableReturn") &&
                     result["stableReturn"].IsBool() &&
                     result["stableReturn"].GetBool();
+                outcome.stableCaughtUp =
+                    result.HasMember("stableCaughtUp") &&
+                    result["stableCaughtUp"].IsBool() &&
+                    result["stableCaughtUp"].GetBool();
                 if(state == "update_available")
                     outcome.state =
                         YtDlpReleaseCheckState::UpdateAvailable;
@@ -3649,7 +3668,9 @@ os.replace(temporary, job['destination'])
                 downloadFailureGuidance
                     ? "A yt-dlp update may fix the downloads"
                     : outcome.stableReturn
-                        ? "Stable yt-dlp is available"
+                        ? outcome.stableCaughtUp
+                            ? "Stable yt-dlp has caught up"
+                            : "Stable yt-dlp is older"
                         : "yt-dlp update available",
                 "Installed: " + outcome.currentVersion + " (" +
                     outcome.currentChannel + ")\nAvailable: " +
@@ -3657,7 +3678,9 @@ os.replace(temporary, job['destination'])
                     (downloadFailureGuidance
                         ? "Several YouTube downloads failed. YouTube may have changed how videos are delivered, so installing this update may restore downloads. The video address or Big Screen itself may not be the cause."
                         : outcome.stableReturn
-                        ? "The stable channel has caught up with your nightly build. You can switch back to the recommended stable release."
+                        ? outcome.stableCaughtUp
+                            ? "The stable channel is now dated at or after your installed nightly build. You can switch back to the recommended stable release."
+                            : "The stable channel has not caught up with your installed nightly build. Switching now will install an older yt-dlp release and may bring back a YouTube compatibility problem fixed by nightly. You can still switch if nightly did not solve your issue or you prefer the stable channel."
                         : outcome.message),
                 true,
                 installNightly,

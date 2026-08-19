@@ -69,8 +69,8 @@ error_manager_source = (root / "src/ErrorManager.cpp").read_text(
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
 settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
-center_modal_header = (
-    root / "include/BigScreen/CenterScreenModal.hpp"
+menu_modal_header = (
+    root / "include/BigScreen/MenuModal.hpp"
 ).read_text(encoding="utf-8")
 downloader_runtime_fetch = (
     root / "scripts/fetch-downloader-runtime.ps1"
@@ -578,7 +578,7 @@ assert 'ReadBool(\n            document, "hardwareDecodingEnabled", true)' in se
 assert 'Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_)' in settings_source
 assert '"Hardware Video Decoding"' in settings_menu_source
 assert '"Uses the Quest\'s dedicated MediaCodec decoders by default' in settings_menu_source
-assert 'ShowModalOnCenterScreen(automaticPerformanceWarningModal_)' in settings_menu_source
+assert 'ShowModalInFront(automaticPerformanceWarningModal_)' in settings_menu_source
 assert '"Enable Automatic Performance?\\n\\nAutomatic Performance is an experimental feature' in settings_menu_source
 assert 'Settings::Instance().SetAutomaticPerformanceEnabled(true)' in settings_menu_source
 
@@ -1008,29 +1008,26 @@ tick_main_thread = error_manager_source.split(
 assert 'Guard("disabling Big Screen after repeated errors"' in tick_main_thread
 assert "if(IsBigScreenMenuActive())\n            return;" in tick_main_thread
 assert "SimpleDialogPrompt while this child flow is" in tick_main_thread
-# Every popup opened from Big Screen's left or right side panel is created on
-# the neutral center controller, then moved to the currently active center
-# subpage immediately before presentation. Parenting only the error dialog to
-# center left warnings and confirmations behind the curved side menus.
-assert "ShowModalOnCenterScreen" in center_modal_header
-assert "ActiveCenterModalHost" in menu_flow_source
-center_popup_host = menu_flow_source.split(
-    "HMUI::ViewController* ActiveCenterModalHost() noexcept", 1
-)[1].split("void ShowModalOnCenterScreen", 1)[0]
-center_popup_presenter = menu_flow_source.split(
-    "void ShowModalOnCenterScreen(BSML::ModalView* modal) noexcept", 1
+# Every popup stays on the left, right, or center controller that owns the
+# action which opened it. Presentation moves the modal root to the final
+# sibling position before and after Show(), keeping both the visible dialog and
+# its blocker above that panel without reparenting it onto another screen.
+assert "ShowModalInFront" in menu_modal_header
+assert "ActiveCenterModalHost" not in menu_flow_source
+menu_popup_presenter = menu_flow_source.split(
+    "void ShowModalInFront(BSML::ModalView* modal) noexcept", 1
 )[1].split("bool IsBigScreenMenuTransitionPending()", 1)[0]
-assert "__cordl_internal_get__mainScreenViewControllers()" in center_popup_host
-assert "ActiveCenterModalHost()" in center_popup_presenter
-assert "modalTransform->SetParent(hostTransform.ptr(), false);" in center_popup_presenter
-assert center_popup_presenter.index("SetParent(hostTransform.ptr(), false)") < \
-    center_popup_presenter.index("modal->Show();")
-assert "CreateModal(\n            modalHostViewController" in settings_menu_source
-assert "CreateModal(\n            viewController" not in settings_menu_source
-assert "CreateModal(\n            modalHostViewController" in library_menu_source
-assert "CreateModal(\n            editorController" not in library_menu_source
-assert "ShowModalOnCenterScreen(errorModal_);" in settings_menu_source
-assert "ShowModalOnCenterScreen(downloadConfirmModal_);" in library_menu_source
+assert menu_popup_presenter.count("modalTransform->SetAsLastSibling();") == 2
+assert "SetParent(" not in menu_popup_presenter
+assert menu_popup_presenter.index("SetAsLastSibling();") < \
+    menu_popup_presenter.index("modal->Show();")
+assert "CreateModal(\n            viewController" in settings_menu_source
+assert "CreateModal(\n            editorController" in library_menu_source
+assert "modalHostViewController" not in settings_menu_source
+assert "modalHostViewController" not in library_menu_source
+assert "ShowModalInFront(errorModal_);" in settings_menu_source
+assert "ShowModalInFront(downloadConfirmModal_);" in library_menu_source
+assert "ShowModalInFront(resolutionModal_);" in selection_toggle_source
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
@@ -1082,13 +1079,19 @@ assert "StartAutomaticYtDlpReleaseCheck();" in settings_menu_source
 assert "StartScheduledUpdaterCheck" not in main_source
 assert "automaticYtDlpReleaseCheckStarted_" in download_manager_header
 assert "yt-dlp/yt-dlp-nightly-builds" in download_manager_source
-assert "stable_supersedes_nightly" in download_manager_source
+assert "stable_has_caught_up" in download_manager_source
+assert "stableCaughtUp" in download_manager_header
+assert "Stable yt-dlp is older" in download_manager_source
+assert "Switching now will install an older yt-dlp release" in download_manager_source
 assert "current_channel == 'nightly'" in download_manager_source
 assert '"Check Stable Release"' in settings_menu_source
 assert '"Several YouTube downloads failed"' in download_manager_source
 assert "consecutiveYoutubeDownloadFailures_ < 3" in download_manager_source
 assert "youtubeFailureGuidancePending_" in download_manager_source
-assert "ShowModalOnCenterScreen(ytDlpUpdateModal_)" in settings_menu_source
+assert "ShowModalInFront(ytDlpUpdateModal_)" in settings_menu_source
+assert settings_menu_source.count("UnityEngine::Vector2{42, 8}") >= 2
+assert "BSML::Lite::SetButtonTextSize(updaterButton_, 2.6f);" in settings_menu_source
+assert "BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);" in settings_menu_source
 assert "Check Big Screen Update" in settings_menu_source
 assert "Current yt-dlp:" in settings_menu_source
 assert "Created by Loud160 (AKA Whisp)" in settings_menu_source
@@ -1182,6 +1185,9 @@ assert 'StyleToggleRow(fitToggle_, "Fit to Song");' in library_menu_source
 assert (
     'StyleToggleRow(blackLeadInToggle_, "Lead-In Background");'
     in library_menu_source
+)
+assert "SetBrightButtonLabel(mapperRefreshButton_, 6.0f);" in (
+    library_menu_source
 )
 assert "timingToggleColumn" not in library_menu_source
 assert "/diagnostics/" in gitignore
@@ -1481,7 +1487,7 @@ assert 'document.RemoveMember("automaticPerformanceResponseSeconds")' in setting
 assert '"Frame Rate Loss Trigger"' in settings_menu_source
 assert '"Use the 60 FPS limit?' in settings_menu_source
 assert '"Use 60 FPS"' in settings_menu_source
-assert "ShowModalOnCenterScreen(highFrameRateWarningModal_);" in settings_menu_source
+assert "ShowModalInFront(highFrameRateWarningModal_);" in settings_menu_source
 assert "RefreshPlaybackFpsControl();" in settings_menu_source
 assert '"Attack Time"' in settings_menu_source
 assert '"Release Time"' in settings_menu_source

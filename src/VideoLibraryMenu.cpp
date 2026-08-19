@@ -6,7 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibraryMenu.hpp"
-#include "BigScreen/CenterScreenModal.hpp"
+#include "BigScreen/MenuModal.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/UiUtility.hpp"
 #include "BigScreen/Utility.hpp"
@@ -673,12 +673,11 @@ namespace BigScreen {
     void VideoLibraryMenu::CreateUi(
         HMUI::ViewController* browserController,
         HMUI::ViewController* editorController,
-        HMUI::ViewController* modalHostViewController,
         std::function<void(bool showEditor)> navigate,
         std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
         std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker)
     {
-        if(!browserController || !editorController || !modalHostViewController)
+        if(!browserController || !editorController)
             return;
         browserController_ = browserController;
         editorController_ = editorController;
@@ -866,7 +865,10 @@ namespace BigScreen {
                     [this]() { RefreshSelectedMapperMetadata(); });
             });
         ConfigureLayout(mapperRefreshButton_, 8.2f, 7.0f, 0.0f);
-        SetBrightButtonLabel(mapperRefreshButton_, 3.4f);
+        // Match the reset glyphs used beside Screen Layout and Performance.
+        // Only the symbol grows; the established compact header button and
+        // Back to Song List spacing remain unchanged.
+        SetBrightButtonLabel(mapperRefreshButton_, 6.0f);
         BSML::Lite::AddHoverHint(
             mapperRefreshButton_,
             "Reloads this map's Cinema JSON or playlist metadata from Quest storage. Use this after copying an edited file back to the Quest.");
@@ -1142,7 +1144,7 @@ namespace BigScreen {
             "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
 
         downloadConfirmModal_ = BSML::Lite::CreateModal(
-            modalHostViewController,
+            editorController,
             {76.0f, 42.0f},
             [this]() {
                 pendingDownloadHeight_ = 0;
@@ -1613,7 +1615,7 @@ namespace BigScreen {
         // the destructive difference explicit without adding another permanent
         // button to an already dense storage row.
         removeConfirmModal_ = BSML::Lite::CreateModal(
-            modalHostViewController,
+            editorController,
             {72.0f, 38.0f},
             nullptr,
             true);
@@ -1691,7 +1693,7 @@ namespace BigScreen {
                             descriptor.activeMapFileName.value_or(
                                 "The assigned local video") +
                             "\n\nThe file will be gone for good - Big Screen cannot restore it and it is not re-downloadable.");
-                    ShowModalOnCenterScreen(deleteLocalConfirmModal_);
+                    ShowModalInFront(deleteLocalConfirmModal_);
                     return;
                 }
                 RemoveOverride(true);
@@ -1704,7 +1706,7 @@ namespace BigScreen {
 
         // Final safeguard for the only unrecoverable choice in this menu.
         deleteLocalConfirmModal_ = BSML::Lite::CreateModal(
-            modalHostViewController,
+            editorController,
             {72.0f, 38.0f},
             nullptr,
             true);
@@ -1848,7 +1850,7 @@ namespace BigScreen {
             [this]()
             {
                 if(removeConfirmModal_)
-                    ShowModalOnCenterScreen(removeConfirmModal_);
+                    ShowModalInFront(removeConfirmModal_);
             });
         ConfigureLayout(removeButton_, 13.5f, 6.5f, 0.0f);
         BSML::Lite::SetButtonTextSize(removeButton_, 2.15f);
@@ -2336,7 +2338,7 @@ namespace BigScreen {
                 confirmDownloadButton_,
                 "Download " + std::to_string(height) + "p");
         if(downloadConfirmModal_)
-            ShowModalOnCenterScreen(downloadConfirmModal_);
+            ShowModalInFront(downloadConfirmModal_);
     }
 
     void VideoLibraryMenu::ConfirmPendingResolutionDownload()

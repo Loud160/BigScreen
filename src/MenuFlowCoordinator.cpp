@@ -7,7 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/MenuFlowCoordinator.hpp"
 
-#include "BigScreen/CenterScreenModal.hpp"
+#include "BigScreen/MenuModal.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
@@ -198,57 +198,34 @@ namespace BigScreen {
         return activeMenuFlow;
     }
 
-    HMUI::ViewController* ActiveCenterModalHost() noexcept
-    {
-        try
-        {
-            auto* coordinator = activeMenuFlow.ptr();
-            if(!coordinator)
-                return nullptr;
-            auto* controllers =
-                coordinator->__cordl_internal_get__mainScreenViewControllers();
-            if(!controllers || controllers->get_Count() <= 0)
-                return coordinator->centerViewController;
-            return controllers->get_Item(controllers->get_Count() - 1);
-        }
-        catch(...)
-        {
-            return nullptr;
-        }
-    }
-
-    void ShowModalOnCenterScreen(BSML::ModalView* modal) noexcept
+    void ShowModalInFront(BSML::ModalView* modal) noexcept
     {
         if(!modal)
             return;
         try
         {
-            // Modal objects are retained with their menu controllers. Resolve
-            // the top center page every time so opening Storage, Showcase, or
-            // the file browser cannot leave a side-triggered dialog parented
-            // beneath an inactive neutral center controller.
-            if(auto* host = ActiveCenterModalHost())
-            {
-                auto modalTransform = modal->get_transform();
-                auto hostTransform = host->get_transform();
-                if(modalTransform && hostTransform &&
-                   modalTransform->get_parent().ptr() != hostTransform.ptr())
-                {
-                    modalTransform->SetParent(hostTransform.ptr(), false);
-                }
-            }
+            // A modal is created on the same controller as the action that
+            // opens it. Never reparent it to another screen: that can strand
+            // an invisible input blocker behind a side panel. Last-sibling
+            // ordering guarantees the retained modal is rendered and receives
+            // pointer input above the rest of its owning controller.
+            auto modalTransform = modal->get_transform();
+            if(modalTransform)
+                modalTransform->SetAsLastSibling();
             modal->Show();
+            if(modalTransform)
+                modalTransform->SetAsLastSibling();
         }
         catch(const std::exception& exception)
         {
             PaperLogger.error(
-                "Could not present a Big Screen dialog on the center screen: {}",
+                "Could not present a Big Screen dialog in front of its menu: {}",
                 exception.what());
         }
         catch(...)
         {
             PaperLogger.error(
-                "Could not present a Big Screen dialog on the center screen");
+                "Could not present a Big Screen dialog in front of its menu");
         }
     }
 
@@ -617,7 +594,6 @@ namespace BigScreen {
 
             SettingsMenu::Instance().CreateUi(
                 settingsViewController,
-                centerViewController,
                 [this]()
                 {
                     BackButtonWasPressed(centerViewController);
@@ -662,7 +638,6 @@ namespace BigScreen {
             VideoLibraryMenu::Instance().CreateUi(
                 libraryBrowserViewController,
                 libraryEditorViewController,
-                centerViewController,
                 [this](bool showEditor)
                 {
                     DiagnosticSessionLogger::Instance().MenuEvent(

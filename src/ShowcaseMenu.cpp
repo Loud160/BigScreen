@@ -6,7 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/ShowcaseMenu.hpp"
-#include "BigScreen/CenterScreenModal.hpp"
+#include "BigScreen/MenuModal.hpp"
 
 #include <string>
 #include <utility>
@@ -406,7 +406,7 @@ namespace BigScreen {
         {
             if(auto object = warningModal_->get_gameObject())
                 object->SetActive(true);
-            ShowModalOnCenterScreen(warningModal_);
+            ShowModalInFront(warningModal_);
         }
     }
 

@@ -159,6 +159,23 @@ release, urls = run_release_check(
 assert release["state"] == "update_available"
 assert release["checkedChannel"] == "stable"
 assert release["stableReturn"] is True
+assert release["stableCaughtUp"] is True
+assert len(urls) == 1
+
+# A stable release cut on the same date as the installed nightly counts as
+# caught up even though the nightly tag carries an additional build suffix.
+release, urls = run_release_check(
+    {
+        "currentVersion": "2026.08.18.122307",
+        "currentChannel": "nightly",
+        "requestedNightly": True,
+        "automatic": True,
+    },
+    "2026.08.18",
+    "2026.08.20.010101",
+)
+assert release["checkedChannel"] == "stable"
+assert release["stableCaughtUp"] is True
 assert len(urls) == 1
 
 # Only when stable has not caught up does an installed nightly query nightly.
@@ -175,6 +192,26 @@ release, urls = run_release_check(
 assert release["state"] == "update_available"
 assert release["checkedChannel"] == "nightly"
 assert len(urls) == 2
+
+# A manual stable check always leaves the return path available. When stable
+# is older than the installed nightly, the result must carry that distinction
+# so the confirmation can clearly describe the switch as a downgrade.
+release, urls = run_release_check(
+    {
+        "currentVersion": "2026.08.18.122307",
+        "currentChannel": "nightly",
+        "requestedNightly": False,
+        "automatic": False,
+    },
+    "2026.07.04",
+    "2026.08.19.010101",
+)
+assert release["state"] == "update_available"
+assert release["checkedChannel"] == "stable"
+assert release["stableReturn"] is True
+assert release["stableCaughtUp"] is False
+assert "has not caught up" in release["message"]
+assert len(urls) == 1
 
 # All three foreground worker types share the cancellation marker. Probe and
 # updater checks are deliberately placed between bounded network operations;

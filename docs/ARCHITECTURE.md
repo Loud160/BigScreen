@@ -10,7 +10,10 @@ status mailboxes, separate from video downloads and yt-dlp package installation.
 Atomic process-lifetime guards allow each automatic check only once per Beat
 Saber session; a manual check may run again but cannot overlap the same active
 release checker. Only the main-thread menu refresh consumes notices and opens
-center-screen BSML dialogs. Three consecutive transfer failures can request an
+BSML dialogs. Each dialog remains attached to the left, right, or center panel
+that owns its action and is moved to that controller's frontmost sibling order
+before presentation, preventing an invisible dialog blocker from being hidden
+behind another menu. Three consecutive transfer failures can request an
 additional background yt-dlp check; a successful transfer resets that streak.
 
 The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.

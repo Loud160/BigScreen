@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/SelectionVideoToggle.hpp"
+#include "BigScreen/MenuModal.hpp"
 #include "BigScreen/Utility.hpp"
 
 #include <algorithm>
@@ -1037,7 +1038,7 @@ namespace BigScreen {
         if(resolutionModalText_)
             resolutionModalText_->set_text(
                 "Checking available resolutions...");
-        resolutionModal_->Show();
+        ShowModalInFront(resolutionModal_);
 
         auto& diagnostics = DiagnosticSessionLogger::Instance();
         if(Settings::Instance().DetailedDiagnosticLoggingEnabled())

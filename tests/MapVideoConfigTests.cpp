@@ -160,7 +160,8 @@ int main()
     }
     const auto timingOnly = BigScreen::MapVideoConfig::LoadDefinitionFromLevel(
         root, error);
-    Expect(timingOnly && !timingOnly->hasMapperPresentation,
+    Expect(timingOnly && !timingOnly->hasMapperPresentation &&
+           !timingOnly->hasMapperScreenGeometry,
            "timing-only metadata should keep the user screen layout");
 
     // The combined Quest test map stores each ten-second phase in its own
