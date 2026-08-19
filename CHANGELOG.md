@@ -2,23 +2,26 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.10 — Menu, updater, and deployment hardening
+
 - Removed the source deployment helper's post-restart shader-tier polling. It
   now returns as soon as Beat Saber has been restarted instead of waiting up to
   two minutes for a first-main-menu diagnostic; the tier remains in normal logs.
 - Added non-blocking, once-per-session yt-dlp release discovery with explicit
   installed-channel reporting. Stable installs check stable only; nightly
   installs check whether stable has caught up before checking nightly, and can
-  return to stable through a dedicated action. Manual results and install
-  offers now use the center screen.
+  return to stable through a dedicated action. A manual stable check identifies
+  whether stable has caught up or whether switching would install an older
+  release, without blocking a deliberate channel change.
 - Added session-scoped guidance after three consecutive YouTube download
   failures. Big Screen checks yt-dlp first, reports an available compatibility
   update when found, otherwise explains that a recent YouTube delivery change
   may require checking again or temporarily using nightly. Successful downloads
   reset the streak and one failing URL cannot spam dialogs.
-- Routed every Big Screen menu warning, confirmation, help, and error dialog
-  through the currently visible center-screen controller. Settings and Video
-  Library popups can no longer open on or behind the curved side panels, even
-  while a center subpage is active.
+- Returned every Big Screen menu warning, confirmation, help, and error dialog
+  to the left, right, or center panel that owns its action. Presentation raises
+  the modal above that panel so neither its controls nor its input blocker can
+  be hidden behind another menu.
 - Replaced per-action downloader threads and UI-thread joins with one persistent
   background operation worker. Download completion now stays active until file
   promotion and the library manifest transaction are fully finished, and menu
@@ -33,6 +36,16 @@
 - Shortened failed-download status text, with the stable `BS-DL-*` support code
   placed first so it remains visible in the right-side menu. Full yt-dlp and
   selected-stream diagnostics continue to be written to Big Screen's log.
+- Made stable and nightly yt-dlp check buttons use the same dimensions and text
+  size, and enlarged the mapper-metadata refresh glyph to match the Screen and
+  Performance reset controls without changing its compact header footprint.
+- Strengthened source deployment ownership and manifest handling so ambiguous
+  ADB device output or optional manifest fields cannot produce an unsafe or
+  partially owned installation. Repository line endings and development
+  fixtures are now deterministic for clean builds on another computer.
+- Added regression coverage proving URL/timing-only Cinema metadata keeps the
+  player's selected screen layout while explicit mapper position, rotation,
+  size, curvature, or additional screens claim the canvas as intended.
 
 ## 0.7.0-alpha.9 — YouTube recovery and screen-presentation safeguards
 

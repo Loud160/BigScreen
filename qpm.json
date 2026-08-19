@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.schema.json",
-  "version": "0.7.0-alpha.9",
+  "version": "0.7.0-alpha.10",
   "sharedDir": "shared",
   "dependenciesDir": "extern",
   "info": {
     "name": "Big Screen",
     "id": "bigscreen",
-    "version": "0.7.0-alpha.9",
+    "version": "0.7.0-alpha.10",
     "url": "https://github.com/Loud160/BigScreen",
     "additionalData": {
       "overrideSoName": "libbigscreen.so",
