@@ -1,1 +1,28 @@
+# Keep every text file byte-stable across Windows, WSL, and GitHub runners.
+# Git does not choose a repository-wide policy automatically; without this,
+# each contributor's core.autocrlf setting can produce whole-file churn.
+* text=auto eol=lf
+
+# Windows command launchers are the one text format kept as CRLF for maximum
+# compatibility with cmd.exe. PowerShell, Python, CMake, C/C++, JSON, Markdown,
+# and shell scripts all use LF in the repository and working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
 *.sh text eol=lf
+
+# Media, native artifacts, archives, and the Unity shader AssetBundle must
+# never pass through text normalization or encoding filters.
+*.a -text
+*.dll -text
+*.exe -text
+*.gif -text
+*.jpg -text
+*.jpeg -text
+*.mp3 -text
+*.mp4 -text
+*.ogg -text
+*.png -text
+*.qmod -text
+*.so -text
+*.zip -text
+assets/bigscreen_video_shader -text
