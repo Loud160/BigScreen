@@ -27,7 +27,7 @@ namespace BigScreen {
         void InitializePersistentLog() noexcept;
         /// Records an expected or handled failure that does not need to count
         /// toward the internal-error circuit breaker.
-        void RecordError(
+        std::string RecordError(
             const std::string& context,
             const std::string& detail) noexcept;
         /// Appends one completed gameplay session. This is intentionally

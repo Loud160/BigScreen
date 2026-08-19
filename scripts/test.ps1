@@ -28,3 +28,5 @@ if ($LASTEXITCODE -ne 0) { throw "Could not build Big Screen core tests." }
 $ctestExe = Join-Path (Split-Path -Parent $cmakeExe) "ctest.exe"
 & $ctestExe --test-dir $build -C Release --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "Big Screen core tests failed." }
+& (Join-Path $root "tests/SourceInstallOwnershipTests.ps1")
+if ($LASTEXITCODE -ne 0) { throw "Big Screen source ownership tests failed." }

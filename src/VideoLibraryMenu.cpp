@@ -26,6 +26,7 @@
 #include <unordered_set>
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
@@ -1143,7 +1144,13 @@ namespace BigScreen {
         downloadConfirmModal_ = BSML::Lite::CreateModal(
             modalHostViewController,
             {76.0f, 42.0f},
-            [this]() { pendingDownloadHeight_ = 0; },
+            [this]() {
+                pendingDownloadHeight_ = 0;
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "resolution_cancelled", "VideoLibraryMenu");
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "cancelled_before_transfer");
+            },
             true);
         downloadConfirmationText_ = BSML::Lite::CreateText(
             downloadConfirmModal_,
@@ -1168,6 +1175,10 @@ namespace BigScreen {
             [this]()
             {
                 pendingDownloadHeight_ = 0;
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "resolution_cancelled", "VideoLibraryMenu");
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "cancelled_before_transfer");
                 if(downloadConfirmModal_)
                     downloadConfirmModal_->Hide();
             });
@@ -2043,6 +2054,9 @@ namespace BigScreen {
         constexpr int count = static_cast<int>(FilterNames.size());
         const int next = (static_cast<int>(filter_) + direction + count) % count;
         filter_ = static_cast<SongLibraryFilter>(next);
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "library_filter_changed", "VideoLibraryMenu", {
+                {"filter", std::string(FilterNames[next])}});
         if(filterText_) filterText_->set_text(
             "Filter: " + std::string(FilterNames[next]));
         RebuildVisibleRows();
@@ -2063,6 +2077,12 @@ namespace BigScreen {
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         selected_ = visible_[row]->level;
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "song_selected", "VideoLibraryMenu", {
+                {"levelId", selected_ && selected_->levelID
+                    ? std::string(selected_->levelID) : ""},
+                {"songName", selected_ && selected_->songName
+                    ? std::string(selected_->songName) : "Unknown Song"}});
         PaperLogger.debug(
             "Opening video editor row {} for '{}' ({})",
             row,
@@ -2254,6 +2274,22 @@ namespace BigScreen {
         if(!selected_ || height < 1 || height > 1440)
             return;
 
+        auto& diagnostics = DiagnosticSessionLogger::Instance();
+        if(Settings::Instance().DetailedDiagnosticLoggingEnabled())
+        {
+            diagnostics.BeginDownloadSession({
+                {"levelId", std::string(selected_->levelID)},
+                {"songName", selected_->songName
+                    ? std::string(selected_->songName) : "Unknown Song"},
+                {"songAuthor", selected_->songAuthorName
+                    ? std::string(selected_->songAuthorName) : ""},
+                {"sourceUrl", url_},
+                {"requestedHeight", std::to_string(height)}});
+            diagnostics.DownloadEvent(
+                "download_clicked", "VideoLibraryMenu", {
+                    {"requestedHeight", std::to_string(height)}});
+        }
+
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const bool localFile = descriptor.userOverrideIsMapLocal ||
             descriptor.userOverrideIsImported ||
@@ -2263,11 +2299,18 @@ namespace BigScreen {
         const bool replacing = descriptor.CanPlay();
         if(!needsWarning && !replacing)
         {
+            diagnostics.DownloadEvent(
+                "resolution_selected", "VideoLibraryMenu", {
+                    {"height", std::to_string(height)}});
             StartResolutionDownload(height);
             return;
         }
 
         pendingDownloadHeight_ = height;
+        diagnostics.DownloadEvent(
+            "resolution_dialog_opened", "VideoLibraryMenu", {
+                {"height", std::to_string(height)},
+                {"replacement", replacing ? "true" : "false"}});
         std::ostringstream message;
         message << "<b>Download " << height << "p video";
         if(replacing)
@@ -2303,7 +2346,12 @@ namespace BigScreen {
         if(downloadConfirmModal_)
             downloadConfirmModal_->Hide();
         if(height > 0)
+        {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "resolution_selected", "VideoLibraryMenu", {
+                    {"height", std::to_string(height)}});
             StartResolutionDownload(height);
+        }
     }
 
     void VideoLibraryMenu::StartResolutionDownload(int height)
@@ -2351,6 +2399,11 @@ namespace BigScreen {
             selectedLevelId);
         if(!downloader.Start(std::move(request), error))
         {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "download_failed", "VideoLibraryMenu", {
+                    {"stage", "start"}, {"message", error}});
+            DiagnosticSessionLogger::Instance().EndDownloadSession(
+                "failed_to_start");
             transientStatus_ = error.empty()
                 ? "The download could not be started."
                 : error;
@@ -2364,6 +2417,9 @@ namespace BigScreen {
         }
         else
         {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "download_started", "VideoLibraryMenu", {
+                    {"height", std::to_string(height)}});
             ownedDownloadLevelId_ = selectedLevelId;
             transientStatus_.clear();
         }
@@ -2639,6 +2695,11 @@ namespace BigScreen {
         }
         ClearThumbnail();
         transientStatus_ = "Local video assigned: " + fileName;
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "video_assigned", "LocalVideoBrowser", {
+                {"levelId", std::string(selected_->levelID)},
+                {"fileName", fileName},
+                {"origin", "local"}});
         previewSongTime_ = 0.0;
         playWhenAudioReady_ = true;
         RefreshLocalVideoStatus();
@@ -2669,6 +2730,7 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
         if(!selected_) return;
+        const auto diagnosticLevelId = std::string(selected_->levelID);
         try
         {
 
@@ -2730,6 +2792,11 @@ namespace BigScreen {
                 deleteFile && !activeLocalFile) || removed;
         if(removedDescriptor.hasMapperLocalFile)
             removed = library.SuppressMapperLocalVideo(levelId) || removed;
+
+        if(removed)
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                deleteFile ? "video_deleted" : "video_unassigned",
+                "VideoLibraryMenu", {{"levelId", diagnosticLevelId}});
 
         if(!removed)
         {
@@ -3505,6 +3572,10 @@ namespace BigScreen {
         ScreenPreview::Instance().Suspend();
         playback.Prepare(selected_);
         playback.Start(PlaybackContext::LibraryPreview);
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "preview_prepared", "SystemNormalization", {
+                {"levelId", std::string(selected_->levelID)},
+                {"songTime", std::to_string(previewSongTime_)}});
         previewMeasurementStarted_ = false;
         ResetPreviewClock(previewSongTime_);
         if(playback.IsLibraryPreviewActive())
@@ -3654,6 +3725,9 @@ namespace BigScreen {
             playWhenVideoReady_ = false;
             previewPaused_ = true;
             previewClockValid_ = false;
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                "preview_paused", "VideoLibraryMenu", {
+                    {"reason", "preparing_cancelled"}});
             transientStatus_.clear();
             RefreshPlaybackControls();
             return;
@@ -3673,6 +3747,9 @@ namespace BigScreen {
                 previewPaused_ = true;
                 playWhenAudioReady_ = false;
                 previewClockValid_ = false;
+                DiagnosticSessionLogger::Instance().MenuEvent(
+                    "preview_paused", "VideoLibraryMenu", {
+                        {"songTime", std::to_string(previewSongTime_)}});
                 RefreshPlaybackControls();
                 return;
             }
@@ -3730,6 +3807,10 @@ namespace BigScreen {
             playWhenAudioReady_ = false;
             playWhenVideoReady_ = false;
             transientStatus_.clear();
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                "preview_started", "VideoLibraryMenu", {
+                    {"mode", "resume"},
+                    {"songTime", std::to_string(previewSongTime_)}});
             RefreshPlaybackControls();
             return;
         }
@@ -3833,6 +3914,10 @@ namespace BigScreen {
         playWhenAudioReady_ = false;
         playWhenVideoReady_ = false;
         transientStatus_.clear();
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "preview_started", "VideoLibraryMenu", {
+                {"mode", "play"},
+                {"songTime", std::to_string(previewSongTime_)}});
         RefreshPlaybackControls();
     }
 
@@ -3859,6 +3944,8 @@ namespace BigScreen {
         // the decoder worker perform its normal backwards seek without a
         // close/reopen allocation cycle at every loop.
         StartPreviewAudio();
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "preview_looped", "SystemNormalization");
         PaperLogger.info("Looped Video Library preview to the beginning");
     }
 
@@ -4014,6 +4101,9 @@ namespace BigScreen {
             0.0,
             duration);
         ResetPreviewClock(previewSongTime_);
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "preview_seeked", "VideoLibraryMenu", {
+                {"songTime", std::to_string(previewSongTime_)}});
 
         if(IsAlive(previewAudioSource_) && IsAlive(previewAudioClip_) &&
            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr())
@@ -4406,6 +4496,8 @@ namespace BigScreen {
 
     void VideoLibraryMenu::StopActivePreview()
     {
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "preview_stopped", "VideoLibraryMenu");
         // Storage maintenance is a review task, not another song-selection
         // state. Stop only media preview ownership here: downloads remain
         // active and the selected editor state remains intact for when the

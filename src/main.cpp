@@ -15,6 +15,7 @@
 
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
 // BLOOM EXPERIMENT DISABLED (2026-08-18): the implementation and hook remain
 // in source below under #if 0 so they can be revisited without reconstructing
@@ -1718,6 +1719,7 @@ namespace {
 
         BigScreen::ErrorManager::Instance().Guard("saving deferred settings", []() {
             BigScreen::Settings::Instance().TickPersistence();
+            BigScreen::DiagnosticSessionLogger::Instance().Tick();
         });
         // The benchmark toggle may already be enabled from the prior app run.
         // Probe from the first stable main-menu update so battery telemetry is
@@ -1973,9 +1975,9 @@ MOD_EXTERN_FUNC void late_load() noexcept
                 "Initializing downloader",
                 downloaderError);
         }
-        else
-            BigScreen::DownloadManager::Instance().StartScheduledUpdaterCheck(
-                BigScreen::Settings::Instance().NightlyDownloaderUpdates());
+        // Release checks begin only after the player enters Big Screen. The
+        // settings UI schedules them on dedicated background workers once per
+        // game session, so startup and menu activation never wait on GitHub.
     });
 
     // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view

@@ -118,6 +118,10 @@ Windows users can double-click **[Collect-BigScreen-Logs.bat](Collect-BigScreen-
 after a problem. It automatically finds ADB, asks when the problem occurred,
 and creates one ZIP containing freshness-labelled Big Screen, Beat Saber, and
 Quest OS diagnostics. No ADB commands or manual file hunting are required.
+When **Misc > Detailed Diagnostic Logging** is enabled (the default), the ZIP
+also includes the ten newest Menu sessions and ten newest Download sessions as
+structured JSONL. Temporary yt-dlp media URLs, cookies, authorization values,
+and tokens are omitted or redacted.
 See [Troubleshooting](docs/TROUBLESHOOTING.md#collecting-a-support-bundle) for
 what is collected, stale-log protection, and privacy guidance.
 ADB started by the collector is stopped automatically. An ADB server that was
@@ -214,6 +218,19 @@ opposite Scotland2 load phase, installs the complete runtime, and asks Beat
 Saber to restart. The console remains open and reports either success or the
 exact failed step.
 
+Source deployment is ownership-tracked. Before the first Quest file changes,
+the script records an exact hash-based partial receipt; a successful deploy
+promotes it to `BigScreen/SourceInstall/source-install.json`. Repeated builds
+keep the original pre-source baseline. If ModsBeforeFriday has Big Screen
+registered for the active Beat Saber version, deployment refuses without
+changing Quest files—remove the package through MBF first.
+
+To leave source-development mode, double-click
+**[Remove-BigScreen.bat](Remove-BigScreen.bat)**. It removes or restores only
+hash-proven source-owned payload, preserves videos/library/logs, and asks
+separately before deleting settings. MBF-managed installations must still be
+removed through MBF.
+
 The deploy step also keeps the experimental embedded video shader bundle
 (`assets/bigscreen_video_shader`) current: when any source under
 `tools/video-shader/` has changed, it rebuilds the bundle automatically with
@@ -223,9 +240,9 @@ changed or appear newer than the bundle; `build.ps1`/`createqmod.ps1` use the
 committed bundle and do not launch Unity. The
 complete Unity project inputs—including `Packages`, `ProjectSettings`, and XR
 assets—are versioned so a clean clone can reproduce the bundle. After the game
-restarts, the console prints the selected shader tier and archives that boot's
-Big Screen log lines to `diagnostics/last-deploy-bigscreen.log`. That tier is a
-diagnostic only; it does not prove that the screen rendered correctly on-device.
+restarts, the deployment command returns immediately instead of waiting for a
+main-menu shader diagnostic. The mod still records its selected shader tier in
+normal logs for support diagnostics.
 
 After deployment, ADB is stopped automatically when the launcher started it.
 If ADB was already active, the launcher asks whether to stop it and defaults to
@@ -405,10 +422,15 @@ and yt-dlp-ejs, assembles the zip-import runtime, and compares the generated
 payload with the official release shipped by Big Screen.
 
 The Update tab separately displays the installed Big Screen version and active
-yt-dlp version. Big Screen checks the latest public stable mod release once per
-Beat Saber session and notifies the player only when a newer version exists.
-The manual check always reports its result. Mod updates remain notification-only
-and are installed through ModsBeforeFriday or the GitHub release page.
+yt-dlp version and channel. Big Screen checks both the latest public stable mod
+release and the appropriate yt-dlp channel once per Beat Saber session on
+background workers, without delaying the menu. Nightly yt-dlp users are told
+when stable has caught up and can switch back directly; stable users are never
+automatically moved to nightly. Manual checks always report their result. After
+three consecutive YouTube download failures, Big Screen also checks yt-dlp and
+explains whether an available update may address a recent YouTube change. Mod
+updates remain notification-only and are installed through ModsBeforeFriday or
+the GitHub release page.
 
 </details>
 

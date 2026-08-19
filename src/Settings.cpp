@@ -16,6 +16,7 @@
 #include <iterator>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "beatsaber-hook/shared/config/config-utils.hpp"
 #include "main.hpp"
@@ -91,6 +92,39 @@ namespace BigScreen {
             // These are presentation ceilings, not forced rates. A 24 FPS
             // source remains 24 FPS even when the selected ceiling is 30 or 60.
             return value == 15 || value == 30 || value == 60 ? value : 30;
+        }
+
+        void SetLoggedBoolean(const char* name, bool& target, bool value)
+        {
+            const bool previous = target;
+            target = value;
+            if(previous != target)
+                DiagnosticSessionLogger::Instance().MenuEvent(
+                    "setting_changed", "Settings", {
+                        {"setting", name},
+                        {"previousValue", previous ? "true" : "false"},
+                        {"newValue", target ? "true" : "false"}});
+        }
+
+        template<typename Number>
+        void SetLoggedDiscrete(const char* name, Number& target, Number value)
+        {
+            const auto previous = target;
+            target = value;
+            if(previous != target)
+                DiagnosticSessionLogger::Instance().MenuEvent(
+                    "setting_changed", "Settings", {
+                        {"setting", name},
+                        {"previousValue", std::to_string(previous)},
+                        {"newValue", std::to_string(target)}});
+        }
+
+        void SetLoggedSlider(const char* name, float& target, float value)
+        {
+            const float previous = target;
+            target = value;
+            DiagnosticSessionLogger::Instance().SliderChanged(
+                name, previous, target);
         }
     }
 
@@ -367,6 +401,8 @@ namespace BigScreen {
             document, "performancePanelRotationZ", 0.0f), -360.0f, 360.0f);
         powerBenchmarkEnabled_ = ReadBool(
             document, "powerBenchmarkEnabled", false);
+        detailedDiagnosticLoggingEnabled_ = ReadBool(
+            document, "detailedDiagnosticLoggingEnabled", true);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
 
         // Preview decoding is an avoidable performance cost when videos are
@@ -389,6 +425,11 @@ namespace BigScreen {
         // makes a newly added setting participate automatically as long as it
         // declares its intended default beside the member itself.
         *this = Settings{};
+        if(!DiagnosticSessionLogger::Instance().MenuSessionActive())
+            DiagnosticSessionLogger::Instance().BeginMenuSession({
+                {"startedBy", "Reset to Defaults"}});
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "settings_reset", "Settings", {{"scope", "all"}});
         ErrorManager::Instance().ResetCircuitBreaker();
         WriteNow();
     }
@@ -400,12 +441,16 @@ namespace BigScreen {
         // new per-layout option from being missed here while preserving all
         // other layouts and every game-wide setting.
         screenLayouts_[activeScreenLayout_] = ScreenLayoutProfile{};
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "settings_reset", "Settings", {
+                {"scope", "screen_layout"},
+                {"layout", std::to_string(activeScreenLayout_ + 1)}});
         Save();
     }
 
     void Settings::SetModEnabled(bool value)
     {
-        modEnabled_ = value;
+        SetLoggedBoolean("Big Screen Enabled", modEnabled_, value);
         if(value)
             ErrorManager::Instance().ResetCircuitBreaker();
         Save();
@@ -415,25 +460,25 @@ namespace BigScreen {
 
     void Settings::SetDistractionFreeMenu(bool value)
     {
-        distractionFreeMenu_ = value;
+        SetLoggedBoolean("Distraction Free Menu", distractionFreeMenu_, value);
         Save();
     }
 
     void Settings::SetShowMenuEnvironment(bool value)
     {
-        showMenuEnvironment_ = value;
+        SetLoggedBoolean("Show Menu Environment", showMenuEnvironment_, value);
         Save();
     }
 
     void Settings::SetShowLaneGuidesEnabled(bool value)
     {
-        showLaneGuidesEnabled_ = value;
+        SetLoggedBoolean("Show Lane Guides", showLaneGuidesEnabled_, value);
         Save();
     }
 
     void Settings::SetVideoEnabled(bool value)
     {
-        videoEnabled_ = value;
+        SetLoggedBoolean("Video In Map", videoEnabled_, value);
         if(!value)
             menuPreviewEnabled_ = false;
         Save();
@@ -443,33 +488,43 @@ namespace BigScreen {
     {
         // Do not permit a stale UI callback or hand-authored config to enable
         // a decoder while the global video switch is disabled.
-        menuPreviewEnabled_ = videoEnabled_ && value;
+        SetLoggedBoolean(
+            "Preview Video On Song Selection",
+            menuPreviewEnabled_, videoEnabled_ && value);
         Save();
     }
 
     void Settings::SetAdvancedOptionsEnabled(bool value)
     {
-        screenLayouts_[activeScreenLayout_].advancedControls = value;
+        SetLoggedBoolean(
+            "Advanced Screen Controls",
+            screenLayouts_[activeScreenLayout_].advancedControls, value);
         Save();
     }
 
     void Settings::SetActiveScreenLayout(int value)
     {
-        activeScreenLayout_ = std::clamp(value, 0, 4);
+        SetLoggedDiscrete(
+            "Editing Screen Layout", activeScreenLayout_,
+            std::clamp(value, 0, 4));
         Save();
     }
 
     void Settings::SetScreenDistanceOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].distanceOffset = std::clamp(
-            value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Screen Distance",
+            screenLayouts_[activeScreenLayout_].distanceOffset,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
     void Settings::SetScreenHorizontalOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].horizontalOffset = std::clamp(
-            value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Screen X",
+            screenLayouts_[activeScreenLayout_].horizontalOffset,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
@@ -478,29 +533,35 @@ namespace BigScreen {
         // Large canvases need substantially more travel than the original
         // +/-40 control provided. Use the same symmetric range as X and depth
         // so every docked placement axis behaves predictably.
-        screenLayouts_[activeScreenLayout_].verticalOffset = std::clamp(
-            value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Screen Y",
+            screenLayouts_[activeScreenLayout_].verticalOffset,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
     void Settings::SetScreenTiltOffset(float value)
     {
-        screenLayouts_[activeScreenLayout_].tiltOffset = std::clamp(
-            value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Screen Tilt",
+            screenLayouts_[activeScreenLayout_].tiltOffset,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
     void Settings::SetScreenScale(float value)
     {
         auto& layout = screenLayouts_[activeScreenLayout_];
-        layout.scale = CoreLogic::NormalizeScreenScale(value, layout.curved);
+        SetLoggedSlider(
+            "Screen Size Multiplier", layout.scale,
+            CoreLogic::NormalizeScreenScale(value, layout.curved));
         Save();
     }
 
     void Settings::SetCurvedScreenEnabled(bool value)
     {
         auto& layout = screenLayouts_[activeScreenLayout_];
-        layout.curved = value;
+        SetLoggedBoolean("Curved Screen", layout.curved, value);
         // Normalize through the mode-aware helper even though flat and curved
         // currently share an 8x ceiling. Keeping one path prevents stale or
         // hand-edited values from bypassing the supported range.
@@ -518,65 +579,81 @@ namespace BigScreen {
         // Preserve the original response through +/-1 while permitting a
         // strong wrap without the impractical geometry produced by the old
         // experimental +/-25 limit.
-        screenLayouts_[activeScreenLayout_].curvature = std::clamp(
-            value,
-            -MaximumScreenCurvature,
-            MaximumScreenCurvature);
+        SetLoggedSlider(
+            "Screen Curve",
+            screenLayouts_[activeScreenLayout_].curvature,
+            std::clamp(value, -MaximumScreenCurvature, MaximumScreenCurvature));
         Save();
     }
 
     void Settings::SetMaintainCurveAspectRatio(bool value)
     {
-        screenLayouts_[activeScreenLayout_].maintainAspectRatio = value;
+        SetLoggedBoolean(
+            "Maintain Aspect Ratio",
+            screenLayouts_[activeScreenLayout_].maintainAspectRatio, value);
         Save();
     }
 
     void Settings::SetScreenRoll(float value)
     {
-        screenLayouts_[activeScreenLayout_].screenRoll = std::clamp(value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Screen Rotation", screenLayouts_[activeScreenLayout_].screenRoll,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
     void Settings::SetVideoRotation(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoRotation = std::clamp(value, -180.0f, 180.0f);
+        SetLoggedSlider(
+            "Video Rotation", screenLayouts_[activeScreenLayout_].videoRotation,
+            std::clamp(value, -180.0f, 180.0f));
         Save();
     }
 
     void Settings::SetVideoZoom(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoZoom = std::clamp(value, 0.5f, 3.0f);
+        SetLoggedSlider(
+            "Video Zoom", screenLayouts_[activeScreenLayout_].videoZoom,
+            std::clamp(value, 0.5f, 3.0f));
         Save();
     }
 
     void Settings::SetVideoOffsetX(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoOffsetX = std::clamp(value, -1.0f, 1.0f);
+        SetLoggedSlider(
+            "Video X", screenLayouts_[activeScreenLayout_].videoOffsetX,
+            std::clamp(value, -1.0f, 1.0f));
         Save();
     }
 
     void Settings::SetVideoOffsetY(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoOffsetY = std::clamp(value, -1.0f, 1.0f);
+        SetLoggedSlider(
+            "Video Y", screenLayouts_[activeScreenLayout_].videoOffsetY,
+            std::clamp(value, -1.0f, 1.0f));
         Save();
     }
 
     void Settings::SetVideoTilt(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoTilt = std::clamp(value, -75.0f, 75.0f);
+        SetLoggedSlider(
+            "Video Tilt", screenLayouts_[activeScreenLayout_].videoTilt,
+            std::clamp(value, -75.0f, 75.0f));
         Save();
     }
 
     void Settings::SetStretchVideoToFit(bool value)
     {
-        screenLayouts_[activeScreenLayout_].stretchVideoToFit = value;
+        SetLoggedBoolean(
+            "Stretch Video To Fit",
+            screenLayouts_[activeScreenLayout_].stretchVideoToFit, value);
         Save();
     }
 
     void Settings::SetUndockedScreenEnabled(bool value)
     {
         auto& layout = screenLayouts_[activeScreenLayout_];
-        layout.undocked = value;
+        SetLoggedBoolean("Undock Screen", layout.undocked, value);
         if(value && !layout.undockedConfigured)
         {
             // Start close enough for the instructions and grab handles to be
@@ -609,135 +686,149 @@ namespace BigScreen {
         layout.undockedWidth = std::clamp(width, 0.5f, 50.0f);
         layout.undockedHeight = std::clamp(height, 0.5f, 50.0f);
         layout.undockedConfigured = true;
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "screen_saved", "Settings", {
+                {"layout", std::to_string(activeScreenLayout_ + 1)},
+                {"width", std::to_string(layout.undockedWidth)},
+                {"height", std::to_string(layout.undockedHeight)}});
         Save();
     }
 
     void Settings::SetAllowChromaOverride(bool value)
     {
-        allowChromaOverride_ = value;
+        SetLoggedBoolean("Allow Chroma Override", allowChromaOverride_, value);
         Save();
     }
 
     void Settings::SetLetterboxTransparencyEnabled(bool value)
     {
-        screenLayouts_[activeScreenLayout_].letterboxTransparency = value;
+        SetLoggedBoolean(
+            "Letter Box Transparency",
+            screenLayouts_[activeScreenLayout_].letterboxTransparency, value);
         Save();
     }
 
     void Settings::SetVideoOpacity(float value)
     {
-        screenLayouts_[activeScreenLayout_].videoOpacity =
-            std::clamp(value, 0.0f, 1.0f);
+        SetLoggedSlider(
+            "Video Transparency",
+            screenLayouts_[activeScreenLayout_].videoOpacity,
+            std::clamp(value, 0.0f, 1.0f));
         Save();
     }
 
     void Settings::SetMapLightShowEnabled(bool value)
     {
-        mapLightShowEnabled_ = value;
+        SetLoggedBoolean("Map Light Show", mapLightShowEnabled_, value);
         Save();
     }
 
     void Settings::SetHideBackWallLights(bool value)
     {
-        hideBackWallLights_ = value;
+        SetLoggedBoolean("Hide Back Wall Lights", hideBackWallLights_, value);
         Save();
     }
 
     void Settings::SetHideRingLights(bool value)
     {
-        hideRingLights_ = value;
+        SetLoggedBoolean("Hide Ring Lights", hideRingLights_, value);
         Save();
     }
 
     void Settings::SetHideSideLaserLights(bool value)
     {
-        hideSideLaserLights_ = value;
+        SetLoggedBoolean("Hide Side Laser Lights", hideSideLaserLights_, value);
         Save();
     }
 
     void Settings::SetEnvironmentOverrideEnabled(bool value)
     {
-        environmentOverrideEnabled_ = value;
+        SetLoggedBoolean("Environment Override", environmentOverrideEnabled_, value);
         Save();
     }
 
     void Settings::SetGlassDesertOverrideEnabled(bool value)
     {
-        glassDesertOverrideEnabled_ = value;
+        SetLoggedBoolean("Force Glass Desert", glassDesertOverrideEnabled_, value);
         Save();
     }
 
     void Settings::SetDisableEnvironmentMotion(bool value)
     {
-        disableEnvironmentMotion_ = value;
+        SetLoggedBoolean("Disable Rotation And Motion", disableEnvironmentMotion_, value);
         Save();
     }
 
     void Settings::SetHideTrackRings(bool value)
     {
-        hideTrackRings_ = value;
+        SetLoggedBoolean("Hide Track Rings", hideTrackRings_, value);
         Save();
     }
 
     void Settings::SetHideSideBars(bool value)
     {
-        hideSideBars_ = value;
+        SetLoggedBoolean("Hide Side Bars", hideSideBars_, value);
         Save();
     }
 
     void Settings::SetHideSpectrogramBars(bool value)
     {
-        hideSpectrogramBars_ = value;
+        SetLoggedBoolean("Hide Spectrogram Bars", hideSpectrogramBars_, value);
         Save();
     }
 
     void Settings::SetPlaybackFpsLimit(int value)
     {
-        playbackFpsLimit_ = NormalizePlaybackFps(value);
+        SetLoggedDiscrete(
+            "Playback FPS Limit", playbackFpsLimit_, NormalizePlaybackFps(value));
         Save();
     }
 
     void Settings::SetUseFfmpeg9(bool value)
     {
-        useFfmpeg9_ = value;
+        SetLoggedBoolean("Use FFmpeg 9", useFfmpeg9_, value);
         Save();
     }
 
     void Settings::SetEmbeddedVideoShaderEnabled(bool value)
     {
-        embeddedVideoShaderEnabled_ = value;
+        SetLoggedBoolean("Use Embedded Video Shader", embeddedVideoShaderEnabled_, value);
         Save();
     }
 
     void Settings::SetHardwareDecodingEnabled(bool value)
     {
-        hardwareDecodingEnabled_ = value;
+        SetLoggedBoolean("Hardware Decoding", hardwareDecodingEnabled_, value);
         Save();
     }
 
     void Settings::SetNativeBloomLevel(float value)
     {
-        nativeBloomLevel_ = std::clamp(
-            std::round(value * 10.0f) / 10.0f, 0.0f, 1.0f);
+        SetLoggedSlider(
+            "Native Bloom Level", nativeBloomLevel_, std::clamp(
+                std::round(value * 10.0f) / 10.0f, 0.0f, 1.0f));
         Save();
     }
 
     void Settings::SetCinemaBloomLevel(float value)
     {
-        cinemaBloomLevel_ = std::clamp(
-            std::round(value * 10.0f) / 10.0f, 0.0f, 2.0f);
+        SetLoggedSlider(
+            "Cinema Blur Level", cinemaBloomLevel_, std::clamp(
+                std::round(value * 10.0f) / 10.0f, 0.0f, 2.0f));
         Save();
     }
 
     void Settings::SetAutomaticPerformanceEnabled(bool value)
     {
-        automaticPerformanceEnabled_ = value;
+        SetLoggedBoolean("Automatic Performance", automaticPerformanceEnabled_, value);
         Save();
     }
 
     void Settings::SetAutomaticPerformanceThreshold(int value)
     {
-        automaticPerformanceThreshold_ = std::clamp(value, 1, 15);
+        const auto normalized = std::clamp(value, 1, 15);
+        SetLoggedDiscrete(
+            "Frame Rate Loss Threshold", automaticPerformanceThreshold_, normalized);
         Save();
     }
 
@@ -746,49 +837,54 @@ namespace BigScreen {
         // Quantize persisted values to the same tenth-second grid presented by
         // the slider. This prevents binary float noise from accumulating after
         // repeated arrow taps or JSON load/save cycles.
-        automaticPerformanceAttackSeconds_ = std::clamp(
-            std::round(value * 10.0f) / 10.0f,
-            0.5f,
-            10.0f);
+        SetLoggedSlider(
+            "Scaling Attack Time", automaticPerformanceAttackSeconds_,
+            std::clamp(std::round(value * 10.0f) / 10.0f, 0.5f, 10.0f));
         Save();
     }
 
     void Settings::SetRespectMapperSettings(bool value)
     {
-        respectMapperSettings_ = value;
+        SetLoggedBoolean("Respect Mapper Settings", respectMapperSettings_, value);
         Save();
     }
 
     void Settings::SetAutomaticPerformanceReleaseSeconds(float value)
     {
-        automaticPerformanceReleaseSeconds_ = std::clamp(
-            std::round(value * 10.0f) / 10.0f,
-            0.5f,
-            30.0f);
+        SetLoggedSlider(
+            "Scaling Release Time", automaticPerformanceReleaseSeconds_,
+            std::clamp(std::round(value * 10.0f) / 10.0f, 0.5f, 30.0f));
         Save();
     }
 
     void Settings::SetAutomaticPerformanceFpsStep(int value)
     {
-        automaticPerformanceFpsStep_ = std::clamp(value, 1, 5);
+        const auto normalized = std::clamp(value, 1, 5);
+        SetLoggedDiscrete(
+            "FPS Adjustment Step", automaticPerformanceFpsStep_, normalized);
         Save();
     }
 
     void Settings::SetAutomaticPerformanceOscillationPreventionEnabled(bool value)
     {
-        automaticPerformanceOscillationPreventionEnabled_ = value;
+        SetLoggedBoolean(
+            "Prevent FPS Oscillation",
+            automaticPerformanceOscillationPreventionEnabled_, value);
         Save();
     }
 
     void Settings::SetAutomaticPerformanceOscillationLimit(int value)
     {
-        automaticPerformanceOscillationLimit_ = std::clamp(value, 1, 10);
+        const auto normalized = std::clamp(value, 1, 10);
+        SetLoggedDiscrete(
+            "FPS Oscillation Limit",
+            automaticPerformanceOscillationLimit_, normalized);
         Save();
     }
 
     void Settings::SetPerformanceDiagnosticsEnabled(bool value)
     {
-        performanceDiagnosticsEnabled_ = value;
+        SetLoggedBoolean("Show Performance", performanceDiagnosticsEnabled_, value);
         Save();
     }
 
@@ -809,6 +905,12 @@ namespace BigScreen {
         performancePanelRotationX_ = std::clamp(rotationX, -360.0f, 360.0f);
         performancePanelRotationY_ = std::clamp(rotationY, -360.0f, 360.0f);
         performancePanelRotationZ_ = std::clamp(rotationZ, -360.0f, 360.0f);
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "panel_placement_saved", "Settings", {
+                {"panel", "performance"},
+                {"positionX", std::to_string(performancePanelPositionX_)},
+                {"positionY", std::to_string(performancePanelPositionY_)},
+                {"positionZ", std::to_string(performancePanelPositionZ_)}});
         Save();
     }
 
@@ -820,18 +922,26 @@ namespace BigScreen {
         performancePanelRotationX_ = 0.0f;
         performancePanelRotationY_ = 0.0f;
         performancePanelRotationZ_ = 0.0f;
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "settings_reset", "Settings", {{"scope", "performance_panel"}});
         Save();
     }
 
     void Settings::SetPowerBenchmarkEnabled(bool value)
     {
-        powerBenchmarkEnabled_ = value;
+        SetLoggedBoolean("Record Power Benchmark", powerBenchmarkEnabled_, value);
+        Save();
+    }
+
+    void Settings::SetDetailedDiagnosticLoggingEnabled(bool value)
+    {
+        detailedDiagnosticLoggingEnabled_ = value;
         Save();
     }
 
     void Settings::SetNightlyDownloaderUpdates(bool value)
     {
-        nightlyDownloaderUpdates_ = value;
+        SetLoggedBoolean("Use Nightly Downloader Updates", nightlyDownloaderUpdates_, value);
         Save();
     }
 
@@ -1031,6 +1141,10 @@ namespace BigScreen {
         Replace(document, "performancePanelRotationY", performancePanelRotationY_);
         Replace(document, "performancePanelRotationZ", performancePanelRotationZ_);
         Replace(document, "powerBenchmarkEnabled", powerBenchmarkEnabled_);
+        Replace(
+            document,
+            "detailedDiagnosticLoggingEnabled",
+            detailedDiagnosticLoggingEnabled_);
         Replace(document, "nightlyDownloaderUpdates", nightlyDownloaderUpdates_);
         try
         {

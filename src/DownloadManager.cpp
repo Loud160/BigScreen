@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -25,6 +26,7 @@
 #include "main.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/QuickJsEngine.hpp"
 #include "BigScreen/QuickJsPythonModule.hpp"
 #include "rapidjson/document.h"
@@ -98,6 +100,20 @@ namespace BigScreen {
                     return left < right;
             }
             return false;
+        }
+
+        std::string NormalizeDownloaderChannel(
+            std::string channel,
+            std::string_view version)
+        {
+            std::transform(channel.begin(), channel.end(), channel.begin(),
+                [](unsigned char value) {
+                    return static_cast<char>(std::tolower(value));
+                });
+            if(channel == "stable" || channel == "nightly")
+                return channel;
+            const auto parts = DownloaderVersionParts(version);
+            return parts && parts->size() > 3 ? "nightly" : "stable";
         }
 
         class ScopedPythonGil final {
@@ -347,9 +363,14 @@ namespace BigScreen {
                 hadActive_ = Utility::IsRegularFile(active_);
                 std::ifstream version(next_.string() + ".version");
                 if(version) std::getline(version, candidateVersion_);
+                std::ifstream channel(next_.string() + ".channel");
+                if(channel) std::getline(channel, candidateChannel_);
+                candidateChannel_ = NormalizeDownloaderChannel(
+                    std::move(candidateChannel_), candidateVersion_);
 
                 if(!Remove(previous_, error) ||
-                   !Remove(previous_.string() + ".version", error))
+                   !Remove(previous_.string() + ".version", error) ||
+                   !Remove(previous_.string() + ".channel", error))
                     return false;
                 if(hadActive_)
                 {
@@ -362,6 +383,12 @@ namespace BigScreen {
                            previous_.string() + ".version",
                            error))
                         return false;
+                    if(Utility::IsRegularFile(active_.string() + ".channel") &&
+                       !Rename(
+                           active_.string() + ".channel",
+                           previous_.string() + ".channel",
+                           error))
+                        return false;
                 }
                 if(!Rename(next_, active_, error))
                     return false;
@@ -371,12 +398,19 @@ namespace BigScreen {
                        next_.string() + ".version",
                        active_.string() + ".version",
                        error))
+                        return false;
+                if(Utility::IsRegularFile(next_.string() + ".channel") &&
+                   !Rename(
+                       next_.string() + ".channel",
+                       active_.string() + ".channel",
+                       error))
                     return false;
                 return true;
             }
 
             bool Promoted() const { return candidateActive_; }
             const std::string& CandidateVersion() const { return candidateVersion_; }
+            const std::string& CandidateChannel() const { return candidateChannel_; }
 
             void Accept()
             {
@@ -391,7 +425,8 @@ namespace BigScreen {
                 if(!candidateActive_)
                     return true;
                 if(!Remove(active_, error) ||
-                   !Remove(active_.string() + ".version", error))
+                   !Remove(active_.string() + ".version", error) ||
+                   !Remove(active_.string() + ".channel", error))
                     return false;
                 candidateActive_ = false;
                 if(originalMoved_)
@@ -403,6 +438,12 @@ namespace BigScreen {
                        !Rename(
                            previous_.string() + ".version",
                            active_.string() + ".version",
+                           error))
+                        return false;
+                    if(Utility::IsRegularFile(previous_.string() + ".channel") &&
+                       !Rename(
+                           previous_.string() + ".channel",
+                           active_.string() + ".channel",
                            error))
                         return false;
                 }
@@ -471,6 +512,19 @@ namespace BigScreen {
                             next_.string() + ".version",
                             ignored);
                     }
+                    ignored.clear();
+                    if(std::filesystem::is_regular_file(
+                           active_.string() + ".channel", ignored))
+                    {
+                        ignored.clear();
+                        std::filesystem::remove(
+                            next_.string() + ".channel", ignored);
+                        ignored.clear();
+                        std::filesystem::rename(
+                            active_.string() + ".channel",
+                            next_.string() + ".channel",
+                            ignored);
+                    }
                     candidateActive_ = false;
                 }
                 if(originalMoved_)
@@ -492,6 +546,19 @@ namespace BigScreen {
                             active_.string() + ".version",
                             ignored);
                     }
+                    ignored.clear();
+                    if(std::filesystem::is_regular_file(
+                           previous_.string() + ".channel", ignored))
+                    {
+                        ignored.clear();
+                        std::filesystem::remove(
+                            active_.string() + ".channel", ignored);
+                        ignored.clear();
+                        std::filesystem::rename(
+                            previous_.string() + ".channel",
+                            active_.string() + ".channel",
+                            ignored);
+                    }
                     originalMoved_ = false;
                 }
             }
@@ -501,6 +568,7 @@ namespace BigScreen {
             std::filesystem::path active_;
             std::filesystem::path previous_;
             std::string candidateVersion_;
+            std::string candidateChannel_;
             bool attempted_ = false;
             bool accepted_ = false;
             bool hadActive_ = false;
@@ -817,6 +885,46 @@ import json, os, re, shutil, time, traceback, urllib.parse, urllib.request
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
 cancel_path = job['cancelPath']
+ytdlp_log_path = job.get('ytdlpLogPath') or ''
+
+def sanitize_ytdlp_message(value):
+    text = re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()
+    text = re.sub(r'(?i)(authorization|cookie|po[_-]?token)\s*[:=]\s*\S+',
+                  r'\1=[redacted]', text)
+    text = re.sub(r'https?://[^\s\x27\x22?#]+[?#][^\s\x27\x22]*',
+                  lambda match: match.group(0).split('?', 1)[0].split('#', 1)[0] + '?[redacted]', text)
+    return text[-2048:]
+
+class BigScreenYtDlpLogger:
+    def __init__(self):
+        self.last = None
+    def _write(self, severity, value):
+        if not ytdlp_log_path:
+            return
+        message = sanitize_ytdlp_message(value)
+        signature = (severity, message)
+        if not message or signature == self.last:
+            return
+        self.last = signature
+        with open(ytdlp_log_path, 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps({
+                'severity': severity,
+                'message': message,
+                'time': time.time()}, ensure_ascii=False) + '\n')
+            stream.flush()
+    def debug(self, value):
+        # yt-dlp routes ordinary information through debug(). Keep only useful
+        # selected-format facts; block chatter is represented by progress.
+        text = str(value)
+        lower = text.lower()
+        if 'format' in lower and ('selected' in lower or 'download' in lower):
+            self._write('info', text)
+    def info(self, value):
+        self._write('info', value)
+    def warning(self, value):
+        self._write('warning', value)
+    def error(self, value):
+        self._write('error', value)
 
 def publish(state, message='', durable=True, **values):
     data = {'state': state, 'message': message}
@@ -967,11 +1075,14 @@ try:
     import yt_dlp
     common = {
         'quiet': True,
-        'no_warnings': True,
+        # Warnings are routed only to BigScreenYtDlpLogger, not stdout. This
+        # keeps useful support evidence without restoring noisy console output.
+        'no_warnings': False,
         'noplaylist': True,
         'continuedl': True,
         'nopart': False,
         'progress_hooks': [progress],
+        'logger': BigScreenYtDlpLogger(),
         'overwrites': True,
         # Cancellation is observed by progress hooks. Bound individual network
         # waits and retries so a disconnected Quest can still leave Beat Saber
@@ -1547,9 +1658,11 @@ try:
     rejected = job.get('rejectedVersion', '')
     latest_key = version_key(version)
     current_key = version_key(current)
+    channel_switch = bool(job.get('channelSwitch'))
+    selected_channel = 'nightly' if job['nightly'] else 'stable'
     if version and version == rejected:
         publish('up_to_date', 'yt-dlp ' + version + ' was rejected on this headset. Big Screen will wait for a newer release.', version=version)
-    elif version == current or (latest_key and current_key and latest_key <= current_key):
+    elif not channel_switch and (version == current or (latest_key and current_key and latest_key <= current_key)):
         publish('up_to_date', 'yt-dlp ' + current + ' is current', version=version)
     elif not job['install']:
         publish('update_available', 'yt-dlp ' + version + ' is available. Select Install Update to download it.', version=version)
@@ -1597,6 +1710,8 @@ try:
         os.replace(temporary, job['nextPath'])
         with open(job['nextPath'] + '.version', 'w', encoding='utf-8') as version_file:
             version_file.write(version)
+        with open(job['nextPath'] + '.channel', 'w', encoding='utf-8') as channel_file:
+            channel_file.write(selected_channel)
         publish('completed', 'yt-dlp ' + version + ' verified. Restart Beat Saber to activate it.', version=version)
 except KeyboardInterrupt:
     publish('cancelled', 'yt-dlp update cancelled')
@@ -1608,6 +1723,119 @@ except BaseException as error:
         except OSError:
             pass
     publish('failed', 'yt-dlp update failed: ' + str(error)[-700:])
+)PY";
+
+        // Release discovery is independent from download/install operations.
+        // It runs on its own worker so opening Big Screen, browsing songs, and
+        // starting a video download never wait for GitHub. Automatic nightly
+        // checks ask stable first and contact the nightly repository only when
+        // no newer stable release can replace the installed nightly.
+        constexpr const char* YtDlpReleaseScript = R"PY(
+import json, urllib.error, urllib.request
+
+job = json.loads(BIGSCREEN_JOB)
+def version_key(value):
+    try:
+        return tuple(int(part) for part in str(value).split('.'))
+    except (TypeError, ValueError):
+        return ()
+def newer(candidate, current):
+    left, right = version_key(candidate), version_key(current)
+    return bool(left and right and left > right)
+def stable_supersedes_nightly(stable, nightly):
+    left, right = version_key(stable), version_key(nightly)
+    return bool(len(left) >= 3 and len(right) >= 3 and left[:3] > right[:3])
+def latest(repository):
+    request = urllib.request.Request(
+        'https://api.github.com/repos/' + repository + '/releases/latest',
+        headers={
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'Big-Screen-Beat-Saber',
+            'X-GitHub-Api-Version': '2022-11-28',
+        })
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = response.read(1024 * 1024 + 1)
+    if len(payload) > 1024 * 1024:
+        raise RuntimeError('GitHub returned an unexpectedly large release response.')
+    value = str(json.loads(payload.decode('utf-8')).get('tag_name') or '')
+    if not version_key(value):
+        raise RuntimeError('GitHub returned an unrecognized yt-dlp version.')
+    return value
+
+result = {
+    'state': 'unavailable',
+    'message': 'The yt-dlp release check did not complete.',
+    'stableVersion': '',
+    'nightlyVersion': '',
+    'checkedChannel': '',
+    'availableVersion': '',
+    'stableReturn': False,
+}
+try:
+    current = str(job.get('currentVersion') or '')
+    current_channel = str(job.get('currentChannel') or 'stable')
+    requested_nightly = bool(job.get('requestedNightly'))
+    automatic = bool(job.get('automatic'))
+    stable = latest('yt-dlp/yt-dlp')
+    result['stableVersion'] = stable
+
+    if current_channel == 'nightly' and (automatic or requested_nightly):
+        # A newer-dated stable release wins. Only if stable has not caught up
+        # do we spend a second request checking the nightly channel.
+        if stable_supersedes_nightly(stable, current):
+            result.update(
+                state='update_available', checkedChannel='stable',
+                availableVersion=stable, stableReturn=True,
+                message='A newer stable yt-dlp release is available.')
+        else:
+            nightly = latest('yt-dlp/yt-dlp-nightly-builds')
+            result['nightlyVersion'] = nightly
+            if newer(nightly, current):
+                result.update(
+                    state='update_available', checkedChannel='nightly',
+                    availableVersion=nightly,
+                    message='A newer nightly yt-dlp build is available.')
+            else:
+                result.update(
+                    state='up_to_date', checkedChannel='nightly',
+                    message='The installed nightly yt-dlp build is current; stable has not caught up yet.')
+    elif requested_nightly:
+        # This path is manual only: automatic checks never move a stable user
+        # to nightly. A different nightly package is offered as an explicit
+        # channel switch even when date ordering is unusual.
+        nightly = latest('yt-dlp/yt-dlp-nightly-builds')
+        result['nightlyVersion'] = nightly
+        if nightly != current:
+            result.update(
+                state='update_available', checkedChannel='nightly',
+                availableVersion=nightly,
+                message='A nightly yt-dlp build is available.')
+        else:
+            result.update(
+                state='up_to_date', checkedChannel='nightly',
+                message='The installed nightly yt-dlp build is current.')
+    else:
+        # Explicit stable checks can intentionally return from nightly even if
+        # the stable tag sorts lower. Installation treats that as a channel
+        # switch rather than an ordinary upgrade.
+        available = newer(stable, current) or current_channel != 'stable'
+        result.update(
+            state='update_available' if available else 'up_to_date',
+            checkedChannel='stable',
+            availableVersion=stable if available else '',
+            stableReturn=current_channel == 'nightly',
+            message=('A stable yt-dlp release is available.' if available
+                     else 'The installed stable yt-dlp release is current.'))
+except urllib.error.HTTPError as error:
+    result['message'] = ('GitHub temporarily limited yt-dlp checks.'
+                         if error.code in (403, 429)
+                         else 'GitHub could not check yt-dlp releases (HTTP ' + str(error.code) + ').')
+except urllib.error.URLError:
+    result['message'] = 'Could not reach GitHub. Check the Quest network connection and try again.'
+except BaseException as error:
+    result['message'] = 'Could not check yt-dlp releases: ' + str(error)[-300:]
+
+BIGSCREEN_YTDLP_RELEASE_RESULT = json.dumps(result)
 )PY";
 
         // Big Screen updates are notification-only. The latest-release API
@@ -1731,6 +1959,7 @@ os.replace(temporary, job['destination'])
         if(worker_.joinable()) worker_.join();
         if(statusWorker_.joinable()) statusWorker_.join();
         if(modReleaseWorker_.joinable()) modReleaseWorker_.join();
+        if(ytDlpReleaseWorker_.joinable()) ytDlpReleaseWorker_.join();
         {
             std::scoped_lock lock(thumbnailMutex_);
             stopThumbnailWorker_ = true;
@@ -1807,6 +2036,9 @@ os.replace(temporary, job['destination'])
                 if(!removeError)
                     std::filesystem::remove(
                         active.string() + ".version", removeError);
+                if(!removeError)
+                    std::filesystem::remove(
+                        active.string() + ".channel", removeError);
                 if(removeError)
                 {
                     return fail(
@@ -1815,7 +2047,8 @@ os.replace(temporary, job['destination'])
                             activeVersion + " runtime: " +
                             removeError.message());
                 }
-                SetCurrentYtDlpVersion(std::string(BundledYtDlpVersion));
+                SetCurrentYtDlpIdentity(
+                    std::string(BundledYtDlpVersion), "nightly");
                 PaperLogger.info(
                     "Replaced obsolete active yt-dlp {} with shipped baseline {}",
                     activeVersion,
@@ -1836,9 +2069,16 @@ os.replace(temporary, job['destination'])
         if(activeVersion)
         {
             std::string version;
+            std::string channel;
             std::getline(activeVersion, version);
-            SetCurrentYtDlpVersion(std::move(version));
+            std::ifstream activeChannel(active.string() + ".channel");
+            if(activeChannel) std::getline(activeChannel, channel);
+            SetCurrentYtDlpIdentity(
+                std::move(version), std::move(channel));
         }
+        else
+            SetCurrentYtDlpIdentity(
+                std::string(BundledYtDlpVersion), "nightly");
 
         // Register the compiled bridge before CPython starts. Keeping this as
         // a built-in module avoids Android's prohibition on executing a qjs
@@ -1957,10 +2197,16 @@ os.replace(temporary, job['destination'])
                     return false;
                 }
                 std::string restoredVersionText(BundledYtDlpVersion);
+                std::string restoredChannelText = "nightly";
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
                     std::getline(restoredVersion, restoredVersionText);
-                SetCurrentYtDlpVersion(std::move(restoredVersionText));
+                std::ifstream restoredChannel(active.string() + ".channel");
+                if(restoredChannel)
+                    std::getline(restoredChannel, restoredChannelText);
+                SetCurrentYtDlpIdentity(
+                    std::move(restoredVersionText),
+                    std::move(restoredChannelText));
                 smokeTestError = smokeTest();
                 if(!smokeTestError.empty())
                 {
@@ -1990,6 +2236,8 @@ os.replace(temporary, job['destination'])
                     std::filesystem::remove(active, fileError);
                     if(!fileError)
                         std::filesystem::remove(active.string() + ".version", fileError);
+                    if(!fileError)
+                        std::filesystem::remove(active.string() + ".channel", fileError);
                     if(fileError)
                     {
                         initializationErrorCode_ = "BS-DL-INIT-113";
@@ -2004,8 +2252,8 @@ os.replace(temporary, job['destination'])
                         runtime / "yt-dlp-rejected.version",
                         std::ios::binary | std::ios::trunc);
                     rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
-                    SetCurrentYtDlpVersion(
-                        std::string(BundledYtDlpVersion));
+                    SetCurrentYtDlpIdentity(
+                        std::string(BundledYtDlpVersion), "nightly");
                     smokeTestError = smokeTest();
                     if(smokeTestError.empty())
                     {
@@ -2080,12 +2328,28 @@ os.replace(temporary, job['destination'])
         return currentUpdateVersion_;
     }
 
-    void DownloadManager::SetCurrentYtDlpVersion(std::string version)
+    std::string DownloadManager::CurrentYtDlpChannel() const
+    {
+        std::scoped_lock lock(versionMutex_);
+        return currentUpdateChannel_;
+    }
+
+    void DownloadManager::SetCurrentYtDlpIdentity(
+        std::string version,
+        std::string channel)
     {
         std::scoped_lock lock(versionMutex_);
         currentUpdateVersion_ = version.empty()
             ? std::string(BundledYtDlpVersion)
             : std::move(version);
+        currentUpdateChannel_ = NormalizeDownloaderChannel(
+            std::move(channel), currentUpdateVersion_);
+    }
+
+    YtDlpReleaseSnapshot DownloadManager::YtDlpReleaseStatus() const
+    {
+        std::scoped_lock lock(ytDlpReleaseMutex_);
+        return ytDlpReleaseSnapshot_;
     }
 
     ModReleaseSnapshot DownloadManager::ModReleaseStatus() const
@@ -2108,6 +2372,64 @@ os.replace(temporary, job['destination'])
         auto result = modReleaseNotice_;
         modReleaseNotice_.reset();
         return result;
+    }
+
+    std::optional<YtDlpReleaseNotice>
+    DownloadManager::TakeYtDlpReleaseNotice()
+    {
+        std::scoped_lock lock(ytDlpReleaseMutex_);
+        auto result = ytDlpReleaseNotice_;
+        ytDlpReleaseNotice_.reset();
+        return result;
+    }
+
+    void DownloadManager::RecordYouTubeDownloadOutcome(DownloadState state)
+    {
+        bool startReleaseCheck = false;
+        {
+            std::scoped_lock lock(ytDlpReleaseMutex_);
+            if(state == DownloadState::Completed)
+            {
+                consecutiveYoutubeDownloadFailures_ = 0;
+                youtubeFailureGuidanceShown_ = false;
+                youtubeFailureGuidancePending_ = false;
+                return;
+            }
+            if(state != DownloadState::Failed)
+                return;
+
+            ++consecutiveYoutubeDownloadFailures_;
+            if(consecutiveYoutubeDownloadFailures_ < 3 ||
+               youtubeFailureGuidanceShown_)
+                return;
+
+            youtubeFailureGuidanceShown_ = true;
+            youtubeFailureGuidancePending_ = true;
+            startReleaseCheck = true;
+        }
+
+        if(startReleaseCheck)
+        {
+            std::string error;
+            const bool installedNightly = CurrentYtDlpChannel() == "nightly";
+            if(!StartYtDlpReleaseCheck(installedNightly, true, error) &&
+               !YtDlpReleaseStatus().Active())
+            {
+                // A check already in flight will consume the pending guidance
+                // when it completes. Only fall back immediately when no check
+                // can run at all.
+                std::scoped_lock lock(ytDlpReleaseMutex_);
+                youtubeFailureGuidancePending_ = false;
+                if(!ytDlpReleaseNotice_)
+                {
+                    ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                        "Several YouTube downloads failed",
+                        "This may not be a problem with Big Screen or the video address. YouTube sometimes changes how videos are delivered. Open the Update tab and check yt-dlp for updates. If stable is current and downloads still fail, a nightly release may contain an early compatibility fix."};
+                }
+                PaperLogger.info(
+                    "Could not run the post-failure yt-dlp check: {}", error);
+            }
+        }
     }
 
     bool DownloadManager::Start(DownloadRequest request, std::string& error)
@@ -2162,12 +2484,17 @@ os.replace(temporary, job['destination'])
             request.requestedHeight == 1440 ? ".webm" : ".mp4");
         const auto statusPath = library.RuntimePath() / "download-status.json";
         const auto cancelPath = library.RuntimePath() / "download.cancel";
+        const auto downloaderDiagnosticPath =
+            library.RuntimePath() / "download-ytdlp.jsonl";
         std::filesystem::remove(cancelPath);
         std::filesystem::remove(statusPath);
+        std::filesystem::remove(downloaderDiagnosticPath);
         {
             std::scoped_lock lock(mutex_);
             statusPath_ = statusPath;
             cancelPath_ = cancelPath;
+            downloaderDiagnosticPath_ = downloaderDiagnosticPath;
+            downloaderDiagnosticOffset_ = 0;
             ignoreStatusFile_ = false;
             snapshot_ = {};
             snapshot_.state = DownloadState::Preparing;
@@ -2176,6 +2503,10 @@ os.replace(temporary, job['destination'])
             snapshot_.requestedHeight = request.requestedHeight;
             snapshot_.availableHeights = std::move(verifiedAvailableHeights);
         }
+        lastDiagnosticState_ = DownloadState::Idle;
+        lastDiagnosticProgressBucket_ = -1;
+        lastUnknownSizeDiagnostic_ = {};
+        lastDownloaderDiagnostic_.clear();
         PaperLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
@@ -2333,7 +2664,11 @@ os.replace(temporary, job['destination'])
         return true;
     }
 
-    bool DownloadManager::StartUpdaterCheck(bool nightly, bool install, std::string& error)
+    bool DownloadManager::StartUpdaterCheck(
+        bool nightly,
+        bool install,
+        std::string& error,
+        bool channelSwitch)
     {
         std::scoped_lock startLock(startMutex_);
         if(!initialized_) { error = UnavailableMessage(); return false; }
@@ -2358,7 +2693,9 @@ os.replace(temporary, job['destination'])
             snapshot_.message = "Checking yt-dlp releases";
         }
         if(!QueueOperation(
-            [this, nightly, install]() { RunUpdater(nightly, install); },
+            [this, nightly, install, channelSwitch]() {
+                RunUpdater(nightly, install, channelSwitch);
+            },
             error))
         {
             SetFailure(error);
@@ -2367,19 +2704,156 @@ os.replace(temporary, job['destination'])
         return true;
     }
 
-    void DownloadManager::StartScheduledUpdaterCheck(bool nightly)
+    void DownloadManager::StartAutomaticYtDlpReleaseCheck()
     {
-        const auto status = VideoLibrary::Instance().RuntimePath() / "update-status.json";
-        std::error_code errorCode;
-        const auto modified = std::filesystem::last_write_time(status, errorCode);
-        if(!errorCode)
-        {
-            const auto age = std::filesystem::file_time_type::clock::now() - modified;
-            if(age < std::chrono::hours(24 * 7)) return;
-        }
+        bool expected = false;
+        if(!automaticYtDlpReleaseCheckStarted_.compare_exchange_strong(
+               expected, true))
+            return;
+
+        // Follow the package that is actually loaded, not merely the user's
+        // preference toggle. A nightly install checks stable first in the
+        // Python release policy and falls back to nightly only when stable has
+        // not caught up. A stable install is never auto-promoted to nightly.
         std::string error;
-        if(!StartUpdaterCheck(nightly, false, error))
-            PaperLogger.warn("Scheduled yt-dlp update check skipped: {}", error);
+        const bool installedNightly = CurrentYtDlpChannel() == "nightly";
+        if(!StartYtDlpReleaseCheck(installedNightly, true, error))
+            PaperLogger.info(
+                "Automatic yt-dlp release check was not started: {}", error);
+    }
+
+    bool DownloadManager::StartYtDlpReleaseCheck(
+        bool requestedNightly,
+        std::string& error)
+    {
+        return StartYtDlpReleaseCheck(requestedNightly, false, error);
+    }
+
+    bool DownloadManager::StartYtDlpReleaseCheck(
+        bool requestedNightly,
+        bool automatic,
+        std::string& error)
+    {
+        std::scoped_lock startLock(ytDlpReleaseStartMutex_);
+        if(!initialized_)
+        {
+            error = UnavailableMessage();
+            std::scoped_lock lock(ytDlpReleaseMutex_);
+            ytDlpReleaseSnapshot_.state =
+                YtDlpReleaseCheckState::Unavailable;
+            ytDlpReleaseSnapshot_.currentVersion = CurrentYtDlpVersion();
+            ytDlpReleaseSnapshot_.currentChannel = CurrentYtDlpChannel();
+            ytDlpReleaseSnapshot_.message =
+                "yt-dlp update checking is unavailable because the embedded network runtime did not initialize.";
+            if(!automatic)
+            {
+                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                    "Could not check yt-dlp",
+                    ytDlpReleaseSnapshot_.message + "\n\n" + error};
+            }
+            return false;
+        }
+        {
+            std::scoped_lock lock(ytDlpReleaseMutex_);
+            if(ytDlpReleaseSnapshot_.Active())
+            {
+                error = "A yt-dlp release check is already running.";
+                return false;
+            }
+        }
+        if(ytDlpReleaseWorker_.joinable())
+        {
+            if(!ytDlpReleaseWorkerFinished_)
+            {
+                error = "A yt-dlp release check is still finishing.";
+                return false;
+            }
+            // Never join a completed network worker from a Unity callback.
+            ytDlpReleaseWorker_.detach();
+        }
+        {
+            std::scoped_lock lock(ytDlpReleaseMutex_);
+            ytDlpReleaseSnapshot_ = {};
+            ytDlpReleaseSnapshot_.state =
+                YtDlpReleaseCheckState::Checking;
+            ytDlpReleaseSnapshot_.currentVersion = CurrentYtDlpVersion();
+            ytDlpReleaseSnapshot_.currentChannel = CurrentYtDlpChannel();
+            ytDlpReleaseSnapshot_.checkedChannel =
+                requestedNightly ? "nightly" : "stable";
+            ytDlpReleaseSnapshot_.message =
+                "Checking yt-dlp releases in the background...";
+        }
+        try
+        {
+            ytDlpReleaseWorkerFinished_ = false;
+            ytDlpReleaseWorker_ = std::thread(
+                [this, automatic, requestedNightly]() {
+                    try
+                    {
+                        RunYtDlpReleaseCheck(automatic, requestedNightly);
+                    }
+                    catch(const std::exception& exception)
+                    {
+                        {
+                            std::scoped_lock lock(ytDlpReleaseMutex_);
+                            ytDlpReleaseSnapshot_.state =
+                                YtDlpReleaseCheckState::Unavailable;
+                            ytDlpReleaseSnapshot_.message =
+                                "The yt-dlp update check stopped unexpectedly.";
+                            if(!automatic)
+                            {
+                                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                                    "Could not check yt-dlp",
+                                    ytDlpReleaseSnapshot_.message};
+                            }
+                        }
+                        ErrorManager::Instance().RecordError(
+                            "Checking yt-dlp releases", exception.what());
+                    }
+                    catch(...)
+                    {
+                        {
+                            std::scoped_lock lock(ytDlpReleaseMutex_);
+                            ytDlpReleaseSnapshot_.state =
+                                YtDlpReleaseCheckState::Unavailable;
+                            ytDlpReleaseSnapshot_.message =
+                                "The yt-dlp update check stopped unexpectedly.";
+                            if(!automatic)
+                            {
+                                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                                    "Could not check yt-dlp",
+                                    ytDlpReleaseSnapshot_.message};
+                            }
+                        }
+                        ErrorManager::Instance().RecordError(
+                            "Checking yt-dlp releases",
+                            "Unexpected release-check worker failure");
+                    }
+                    ytDlpReleaseWorkerFinished_ = true;
+                });
+        }
+        catch(const std::exception& exception)
+        {
+            ytDlpReleaseWorkerFinished_ = true;
+            error = std::string(
+                "Could not start the yt-dlp release-check worker: ") +
+                exception.what();
+            std::scoped_lock lock(ytDlpReleaseMutex_);
+            ytDlpReleaseSnapshot_.state =
+                YtDlpReleaseCheckState::Unavailable;
+            ytDlpReleaseSnapshot_.message =
+                "Big Screen could not start the yt-dlp update check.";
+            if(!automatic)
+            {
+                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                    "Could not check yt-dlp",
+                    ytDlpReleaseSnapshot_.message};
+            }
+            ErrorManager::Instance().RecordError(
+                "Starting yt-dlp release check", exception.what());
+            return false;
+        }
+        return true;
     }
 
     void DownloadManager::StartAutomaticModReleaseCheck()
@@ -2658,6 +3132,9 @@ os.replace(temporary, job['destination'])
             levelId = snapshot_.levelId;
             snapshot_.message = "Stopping download";
         }
+        DiagnosticSessionLogger::Instance().DownloadEvent(
+            "download_cancel_requested", "DownloadManager", {
+                {"levelId", levelId}});
         std::ofstream stream(cancelPath, std::ios::binary | std::ios::trunc);
         stream << "cancel";
         stream.flush();
@@ -2701,6 +3178,11 @@ os.replace(temporary, job['destination'])
 
     void DownloadManager::Run(DownloadRequest request, std::filesystem::path finalPath)
     {
+        // Count one result per user-started transfer even if a later logging
+        // or publication exception reaches the outer guard. Without this
+        // latch, one failed attempt could advance the three-failure guidance
+        // threshold twice.
+        bool outcomeRecorded = false;
         try
         {
             const auto thumbnailPath =
@@ -2720,6 +3202,12 @@ os.replace(temporary, job['destination'])
                 allocator);
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "cancelPath", cancelPath_.string(), allocator);
+            AddString(
+                document, "ytdlpLogPath",
+                DiagnosticSessionLogger::Instance().DownloadSessionActive()
+                    ? downloaderDiagnosticPath_.string()
+                    : std::string{},
+                allocator);
             document.AddMember("explicitContentAllowed", request.explicitContentAllowed, allocator);
             document.AddMember("requestedHeight", request.requestedHeight, allocator);
             document.AddMember("maximumSourceFps", request.maximumSourceFps, allocator);
@@ -2775,12 +3263,21 @@ os.replace(temporary, job['destination'])
                             std::filesystem::remove(
                                 active.string() + ".version", fileError);
                         if(!fileError)
+                            std::filesystem::remove(
+                                active.string() + ".channel", fileError);
+                        if(!fileError)
                             std::filesystem::rename(previous, active, fileError);
                         if(!fileError && std::filesystem::is_regular_file(
                                previous.string() + ".version", fileError))
                             std::filesystem::rename(
                                 previous.string() + ".version",
                                 active.string() + ".version",
+                                fileError);
+                        if(!fileError && std::filesystem::is_regular_file(
+                               previous.string() + ".channel", fileError))
+                            std::filesystem::rename(
+                                previous.string() + ".channel",
+                                active.string() + ".channel",
                                 fileError);
                         if(!fileError)
                         {
@@ -2791,13 +3288,20 @@ os.replace(temporary, job['destination'])
                                 ? "unknown"
                                 : rejectedVersion);
                             std::string restoredVersionText(BundledYtDlpVersion);
+                            std::string restoredChannelText = "nightly";
                             std::ifstream restoredVersion(
                                 active.string() + ".version", std::ios::binary);
                             if(restoredVersion)
                                 std::getline(
                                     restoredVersion, restoredVersionText);
-                            SetCurrentYtDlpVersion(
-                                std::move(restoredVersionText));
+                            std::ifstream restoredChannel(
+                                active.string() + ".channel", std::ios::binary);
+                            if(restoredChannel)
+                                std::getline(
+                                    restoredChannel, restoredChannelText);
+                            SetCurrentYtDlpIdentity(
+                                std::move(restoredVersionText),
+                                std::move(restoredChannelText));
                             if(PyRun_SimpleString(
                                    "import importlib, sys\n"
                                    "importlib.invalidate_caches()\n"
@@ -2848,6 +3352,8 @@ os.replace(temporary, job['destination'])
                     pythonFailure);
                 SetFailure(
                     "The embedded downloader could not start. Big Screen recorded the internal error; the map and game can continue normally.");
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
+                outcomeRecorded = true;
                 return;
             }
 
@@ -2947,6 +3453,37 @@ os.replace(temporary, job['destination'])
                 std::scoped_lock lock(mutex_);
                 snapshot_ = terminalSnapshot;
             }
+            RecordYouTubeDownloadOutcome(terminalSnapshot.state);
+            outcomeRecorded = true;
+            auto& diagnostics = DiagnosticSessionLogger::Instance();
+            const auto terminalState = terminalSnapshot.state;
+            DiagnosticFields terminalFields{
+                {"levelId", request.levelId},
+                {"state", StateName(terminalState)},
+                {"message", terminalSnapshot.message},
+                {"downloadedBytes", std::to_string(
+                    terminalSnapshot.downloadedBytes)},
+                {"totalBytes", std::to_string(terminalSnapshot.totalBytes)}};
+            if(terminalState == DownloadState::Completed)
+            {
+                terminalFields.emplace_back("outputPath", finalPath.string());
+                diagnostics.DownloadEvent(
+                    "download_completed", "DownloadManager", terminalFields);
+                diagnostics.EndDownloadSession("completed", terminalFields);
+            }
+            else if(terminalState == DownloadState::Cancelled)
+            {
+                diagnostics.DownloadEvent(
+                    "download_cancelled", "DownloadManager", terminalFields);
+                diagnostics.EndDownloadSession("cancelled", terminalFields);
+            }
+            else if(terminalState == DownloadState::Failed)
+            {
+                terminalFields.emplace_back("errorCode", terminalSnapshot.errorCode);
+                diagnostics.DownloadEvent(
+                    "download_failed", "DownloadManager", terminalFields);
+                diagnostics.EndDownloadSession("failed", terminalFields);
+            }
             PaperLogger.info(
                 "Downloader finished for {} with state '{}': {}",
                 request.levelId,
@@ -2956,10 +3493,14 @@ os.replace(temporary, job['destination'])
         catch(const std::exception& exception)
         {
             SetFailure(std::string("Downloader stopped: ") + exception.what());
+            if(!outcomeRecorded)
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
         catch(...)
         {
             SetFailure("Downloader stopped because of an unexpected internal error.");
+            if(!outcomeRecorded)
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
     }
 
@@ -3082,6 +3623,7 @@ os.replace(temporary, job['destination'])
 
     void DownloadManager::RunProbe(std::string levelId, std::string sourceUrl)
     {
+        bool failureRecorded = false;
         try
         {
             const auto thumbnailPath =
@@ -3126,6 +3668,8 @@ os.replace(temporary, job['destination'])
                     pythonFailure);
                 SetFailure(
                     "The embedded downloader could not check this YouTube URL. Big Screen recorded the internal error; try again after restarting Beat Saber.");
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
+                failureRecorded = true;
                 return;
             }
 
@@ -3137,6 +3681,8 @@ os.replace(temporary, job['destination'])
             }
             if(terminalSnapshot.state == DownloadState::Failed)
             {
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
+                failureRecorded = true;
                 ErrorManager::Instance().RecordError(
                     "Checking a YouTube URL",
                     (terminalSnapshot.errorCode.empty()
@@ -3145,6 +3691,21 @@ os.replace(temporary, job['destination'])
                     (terminalSnapshot.diagnostic.empty()
                         ? terminalSnapshot.message
                         : terminalSnapshot.diagnostic));
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "download_failed", "DownloadManager", {
+                        {"stage", "resolution_probe"},
+                        {"errorCode", terminalSnapshot.errorCode},
+                        {"message", terminalSnapshot.message}});
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "probe_failed");
+            }
+            else if(terminalSnapshot.state == DownloadState::Cancelled)
+            {
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "resolution_cancelled", "DownloadManager", {
+                        {"stage", "resolution_probe"}});
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "cancelled_before_transfer");
             }
             PaperLogger.info(
                 "URL check finished for {} with state '{}': {}",
@@ -3155,14 +3716,21 @@ os.replace(temporary, job['destination'])
         catch(const std::exception& exception)
         {
             SetFailure(std::string("URL check stopped: ") + exception.what());
+            if(!failureRecorded)
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
         catch(...)
         {
             SetFailure("URL check stopped because of an unexpected internal error.");
+            if(!failureRecorded)
+                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
     }
 
-    void DownloadManager::RunUpdater(bool nightly, bool install)
+    void DownloadManager::RunUpdater(
+        bool nightly,
+        bool install,
+        bool channelSwitch)
     {
         try
         {
@@ -3184,6 +3752,7 @@ os.replace(temporary, job['destination'])
             AddString(document, "rejectedVersion", rejectedVersion, allocator);
             document.AddMember("nightly", nightly, allocator);
             document.AddMember("install", install, allocator);
+            document.AddMember("channelSwitch", channelSwitch, allocator);
             rapidjson::StringBuffer buffer;
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
@@ -3219,6 +3788,38 @@ os.replace(temporary, job['destination'])
                 return;
             }
             RefreshSnapshotFromDisk();
+            DownloadSnapshot terminal;
+            {
+                std::scoped_lock lock(mutex_);
+                terminal = snapshot_;
+            }
+            if(terminal.state == DownloadState::Completed)
+            {
+                std::scoped_lock lock(ytDlpReleaseMutex_);
+                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                    "yt-dlp update ready",
+                    std::string("yt-dlp ") +
+                        (nightly ? "nightly" : "stable") +
+                        " was downloaded and verified. Restart Beat Saber to activate it."};
+            }
+            else if(terminal.state == DownloadState::UpToDate)
+            {
+                std::scoped_lock lock(ytDlpReleaseMutex_);
+                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                    "yt-dlp is current",
+                    terminal.message.empty()
+                        ? "The selected yt-dlp channel is already current."
+                        : terminal.message};
+            }
+            else if(terminal.state == DownloadState::Failed)
+            {
+                std::scoped_lock lock(ytDlpReleaseMutex_);
+                ytDlpReleaseNotice_ = YtDlpReleaseNotice{
+                    "yt-dlp update failed",
+                    terminal.message.empty()
+                        ? "Big Screen could not download or verify the yt-dlp update."
+                        : terminal.message};
+            }
         }
         catch(const std::exception& exception)
         {
@@ -3228,6 +3829,163 @@ os.replace(temporary, job['destination'])
         {
             SetFailure("yt-dlp update stopped because of an unexpected internal error.");
         }
+    }
+
+    void DownloadManager::RunYtDlpReleaseCheck(
+        bool automatic,
+        bool requestedNightly)
+    {
+        YtDlpReleaseSnapshot outcome;
+        outcome.currentVersion = CurrentYtDlpVersion();
+        outcome.currentChannel = CurrentYtDlpChannel();
+        outcome.state = YtDlpReleaseCheckState::Unavailable;
+        outcome.message = "The yt-dlp release check did not complete.";
+        try
+        {
+            rapidjson::Document job(rapidjson::kObjectType);
+            auto& allocator = job.GetAllocator();
+            AddString(
+                job, "currentVersion", outcome.currentVersion, allocator);
+            AddString(
+                job, "currentChannel", outcome.currentChannel, allocator);
+            job.AddMember("requestedNightly", requestedNightly, allocator);
+            job.AddMember("automatic", automatic, allocator);
+            rapidjson::StringBuffer jobBuffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(jobBuffer);
+            job.Accept(writer);
+
+            std::string resultJson;
+            std::string pythonFailure;
+            {
+                ScopedPythonGil gil;
+                auto globals = CreatePythonGlobals(
+                    jobBuffer.GetString(), jobBuffer.GetSize());
+                PythonObject result;
+                if(globals)
+                    result.reset(PyRun_String(
+                        YtDlpReleaseScript,
+                        Py_file_input,
+                        globals.get(),
+                        globals.get()));
+                if(!globals || !result)
+                    pythonFailure = TakePythonExceptionText();
+                else if(auto* value = PyDict_GetItemString(
+                            globals.get(), "BIGSCREEN_YTDLP_RELEASE_RESULT"))
+                {
+                    if(const char* text = PyUnicode_AsUTF8(value))
+                        resultJson = text;
+                    else
+                        pythonFailure = TakePythonExceptionText();
+                }
+                else
+                    pythonFailure =
+                        "The yt-dlp release-check script returned no result.";
+            }
+            if(!pythonFailure.empty())
+            {
+                PaperLogger.error(
+                    "Embedded yt-dlp release-check failure:\n{}",
+                    pythonFailure);
+                ErrorManager::Instance().RecordError(
+                    "Checking yt-dlp releases", pythonFailure);
+                outcome.message =
+                    "Big Screen could not run the yt-dlp update check. Details were written to the error log.";
+            }
+            else
+            {
+                rapidjson::Document result;
+                result.Parse(resultJson.data(), resultJson.size());
+                if(result.HasParseError() || !result.IsObject())
+                    throw std::runtime_error(
+                        "The yt-dlp release response could not be interpreted.");
+
+                const auto state = ReadString(result, "state");
+                outcome.message = ReadString(result, "message");
+                outcome.checkedChannel =
+                    ReadString(result, "checkedChannel");
+                outcome.availableVersion =
+                    ReadString(result, "availableVersion");
+                outcome.latestStableVersion =
+                    ReadString(result, "stableVersion");
+                outcome.latestNightlyVersion =
+                    ReadString(result, "nightlyVersion");
+                outcome.stableReturn =
+                    result.HasMember("stableReturn") &&
+                    result["stableReturn"].IsBool() &&
+                    result["stableReturn"].GetBool();
+                if(state == "update_available")
+                    outcome.state =
+                        YtDlpReleaseCheckState::UpdateAvailable;
+                else if(state == "up_to_date")
+                    outcome.state = YtDlpReleaseCheckState::UpToDate;
+                else
+                    outcome.state = YtDlpReleaseCheckState::Unavailable;
+            }
+        }
+        catch(const std::exception& exception)
+        {
+            outcome.message =
+                "Could not check yt-dlp releases. Try again later.";
+            PaperLogger.error(
+                "yt-dlp release check stopped: {}", exception.what());
+            ErrorManager::Instance().RecordError(
+                "Checking yt-dlp releases", exception.what());
+        }
+
+        // Publish the result and consume any failure-guidance request under
+        // one lock. Otherwise a third failed download could set the request
+        // after this worker sampled it but before the snapshot stopped being
+        // "Checking", leaving no worker responsible for the popup.
+        std::scoped_lock releaseLock(ytDlpReleaseMutex_);
+        const bool downloadFailureGuidance =
+            youtubeFailureGuidancePending_;
+        youtubeFailureGuidancePending_ = false;
+        std::optional<YtDlpReleaseNotice> notice;
+        if(outcome.state == YtDlpReleaseCheckState::UpdateAvailable)
+        {
+            const bool installNightly =
+                outcome.checkedChannel == "nightly";
+            const bool switchChannel =
+                outcome.currentChannel != outcome.checkedChannel;
+            const std::string label = installNightly ? "nightly" : "stable";
+            notice = YtDlpReleaseNotice{
+                downloadFailureGuidance
+                    ? "A yt-dlp update may fix the downloads"
+                    : outcome.stableReturn
+                        ? "Stable yt-dlp is available"
+                        : "yt-dlp update available",
+                "Installed: " + outcome.currentVersion + " (" +
+                    outcome.currentChannel + ")\nAvailable: " +
+                    outcome.availableVersion + " (" + label + ")\n\n" +
+                    (downloadFailureGuidance
+                        ? "Several YouTube downloads failed. YouTube may have changed how videos are delivered, so installing this update may restore downloads. The video address or Big Screen itself may not be the cause."
+                        : outcome.stableReturn
+                        ? "The stable channel has caught up with your nightly build. You can switch back to the recommended stable release."
+                        : outcome.message),
+                true,
+                installNightly,
+                switchChannel};
+        }
+        else if(downloadFailureGuidance)
+        {
+            notice = YtDlpReleaseNotice{
+                "Several YouTube downloads failed",
+                outcome.state == YtDlpReleaseCheckState::UpToDate
+                    ? "Big Screen did not find a newer yt-dlp release. This may still be caused by a recent YouTube change rather than the video address or the mod. Open the Update tab to check again later. If you are using stable and failures continue, the nightly channel may receive a compatibility fix first."
+                    : "Big Screen could not complete the automatic yt-dlp update check. Open the Update tab and check again. YouTube may have changed how videos are delivered; if stable is current and downloads continue to fail, a nightly release may contain an early compatibility fix."};
+        }
+        else if(!automatic)
+        {
+            notice = YtDlpReleaseNotice{
+                outcome.state == YtDlpReleaseCheckState::UpToDate
+                    ? "yt-dlp is current"
+                    : "Could not check yt-dlp",
+                outcome.message};
+        }
+
+        ytDlpReleaseSnapshot_ = std::move(outcome);
+        if(notice)
+            ytDlpReleaseNotice_ = std::move(notice);
     }
 
     void DownloadManager::RunModReleaseCheck(bool automatic)
@@ -3484,6 +4242,110 @@ os.replace(temporary, job['destination'])
                 return;
             snapshot_ = std::move(refreshed);
         }
+
+        // Diagnostic writes happen only after mutex_ has been released. The
+        // status worker owns this throttle state through statusReadMutex_, so
+        // no additional worker or lock ordering is introduced.
+        const auto published = Snapshot();
+        auto& diagnostics = DiagnosticSessionLogger::Instance();
+        if(diagnostics.DownloadSessionActive())
+        {
+            if(published.state != lastDiagnosticState_)
+            {
+                diagnostics.DownloadEvent(
+                    "download_stage", "DownloadManager", {
+                        {"previous", StateName(lastDiagnosticState_)},
+                        {"stage", StateName(published.state)},
+                        {"message", published.message}});
+                lastDiagnosticState_ = published.state;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            bool emitProgress = false;
+            int bucket = -1;
+            if(published.totalBytes > 0)
+            {
+                const auto percentage = std::clamp(
+                    static_cast<int>((published.downloadedBytes * 100ull) /
+                        published.totalBytes), 0, 100);
+                bucket = (percentage / 5) * 5;
+                emitProgress = bucket != lastDiagnosticProgressBucket_;
+            }
+            else if(published.Active() &&
+                    (lastUnknownSizeDiagnostic_ ==
+                         std::chrono::steady_clock::time_point{} ||
+                     now - lastUnknownSizeDiagnostic_ >=
+                         std::chrono::seconds(5)))
+            {
+                emitProgress = true;
+            }
+            if(emitProgress)
+            {
+                DiagnosticFields fields{
+                    {"downloadedBytes", std::to_string(
+                        published.downloadedBytes)},
+                    {"totalBytes", std::to_string(published.totalBytes)},
+                    {"speedBytesPerSecond", std::to_string(
+                        published.speedBytesPerSecond)},
+                    {"etaSeconds", std::to_string(published.etaSeconds)}};
+                if(bucket >= 0)
+                    fields.emplace_back("percentage", std::to_string(bucket));
+                diagnostics.DownloadEvent(
+                    "download_progress", "DownloadManager", fields);
+                lastDiagnosticProgressBucket_ = bucket;
+                lastUnknownSizeDiagnostic_ = now;
+            }
+            if(!published.diagnostic.empty() &&
+               published.diagnostic != lastDownloaderDiagnostic_)
+            {
+                lastDownloaderDiagnostic_ = published.diagnostic;
+                diagnostics.DownloadEvent(
+                    "ytdlp_message", "yt-dlp", {
+                        {"severity", published.state == DownloadState::Failed
+                            ? "error" : "warning"},
+                        {"message", DiagnosticSessionLogger::SanitizeExternalMessage(
+                            published.diagnostic)}});
+            }
+        }
+
+        std::filesystem::path downloaderDiagnosticPath;
+        std::uintmax_t diagnosticOffset = 0;
+        {
+            std::scoped_lock lock(mutex_);
+            downloaderDiagnosticPath = downloaderDiagnosticPath_;
+            diagnosticOffset = downloaderDiagnosticOffset_;
+        }
+        if(diagnostics.DownloadSessionActive() &&
+           !downloaderDiagnosticPath.empty())
+        {
+            std::ifstream ytdlpStream(
+                downloaderDiagnosticPath, std::ios::binary);
+            if(ytdlpStream)
+            {
+                ytdlpStream.seekg(static_cast<std::streamoff>(diagnosticOffset));
+                std::string line;
+                while(std::getline(ytdlpStream, line))
+                {
+                    rapidjson::Document message;
+                    message.Parse(line.data(), line.size());
+                    if(message.HasParseError() || !message.IsObject())
+                        continue;
+                    diagnostics.DownloadEvent(
+                        "ytdlp_message", "yt-dlp", {
+                            {"severity", ReadString(message, "severity")},
+                            {"message", DiagnosticSessionLogger::SanitizeExternalMessage(
+                                ReadString(message, "message"))}});
+                }
+                std::error_code sizeError;
+                const auto size = std::filesystem::file_size(
+                    downloaderDiagnosticPath, sizeError);
+                if(!sizeError)
+                {
+                    std::scoped_lock lock(mutex_);
+                    if(downloaderDiagnosticPath_ == downloaderDiagnosticPath)
+                        downloaderDiagnosticOffset_ = size;
+                }
+            }
+        }
     }
 
     void DownloadManager::SetFailure(std::string message)
@@ -3525,5 +4387,10 @@ os.replace(temporary, job['destination'])
         ErrorManager::Instance().RecordError(
             "Downloader operation",
             message);
+        DiagnosticSessionLogger::Instance().DownloadEvent(
+            "download_failed", "DownloadManager", {
+                {"message", message}});
+        DiagnosticSessionLogger::Instance().EndDownloadSession(
+            "failed", {{"message", message}});
     }
 }

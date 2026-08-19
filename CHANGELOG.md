@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Removed the source deployment helper's post-restart shader-tier polling. It
+  now returns as soon as Beat Saber has been restarted instead of waiting up to
+  two minutes for a first-main-menu diagnostic; the tier remains in normal logs.
+- Added non-blocking, once-per-session yt-dlp release discovery with explicit
+  installed-channel reporting. Stable installs check stable only; nightly
+  installs check whether stable has caught up before checking nightly, and can
+  return to stable through a dedicated action. Manual results and install
+  offers now use the center screen.
+- Added session-scoped guidance after three consecutive YouTube download
+  failures. Big Screen checks yt-dlp first, reports an available compatibility
+  update when found, otherwise explains that a recent YouTube delivery change
+  may require checking again or temporarily using nightly. Successful downloads
+  reset the streak and one failing URL cannot spam dialogs.
 - Routed every Big Screen menu warning, confirmation, help, and error dialog
   through the currently visible center-screen controller. Settings and Video
   Library popups can no longer open on or behind the curved side panels, even

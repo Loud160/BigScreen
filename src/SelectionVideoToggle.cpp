@@ -16,6 +16,7 @@
 
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
@@ -585,6 +586,10 @@ namespace BigScreen {
                     DownloadManager::Instance().Cancel();
                 pendingDownloadHeight_ = 0;
                 resolutionModalOpen_ = false;
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "resolution_cancelled", "SongSelection");
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "cancelled_before_transfer");
             },
             true);
         resolutionModalText_ = BSML::Lite::CreateText(
@@ -634,6 +639,10 @@ namespace BigScreen {
                     DownloadManager::Instance().Cancel();
                 pendingDownloadHeight_ = 0;
                 resolutionModalOpen_ = false;
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "resolution_cancelled", "SongSelection");
+                DiagnosticSessionLogger::Instance().EndDownloadSession(
+                    "cancelled_before_transfer");
                 if(resolutionModal_)
                     resolutionModal_->Hide();
             });
@@ -1029,6 +1038,21 @@ namespace BigScreen {
                 "Checking available resolutions...");
         resolutionModal_->Show();
 
+        auto& diagnostics = DiagnosticSessionLogger::Instance();
+        if(Settings::Instance().DetailedDiagnosticLoggingEnabled())
+        {
+            diagnostics.BeginDownloadSession({
+                {"levelId", selectedDescriptor_.levelId},
+                {"songName", selectedDescriptor_.songName},
+                {"songAuthor", selectedDescriptor_.songAuthor},
+                {"sourceUrl", selectedDescriptor_.downloadUrl.value_or("")}});
+            diagnostics.DownloadEvent(
+                "download_clicked", "SongSelection");
+            diagnostics.DownloadEvent(
+                "resolution_dialog_opened", "SongSelection", {
+                    {"stage", "probing"}});
+        }
+
         const auto snapshot = DownloadManager::Instance().Snapshot();
         const auto& url = *selectedDescriptor_.downloadUrl;
         const bool cached = snapshot.levelId == selectedDescriptor_.levelId &&
@@ -1125,17 +1149,38 @@ namespace BigScreen {
     {
         if(height < 1 || height > 1440)
             return;
+        auto& diagnostics = DiagnosticSessionLogger::Instance();
+        if(Settings::Instance().DetailedDiagnosticLoggingEnabled() &&
+           !diagnostics.DownloadSessionActive())
+        {
+            diagnostics.BeginDownloadSession({
+                {"levelId", selectedDescriptor_.levelId},
+                {"songName", selectedDescriptor_.songName},
+                {"songAuthor", selectedDescriptor_.songAuthor},
+                {"sourceUrl", selectedDescriptor_.downloadUrl.value_or("")},
+                {"requestedHeight", std::to_string(height)}});
+            diagnostics.DownloadEvent(
+                "download_clicked", "SongSelection", {
+                    {"requestedHeight", std::to_string(height)}});
+        }
         const bool replacing = selectedDescriptor_.CanPlay();
         if(height != 1440 && !replacing)
         {
             resolutionModalOpen_ = false;
             if(resolutionModal_)
                 resolutionModal_->Hide();
+            diagnostics.DownloadEvent(
+                "resolution_selected", "SongSelection", {
+                    {"height", std::to_string(height)}});
             StartResolutionDownload(height);
             return;
         }
 
         pendingDownloadHeight_ = height;
+        diagnostics.DownloadEvent(
+            "resolution_dialog_opened", "SongSelection", {
+                {"height", std::to_string(height)},
+                {"replacement", replacing ? "true" : "false"}});
         for(auto* button : resolutionButtons_)
             if(button) button->get_gameObject()->SetActive(false);
         if(confirmResolutionButton_)
@@ -1170,7 +1215,12 @@ namespace BigScreen {
         if(resolutionModal_)
             resolutionModal_->Hide();
         if(height > 0)
+        {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "resolution_selected", "SongSelection", {
+                    {"height", std::to_string(height)}});
             StartResolutionDownload(height);
+        }
     }
 
     void SelectionVideoToggle::StartResolutionDownload(int height)
@@ -1200,6 +1250,11 @@ namespace BigScreen {
         std::string error;
         if(!downloader.Start(std::move(request), error))
         {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "download_failed", "SongSelection", {
+                    {"stage", "start"}, {"message", error}});
+            DiagnosticSessionLogger::Instance().EndDownloadSession(
+                "failed_to_start");
             if(downloadStatus_)
             {
                 downloadStatus_->set_text("Download unavailable");
@@ -1209,6 +1264,9 @@ namespace BigScreen {
         }
         else
         {
+            DiagnosticSessionLogger::Instance().DownloadEvent(
+                "download_started", "SongSelection", {
+                    {"height", std::to_string(height)}});
             // A retry deserves a fresh result dialog even if YouTube returns
             // the same reason as the previous attempt.
             reportedDownloadFailure_.clear();

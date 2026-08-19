@@ -263,6 +263,28 @@ FFmpeg libraries/symbols, and requires each backend's exported factory.
 
 The generated `mod.json` must report the same version as `qpm.json`, `qpm.shared.json`, and `mod.template.json`, the exact package version, all required libraries, and every runtime file copy.
 
+## Source deployment ownership and MBF
+
+`scripts/copy.ps1` writes a planned
+`BigScreen/SourceInstall/source-install.partial.json` before changing any
+deployment destination. Every copied file is SHA-256 verified and marked
+complete before that receipt is atomically promoted to `source-install.json`.
+Later source deploys preserve the original pre-development baseline rather
+than treating the previous source build as user-owned content.
+
+Do not source-deploy Big Screen over an MBF-registered Big Screen package. The
+script searches the active version's package manifests by `id: bigscreen` and
+refuses both installed and dormant MBF registrations without modifying Quest
+files. Remove Big Screen from MBF first.
+
+To switch back to MBF, run `Remove-BigScreen.bat`. It force-stops Beat Saber,
+uses receipt hashes to delete/restore only proven source-owned files, never
+removes shared dependencies merely because Big Screen used them, and preserves
+videos, thumbnails, library data, logs, maps, and choreography. Settings have
+a separate confirmation that defaults to No. Pre-receipt installs use a
+one-time guided cleanup limited to exact Big Screen-exclusive paths; ambiguous
+files are preserved and reported.
+
 ## Deployment to a test headset
 
 With the intended Quest connected and authorized:

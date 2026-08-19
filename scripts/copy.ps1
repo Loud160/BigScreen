@@ -77,9 +77,12 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     throw "ADB was not found. Install Android platform-tools or SideQuest before deploying."
 }
-& adb get-state | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "No authorized Quest was available through ADB."
+$authorizedDevices = @((& adb devices) | Select-String "`tdevice$")
+if ($authorizedDevices.Count -eq 0) {
+    throw "No authorized Quest was available through ADB. Connect one headset and accept its USB debugging prompt."
+}
+if ($authorizedDevices.Count -gt 1) {
+    throw "More than one authorized Android device is connected. Disconnect every device except the Quest before source deployment."
 }
 
 # The embedded video shader bundle must never be stale relative to its Unity
@@ -162,184 +165,72 @@ if ($LASTEXITCODE -ne 0) {
 }
 $modJson = Get-Content "./mod.json" -Raw | ConvertFrom-Json
 
-$modFiles = $modJson.modFiles
-$lateModFiles = $modJson.lateModFiles
+. (Join-Path $PSScriptRoot "source-install-ownership.ps1")
+$deploymentPlan = @(Get-BigScreenDeploymentPlan `
+    -Manifest $modJson `
+    -RuntimeStage $runtimeStage `
+    -UseDebug:$useDebug)
+$classification = Get-BigScreenInstallClassification ([string]$modJson.packageVersion)
+Write-Output "Detected Big Screen installation state: $($classification.State)"
 
-function Assert-QuestFileMatches {
-    param(
-        [Parameter(Mandatory=$true)][String] $LocalPath,
-        [Parameter(Mandatory=$true)][String] $RemotePath
-    )
-
-    $localHash = (Get-FileHash -LiteralPath $LocalPath `
-        -Algorithm SHA256).Hash.ToLowerInvariant()
-    $remoteOutput = & adb shell sha256sum $RemotePath
-    if ($LASTEXITCODE -ne 0 -or -not $remoteOutput) {
-        throw "Could not verify deployed Quest file $RemotePath"
-    }
-    $remoteHash = ([String]$remoteOutput -split "\s+")[0].ToLowerInvariant()
-    if ($localHash -ne $remoteHash) {
-        throw "Deployment verification failed for $RemotePath. Local SHA-256 $localHash does not match Quest SHA-256 $remoteHash."
-    }
-    Write-Output "Verified active Quest file: $RemotePath ($localHash)"
+if ($classification.State -eq "MBF_MANAGED" -or
+    $classification.State -eq "MBF_REGISTERED_NOT_INSTALLED") {
+    throw "Big Screen is registered with ModsBeforeFriday for this Beat Saber version. Source deployment is refused. Remove Big Screen from MBF's package list first; no Quest files were changed."
 }
+if ($classification.State -eq "MIXED_OR_AMBIGUOUS") {
+    Write-BigScreenOwnershipDiagnostic $classification
+    throw "Big Screen's source/MBF ownership is mixed or ambiguous. No Quest files were changed. Run Remove-BigScreen.bat or remove the MBF package before deploying source."
+}
+
+$priorReceipt = $null
+if ($classification.State -eq "SOURCE_PARTIAL") {
+    Assert-BigScreenPartialRecoverable $classification.PartialReceipt
+    $priorReceipt = $classification.PartialReceipt
+    Write-Output "A recoverable partial source deployment was found. Resuming from its preserved baseline."
+} elseif ($classification.State -eq "SOURCE_MANAGED") {
+    Assert-BigScreenManagedReceiptSafe $classification.CompleteReceipt
+    $priorReceipt = $classification.CompleteReceipt
+} elseif ($classification.State -eq "LEGACY_SOURCE") {
+    Write-Output ""
+    Write-Host "A pre-receipt Big Screen source install was found." -ForegroundColor Yellow
+    Write-Output "Its executable and private runtime files must be refreshed once before ownership-safe deployment."
+    Write-Output "Settings, downloaded videos, the Video Library, thumbnails, and logs will be preserved."
+    $answer = Read-Host "Perform the one-time clean source migration? [Y/N]"
+    if ($answer -notmatch '^(?i)y(?:es)?$') {
+        Write-Output "No Quest files were changed."
+        exit 0
+    }
+    $legacyPrivatePaths = @($deploymentPlan |
+        Where-Object Ownership -eq "BigScreenExclusive" |
+        ForEach-Object { [string]$_.Path })
+    Remove-BigScreenLegacyExclusivePayload -AdditionalPaths $legacyPrivatePaths
+    Remove-BigScreenLegacyRuntimePayload
+}
+
+$sourceCommit = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+if (-not $sourceCommit) { $sourceCommit = "unknown" }
+$receipt = New-BigScreenSourceReceipt `
+    -Plan $deploymentPlan `
+    -Manifest $modJson `
+    -SourceCommit $sourceCommit `
+    -PriorReceipt $priorReceipt `
+    -BuildType $(if ($useDebug) { "Debug" } else { "Release" })
 
 Write-Output ""
 Write-Output "Deploying Big Screen's native libraries and embedded downloader runtime to the Quest. Many files are copied individually, so this can take a few minutes on some USB connections."
 
-# A development build can move a native mod between Scotland2's early and late
-# phases while an older copy remains in the other folder. Scotland2 treats both
-# files as independent mods, which caused Big Screen to initialize its embedded
-# CPython runtime twice and abort Beat Saber during startup. The manifest is the
-# source of truth: remove only this project's same-named file from the opposite
-# phase before copying the selected build.
-foreach ($fileName in $modFiles) {
-    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Modloader/mods/$fileName"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    # This root-level directory is not a Scotland2 native-mod location. Remove
-    # any same-named file left by an incorrect manual ADB deployment so nobody
-    # can mistake an unused copy for the active build again.
-    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Mods/$fileName"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-foreach ($fileName in $lateModFiles) {
-    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Modloader/early_mods/$fileName"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & adb shell rm -f -- "/sdcard/ModData/com.beatgames.beatsaber/Mods/$fileName"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
+# A receipt is written before the first destination changes, updated after
+# every verified copy, and promoted only after the complete manifest succeeds.
+# Repeated deployments retain the original pre-source baseline. Retired paths
+# are removed/restored only when the prior installed hash proves ownership.
+Install-BigScreenSourcePlan `
+    -Receipt $receipt `
+    -PriorReceipt $priorReceipt `
+    -CurrentPlan $deploymentPlan
 
-foreach ($fileName in $modFiles) {
-    $sourcePath = if ($useDebug -eq $true) {
-        "build/debug/$fileName"
-    } else {
-        "build/$fileName"
-    }
-    $destinationPath = "/sdcard/ModData/com.beatgames.beatsaber/Modloader/early_mods/$fileName"
-    & adb push $sourcePath $destinationPath
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    Assert-QuestFileMatches -LocalPath $sourcePath -RemotePath $destinationPath
-}
-
-foreach ($fileName in $lateModFiles) {
-    $sourcePath = if ($useDebug -eq $true) {
-        "build/debug/$fileName"
-    } else {
-        "build/$fileName"
-    }
-    $destinationPath = "/sdcard/ModData/com.beatgames.beatsaber/Modloader/mods/$fileName"
-    & adb push $sourcePath $destinationPath
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    Assert-QuestFileMatches -LocalPath $sourcePath -RemotePath $destinationPath
-}
-
-# Project-owned runtime libraries must be deployed with the mod during local
-# development. Dependency libraries already installed by QMOD are left alone;
-# only files produced in this build directory are pushed. This is especially
-# important for both private FFmpeg sets and their decoder backends because Big Screen no longer
-# falls back to Hollywood's media runtime.
-foreach ($fileName in $modJson.libraryFiles) {
-    $builtLibrary = Join-Path "build" $fileName
-    $packagedDependency = Join-Path "extern/libs" $fileName
-    $librarySource = if (Test-Path -LiteralPath $builtLibrary) {
-        $builtLibrary
-    } elseif (Test-Path -LiteralPath $packagedDependency) {
-        $packagedDependency
-    } else {
-        $null
-    }
-    if (-not $librarySource) {
-        # Silently skipping a declared library can leave a different ABI on the
-        # headset. That exact failure mixed CPython extensions requiring
-        # _PyType_AllocNoTrack with an older libpython and disabled downloads.
-        throw "No authoritative source was found for required runtime library $fileName"
-    }
-    & adb push $librarySource "/sdcard/ModData/com.beatgames.beatsaber/Modloader/libs/$fileName"
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-}
-
-# Mirror the QMOD installer's fileCopies during development deployments. A
-# native-only push is insufficient for the embedded downloader: its Python
-# standard library, CA bundle, yt-dlp baseline, and Big Screen QuickJS provider
-# live in the mod-owned Runtime directory. Deriving the source from the fixed
-# runtime destination preserves nested certifi/lib-dynload paths without a
-# second hand-maintained manifest.
-$runtimeDestination = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime/"
-foreach ($copy in $modJson.fileCopies) {
-    $destination = [string]$copy.destination
-    if (-not $destination.StartsWith(
-        $runtimeDestination,
-        [System.StringComparison]::Ordinal)) {
-        throw "Development deployment does not recognize fileCopy destination $destination"
-    }
-    $relative = $destination.Substring($runtimeDestination.Length).Replace('/', [IO.Path]::DirectorySeparatorChar)
-    $source = Join-Path $runtimeStage $relative
-    if (-not (Test-Path -LiteralPath $source)) {
-        throw "Development deployment could not find staged runtime file $source"
-    }
-    & adb push $source $destination
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-}
-
-
-# Clear the log buffer so the post-restart verification below reads only this
-# boot. The mod logs its active video shader tier on the first main-menu tick.
-# Everything in the verification is best-effort: it must never be able to turn
-# a successful deployment into a reported failure.
-$previousErrorPreference = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-try { & adb logcat -c 2>&1 | Out-Null } catch {}
-$ErrorActionPreference = $previousErrorPreference
 
 & $PSScriptRoot/restart-game.ps1
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-# Post-deploy verification: wait for Beat Saber to reach the main menu and
-# report which video shader tier the installed build selected. This removes
-# any need to run a separate log tool after deploying - the answer is printed
-# here and archived under diagnostics/ on every deployment.
-$ErrorActionPreference = "Continue"
-try {
-    Write-Output ""
-    Write-Output "Waiting for Beat Saber to report the active video shader tier (up to 120 seconds)..."
-    $tierLine = $null
-    $deadline = (Get-Date).AddSeconds(120)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 3
-        $buffer = ((& adb logcat -d 2>&1) | Out-String)
-        $match = [regex]::Match($buffer, '(?m)^.*Video shader tier: .*$')
-        if ($match.Success) {
-            $tierLine = $match.Value.Trim()
-            break
-        }
-    }
-    $diagnosticsDirectory = Join-Path $PSScriptRoot "../diagnostics"
-    if (-not (Test-Path -LiteralPath $diagnosticsDirectory)) {
-        New-Item -ItemType Directory -Path $diagnosticsDirectory -Force | Out-Null
-    }
-    $deployLogPath = Join-Path $diagnosticsDirectory "last-deploy-bigscreen.log"
-    $bigScreenLines = (& adb logcat -d 2>&1) |
-        Where-Object { "$_" -match "BigScreen|Big Screen|bigscreen" }
-    Set-Content -LiteralPath $deployLogPath -Value (($bigScreenLines | ForEach-Object { "$_" }) -join "`r`n") -Encoding UTF8
-    if ($tierLine) {
-        Write-Output "============================================================"
-        Write-Host $tierLine -ForegroundColor Cyan
-        Write-Host "The reported tier identifies the selected shader path; verify the picture on the headset with Bloom on and off." -ForegroundColor Yellow
-        Write-Output "============================================================"
-    } else {
-        Write-Host "Beat Saber did not report a video shader tier within 120 seconds." -ForegroundColor Yellow
-        Write-Host "It may still be starting; the mod prints the tier on the first main-menu frame." -ForegroundColor Yellow
-        Write-Host "This boot's Big Screen log lines were saved to diagnostics/last-deploy-bigscreen.log." -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host ("Post-deploy shader verification was skipped: " + $_.Exception.Message) -ForegroundColor Yellow
-} finally {
-    $ErrorActionPreference = $previousErrorPreference
-}
 
 if ($log -eq $true) {
     & $PSScriptRoot/start-logging.ps1 -self:$self -all:$all -custom:$custom -file:$file

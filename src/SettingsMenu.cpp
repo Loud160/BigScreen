@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/CenterScreenModal.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 
 #include <algorithm>
 #include <array>
@@ -163,6 +164,7 @@ namespace BigScreen {
         // The manager owns the once-per-process guard, so rebuilding or
         // reopening this view can safely ask without creating another request.
         DownloadManager::Instance().StartAutomaticModReleaseCheck();
+        DownloadManager::Instance().StartAutomaticYtDlpReleaseCheck();
         if(settingsViewController_ == viewController)
         {
             RefreshControls();
@@ -254,6 +256,9 @@ namespace BigScreen {
         powerBenchmarkToggle_ = nullptr;
         nightlyUpdatesToggle_ = nullptr;
         nightlyWarningModal_ = nullptr;
+        ytDlpUpdateModal_ = nullptr;
+        ytDlpUpdateModalText_ = nullptr;
+        ytDlpUpdateActionButton_ = nullptr;
         localVideoInstructionsModal_ = nullptr;
         resetConfirmationModal_ = nullptr;
         advancedWarningModal_ = nullptr;
@@ -262,6 +267,7 @@ namespace BigScreen {
         unsavedScreenModal_ = nullptr;
         pendingScreenNavigation_ = {};
         updaterButton_ = nullptr;
+        stableUpdaterButton_ = nullptr;
         updaterHoverHint_ = nullptr;
         updaterStatus_ = nullptr;
         modUpdaterButton_ = nullptr;
@@ -273,6 +279,8 @@ namespace BigScreen {
         errorModalText_ = nullptr;
         showcaseButton_ = nullptr;
         showcaseStatus_ = nullptr;
+        pendingYtDlpInstallNightly_ = false;
+        pendingYtDlpChannelSwitch_ = false;
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
         // navigation inside this left panel. Anchor a dedicated header to the
@@ -994,6 +1002,40 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             powerBenchmarkToggle_,
             "Records one-second Quest battery/current readings, decoder CPU time, whole-game CPU time, and playback statistics for every played map. Results are saved as CSV files in Big Screen's Logs folder after the map ends. For a meaningful battery comparison, unplug external power and play the same map once with Video In Map on and once with it off.");
+
+        detailedDiagnosticLoggingToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Detailed Diagnostic Logging",
+            settings.DetailedDiagnosticLoggingEnabled(),
+            [](bool enabled)
+            {
+                auto& logger = DiagnosticSessionLogger::Instance();
+                if(enabled)
+                {
+                    Settings::Instance().SetDetailedDiagnosticLoggingEnabled(true);
+                    logger.BeginMenuSession({
+                        {"startedBy", "Detailed Diagnostic Logging toggle"},
+                        {"activeLayout", std::to_string(
+                            Settings::Instance().ActiveScreenLayout() + 1)}});
+                    logger.MenuEvent("setting_changed", "SettingsMenu", {
+                        {"setting", "Detailed Diagnostic Logging"},
+                        {"previousValue", "false"},
+                        {"newValue", "true"}});
+                }
+                else
+                {
+                    logger.MenuEvent("setting_changed", "SettingsMenu", {
+                        {"setting", "Detailed Diagnostic Logging"},
+                        {"previousValue", "true"},
+                        {"newValue", "false"}});
+                    logger.EndMenuSession("logging_disabled");
+                    logger.EndDownloadSession("logging_disabled");
+                    Settings::Instance().SetDetailedDiagnosticLoggingEnabled(false);
+                }
+            });
+        BSML::Lite::AddHoverHint(
+            detailedDiagnosticLoggingToggle_,
+            "Records the actions taken in Big Screen menus and video downloads as small diagnostic session logs. This is enabled by default and helps reconstruct what happened before a crash. Temporary signed media links and authentication values are removed. Turning this off does not disable the normal error or performance logs.");
 
         modEnabledToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -2170,6 +2212,64 @@ namespace BigScreen {
                 RefreshUpdaterHint();
             });
 
+        // All yt-dlp results—including repeated-download guidance—use the
+        // neutral center controller. A modal attached to this left panel can
+        // be hidden by the Video Library on the right and leave input blocked
+        // with no visible explanation.
+        ytDlpUpdateModal_ = BSML::Lite::CreateModal(
+            modalHostViewController,
+            {72.0f, 39.0f},
+            nullptr,
+            true);
+        ytDlpUpdateModalText_ = BSML::Lite::CreateText(
+            ytDlpUpdateModal_,
+            "",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 4.0f},
+            {66.0f, 26.0f});
+        ytDlpUpdateModalText_->set_enableWordWrapping(true);
+        ytDlpUpdateModalText_->set_enableAutoSizing(true);
+        ytDlpUpdateModalText_->set_fontSizeMin(2.25f);
+        ytDlpUpdateModalText_->set_fontSizeMax(3.0f);
+        ytDlpUpdateModalText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        ytDlpUpdateModalText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            ytDlpUpdateModal_->get_transform(),
+            "Close",
+            {20.0f, -31.5f},
+            {22.0f, 7.0f},
+            [this]() {
+                if(ytDlpUpdateModal_)
+                    ytDlpUpdateModal_->Hide();
+            });
+        ytDlpUpdateActionButton_ = BSML::Lite::CreateUIButton(
+            ytDlpUpdateModal_->get_transform(),
+            "Install Update",
+            {51.0f, -31.5f},
+            {27.0f, 7.0f},
+            [this]() {
+                std::string error;
+                if(!DownloadManager::Instance().StartUpdaterCheck(
+                       pendingYtDlpInstallNightly_,
+                       true,
+                       error,
+                       pendingYtDlpChannelSwitch_))
+                {
+                    if(updaterStatus_)
+                        updaterStatus_->set_text(error);
+                    ErrorManager::Instance().ReportUserVisible(
+                        "Could not start yt-dlp update", error);
+                    pendingYtDlpChannelSwitch_ = false;
+                }
+                if(ytDlpUpdateModal_)
+                    ytDlpUpdateModal_->Hide();
+                RefreshDownloaderStatus();
+            });
+        ytDlpUpdateActionButton_->get_gameObject()->SetActive(false);
+
         const auto createUpdateSectionTitle = [updateContainer](
             const char* label) -> TMPro::TextMeshProUGUI*
         {
@@ -2262,7 +2362,8 @@ namespace BigScreen {
         ytDlpVersionText_ = BSML::Lite::CreateText(
             updateContainer,
             "Current yt-dlp: " +
-                DownloadManager::Instance().CurrentYtDlpVersion(),
+                DownloadManager::Instance().CurrentYtDlpVersion() + " (" +
+                DownloadManager::Instance().CurrentYtDlpChannel() + ")",
             2.8f);
         configureUpdateText(ytDlpVersionText_, 4.5f, 2.3f, 2.8f);
 
@@ -2300,14 +2401,31 @@ namespace BigScreen {
             UnityEngine::Vector2{42, 8},
             [this]() {
                 auto& downloader = DownloadManager::Instance();
-                const bool install = downloader.Snapshot().state == DownloadState::UpdateAvailable;
                 std::string error;
-                if(!downloader.StartUpdaterCheck(
-                       Settings::Instance().NightlyDownloaderUpdates(), install, error) && updaterStatus_)
+                if(!downloader.StartYtDlpReleaseCheck(
+                       Settings::Instance().NightlyDownloaderUpdates(), error) && updaterStatus_)
                     updaterStatus_->set_text(error);
                 RefreshDownloaderStatus();
             });
         updaterHoverHint_ = BSML::Lite::AddHoverHint(updaterButton_, "");
+        stableUpdaterButton_ = BSML::Lite::CreateUIButton(
+            updateContainer,
+            "Check Stable Release",
+            UnityEngine::Vector2{0, 0},
+            UnityEngine::Vector2{42, 7},
+            [this]() {
+                std::string error;
+                if(!DownloadManager::Instance().StartYtDlpReleaseCheck(
+                       false, error) && updaterStatus_)
+                    updaterStatus_->set_text(error);
+                RefreshDownloaderStatus();
+            });
+        BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);
+        BSML::Lite::AddHoverHint(
+            stableUpdaterButton_,
+            "Checks the official stable yt-dlp release while a nightly build is installed, so you can return to the recommended stable channel when it is ready.");
+        stableUpdaterButton_->get_gameObject()->SetActive(
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly");
         updaterStatus_ = BSML::Lite::CreateText(updateContainer, "", 2.5f);
         configureUpdateText(updaterStatus_, 8.0f, 1.9f, 2.5f);
 
@@ -2568,6 +2686,9 @@ namespace BigScreen {
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
             powerBenchmarkToggle_, settings.PowerBenchmarkEnabled());
+        SetToggleWithoutNotification(
+            detailedDiagnosticLoggingToggle_,
+            settings.DetailedDiagnosticLoggingEnabled());
         SetToggleWithoutNotification(curvedScreenToggle_, settings.CurvedScreenEnabled());
         SetToggleWithoutNotification(
             maintainCurveAspectToggle_,
@@ -2897,10 +3018,15 @@ namespace BigScreen {
             performanceDiagnosticsToggle_->set_interactable(enabled);
         if(powerBenchmarkToggle_)
             powerBenchmarkToggle_->set_interactable(enabled);
+        if(detailedDiagnosticLoggingToggle_)
+            detailedDiagnosticLoggingToggle_->set_interactable(enabled);
         if(nightlyUpdatesToggle_)
             nightlyUpdatesToggle_->set_interactable(enabled);
         if(updaterButton_)
             updaterButton_->set_interactable(enabled && DownloadManager::Instance().IsReady());
+        if(stableUpdaterButton_)
+            stableUpdaterButton_->set_interactable(
+                enabled && DownloadManager::Instance().IsReady());
         if(modUpdaterButton_)
             modUpdaterButton_->set_interactable(
                 enabled &&
@@ -3089,7 +3215,18 @@ namespace BigScreen {
                 return;
             }
         }
+        const int previousTab = selectedTab_;
         selectedTab_ = index;
+        if(previousTab != selectedTab_)
+        {
+            static constexpr std::array<const char*, 5> TabNames{
+                "General", "Screen", "Environment", "Misc", "Update"};
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                "tab_changed", "SettingsMenu", {
+                    {"previousTab", previousTab >= 0 && previousTab < 5
+                        ? TabNames[previousTab] : "Unknown"},
+                    {"newTab", TabNames[selectedTab_]}});
+        }
         for(int page = 0; page < static_cast<int>(tabViewRoots_.size()); ++page)
             if(tabViewRoots_[page])
                 tabViewRoots_[page]->SetActive(page == selectedTab_);
@@ -3164,11 +3301,9 @@ namespace BigScreen {
         if(!updaterHoverHint_)
             return;
         updaterHoverHint_->set_text(
-            DownloadManager::Instance().Snapshot().state == DownloadState::UpdateAvailable
-                ? "Downloads the available yt-dlp update, verifies it against the official SHA-256 checksum, and activates it after Beat Saber restarts."
-                : Settings::Instance().NightlyDownloaderUpdates()
-                    ? "Checks yt-dlp's nightly update channel. Nightly versions may contain bugs; use this only when stable downloads are failing."
-                    : "Checks the official stable yt-dlp release channel. Stable releases are recommended for normal use.");
+            Settings::Instance().NightlyDownloaderUpdates()
+                ? "Checks yt-dlp's nightly update channel. Nightly versions may contain bugs; use this only when stable downloads are failing."
+                : "Checks the official stable yt-dlp release channel. Stable releases are recommended for normal use.");
     }
 
     void SettingsMenu::ResetToDefaults()
@@ -3213,6 +3348,33 @@ namespace BigScreen {
         if(auto update = DownloadManager::Instance().TakeModReleaseNotice())
             ErrorManager::Instance().ReportUserVisible(
                 std::move(update->title), std::move(update->message));
+        if(ytDlpUpdateModal_ && ytDlpUpdateModalText_ &&
+           ytDlpUpdateActionButton_)
+        {
+            if(auto notice =
+                   DownloadManager::Instance().TakeYtDlpReleaseNotice())
+            {
+                ytDlpUpdateModalText_->set_text(
+                    "<b>" + notice->title + "</b>\n\n" +
+                    notice->message);
+                if(notice->offerInstall)
+                {
+                    pendingYtDlpInstallNightly_ = notice->installNightly;
+                    pendingYtDlpChannelSwitch_ = notice->channelSwitch;
+                }
+                ytDlpUpdateActionButton_->get_gameObject()->SetActive(
+                    notice->offerInstall);
+                if(notice->offerInstall)
+                {
+                    BSML::Lite::SetButtonText(
+                        ytDlpUpdateActionButton_,
+                        notice->channelSwitch && !notice->installNightly
+                            ? "Switch to Stable"
+                            : "Install Update");
+                }
+                ShowModalOnCenterScreen(ytDlpUpdateModal_);
+            }
+        }
         // TakePendingDialog clears the queue. Consume only after this menu has
         // a live modal, otherwise a recoverable creation/order change would
         // discard the one user-visible explanation before it can be shown.
@@ -3242,7 +3404,8 @@ namespace BigScreen {
         auto& downloader = DownloadManager::Instance();
         if(ytDlpVersionText_)
             ytDlpVersionText_->set_text(
-                "Current yt-dlp: " + downloader.CurrentYtDlpVersion());
+                "Current yt-dlp: " + downloader.CurrentYtDlpVersion() +
+                " (" + downloader.CurrentYtDlpChannel() + ")");
         if(modVersionText_)
             modVersionText_->set_text(
                 std::string("Current version: ") + VERSION +
@@ -3265,14 +3428,46 @@ namespace BigScreen {
         }
         if(!updaterButton_ || !updaterStatus_) return;
         const auto snapshot = downloader.Snapshot();
-        if(snapshot.levelId != "__updater__") return;
-        updaterStatus_->set_text(snapshot.message);
+        const auto ytDlpRelease = downloader.YtDlpReleaseStatus();
+        const bool installing = snapshot.levelId == "__updater__";
+        if(installing && snapshot.state == DownloadState::Completed &&
+           pendingYtDlpChannelSwitch_)
+        {
+            Settings::Instance().SetNightlyDownloaderUpdates(
+                pendingYtDlpInstallNightly_);
+            suppressNightlyCallback_ = true;
+            SetToggleWithoutNotification(
+                nightlyUpdatesToggle_, pendingYtDlpInstallNightly_);
+            suppressNightlyCallback_ = false;
+            pendingYtDlpChannelSwitch_ = false;
+            RefreshUpdaterHint();
+        }
+        else if(installing && snapshot.state == DownloadState::Failed)
+            pendingYtDlpChannelSwitch_ = false;
+
+        updaterStatus_->set_text(
+            installing && !snapshot.message.empty()
+                ? snapshot.message
+                : ytDlpRelease.message.empty()
+                    ? "Not checked this session"
+                    : ytDlpRelease.message);
         BSML::Lite::SetButtonText(
             updaterButton_,
-            snapshot.state == DownloadState::UpdateAvailable
-                ? "Install yt-dlp Update"
-                : snapshot.Active() ? "Checking..." : "Check yt-dlp Update");
+            ytDlpRelease.Active()
+                ? "Checking..."
+                : Settings::Instance().NightlyDownloaderUpdates()
+                    ? "Check Nightly Update"
+                    : "Check Stable Update");
         updaterButton_->set_interactable(
-            Settings::Instance().ModEnabled() && !snapshot.Active());
+            Settings::Instance().ModEnabled() &&
+            !snapshot.Active() && !ytDlpRelease.Active());
+        if(stableUpdaterButton_)
+        {
+            stableUpdaterButton_->get_gameObject()->SetActive(
+                downloader.CurrentYtDlpChannel() == "nightly");
+            stableUpdaterButton_->set_interactable(
+                Settings::Instance().ModEnabled() &&
+                !snapshot.Active() && !ytDlpRelease.Active());
+        }
     }
 }

@@ -151,8 +151,12 @@ namespace BigScreen {
         UnityEngine::UI::Button* performancePanelResetButton_ = nullptr;
         BSML::ToggleSetting* performanceDiagnosticsToggle_ = nullptr;
         BSML::ToggleSetting* powerBenchmarkToggle_ = nullptr;
+        BSML::ToggleSetting* detailedDiagnosticLoggingToggle_ = nullptr;
         BSML::ToggleSetting* nightlyUpdatesToggle_ = nullptr;
         BSML::ModalView* nightlyWarningModal_ = nullptr;
+        BSML::ModalView* ytDlpUpdateModal_ = nullptr;
+        TMPro::TextMeshProUGUI* ytDlpUpdateModalText_ = nullptr;
+        UnityEngine::UI::Button* ytDlpUpdateActionButton_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
         BSML::ModalView* advancedWarningModal_ = nullptr;
@@ -164,6 +168,7 @@ namespace BigScreen {
         UnityEngine::UI::Button* showcaseButton_ = nullptr;
         TMPro::TextMeshProUGUI* showcaseStatus_ = nullptr;
         UnityEngine::UI::Button* updaterButton_ = nullptr;
+        UnityEngine::UI::Button* stableUpdaterButton_ = nullptr;
         HMUI::HoverHint* updaterHoverHint_ = nullptr;
         TMPro::TextMeshProUGUI* updaterStatus_ = nullptr;
         UnityEngine::UI::Button* modUpdaterButton_ = nullptr;
@@ -172,6 +177,8 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* ytDlpVersionText_ = nullptr;
         UnityEngine::UI::Button* resetButton_ = nullptr;
         bool suppressNightlyCallback_ = false;
+        bool pendingYtDlpInstallNightly_ = false;
+        bool pendingYtDlpChannelSwitch_ = false;
         bool suppressAutomaticPerformanceCallback_ = false;
         bool suppressAdvancedCallback_ = false;
         bool suppressUndockCallback_ = false;

@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <functional>
@@ -117,6 +118,38 @@ namespace BigScreen {
         std::string message;
     };
 
+    enum class YtDlpReleaseCheckState {
+        NotChecked,
+        Checking,
+        UpToDate,
+        UpdateAvailable,
+        Unavailable
+    };
+
+    struct YtDlpReleaseSnapshot {
+        YtDlpReleaseCheckState state = YtDlpReleaseCheckState::NotChecked;
+        std::string currentVersion;
+        std::string currentChannel;
+        std::string checkedChannel;
+        std::string availableVersion;
+        std::string latestStableVersion;
+        std::string latestNightlyVersion;
+        std::string message;
+        bool stableReturn = false;
+
+        bool Active() const {
+            return state == YtDlpReleaseCheckState::Checking;
+        }
+    };
+
+    struct YtDlpReleaseNotice {
+        std::string title;
+        std::string message;
+        bool offerInstall = false;
+        bool installNightly = false;
+        bool channelSwitch = false;
+    };
+
     /// Runs the official Android CPython build and yt-dlp in-process on one
     /// background thread. Quest's noexec shared storage and Android API 29 W^X
     /// restrictions make an extracted executable interpreter unreliable; the
@@ -134,8 +167,18 @@ namespace BigScreen {
             std::string& error);
         bool Start(DownloadRequest request, std::string& error);
         bool StartMapPackage(MapPackageRequest request, std::string& error);
-        bool StartUpdaterCheck(bool nightly, bool install, std::string& error);
-        void StartScheduledUpdaterCheck(bool nightly);
+        bool StartUpdaterCheck(
+            bool nightly,
+            bool install,
+            std::string& error,
+            bool channelSwitch = false);
+        /// Starts the channel-aware yt-dlp release check at most once per Beat
+        /// Saber process. It only schedules background work and never waits on
+        /// GitHub or Python from the menu activation callback.
+        void StartAutomaticYtDlpReleaseCheck();
+        /// Manual checks use the selected channel. Stable-to-nightly remains an
+        /// explicit user action; automatic checks follow the installed channel.
+        bool StartYtDlpReleaseCheck(bool nightly, std::string& error);
         /// Starts the public GitHub release check at most once per Beat Saber
         /// process. Reopening Big Screen does not generate another request.
         void StartAutomaticModReleaseCheck();
@@ -154,9 +197,12 @@ namespace BigScreen {
         /// Big Screen's persistent log under the same error code.
         std::string UnavailableMessage() const;
         std::string CurrentYtDlpVersion() const;
+        std::string CurrentYtDlpChannel() const;
+        YtDlpReleaseSnapshot YtDlpReleaseStatus() const;
         ModReleaseSnapshot ModReleaseStatus() const;
         std::optional<std::string> TakeUpdateNotice();
         std::optional<ModReleaseNotice> TakeModReleaseNotice();
+        std::optional<YtDlpReleaseNotice> TakeYtDlpReleaseNotice();
 
     private:
         DownloadManager() = default;
@@ -167,14 +213,22 @@ namespace BigScreen {
         void Run(DownloadRequest request, std::filesystem::path finalPath);
         void RunMapPackage(MapPackageRequest request);
         void RunProbe(std::string levelId, std::string sourceUrl);
-        void RunUpdater(bool nightly, bool install);
+        void RunUpdater(bool nightly, bool install, bool channelSwitch);
+        void RunYtDlpReleaseCheck(bool automatic, bool requestedNightly);
         void RunModReleaseCheck(bool automatic);
         void RunThumbnailQueue();
         void RunOperationQueue();
         void RunStatusPolling();
         bool QueueOperation(std::function<void()> operation, std::string& error);
         bool StartModReleaseCheck(bool automatic, std::string& error);
-        void SetCurrentYtDlpVersion(std::string version);
+        bool StartYtDlpReleaseCheck(
+            bool requestedNightly,
+            bool automatic,
+            std::string& error);
+        void SetCurrentYtDlpIdentity(
+            std::string version,
+            std::string channel);
+        void RecordYouTubeDownloadOutcome(DownloadState state);
         void RefreshSnapshotFromDisk();
         void SetFailure(std::string message);
 
@@ -215,6 +269,20 @@ namespace BigScreen {
         ModReleaseSnapshot modReleaseSnapshot_;
         std::optional<ModReleaseNotice> modReleaseNotice_;
         std::atomic<bool> automaticModReleaseCheckStarted_{false};
+        std::thread ytDlpReleaseWorker_;
+        std::atomic<bool> ytDlpReleaseWorkerFinished_{true};
+        std::mutex ytDlpReleaseStartMutex_;
+        mutable std::mutex ytDlpReleaseMutex_;
+        YtDlpReleaseSnapshot ytDlpReleaseSnapshot_;
+        std::optional<YtDlpReleaseNotice> ytDlpReleaseNotice_;
+        std::atomic<bool> automaticYtDlpReleaseCheckStarted_{false};
+        // A successful YouTube transfer resets this session-only streak. Three
+        // consecutive failures are enough to suggest checking yt-dlp without
+        // implying that every bad URL is an updater problem. The notice is
+        // shown once per failure streak so a broken video cannot spam modals.
+        int consecutiveYoutubeDownloadFailures_ = 0;
+        bool youtubeFailureGuidanceShown_ = false;
+        bool youtubeFailureGuidancePending_ = false;
         std::thread thumbnailWorker_;
         std::mutex thumbnailMutex_;
         std::condition_variable thumbnailWake_;
@@ -224,15 +292,25 @@ namespace BigScreen {
         DownloadSnapshot snapshot_;
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
+        std::filesystem::path downloaderDiagnosticPath_;
+        std::uintmax_t downloaderDiagnosticOffset_ = 0;
         std::atomic<bool> initialized_{false};
         std::string initializationErrorCode_ = "BS-DL-INIT-000";
         mutable std::mutex versionMutex_;
         std::string currentUpdateVersion_ = std::string(BundledYtDlpVersion);
+        std::string currentUpdateChannel_ = "nightly";
         std::optional<std::string> updateNotice_;
         // Set when C++ itself publishes a terminal failure. A filesystem
         // permission/handle error can prevent deletion or truncation of the
         // worker's older JSON; ignoring it until the next explicitly started
         // operation prevents that stale file from reviving an active state.
         bool ignoreStatusFile_ = false;
+        // Status polling is already serialized by statusReadMutex_. These
+        // values throttle diagnostic progress without adding a worker thread
+        // or touching Unity's main thread.
+        DownloadState lastDiagnosticState_ = DownloadState::Idle;
+        int lastDiagnosticProgressBucket_ = -1;
+        std::chrono::steady_clock::time_point lastUnknownSizeDiagnostic_{};
+        std::string lastDownloaderDiagnostic_;
     };
 }

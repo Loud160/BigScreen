@@ -34,4 +34,8 @@ The separate **Check yt-dlp** control updates only the embedded downloader Pytho
 
 - To stop all behavior but keep the mod installed, turn off **Big Screen Enabled**. The menu remains available so it can be re-enabled.
 - To uninstall, remove Big Screen through the mod manager. ModData may intentionally remain so assignments and downloaded files survive reinstalling.
+- If Big Screen was installed with this repository's Build & Deploy workflow,
+  use `Remove-BigScreen.bat` instead. It reads the source ownership receipt,
+  preserves videos/library/logs, and asks separately whether to remove settings.
+  Do not use the source remover for an MBF-managed install.
 - Before manually deleting ModData, copy out any downloaded video you want to keep. Map-folder and Video Import files are independent user-owned files.

@@ -129,6 +129,37 @@ function Invoke-AdbShell([string] $Command, [switch] $AllowFailure) {
     return Invoke-Adb -Arguments @("shell", $Command) -AllowFailure:$AllowFailure
 }
 
+function Collect-DiagnosticSessions([string] $SessionType) {
+    $remoteDirectory = "$($script:BigScreenLogRoot)/Sessions/$SessionType"
+    $localDirectory = Join-Path $script:StageRoot "Sessions/$SessionType"
+    $listing = Invoke-AdbShell "find '$remoteDirectory' -maxdepth 1 -type f -name '*.jsonl' -print 2>/dev/null" -AllowFailure
+    if (-not $listing -or $listing.ExitCode -ne 0 -or
+        [string]::IsNullOrWhiteSpace($listing.Text)) {
+        return 0
+    }
+
+    New-Item -ItemType Directory -Force -Path $localDirectory | Out-Null
+    $count = 0
+    foreach ($remotePath in ($listing.Text -split "`r?`n")) {
+        $remotePath = $remotePath.Trim()
+        if (-not $remotePath) { continue }
+        # The runtime controls these names, but reduce to a leaf before making
+        # a local path so malformed device output cannot escape the stage dir.
+        $fileName = Split-Path -Leaf $remotePath
+        if (-not $fileName.EndsWith(".jsonl", [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $destination = Join-Path $localDirectory $fileName
+        $pull = Invoke-Adb -Arguments @("pull", $remotePath, $destination) -AllowFailure
+        if ($pull.ExitCode -eq 0 -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
+            $count++
+        } else {
+            Add-ReportLine "Could not collect diagnostic session: $remotePath"
+        }
+    }
+    return $count
+}
+
 function Stop-AdbServer([string] $Reason) {
     if (-not (Get-Process adb -ErrorAction SilentlyContinue)) { return }
     Write-Host $Reason -ForegroundColor Cyan
@@ -486,6 +517,9 @@ try {
     [void](Pull-RemoteArtifact "Big-Screen" $previousPath $previousClassificationEpoch "error-history.previous.log" "Rotated Big Screen error history; normally older context.")
     $performancePath = "$($script:BigScreenLogRoot)/performance-history.log"
     [void](Pull-RemoteArtifact "Big-Screen" $performancePath ([Nullable[long]]$null) "performance-history.log" "Optional playback and gameplay performance context.")
+    $menuSessionCount = Collect-DiagnosticSessions "Menu"
+    $downloadSessionCount = Collect-DiagnosticSessions "Download"
+    Add-ReportLine "Detailed diagnostic sessions collected: $menuSessionCount Menu, $downloadSessionCount Download."
 
     Write-Host "Collecting Beat Saber logs and process-exit evidence..." -ForegroundColor Cyan
     # The legacy Paper 3 files stopped being written when the project moved to

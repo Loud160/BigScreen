@@ -1,11 +1,16 @@
 # Downloader update security
 
-Big Screen checks the official `yt-dlp/yt-dlp` GitHub release channel over
-HTTPS. Stable remains the normal update channel and nightly updates are opt-in
-and clearly warned as higher risk. The QMOD temporarily ships pinned official
+Big Screen checks the official `yt-dlp/yt-dlp` and, when applicable,
+`yt-dlp/yt-dlp-nightly-builds` GitHub release channels over HTTPS. Stable
+remains the normal update channel and nightly updates are opt-in and clearly
+warned as higher risk. A once-per-session background check follows the package
+actually loaded: stable checks stable only, while nightly checks stable first
+and checks nightly only when stable has not caught up. Automatic checks never
+move a stable installation to nightly. The QMOD temporarily ships pinned official
 nightly 2026.08.18.122307 because upstream identified nightly as the fix for
-stable 2026.07.04's Android-VR HTTP 403 regression. A stable check never offers
-an older package as a downgrade. The release package is checked against the SHA-256 list published with
+stable 2026.07.04's Android-VR HTTP 403 regression. An explicit return from
+nightly to stable is treated as a channel switch rather than an accidental
+downgrade. The release package is checked against the SHA-256 list published with
 that same release, inspected as an archive, checked for the expected module,
 and staged without replacing the working package.
 

@@ -8,6 +8,7 @@
 #include "BigScreen/MenuFlowCoordinator.hpp"
 
 #include "BigScreen/CenterScreenModal.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
@@ -549,6 +550,18 @@ namespace BigScreen {
         try
         {
         activeMenuFlow = this;
+        if(Settings::Instance().DetailedDiagnosticLoggingEnabled() &&
+           !DiagnosticSessionLogger::Instance().MenuSessionActive())
+        {
+            DiagnosticSessionLogger::Instance().BeginMenuSession({
+                {"firstActivation", firstActivation ? "true" : "false"},
+                {"modEnabled", Settings::Instance().ModEnabled()
+                    ? "true" : "false"},
+                {"activeLayout", std::to_string(
+                    Settings::Instance().ActiveScreenLayout() + 1)},
+                {"menuEnvironment", Settings::Instance().ShowMenuEnvironment()
+                    ? "visible" : "hidden"}});
+        }
         // Do not call HMUI::FlowCoordinator::DidActivate from a custom-types
         // override. The generated CORDL wrapper performs virtual dispatch, so
         // calling it through the base type returns to this override and grows
@@ -611,6 +624,9 @@ namespace BigScreen {
                 },
                 [this]()
                 {
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "page_opened", "SettingsMenu",
+                        {{"page", "storage_maintenance"}});
                     // Storage maintenance belongs on the center screen and is
                     // intentionally non-playback UI. Stop both song audio and
                     // video before presenting it, but leave downloads and the
@@ -626,6 +642,9 @@ namespace BigScreen {
                 },
                 [this]()
                 {
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "page_opened", "SettingsMenu",
+                        {{"page", "showcase"}});
                     // The showcase readiness page owns all of its download
                     // actions. Opening it is read-only apart from stopping an
                     // active preview so its center-screen status remains easy
@@ -646,6 +665,9 @@ namespace BigScreen {
                 centerViewController,
                 [this](bool showEditor)
                 {
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "page_changed", "VideoLibraryMenu",
+                        {{"page", showEditor ? "video_editor" : "song_list"}});
                     SetRightScreenViewController(
                         showEditor
                             ? libraryEditorViewController
@@ -654,6 +676,9 @@ namespace BigScreen {
                 },
                 [this](GlobalNamespace::BeatmapLevel* level)
                 {
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "page_opened", "VideoLibraryMenu",
+                        {{"page", "local_video_browser"}});
                     VideoLibraryMenu::Instance().StopActivePreview();
                     LocalVideoBrowserMenu::Instance().Show(level);
                     restoreCenterOnActivation = true;
@@ -665,6 +690,9 @@ namespace BigScreen {
                 },
                 [this](GlobalNamespace::BeatmapLevel* level)
                 {
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "page_opened", "VideoLibraryMenu",
+                        {{"page", "thumbnail_picker"}});
                     // The picker opens its own read-only decoder on the same
                     // file, so the library preview must release its decoder
                     // and audio first, exactly like the file-browser path.
@@ -870,6 +898,8 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "menu_deactivation_started", "MenuFlowCoordinator");
         try
         {
         BeginMenuReentryGuard();
@@ -894,6 +924,7 @@ namespace BigScreen {
         // DidActivate, so this override must not call it directly either.
         (void)removedFromHierarchy;
         (void)screenSystemDisabling;
+        DiagnosticSessionLogger::Instance().EndMenuSession("menu_closed");
         }
         catch(const std::exception& exception)
         {
@@ -909,6 +940,8 @@ namespace BigScreen {
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;
+            DiagnosticSessionLogger::Instance().EndMenuSession(
+                "menu_teardown_error");
         }
         catch(...)
         {
@@ -920,6 +953,8 @@ namespace BigScreen {
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;
+            DiagnosticSessionLogger::Instance().EndMenuSession(
+                "menu_teardown_error");
         }
     }
 

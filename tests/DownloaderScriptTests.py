@@ -18,6 +18,7 @@ import pathlib
 import sys
 import tempfile
 import types
+import urllib.request
 
 
 def extract(source: str, name: str) -> str:
@@ -52,6 +53,7 @@ download_script = media_helpers + extract(source, "DownloaderScript")
 map_package_script = extract(source, "MapPackageScript")
 probe_script = media_helpers + extract(source, "ProbeScript")
 updater_script = extract(source, "UpdaterScript")
+release_check_script = extract(source, "YtDlpReleaseScript")
 
 # A candidate that failed the on-device import test must not be offered every
 # startup. This is intentionally a source-level invariant because the complete
@@ -81,8 +83,98 @@ for name, script in (
     ("MapPackageScript", map_package_script),
     ("ProbeScript", probe_script),
     ("UpdaterScript", updater_script),
+    ("YtDlpReleaseScript", release_check_script),
 ):
     compile(script, f"<{name}>", "exec")
+
+
+def run_release_check(job, stable_version, nightly_version):
+    """Execute the exact embedded policy without contacting GitHub."""
+    requested_urls = []
+
+    class FakeResponse:
+        def __init__(self, version):
+            self.payload = json.dumps({"tag_name": version}).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self, _limit=-1):
+            return self.payload
+
+    original_urlopen = urllib.request.urlopen
+
+    def fake_urlopen(request, timeout=0):
+        del timeout
+        url = request.full_url
+        requested_urls.append(url)
+        return FakeResponse(
+            nightly_version if "nightly-builds" in url else stable_version
+        )
+
+    try:
+        urllib.request.urlopen = fake_urlopen
+        namespace = {"BIGSCREEN_JOB": json.dumps(job)}
+        exec(
+            compile(
+                release_check_script,
+                "<YtDlpReleaseScript-policy>",
+                "exec",
+            ),
+            namespace,
+        )
+        return json.loads(namespace["BIGSCREEN_YTDLP_RELEASE_RESULT"]), requested_urls
+    finally:
+        urllib.request.urlopen = original_urlopen
+
+
+# Stable users never contact or auto-promote to nightly.
+release, urls = run_release_check(
+    {
+        "currentVersion": "2026.08.19",
+        "currentChannel": "stable",
+        "requestedNightly": False,
+        "automatic": True,
+    },
+    "2026.08.19",
+    "2026.08.20.010101",
+)
+assert release["state"] == "up_to_date"
+assert len(urls) == 1 and "nightly-builds" not in urls[0]
+
+# A newer-dated stable release is offered before querying nightly.
+release, urls = run_release_check(
+    {
+        "currentVersion": "2026.08.18.122307",
+        "currentChannel": "nightly",
+        "requestedNightly": True,
+        "automatic": True,
+    },
+    "2026.08.19",
+    "2026.08.20.010101",
+)
+assert release["state"] == "update_available"
+assert release["checkedChannel"] == "stable"
+assert release["stableReturn"] is True
+assert len(urls) == 1
+
+# Only when stable has not caught up does an installed nightly query nightly.
+release, urls = run_release_check(
+    {
+        "currentVersion": "2026.08.18.122307",
+        "currentChannel": "nightly",
+        "requestedNightly": True,
+        "automatic": True,
+    },
+    "2026.08.17",
+    "2026.08.19.010101",
+)
+assert release["state"] == "update_available"
+assert release["checkedChannel"] == "nightly"
+assert len(urls) == 2
 
 # All three foreground worker types share the cancellation marker. Probe and
 # updater checks are deliberately placed between bounded network operations;

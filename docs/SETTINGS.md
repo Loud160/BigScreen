@@ -188,7 +188,7 @@ Shows the installed Big Screen version. The first time the Big Screen menu opens
 
 ### Current yt-dlp Version
 
-Shows the downloader package that is active in the embedded runtime. This may be the baseline shipped in the QMOD or a verified update activated after restart.
+Shows both the downloader version and the channel of the package currently active in the embedded runtime. This may be the baseline shipped in the QMOD or a verified update activated after restart.
 
 ### Use Nightly Builds — default: Off
 
@@ -196,7 +196,11 @@ Selects yt-dlp's nightly release channel. Enabling requires confirmation because
 
 ### Check yt-dlp / Install Update
 
-The hover hint identifies the active stable/nightly channel. Checking contacts GitHub and reports whether a newer official package exists. Installation downloads the official asset, verifies it against the official SHA-256 list, validates the archive, and stages it for the next Beat Saber restart. It never replaces a running Python module.
+The first time Big Screen opens during each Beat Saber session, it starts a non-blocking yt-dlp check on a background worker. The menu opens immediately and remains usable while the request runs. A stable installation checks stable only. A nightly installation checks whether stable has caught up first, then checks nightly only when no newer stable release is available. Big Screen never moves a stable user to nightly automatically.
+
+The main check button follows the selected stable/nightly preference. While a nightly package is active, **Check Stable Release** provides an explicit path back to the recommended stable channel. Manual checks always use centered result dialogs. Installation downloads the official asset, verifies it against the official SHA-256 list, validates the archive, and stages it for the next Beat Saber restart. It never replaces a running Python module.
+
+After three consecutive YouTube video download failures in one game session, Big Screen first checks yt-dlp in the background. If an update exists, the popup explains that installing it may restore downloads. If no update is found or the check cannot complete, the popup explains that a recent YouTube change may be responsible and directs the player to the Update tab. One failed or restricted video does not trigger this guidance, the popup appears only once per failure streak, and a successful download resets the streak.
 
 On restart, Big Screen import-tests the candidate. An incompatible candidate is rolled back to the last working package or shipped baseline and marked rejected so the same release is not repeatedly offered. A newer version remains eligible.
 
@@ -271,6 +275,16 @@ Displays the active hardware/software backend, presentation-oriented native vide
 Records one sample per second for every played map, including maps played with **Video In Map** off. Each sample contains the Quest battery charge counter, instantaneous and Android-averaged battery current when the headset exposes them, battery percentage/charging state, whole Beat Saber process CPU time, Big Screen decoder-worker CPU time, actual video resolution, active FPS limit, and playback statistics. Data stays in memory during gameplay and is appended to CSV files only after the map ends or is exited. When this release first writes the simplified native-resolution schema, an older CSV is preserved with a timestamped `-legacy-` filename.
 
 Use this for controlled A/B tests, not as a permanent gameplay option. Unplug USB/external power, hold brightness, refresh rate, map, difficulty, modifiers, graphics, and headset temperature constant, then play the same map once with video off and once with video on. A blank battery field means the Quest firmware reported that individual Android property as unsupported; it is not treated as zero.
+
+#### Detailed Diagnostic Logging — default: On
+
+Creates one structured JSONL session while Big Screen's menu is open and a
+separate session for each Download action, including resolution cancellation.
+Important actions are flushed immediately; rapid slider movement is recorded
+as one initial/final change. Big Screen retains the ten newest Menu sessions
+and ten newest Download sessions under `BigScreen/Logs/Sessions`. Turning this
+off prevents new session files without disabling Paper logs, error history,
+performance history, or crash collection. Reset to Defaults restores it to On.
 
 ## Song-selection header controls
 

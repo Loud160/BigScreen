@@ -5,11 +5,13 @@ Update hooks. FFmpeg decoding, yt-dlp work, mod-release checks, thumbnail reques
 run on background workers and exchange plain data through locked mailboxes or
 atomic JSON files. No worker touches a Unity texture, view, or map object.
 
-The mod-release checker uses its own worker and status mailbox, separate from
-video downloads and yt-dlp package updates. An atomic process-lifetime guard
-allows the automatic check only once per Beat Saber session; a manual check may
-run again but cannot overlap an active release check. Only the main-thread menu
-refresh consumes notices and opens BSML dialogs.
+The mod-release and yt-dlp release checkers each use dedicated workers and
+status mailboxes, separate from video downloads and yt-dlp package installation.
+Atomic process-lifetime guards allow each automatic check only once per Beat
+Saber session; a manual check may run again but cannot overlap the same active
+release checker. Only the main-thread menu refresh consumes notices and opens
+center-screen BSML dialogs. Three consecutive transfer failures can request an
+additional background yt-dlp check; a successful transfer resets that streak.
 
 The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.
 Big Screen registers a built-in Python module and a preferred yt-dlp JavaScript

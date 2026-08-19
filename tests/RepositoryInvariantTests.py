@@ -47,6 +47,9 @@ rapidjson_fetch = (root / "scripts/fetch-rapidjson.ps1").read_text(
 core_tests_workflow = (root / ".github/workflows/core-tests.yml").read_text(
     encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
+ownership_script = (
+    root / "scripts/source-install-ownership.ps1"
+).read_text(encoding="utf-8")
 runtime_manifest_sync = (
     root / "scripts/sync-runtime-manifest.ps1"
 ).read_text(encoding="utf-8")
@@ -66,6 +69,9 @@ settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
 center_modal_header = (
     root / "include/BigScreen/CenterScreenModal.hpp"
+).read_text(encoding="utf-8")
+downloader_runtime_fetch = (
+    root / "scripts/fetch-downloader-runtime.ps1"
 ).read_text(encoding="utf-8")
 library_menu_header = (
     root / "include/BigScreen/VideoLibraryMenu.hpp"
@@ -730,28 +736,18 @@ assert 'unity_GUIZTestMode' in screen_surface_source
 assert 'videoMaterialUiMasked_' in screen_surface_source
 assert screen_surface_source.count(
     'UnityEngine::Texture2D::get_whiteTexture()') >= 2
-# The active shader tier is logged once on the first main-menu tick so the
-# deploy script (and any support-log reader) can see which tier is running
-# without a video ever being started. The log prefix is a stable contract:
-# scripts/copy.ps1 polls logcat for exactly this text after every deploy.
+# The active shader tier remains in the normal mod log for support collection,
+# without making every source deployment wait for the first main-menu frame.
 assert 'LogVideoShaderTierOnce' in screen_surface_source
 assert '"Video shader tier: {}"' in screen_surface_source
 assert 'LogVideoShaderTierOnce();' in main_source
 # The one-click bat must never deploy a stale shader bundle: copy.ps1
 # rebuilds assets/bigscreen_video_shader whenever any shader source input is
 # newer, and refuses to deploy if the rebuild cannot run (missing Unity).
-# After install it polls logcat for the tier line and archives the boot log.
 assert 'build-video-shader.ps1' in copy_script
 assert 'Deploying with a stale shader bundle is refused' in copy_script
-assert 'Video shader tier: ' in copy_script
-# The deployment helper reports the selected tier but explicitly sends the
-# tester back to the Bloom-on/Bloom-off headset check instead of presenting a
-# source-level shader match as visual validation.
-assert 'identifies the selected shader path' in copy_script
-assert 'verify the picture on the headset with Bloom on and off' in copy_script
-assert 'last-deploy-bigscreen.log' in copy_script
-assert 'logcat -c' in copy_script
-assert copy_script.index('logcat -c') < copy_script.index('restart-game.ps1')
+assert 'Waiting for Beat Saber to report the active video shader tier' not in copy_script
+assert 'Start-Sleep -Seconds 3' not in copy_script
 assert "bool showMenuEnvironment_ = true;" in settings_header
 assert '"showMenuEnvironment",\n            true' in settings_source
 assert 'Replace(document, "showMenuEnvironment", showMenuEnvironment_)' in settings_source
@@ -847,8 +843,8 @@ for python_library in (
 ):
     assert f"${{BIGSCREEN_PYTHON_PREFIX}}/lib/${{BIGSCREEN_PYTHON_LIBRARY}}" in cmake
     assert python_library in cmake
-assert "No authoritative source was found for required runtime library" in copy_script
-assert '$packagedDependency = Join-Path "extern/libs" $fileName' in copy_script
+assert "No authoritative source was found for required runtime library" in ownership_script
+assert '$packaged = Join-Path "extern/libs" $name' in ownership_script
 for installer in (copy_script, create_qmod):
     assert "sync-runtime-manifest.ps1" in installer
     assert "Sync-BigScreenRuntimeManifest" in installer
@@ -1046,6 +1042,17 @@ assert "https://api.github.com/repos/Loud160/BigScreen/releases/latest" in (
     download_manager_source
 )
 assert "StartAutomaticModReleaseCheck();" in settings_menu_source
+assert "StartAutomaticYtDlpReleaseCheck();" in settings_menu_source
+assert "StartScheduledUpdaterCheck" not in main_source
+assert "automaticYtDlpReleaseCheckStarted_" in download_manager_header
+assert "yt-dlp/yt-dlp-nightly-builds" in download_manager_source
+assert "stable_supersedes_nightly" in download_manager_source
+assert "current_channel == 'nightly'" in download_manager_source
+assert '"Check Stable Release"' in settings_menu_source
+assert '"Several YouTube downloads failed"' in download_manager_source
+assert "consecutiveYoutubeDownloadFailures_ < 3" in download_manager_source
+assert "youtubeFailureGuidancePending_" in download_manager_source
+assert "ShowModalOnCenterScreen(ytDlpUpdateModal_)" in settings_menu_source
 assert "Check Big Screen Update" in settings_menu_source
 assert "Current yt-dlp:" in settings_menu_source
 assert "Created by Loud160 (AKA Whisp)" in settings_menu_source
@@ -1363,18 +1370,18 @@ assert "localtime_s" in error_manager_source
 assert "localtime_r" in error_manager_source
 assert "std::localtime" not in error_manager_source
 
-# A stale copy in the opposite Scotland2 phase can load Big Screen twice and
-# initialize CPython twice, which aborts Beat Saber during startup. The legacy
-# root-level Mods path is not loaded by Scotland2, but removing it prevents an
-# unused manual deployment from being mistaken for the active build. Every
-# deployed native mod is hash-verified so a successful copy cannot silently
-# leave an older binary active on the headset.
-assert 'Modloader/mods/$fileName' in copy_script
-assert 'Modloader/early_mods/$fileName' in copy_script
-assert 'ModData/com.beatgames.beatsaber/Mods/$fileName' in copy_script
-assert "function Assert-QuestFileMatches" in copy_script
-assert "Assert-QuestFileMatches -LocalPath $sourcePath" in copy_script
-assert "Verified active Quest file:" in copy_script
+# Opposite-phase and root-level legacy copies are no longer deleted blindly.
+# The shared ownership layer classifies them, migrates exact exclusive legacy
+# payload only after confirmation, and removes retired paths only when the
+# receipt hash proves the source tool installed the current bytes.
+assert 'Modloader/mods/libbigscreen.so' in ownership_script
+assert 'Modloader/early_mods/libbigscreen.so' in ownership_script
+assert 'Modloader/Mods/libbigscreen.so' not in ownership_script
+assert 'ModData/$($script:BigScreenPackage)/Mods' not in ownership_script
+assert '/Mods/libbigscreen.so' in ownership_script
+assert "Remove-BigScreenRetiredReceiptFiles" in ownership_script
+assert "Deployment verification failed" in ownership_script
+assert "Verified deployed payload:" in ownership_script
 
 # Every per-screen field must be both loaded and written. Reset deliberately
 # reconstructs Settings{} so new member initializers remain the defaults list.
@@ -1968,5 +1975,66 @@ assert "TODO: Split oversized source files" in future
 assert "large-file refactor" in checklist.lower()
 assert "Reviewed and intentionally not changed" in review_resolution
 assert "Deferred with explicit release tracking" in review_resolution
+
+# Detailed diagnostic sessions are opt-out, independent Menu/Download JSONL
+# sinks with bounded retention. Error history keeps the full detail and shares
+# a correlation ID with either active session. The support collector preserves
+# the two session directories rather than flattening potentially equal names.
+settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
+diagnostic_header = (root / "include/BigScreen/DiagnosticSessionLogger.hpp").read_text(encoding="utf-8")
+diagnostic_source = (root / "src/DiagnosticSessionLogger.cpp").read_text(encoding="utf-8")
+error_source = (root / "src/ErrorManager.cpp").read_text(encoding="utf-8")
+assert "detailedDiagnosticLoggingEnabled_ = true" in settings_header
+assert 'ReadBool(\n            document, "detailedDiagnosticLoggingEnabled", true)' in settings_source
+assert '"detailedDiagnosticLoggingEnabled",\n            detailedDiagnosticLoggingEnabled_' in settings_source
+assert "std::chrono::milliseconds(400)" in diagnostic_source
+assert "RetainedSessionCount = 10" in diagnostic_source
+assert "BigScreen-Menu-" in diagnostic_source
+assert "BigScreen-Download-" in diagnostic_source
+assert "SanitizeExternalMessage" in diagnostic_header
+assert "correlationId" in error_source
+assert "Collect-DiagnosticSessions \"Menu\"" in log_collector
+assert "Collect-DiagnosticSessions \"Download\"" in log_collector
+
+# Build & Deploy and removal share one receipt/classifier implementation.
+# MBF registration is discovered by manifest id, source writes are hash
+# verified, and broad/user-data deletion is absent from the removal workflow.
+removal_script = (root / "scripts/remove-bigscreen.ps1").read_text(encoding="utf-8")
+assert "source-install.partial.json" in ownership_script
+assert "source-install.json" in ownership_script
+assert '[string]$manifest.id -ne "bigscreen"' in ownership_script
+for state in (
+    "NOT_INSTALLED", "SOURCE_MANAGED", "SOURCE_PARTIAL", "MBF_MANAGED",
+    "MBF_REGISTERED_NOT_INSTALLED", "LEGACY_SOURCE", "MIXED_OR_AMBIGUOUS",
+):
+    assert state in ownership_script
+assert "Install-BigScreenSourcePlan `" in copy_script
+assert "-Receipt $receipt" in copy_script
+assert "ModsBeforeFriday" in copy_script
+assert "Remove-BigScreenReceiptFiles" in removal_script
+assert "Resolve-BigScreenReceiptRemovalAction" in ownership_script
+assert "Test-BigScreenExclusiveLibraryName" in ownership_script
+assert "Test-BigScreenRemoteDirectory" in ownership_script
+assert "Remove-BigScreenLegacyRuntimePayload" in ownership_script
+assert 'BigScreen/Runtime' in ownership_script
+assert 'New-Object Text.UTF8Encoding($false)' in downloader_runtime_fetch
+assert 'Set-Content -LiteralPath (Join-Path $stageRoot "runtime-manifest.json")' not in downloader_runtime_fetch
+for private_python_library in (
+    "libpython3.14.so", "libssl_python.so", "libcrypto_python.so",
+    "libsqlite3_python.so",
+):
+    assert private_python_library in ownership_script
+assert "AlreadyBaseline" in ownership_script
+assert "-Partial" in removal_script
+assert "localPath = [string]$item.LocalPath" not in ownership_script
+assert "Legacy cleanup could not remove" in ownership_script
+assert 'Get-BigScreenJsonArray $manifest "fileCopies"' in removal_script
+assert 'BigScreen/Runtime/' in removal_script
+assert "Preserved MBF-required path" in removal_script
+assert "ReceiptUnreadable" in ownership_script
+assert "UnexpectedPhasePaths" in ownership_script
+assert "BigScreen/Videos" not in removal_script
+assert "BigScreen/Logs" not in removal_script
+assert (root / "Remove-BigScreen.bat").is_file()
 
 print("Repository toolchain, licensing, persistence, and deferred-work invariants passed.")

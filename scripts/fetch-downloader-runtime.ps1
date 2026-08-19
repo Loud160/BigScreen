@@ -339,7 +339,7 @@ foreach ($extension in $productionExtensions) {
     Copy-Item -LiteralPath $extension.FullName -Destination $dynamicStage -Force
 }
 
-@{
+$runtimeManifest = @{
     pythonVersion = $pythonVersion
     pythonSha256 = $pythonSha256
     ytDlpVersion = $ytDlpVersion
@@ -349,6 +349,15 @@ foreach ($extension in $productionExtensions) {
     certifiSha256 = $certifiSha256
     quickJsVersion = "0.16.1"
     nativeExtensions = @($productionExtensions | ForEach-Object Name)
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageRoot "runtime-manifest.json") -Encoding UTF8
+} | ConvertTo-Json
+# Windows PowerShell 5.1's `Set-Content -Encoding UTF8` prepends a BOM.
+# DownloadManager feeds these bytes directly to RapidJSON, whose default parse
+# flags reject that prefix. Always stage plain UTF-8 so a source-built package
+# initializes the embedded downloader identically under powershell.exe and
+# PowerShell 7.
+[IO.File]::WriteAllText(
+    (Join-Path $stageRoot "runtime-manifest.json"),
+    $runtimeManifest,
+    (New-Object Text.UTF8Encoding($false)))
 
 Write-Output "Prepared CPython $pythonVersion and yt-dlp $ytDlpVersion in $stageRoot"

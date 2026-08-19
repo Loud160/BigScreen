@@ -8,6 +8,8 @@
 #include "BigScreen/ErrorManager.hpp"
 
 #include <stdexcept>
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <ctime>
 #include <filesystem>
@@ -16,6 +18,7 @@
 #include <sstream>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/SelectionVideoToggle.hpp"
@@ -40,6 +43,31 @@ namespace BigScreen {
             return localtime_r(&value, &result)
                 ? std::optional<std::tm>(result) : std::nullopt;
 #endif
+        }
+
+        std::atomic<std::uint64_t> errorSequence{0};
+
+        std::string NewCorrelationId(
+            std::chrono::system_clock::time_point now) noexcept
+        {
+            try
+            {
+                const auto time = std::chrono::system_clock::to_time_t(now);
+                const auto local = LocalTime(time);
+                std::ostringstream output;
+                output << "BS-ERR-";
+                if(local)
+                    output << std::put_time(&*local, "%Y%m%d-%H%M%S");
+                else
+                    output << "UNKNOWN";
+                output << '-' << std::setw(6) << std::setfill('0')
+                       << errorSequence.fetch_add(1);
+                return output.str();
+            }
+            catch(...)
+            {
+                return "BS-ERR-UNAVAILABLE";
+            }
         }
     }
 
@@ -94,26 +122,37 @@ namespace BigScreen {
         }
     }
 
-    void ErrorManager::RecordError(
+    std::string ErrorManager::RecordError(
         const std::string& context,
         const std::string& detail) noexcept
     {
+        const auto now = std::chrono::system_clock::now();
+        const auto correlationId = NewCorrelationId(now);
         try
         {
-            std::scoped_lock lock(persistentLogMutex_);
-            const std::filesystem::path logPath(PersistentErrorLog);
-            std::filesystem::create_directories(logPath.parent_path());
-            std::ofstream output(logPath, std::ios::app);
-            if(!output)
-                return;
-
-            const auto now = std::chrono::system_clock::now();
-            const std::time_t time = std::chrono::system_clock::to_time_t(now);
-            const auto local = LocalTime(time);
-            if(local)
-                output << '[' << std::put_time(&*local, "%Y-%m-%d %H:%M:%S") << "] ";
-            output << context << ": " << detail << '\n';
-            output.flush();
+            {
+                std::scoped_lock lock(persistentLogMutex_);
+                const std::filesystem::path logPath(PersistentErrorLog);
+                std::filesystem::create_directories(logPath.parent_path());
+                std::ofstream output(logPath, std::ios::app);
+                if(output)
+                {
+                    const std::time_t time =
+                        std::chrono::system_clock::to_time_t(now);
+                    const auto local = LocalTime(time);
+                    if(local)
+                        output << '[' << std::put_time(
+                            &*local, "%Y-%m-%d %H:%M:%S") << "] ";
+                    output << '[' << correlationId << "] "
+                           << context << ": " << detail << '\n';
+                    output.flush();
+                }
+            }
+            // This call occurs only after the persistent-log lock is released.
+            // The session logger is fail-open and never calls ErrorManager,
+            // preventing diagnostics from creating a recursive lock path.
+            DiagnosticSessionLogger::Instance().CorrelatedError(
+                correlationId, context, detail);
         }
         catch(...)
         {
@@ -121,6 +160,7 @@ namespace BigScreen {
             // this class would recurse and could turn a storage issue into a
             // circuit-breaker event.
         }
+        return correlationId;
     }
 
     void ErrorManager::RecordPerformance(
@@ -177,7 +217,10 @@ namespace BigScreen {
         const std::string& detail)
     {
         PaperLogger.error("{}: {}", title, detail);
-        RecordError(title, detail);
+        const auto correlationId = RecordError(title, detail);
+        DiagnosticSessionLogger::Instance().MenuEvent(
+            "dialog_opened", "ErrorManager", {
+                {"title", title}, {"correlationId", correlationId}});
         std::scoped_lock lock(mutex_);
         // Keep only the newest message. A single modal is useful; a backlog of
         // stale popups can prevent the player from reaching the disable switch.

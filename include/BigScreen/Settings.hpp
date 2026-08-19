@@ -159,6 +159,9 @@ namespace BigScreen {
         float PerformancePanelRotationY() const { return performancePanelRotationY_; }
         float PerformancePanelRotationZ() const { return performancePanelRotationZ_; }
         bool PowerBenchmarkEnabled() const { return powerBenchmarkEnabled_; }
+        bool DetailedDiagnosticLoggingEnabled() const {
+            return detailedDiagnosticLoggingEnabled_;
+        }
         bool NightlyDownloaderUpdates() const { return nightlyDownloaderUpdates_; }
 
         void SetModEnabled(bool value);
@@ -229,6 +232,7 @@ namespace BigScreen {
             float rotationZ);
         void ResetPerformancePanelPlacement();
         void SetPowerBenchmarkEnabled(bool value);
+        void SetDetailedDiagnosticLoggingEnabled(bool value);
         void SetNightlyDownloaderUpdates(bool value);
 
     private:
@@ -311,6 +315,9 @@ namespace BigScreen {
         float performancePanelRotationY_ = 0.0f;
         float performancePanelRotationZ_ = 0.0f;
         bool powerBenchmarkEnabled_ = false;
+        // Crash-oriented menu/download session logs are enabled on a fresh
+        // install. This does not change Paper, error, or performance logging.
+        bool detailedDiagnosticLoggingEnabled_ = true;
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;
         std::chrono::steady_clock::time_point saveDeadline_{};

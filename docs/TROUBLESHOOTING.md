@@ -29,6 +29,14 @@ settings, or alter files on the Quest. Logs can contain song/map names, file
 paths, video URLs, or usernames; review the extracted text before posting the
 ZIP publicly.
 
+With **Misc > Detailed Diagnostic Logging** enabled, the support ZIP also
+contains `Sessions/Menu` and `Sessions/Download`. Big Screen keeps ten files in
+each headset folder. Menu actions, settled slider changes, previews, download
+choices, five-percent progress points, cancellation, terminal results, and
+concise error correlation IDs are recorded as JSONL. Full errors remain in
+`error-history.log` under the same ID. Missing session folders are normal when
+the option was off and do not stop the rest of the collection.
+
 If the collector had to start ADB, it stops that daemon automatically when
 finished. If ADB was already running, it asks whether to stop it and defaults
 to **No** after five minutes. This prevents the collector from silently ending
@@ -85,6 +93,14 @@ current `libbigscreen.so` and `Runtime/bigscreen_jsc_provider.py`. A successful
 downloader initialization log names the bundled QuickJS-NG version. An
 incompatible yt-dlp update is rejected automatically and the prior downloader
 is restored on the next Beat Saber start.
+
+If three YouTube downloads fail consecutively, Big Screen performs a background
+yt-dlp release check before showing guidance. A found update is offered as a
+possible compatibility fix. If no update is available, check again later from
+the Update tab; YouTube sometimes changes video delivery before a stable yt-dlp
+fix is published, and the optional nightly channel may receive that fix first.
+The notice does not mean every failed URL is an updater problem—private,
+restricted, removed, or region-limited videos can still fail independently.
 
 If the video library JSON is damaged, Big Screen quarantines it and restores the
 newest of two known-good backups. If neither backup is usable, it reconstructs
