@@ -111,6 +111,7 @@ namespace BigScreen {
             decoder_.BufferAllocations(),
             decoder_.AverageDecodeMilliseconds(),
             decoder_.PeakDecodeMilliseconds(),
+            decoder_.OpenMilliseconds(),
             activeDecoderCpu,
             automaticReductions_,
             decoder_.DecodeMethodName(),
@@ -1650,7 +1651,9 @@ namespace BigScreen {
              << averageVideoFps << " FPS  |  Decode "
              << std::setprecision(2) << diagnostics.averageDecodeMilliseconds
              << " ms average / " << diagnostics.peakDecodeMilliseconds
-             << " ms peak  |  RGBA allocations "
+             << " ms peak  |  Decoder startup "
+             << diagnostics.decoderOpenMilliseconds
+             << " ms  |  RGBA allocations "
               << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
               << diagnostics.decoderRuntime << "  |  Decoder "
               << diagnostics.decodeMethod;

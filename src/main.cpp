@@ -16,11 +16,12 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
+#include "BigScreen/ExperimentalFeatures.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
 // BLOOM EXPERIMENT DISABLED (2026-08-18): the implementation and hook remain
-// in source below under #if 0 so they can be revisited without reconstructing
+// behind one named build gate so they can be revisited without reconstructing
 // the experiment. Video playback currently ignores mapper-driven bloom.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
 #include "BigScreen/CinemaBloomRenderer.hpp"
 #endif
 #include "BigScreen/MenuPlacementGuide.hpp"
@@ -1011,7 +1012,7 @@ namespace {
 
     // BLOOM EXPERIMENT DISABLED (2026-08-18): retain the complete hook but do
     // not intercept Beat Saber's bloom pre-pass in a release build.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
     MAKE_HOOK_MATCH(
         BloomPrePass_OnPreRender,
         &GlobalNamespace::BloomPrePass::OnPreRender,
@@ -2004,7 +2005,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // controls proven visible and a lifecycle that does not use that failed
     // custom-setting hierarchy.
     // BLOOM EXPERIMENT DISABLED (2026-08-18): see the preserved hook above.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
     INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);
 #endif
     INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);

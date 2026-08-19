@@ -727,6 +727,7 @@ namespace BigScreen {
         double lastDecodedDuration = nominalFrameSeconds_;
         std::optional<double> firstAvailableFrameTime;
         std::optional<double> endOfStreamTime;
+        bool decodedAnyFrame = false;
         const auto updateCpuTotal = [this, cpuStartedNanoseconds]
         {
             const std::uint64_t now = CurrentThreadCpuNanoseconds();
@@ -819,6 +820,22 @@ namespace BigScreen {
                 {
                     if(reachedEndOfStream)
                     {
+                        // A container can parse successfully while containing
+                        // no usable video pictures. Treat that as a media
+                        // failure rather than a normal EOF; otherwise preview
+                        // audio waits forever for firstFrameUploaded_. Do not
+                        // flag a valid file whose very first request was
+                        // intentionally beyond its known duration.
+                        const bool requestInsideKnownMedia =
+                            durationSeconds_ <= 0.0 ||
+                            target < durationSeconds_ + nominalFrameSeconds_;
+                        if(!decodedAnyFrame && requestInsideKnownMedia)
+                        {
+                            SetWorkerError(
+                                "FFmpeg reached the end of the video without decoding any usable frames.");
+                            handledVersion = targetVersion;
+                            break;
+                        }
                         endOfStreamTime = std::isfinite(lastDecodedTime)
                             ? lastDecodedTime + std::max(
                                   lastDecodedDuration,
@@ -829,6 +846,7 @@ namespace BigScreen {
                     break;
                 }
 
+                decodedAnyFrame = true;
                 lastDecodedTime = CurrentFrameTime();
                 lastDecodedDuration = CurrentFrameDuration();
                 if(!firstAvailableFrameTime)

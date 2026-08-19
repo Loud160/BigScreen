@@ -365,7 +365,7 @@ namespace BigScreen {
             {
                 LayoutSelectorChanged(value);
             });
-        PlaceTopBarLayoutSelector(layoutUi_);
+        PlaceTopBarLayoutSelector(layoutUi_.ptr());
 
         if(!previewUi_ || !inMapUi_ || !layoutUi_)
         {
@@ -379,17 +379,17 @@ namespace BigScreen {
         }
 
         PlaceTopBarToggle(
-            previewUi_, "Big Screen Preview Video Toggle", PreviewToggleX);
+            previewUi_.ptr(), "Big Screen Preview Video Toggle", PreviewToggleX);
         PlaceTopBarToggle(
-            inMapUi_, "Big Screen Video In Map Toggle", InMapToggleX);
+            inMapUi_.ptr(), "Big Screen Video In Map Toggle", InMapToggleX);
         BSML::Lite::AddHoverHint(
-            previewUi_,
+            previewUi_.ptr(),
             "Turns video previews on or off while browsing songs. This is a global setting and requires Video In Map to be enabled.");
         BSML::Lite::AddHoverHint(
-            inMapUi_,
+            inMapUi_.ptr(),
             "Master switch for all song videos. Turning it off disables both in-map playback and song-selection previews.");
         BSML::Lite::AddHoverHint(
-            layoutUi_,
+            layoutUi_.ptr(),
             "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
         RefreshUi();
         BringHeaderControlsToFront();
@@ -437,7 +437,7 @@ namespace BigScreen {
             return;
 
         CreateTopControls(detailView, false);
-        if(!controlsScreen_ || controlsAnchor_ != detailView || downloadRow_)
+        if(!controlsScreen_ || controlsAnchor_.ptr() != detailView || downloadRow_)
             return;
 
         // ---- Cinema-parity download row --------------------------------
@@ -791,7 +791,8 @@ namespace BigScreen {
             PositionControlsRow();
         if(selectedLevel_)
         {
-            selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
+            selectedDescriptor_ = VideoLibrary::Instance().Describe(
+                selectedLevel_);
             if(selectedDescriptor_.CanPlay() && !selectedLevelHasVideo_)
             {
                 PlaybackSession::Instance().Prepare(selectedLevel_);
@@ -1029,7 +1030,7 @@ namespace BigScreen {
         pendingDownloadHeight_ = 0;
         resolutionModalOpen_ = true;
         displayedResolutionHeights_.clear();
-        for(auto* button : resolutionButtons_)
+        for(auto& button : resolutionButtons_)
             if(button) button->get_gameObject()->SetActive(false);
         if(confirmResolutionButton_)
             confirmResolutionButton_->get_gameObject()->SetActive(false);
@@ -1119,7 +1120,7 @@ namespace BigScreen {
             "Choose the resolution to download. Big Screen plays the selected file at its native resolution.");
         for(std::size_t index = 0; index < resolutionButtons_.size(); ++index)
         {
-            auto* button = resolutionButtons_[index];
+            auto* button = resolutionButtons_[index].ptr();
             if(!button)
                 continue;
             const bool visible = index < displayedResolutionHeights_.size();
@@ -1181,13 +1182,13 @@ namespace BigScreen {
             "resolution_dialog_opened", "SongSelection", {
                 {"height", std::to_string(height)},
                 {"replacement", replacing ? "true" : "false"}});
-        for(auto* button : resolutionButtons_)
+        for(auto& button : resolutionButtons_)
             if(button) button->get_gameObject()->SetActive(false);
         if(confirmResolutionButton_)
         {
             confirmResolutionButton_->get_gameObject()->SetActive(true);
             BSML::Lite::SetButtonText(
-                confirmResolutionButton_,
+                confirmResolutionButton_.ptr(),
                 "Download " + std::to_string(height) + "p");
         }
         std::ostringstream message;
@@ -1316,7 +1317,8 @@ namespace BigScreen {
         // then keep using the cached result for all later UI ticks.
         if(forSelection && snapshot.state == DownloadState::Completed &&
            selectedLevel_ && !selectedDescriptor_.CanPlay())
-            selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
+            selectedDescriptor_ = VideoLibrary::Instance().Describe(
+                selectedLevel_);
         const auto& descriptor = selectedDescriptor_;
         const bool show = Settings::Instance().ModEnabled() &&
                           (descriptor.CanPlay() ||
@@ -1333,7 +1335,8 @@ namespace BigScreen {
 
         if(forSelection && snapshot.Active())
         {
-            BSML::Lite::SetButtonText(downloadButton_, "Cancel Download");
+            BSML::Lite::SetButtonText(
+                downloadButton_.ptr(), "Cancel Download");
             downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
             if(snapshot.totalBytes)
             {
@@ -1359,7 +1362,7 @@ namespace BigScreen {
         else if(forSelection && snapshot.state == DownloadState::Failed)
         {
             BSML::Lite::SetButtonText(
-                downloadButton_,
+                downloadButton_.ptr(),
                 snapshot.metadataOnly ? "Retry Check" : "Retry Download");
             downloadStatus_->set_text(
                 snapshot.metadataOnly
@@ -1377,7 +1380,8 @@ namespace BigScreen {
         }
         else if(forSelection && snapshot.state == DownloadState::Cancelled)
         {
-            BSML::Lite::SetButtonText(downloadButton_, "Resume Download");
+            BSML::Lite::SetButtonText(
+                downloadButton_.ptr(), "Resume Download");
             downloadStatus_->set_text("Download paused");
             downloadStatus_->set_color({1.0f, 0.68f, 0.20f, 1.0f});
         }
@@ -1395,7 +1399,8 @@ namespace BigScreen {
         }
         else
         {
-            BSML::Lite::SetButtonText(downloadButton_, "Download Video");
+            BSML::Lite::SetButtonText(
+                downloadButton_.ptr(), "Download Video");
             downloadStatus_->set_text("Video available");
             downloadStatus_->set_color(UnityEngine::Color::get_white());
         }
@@ -1494,8 +1499,9 @@ namespace BigScreen {
 
         // SetIsOnWithoutNotify prevents selection refreshes from masquerading
         // as a user click and reopening a decoder that is already running.
-        SetToggleWithoutNotification(inMapUi_, inMapEnabled_);
-        SetToggleWithoutNotification(previewUi_, settings.MenuPreviewEnabled());
+        SetToggleWithoutNotification(inMapUi_.ptr(), inMapEnabled_);
+        SetToggleWithoutNotification(
+            previewUi_.ptr(), settings.MenuPreviewEnabled());
         if(previewUi_)
             previewUi_->set_interactable(inMapEnabled_);
         if(layoutUi_)

@@ -8,6 +8,7 @@
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/CenterScreenModal.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
+#include "BigScreen/ExperimentalFeatures.hpp"
 
 #include <algorithm>
 #include <array>
@@ -683,7 +684,7 @@ namespace BigScreen {
         // players. The Embedded Video Shader toggle above remains available.
         // Map-authored bloom is ignored by the runtime while this block is
         // compiled out.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         nativeBloomLevelSlider_ = BSML::Lite::CreateSliderSetting(
             performanceParent,
             "Native Bloom Level",

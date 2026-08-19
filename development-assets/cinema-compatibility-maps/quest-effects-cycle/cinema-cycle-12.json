@@ -1,0 +1,76 @@
+{
+  "title": "Cinema Compatibility Test 12",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00012",
+  "videoFile": "cinema-cycle-video.mp4",
+  "environmentName": "BigMirrorEnvironment",
+  "disableDefaultModifications": true,
+  "mergePropGroups": false,
+  "environment": [
+    {
+      "name": "NearBuildingLeft",
+      "active": false
+    },
+    {
+      "name": "NearBuildingRight",
+      "position": {
+        "x": 25.0,
+        "y": 8.0,
+        "z": 25.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": -25.0,
+        "z": 0.0
+      },
+      "scale": {
+        "x": 0.55,
+        "y": 1.4,
+        "z": 1.0
+      }
+    },
+    {
+      "name": "NeonTubeDirectionalL",
+      "parentName": "Environment",
+      "position": {
+        "x": -18.0,
+        "y": 10.0,
+        "z": 40.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 45.0
+      },
+      "scale": {
+        "x": 1.5,
+        "y": 1.5,
+        "z": 1.5
+      }
+    },
+    {
+      "name": "CinemaTestClonedLight",
+      "cloneFrom": "NeonTubeDirectionalR",
+      "active": true,
+      "position": {
+        "x": 0.0,
+        "y": 25.0,
+        "z": 48.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 90.0
+      },
+      "scale": {
+        "x": 2.0,
+        "y": 2.0,
+        "z": 2.0
+      }
+    }
+  ]
+}

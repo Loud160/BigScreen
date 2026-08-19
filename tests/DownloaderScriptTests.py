@@ -346,6 +346,98 @@ with tempfile.TemporaryDirectory() as directory:
     assert calls == [True, False], calls
     assert final_path.read_bytes() == b"complete-video"
 
+# Execute cancellation through yt-dlp's real production progress-hook path.
+# The worker must publish a terminal cancelled state and retain the .part file
+# so the user's explicit Resume action can continue it later.
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    final_path = root / "video.mp4"
+    part_path = pathlib.Path(str(final_path) + ".part")
+    status_path = root / "status.json"
+    cancel_path = root / "cancel"
+    candidate = {
+        "format_id": "137",
+        "ext": "mp4",
+        "vcodec": "avc1.640028",
+        "acodec": "none",
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "filesize": 32,
+        "protocol": "https",
+        "url": "https://example.invalid/video?c=VISIONOS",
+    }
+    info = {
+        "id": "abcdefghijk",
+        "title": "Cancellation test",
+        "duration": 10,
+        "age_limit": 0,
+        "formats": [candidate],
+    }
+
+    class CancellingYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def extract_info(self, _url, download=False):
+            if not download:
+                return dict(info)
+            part_path.write_bytes(b"resumable-partial-video")
+            cancel_path.write_text("cancel", encoding="utf-8")
+            for hook in self.options["progress_hooks"]:
+                hook({"status": "downloading", "downloaded_bytes": 23})
+            raise AssertionError("The cancellation hook must abort the transfer")
+
+    old_modules = {
+        name: sys.modules.get(name)
+        for name in ("bigscreen_jsc_provider", "yt_dlp")
+    }
+    sys.modules["bigscreen_jsc_provider"] = types.ModuleType(
+        "bigscreen_jsc_provider"
+    )
+    fake_yt_dlp = types.ModuleType("yt_dlp")
+    fake_yt_dlp.YoutubeDL = CancellingYoutubeDL
+    sys.modules["yt_dlp"] = fake_yt_dlp
+    try:
+        namespace = {
+            "BIGSCREEN_JOB": json.dumps(
+                {
+                    "sourceUrl": "https://youtu.be/cancelled",
+                    "finalPath": str(final_path),
+                    "thumbnailPath": str(root / "thumbnail.jpg"),
+                    "statusPath": str(status_path),
+                    "cancelPath": str(cancel_path),
+                    "explicitContentAllowed": True,
+                    "requestedHeight": 1080,
+                    "maximumSourceFps": 60,
+                    "reserveBytes": 0,
+                    "unknownRequiredBytes": 0,
+                }
+            )
+        }
+        exec(
+            compile(download_script, "<download-cancellation-test>", "exec"),
+            namespace,
+        )
+    finally:
+        for name, module in old_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "cancelled", status
+    assert status["errorCode"] == "BS-DL-CANCELLED", status
+    assert not final_path.exists()
+    assert part_path.read_bytes() == b"resumable-partial-video"
+
 # Resolution tiers are orientation-independent (short edge), downloads are
 # exact rather than silently substituting a different tier, and only the new
 # 1440 tier changes from H.264/MP4 to VP9/WebM.

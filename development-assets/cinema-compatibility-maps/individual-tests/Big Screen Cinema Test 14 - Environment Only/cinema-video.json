@@ -1,0 +1,21 @@
+{
+  "title": "Cinema Compatibility Test 14",
+  "author": "Big Screen compatibility suite",
+  "duration": 20,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "environmentName": "BigMirrorEnvironment",
+  "forceEnvironmentModifications": true,
+  "disableDefaultModifications": true,
+  "environment": [
+    {
+      "name": "NearBuildingLeft",
+      "active": false
+    },
+    {
+      "name": "NearBuildingRight",
+      "active": false
+    }
+  ]
+}

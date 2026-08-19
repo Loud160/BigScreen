@@ -10,7 +10,8 @@ Last reviewed: August 18, 2026
 
 The two selectable visible video-material paths remain available. The August
 18 Cinema bloom renderer, camera hook, soft-additive map path, and two diagnostic
-bloom sliders are preserved in source under disabled compile blocks and do not
+bloom sliders are preserved behind the default-off
+`BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM` build gate and do not
 run or appear in the menu. Mapper `bloom` and `colorBlending` fields are parsed
 but intentionally ignored. Both active material paths instead suppress the
 video's bloom-emission weight. Explicit mapper transparency/vignette and the
@@ -30,7 +31,8 @@ but the complete feature set has not passed a clean on-device regression pass.
 In particular:
 
 - the PC Cinema `bloom` and `colorBlending` fields are parsed but intentionally
-  have no runtime effect while the failed glow experiment is compiled out;
+  have no runtime effect while the failed glow experiment's named build gate
+  remains off;
 - opaque/transparency presentation depends on the selected video material and
   therefore belongs in the same on-device test matrix;
 - environment cloning, requested environments, additional screens, Chroma

@@ -41,6 +41,7 @@ namespace BigScreen {
         std::uint64_t rgbaBufferAllocations = 0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
+        double decoderOpenMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
         int automaticReductions = 0;
         /// Hardware/software decode method. The separately selectable FFmpeg

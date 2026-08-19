@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "BigScreen/VideoLibrary.hpp"
+#include "beatsaber-hook/shared/utils/typedefs.h"
 
 namespace BSML {
     class FloatingScreen;
@@ -134,31 +135,35 @@ namespace BigScreen {
 
         // Slim self-raycasting canvas hosting the three global controls above
         // the stock title bar. Owned by this class, not by the detail view.
-        BSML::FloatingScreen* controlsScreen_ = nullptr;
+        UnityW<BSML::FloatingScreen> controlsScreen_ = nullptr;
         // Generic Component anchor shared by StandardLevelDetailView (Solo)
         // and MissionLevelDetailViewController (Campaign). It is used only to
         // locate the active ScreenSystem and its stock top title screen.
-        UnityEngine::Component* controlsAnchor_ = nullptr;
+        UnityW<UnityEngine::Component> controlsAnchor_ = nullptr;
         // Campaign's detail transform is not in the same coordinate space as
         // Solo's fallback anchor. Until its ScreenSystem top screen is ready,
         // keep the panel hidden and retry rather than placing it far offscreen.
         bool controlsRequireTopScreen_ = false;
         bool controlsPositionPending_ = false;
         bool controlsVisibleRequested_ = false;
-        BSML::ToggleSetting* previewUi_ = nullptr;
-        BSML::ToggleSetting* inMapUi_ = nullptr;
-        BSML::IncrementSetting* layoutUi_ = nullptr;
+        UnityW<BSML::ToggleSetting> previewUi_ = nullptr;
+        UnityW<BSML::ToggleSetting> inMapUi_ = nullptr;
+        UnityW<BSML::IncrementSetting> layoutUi_ = nullptr;
         // Cinema-parity download row between the difficulty selector and the
         // Play/Practice buttons: cloned native background, italic status
         // label, and the Download/Cancel/Retry button on one centered row.
-        UnityEngine::GameObject* downloadRow_ = nullptr;
-        UnityEngine::UI::Button* downloadButton_ = nullptr;
-        TMPro::TextMeshProUGUI* downloadStatus_ = nullptr;
-        BSML::ModalView* resolutionModal_ = nullptr;
-        TMPro::TextMeshProUGUI* resolutionModalText_ = nullptr;
-        std::vector<UnityEngine::UI::Button*> resolutionButtons_;
+        UnityW<UnityEngine::GameObject> downloadRow_ = nullptr;
+        UnityW<UnityEngine::UI::Button> downloadButton_ = nullptr;
+        UnityW<TMPro::TextMeshProUGUI> downloadStatus_ = nullptr;
+        UnityW<BSML::ModalView> resolutionModal_ = nullptr;
+        UnityW<TMPro::TextMeshProUGUI> resolutionModalText_ = nullptr;
+        std::vector<UnityW<UnityEngine::UI::Button>> resolutionButtons_;
         std::vector<int> displayedResolutionHeights_;
-        UnityEngine::UI::Button* confirmResolutionButton_ = nullptr;
+        UnityW<UnityEngine::UI::Button> confirmResolutionButton_ = nullptr;
+        // BeatmapLevel is managed data rather than a UnityEngine::Object, so
+        // UnityW's native-object liveness contract does not apply to it. The
+        // active game's detail view owns this reference; every view teardown
+        // clears it before the owning menu hierarchy can be replaced.
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
         std::string selectedLevelId_;
         // A failed worker remains in a terminal state until another task is

@@ -16,6 +16,34 @@ target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DI
 add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)
 
 add_executable(
+    bigscreen-downloader-activation-tests
+    DownloaderActivationTests.cpp)
+target_compile_features(bigscreen-downloader-activation-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-downloader-activation-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(
+    NAME bigscreen-downloader-activation-tests
+    COMMAND bigscreen-downloader-activation-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-downloader-activation-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(
+    bigscreen-rotating-backup-store-tests
+    RotatingBackupStoreTests.cpp)
+target_compile_features(bigscreen-rotating-backup-store-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-rotating-backup-store-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(
+    NAME bigscreen-rotating-backup-store-tests
+    COMMAND bigscreen-rotating-backup-store-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-rotating-backup-store-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(
     bigscreen-up-down-showcase-tests
     UpDownShowcaseTimelineTests.cpp
     ../src/UpDownShowcaseTimeline.cpp)

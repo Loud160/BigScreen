@@ -398,7 +398,8 @@ through its separate alpha blend equation. `UI/Default` cannot, so its visible
 RGB pass is followed by an invisible alpha-only guard using the embedded
 shader; the guard changes no picture pixels and uses the picture's actual
 opacity/vignette coverage. Big Screen's experimental Cinema bloom pre-pass and
-its two diagnostic sliders remain preserved in source but are compiled out.
+its two diagnostic sliders remain preserved behind the default-off
+`BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM` build gate.
 Mapper `bloom` and `colorBlending` values therefore do not affect the active
 screen. The Embedded Video Shader toggle remains available for comparing the
 two visible-material paths.

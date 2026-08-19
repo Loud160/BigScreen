@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/RotatingBackupStore.hpp"
 #include "BigScreen/Utility.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -1629,34 +1630,21 @@ namespace BigScreen {
             if(!anyBackup)
                 return; // genuine first run, not a recovery event
         }
-        for(std::size_t index = 0; index < backups.size(); ++index)
+        std::vector<std::pair<std::string, LevelVideoRecords>> restored;
+        const auto recovery = RotatingBackupStore::RestoreFirstValid(
+            manifestPath_, backups, [&](const auto& backup)
+            {
+                return TryLoadManifestLocked(backup, restored);
+            });
+        if(recovery.foundValidBackup)
         {
-            std::vector<std::pair<std::string, LevelVideoRecords>> restored;
-            if(!TryLoadManifestLocked(backups[index], restored))
-                continue;
             records_ = std::move(restored);
-            const auto temporary = manifestPath_.string() + ".restore.tmp";
-            error.clear();
-            std::filesystem::copy_file(
-                backups[index], temporary,
-                std::filesystem::copy_options::overwrite_existing, error);
-            if(!error)
+            if(!recovery.restoredPrimary)
             {
-                std::error_code removeError;
-                std::filesystem::remove(manifestPath_, removeError);
-                if(removeError)
-                    error = removeError;
-                else
-                    std::filesystem::rename(temporary, manifestPath_, error);
-            }
-            if(error)
-            {
-                std::error_code cleanupError;
-                std::filesystem::remove(temporary, cleanupError);
                 const std::string detail =
-                    "Backup " + std::to_string(index + 1) +
+                    "Backup " + std::to_string(recovery.backupIndex + 1) +
                     " was loaded in memory, but library.json could not be restored: " +
-                    error.message();
+                    recovery.error;
                 PaperLogger.error("{}", detail);
                 ErrorManager::Instance().RecordError(
                     "Restoring the video library backup", detail);
@@ -1668,7 +1656,9 @@ namespace BigScreen {
                 recoveryNotice_ = primaryExists
                     ? "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved."
                     : "Big Screen found that the main video library was missing and restored the most recent known-good backup. Your video assignments were preserved.";
-                PaperLogger.warn("Recovered video library from backup {}", index + 1);
+                PaperLogger.warn(
+                    "Recovered video library from backup {}",
+                    recovery.backupIndex + 1);
             }
             return;
         }
@@ -1779,36 +1769,30 @@ namespace BigScreen {
         }
         const auto backup1 = std::filesystem::path(manifestPath_.string() + ".backup1");
         const auto backup2 = std::filesystem::path(manifestPath_.string() + ".backup2");
-        std::error_code error;
         std::vector<std::pair<std::string, LevelVideoRecords>> knownGood;
-        if(TryLoadManifestLocked(backup1, knownGood))
-        {
-            std::filesystem::copy_file(
-                backup1, backup2,
-                std::filesystem::copy_options::overwrite_existing, error);
-            if(error)
-                PaperLogger.warn(
-                    "Could not rotate video library backup 1 to backup 2: {}",
-                    error.message());
-        }
-        error.clear();
-        if(TryLoadManifestLocked(manifestPath_, knownGood))
-        {
-            std::filesystem::copy_file(
-                manifestPath_, backup1,
-                std::filesystem::copy_options::overwrite_existing, error);
-            if(error)
-                PaperLogger.warn(
-                    "Could not refresh video library backup 1: {}",
-                    error.message());
-        }
+        RotatingBackupStore::RotateKnownGood(
+            manifestPath_, backup1, backup2,
+            [&](const auto& candidate)
+            {
+                return TryLoadManifestLocked(candidate, knownGood);
+            },
+            [](int from, int to, const std::string& detail)
+            {
+                if(from == 1 && to == 2)
+                    PaperLogger.warn(
+                        "Could not rotate video library backup 1 to backup 2: {}",
+                        detail);
+                else
+                    PaperLogger.warn(
+                        "Could not refresh video library backup 1: {}", detail);
+            });
 
         // Keep the proven shared-storage replacement sequence: remove only the
         // exact manifest path after the fully flushed temporary file and
         // rotating backups exist. LoadLocked treats a missing primary plus an
         // intact backup as recovery, so a crash at this boundary preserves the
         // assignments instead of presenting an empty first-run library.
-        error.clear();
+        std::error_code error;
         std::filesystem::remove(manifestPath_, error);
         error.clear();
         std::filesystem::rename(temporary, manifestPath_, error);

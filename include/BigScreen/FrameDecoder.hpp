@@ -384,6 +384,10 @@ namespace BigScreen {
         double SourceFramesPerSecond() const;
         double AverageDecodeMilliseconds() const;
         double PeakDecodeMilliseconds() const;
+        /// Wall-clock time spent selecting and opening the active backend.
+        /// Persisted only to performance-history.log; it is intentionally not
+        /// part of the live panel because startup is a one-time event.
+        double OpenMilliseconds() const { return openMilliseconds_; }
         void ResetPeakDecodeMilliseconds();
         double WorkerCpuMilliseconds() const;
         double DurationSeconds() const;
@@ -414,6 +418,7 @@ namespace BigScreen {
         double accumulatedWorkerCpuMilliseconds_ = 0.0;
         std::uint64_t accumulatedBufferAllocations_ = 0;
         double retainedPeakDecodeMilliseconds_ = 0.0;
+        double openMilliseconds_ = 0.0;
     };
 #endif
 }

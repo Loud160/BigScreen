@@ -71,14 +71,15 @@ The following picture fields are supported:
   `gamma`, and `hue`, with Cinema's documented ranges;
 - `vignette`: rectangular or elliptical `type`, `radius`, and `softness`;
 - `colorBlending`: parsed for compatibility but currently ignored. The
-  experimental Cinema soft-additive path is preserved in source and compiled
-  out so a map cannot unexpectedly make the picture emissive or see-through;
+  experimental Cinema soft-additive path is preserved behind the default-off
+  `BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM` build gate so a map cannot
+  unexpectedly make the picture emissive or see-through;
 - `transparency`, which controls Cinema's opaque light-blocking body behind the
   picture. It does not change picture opacity or the player's letterbox option.
 
 PC Cinema's `bloom` field is parsed and retained in the normalized map data but
 currently has no runtime effect. Big Screen's experimental Cinema-style glow
-renderer is preserved under disabled compile blocks rather than deleted. Both
+renderer is preserved behind that named build gate rather than deleted. Both
 visible-material paths instead suppress the video's bloom-emission weight so
 bloom-heavy map lighting cannot wash the picture into a solid white rectangle.
 Unknown fields are ignored rather than treated as fatal configuration errors.

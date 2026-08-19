@@ -5,6 +5,56 @@ were evaluated. Each review was treated as a set of hypotheses, not as an
 automatic change list, and every accepted item was checked against the current
 source before implementation.
 
+## August 19 independent review
+
+The Claude Opus 4.8 review of `54bb2a1` was preserved under
+`docs/ai-assisted-development/reviews/` and evaluated against the live tree.
+The following confirmed findings were addressed without changing intended
+playback, menu, download, or mapper behavior:
+
+- The retained Cinema bloom experiment now has one descriptive CMake/source
+  feature gate that defaults off. Parser support and the implementation remain
+  available for future work, while release builds cannot accidentally compile
+  only part of the abandoned experiment.
+- Error reporting is nonthrowing all the way through correlation-ID creation,
+  and an externally dismissed Beat Saber prompt can no longer latch the
+  user-visible error channel. Resetting the circuit breaker also resets that
+  presentation state.
+- Song-selection scene objects now use Unity liveness-aware references. The
+  selected `BeatmapLevel` remains under the detail view's existing teardown
+  ownership because it is managed song data, not a `UnityEngine::Object`.
+- Downloader diagnostic-throttle state is reset under its documented mutex;
+  the legacy tombstone helper skips missing slots; and a parseable video that
+  reaches EOF without decoding a single picture becomes an explicit playback
+  failure instead of gating preview audio forever.
+- Decoder startup was deliberately not moved to another thread. Its measured
+  open duration is now appended to completed-session performance logs, making
+  future decisions evidence-based without adding a new startup lifecycle.
+- yt-dlp candidate promotion/rollback and rotating known-good library backups
+  were isolated into Unity-free filesystem transactions. Host tests execute
+  their real promotion, rejection, destructor rollback, rotation, corrupt-
+  primary recovery, and missing-primary recovery behavior. The embedded
+  downloader test now also cancels through the production progress hook and
+  verifies its resumable partial-file contract.
+- FFmpeg 9.0.1 is documented as the default runtime and 4.4.8 as the comparison
+  runtime. Internal AI prompts, reviews, and planning records remain available
+  by design, but are grouped beneath a clearly noncanonical AI-assisted-
+  development archive instead of appearing as primary developer guidance.
+- The Cinema compatibility maps are retained under `development-assets/` as
+  manual PC/Quest fixtures. Repository tests prevent those maps from entering
+  the QMOD or source-deployment scripts.
+
+Several claims were stale or incorrect in the reviewed snapshot and were not
+implemented: source deployment already writes and consumes ownership receipts;
+library and file-copy deployment already performs read-back hashing; the ADB
+completion helper is used by the public launchers; and the displayed yt-dlp
+baseline was already current. The proposed migration of
+`menuScreenPreviewEnabled` was also rejected after history showed that it was a
+different placement-screen preference, not the old name of `showMenuPreview`.
+The serial decoder retirement queue remains unchanged: a detached thread per
+stuck backend would replace one bounded queue with unbounded threads and is not
+a safer correction without evidence of a real stalled-close problem.
+
 ## August 15 second review
 
 The second independent review was evaluated against the `d7efbaf` checkpoint.

@@ -36,8 +36,12 @@ namespace BigScreen {
             const std::string& mapIdentity,
             const std::string& summary) noexcept;
         void SetGameplayActive(bool active);
-        void ReportInternal(const std::string& context, const std::string& detail);
-        void ReportUserVisible(const std::string& title, const std::string& detail);
+        void ReportInternal(
+            const std::string& context,
+            const std::string& detail) noexcept;
+        void ReportUserVisible(
+            const std::string& title,
+            const std::string& detail) noexcept;
         std::optional<std::pair<std::string, std::string>> TakePendingDialog();
         /// Presents one pending message through Beat Saber's normal main-flow
         /// dialog. Must be called from a Unity main-thread Update hook.

@@ -25,6 +25,7 @@
 
 #include "main.hpp"
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/DownloaderActivation.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/QuickJsEngine.hpp"
@@ -40,81 +41,9 @@ namespace BigScreen {
         const std::filesystem::path InternalNativeRuntime{
             "/data/user/0/com.beatgames.beatsaber/code_cache/BigScreen"};
 
-        /// Parses yt-dlp's numeric stable/nightly tags (for example
-        /// 2026.07.04 and 2026.08.18.122307). This is intentionally separate
-        /// from Big Screen's semantic-version parser because yt-dlp nightly
-        /// tags have four numeric components rather than SemVer's three.
-        std::optional<std::vector<std::uint64_t>> DownloaderVersionParts(
-            std::string_view text)
-        {
-            std::vector<std::uint64_t> parts;
-            while(!text.empty())
-            {
-                const auto dot = text.find('.');
-                const auto part = text.substr(0, dot);
-                if(part.empty() || !std::all_of(
-                       part.begin(), part.end(), [](unsigned char value) {
-                           return value >= '0' && value <= '9';
-                       }))
-                    return std::nullopt;
-                std::uint64_t value = 0;
-                const auto parsed = std::from_chars(
-                    part.data(), part.data() + part.size(), value);
-                if(parsed.ec != std::errc{} ||
-                   parsed.ptr != part.data() + part.size())
-                    return std::nullopt;
-                parts.push_back(value);
-                if(dot == std::string_view::npos)
-                    break;
-                text.remove_prefix(dot + 1);
-            }
-            return parts.empty()
-                ? std::nullopt
-                : std::optional<std::vector<std::uint64_t>>{std::move(parts)};
-        }
-
-        bool DownloaderVersionIsOlder(
-            std::string_view candidate,
-            std::string_view reference)
-        {
-            // Fail closed when either side is not a normal numeric yt-dlp
-            // version. This helper is used only to retire a known-obsolete
-            // active package after a QMOD upgrade; an unrecognized or newer
-            // user-installed package must remain available to the existing
-            // smoke-test/rollback transaction instead of being deleted.
-            const auto candidateParts = DownloaderVersionParts(candidate);
-            const auto referenceParts = DownloaderVersionParts(reference);
-            if(!candidateParts || !referenceParts)
-                return false;
-            const auto count = std::max(
-                candidateParts->size(), referenceParts->size());
-            for(std::size_t index = 0; index < count; ++index)
-            {
-                const auto left = index < candidateParts->size()
-                    ? (*candidateParts)[index]
-                    : 0;
-                const auto right = index < referenceParts->size()
-                    ? (*referenceParts)[index]
-                    : 0;
-                if(left != right)
-                    return left < right;
-            }
-            return false;
-        }
-
-        std::string NormalizeDownloaderChannel(
-            std::string channel,
-            std::string_view version)
-        {
-            std::transform(channel.begin(), channel.end(), channel.begin(),
-                [](unsigned char value) {
-                    return static_cast<char>(std::tolower(value));
-                });
-            if(channel == "stable" || channel == "nightly")
-                return channel;
-            const auto parts = DownloaderVersionParts(version);
-            return parts && parts->size() > 3 ? "nightly" : "stable";
-        }
+        using DownloaderPackage::Activation;
+        using DownloaderPackage::NormalizeChannel;
+        using DownloaderPackage::VersionIsOlder;
 
         class ScopedPythonGil final {
         public:
@@ -335,245 +264,6 @@ namespace BigScreen {
             bool hadDestination_ = false;
             bool promoted_ = false;
             bool committed_ = false;
-        };
-
-        /// Owns the filesystem transaction that promotes a staged yt-dlp
-        /// package. Any return before Accept() moves the candidate back to
-        /// `next` and restores the prior active package, so an unrelated
-        /// Python/native initialization error cannot strand a bad active file.
-        class DownloaderActivation final {
-        public:
-            explicit DownloaderActivation(std::filesystem::path runtime)
-                : runtime_(std::move(runtime)),
-                  next_(runtime_ / "yt-dlp-next"),
-                  active_(runtime_ / "yt-dlp-active"),
-                  previous_(runtime_ / "yt-dlp-previous") {}
-
-            ~DownloaderActivation()
-            {
-                if(attempted_ && !accepted_)
-                    RestoreForRetry();
-            }
-
-            bool Promote(std::string& error)
-            {
-                if(!Utility::IsRegularFile(next_))
-                    return true;
-                attempted_ = true;
-                hadActive_ = Utility::IsRegularFile(active_);
-                std::ifstream version(next_.string() + ".version");
-                if(version) std::getline(version, candidateVersion_);
-                std::ifstream channel(next_.string() + ".channel");
-                if(channel) std::getline(channel, candidateChannel_);
-                candidateChannel_ = NormalizeDownloaderChannel(
-                    std::move(candidateChannel_), candidateVersion_);
-
-                if(!Remove(previous_, error) ||
-                   !Remove(previous_.string() + ".version", error) ||
-                   !Remove(previous_.string() + ".channel", error))
-                    return false;
-                if(hadActive_)
-                {
-                    if(!Rename(active_, previous_, error))
-                        return false;
-                    originalMoved_ = true;
-                    if(Utility::IsRegularFile(active_.string() + ".version") &&
-                       !Rename(
-                           active_.string() + ".version",
-                           previous_.string() + ".version",
-                           error))
-                        return false;
-                    if(Utility::IsRegularFile(active_.string() + ".channel") &&
-                       !Rename(
-                           active_.string() + ".channel",
-                           previous_.string() + ".channel",
-                           error))
-                        return false;
-                }
-                if(!Rename(next_, active_, error))
-                    return false;
-                candidateActive_ = true;
-                if(Utility::IsRegularFile(next_.string() + ".version") &&
-                   !Rename(
-                       next_.string() + ".version",
-                       active_.string() + ".version",
-                       error))
-                        return false;
-                if(Utility::IsRegularFile(next_.string() + ".channel") &&
-                   !Rename(
-                       next_.string() + ".channel",
-                       active_.string() + ".channel",
-                       error))
-                    return false;
-                return true;
-            }
-
-            bool Promoted() const { return candidateActive_; }
-            const std::string& CandidateVersion() const { return candidateVersion_; }
-            const std::string& CandidateChannel() const { return candidateChannel_; }
-
-            void Accept()
-            {
-                accepted_ = true;
-                std::error_code ignored;
-                std::filesystem::remove(
-                    runtime_ / "yt-dlp-rejected.version", ignored);
-            }
-
-            bool Reject(std::string& error)
-            {
-                if(!candidateActive_)
-                    return true;
-                if(!Remove(active_, error) ||
-                   !Remove(active_.string() + ".version", error) ||
-                   !Remove(active_.string() + ".channel", error))
-                    return false;
-                candidateActive_ = false;
-                if(originalMoved_)
-                {
-                    if(!Rename(previous_, active_, error))
-                        return false;
-                    originalMoved_ = false;
-                    if(Utility::IsRegularFile(previous_.string() + ".version") &&
-                       !Rename(
-                           previous_.string() + ".version",
-                           active_.string() + ".version",
-                           error))
-                        return false;
-                    if(Utility::IsRegularFile(previous_.string() + ".channel") &&
-                       !Rename(
-                           previous_.string() + ".channel",
-                           active_.string() + ".channel",
-                           error))
-                        return false;
-                }
-                if(!WriteRejectedVersion(candidateVersion_, error))
-                    return false;
-                accepted_ = true;
-                return true;
-            }
-
-        private:
-            bool Remove(const std::filesystem::path& path, std::string& error)
-            {
-                std::error_code fileError;
-                std::filesystem::remove(path, fileError);
-                if(!fileError) return true;
-                error = "Could not remove " + path.filename().string() + ": " +
-                        fileError.message();
-                return false;
-            }
-
-            bool Rename(
-                const std::filesystem::path& from,
-                const std::filesystem::path& to,
-                std::string& error)
-            {
-                std::error_code fileError;
-                std::filesystem::rename(from, to, fileError);
-                if(!fileError) return true;
-                error = "Could not activate " + from.filename().string() + ": " +
-                        fileError.message();
-                return false;
-            }
-
-            bool WriteRejectedVersion(
-                const std::string& version,
-                std::string& error) const
-            {
-                std::ofstream rejected(
-                    runtime_ / "yt-dlp-rejected.version",
-                    std::ios::binary | std::ios::trunc);
-                rejected << (version.empty() ? "unknown" : version);
-                rejected.flush();
-                if(rejected) return true;
-                error = "Could not record the rejected yt-dlp version.";
-                return false;
-            }
-
-            void RestoreForRetry() noexcept
-            {
-                std::error_code ignored;
-                if(candidateActive_)
-                {
-                    std::filesystem::remove(next_, ignored);
-                    ignored.clear();
-                    std::filesystem::rename(active_, next_, ignored);
-                    ignored.clear();
-                    if(std::filesystem::is_regular_file(
-                           active_.string() + ".version", ignored))
-                    {
-                        ignored.clear();
-                        std::filesystem::remove(
-                            next_.string() + ".version", ignored);
-                        ignored.clear();
-                        std::filesystem::rename(
-                            active_.string() + ".version",
-                            next_.string() + ".version",
-                            ignored);
-                    }
-                    ignored.clear();
-                    if(std::filesystem::is_regular_file(
-                           active_.string() + ".channel", ignored))
-                    {
-                        ignored.clear();
-                        std::filesystem::remove(
-                            next_.string() + ".channel", ignored);
-                        ignored.clear();
-                        std::filesystem::rename(
-                            active_.string() + ".channel",
-                            next_.string() + ".channel",
-                            ignored);
-                    }
-                    candidateActive_ = false;
-                }
-                if(originalMoved_)
-                {
-                    ignored.clear();
-                    std::filesystem::remove(active_, ignored);
-                    ignored.clear();
-                    std::filesystem::rename(previous_, active_, ignored);
-                    ignored.clear();
-                    if(std::filesystem::is_regular_file(
-                           previous_.string() + ".version", ignored))
-                    {
-                        ignored.clear();
-                        std::filesystem::remove(
-                            active_.string() + ".version", ignored);
-                        ignored.clear();
-                        std::filesystem::rename(
-                            previous_.string() + ".version",
-                            active_.string() + ".version",
-                            ignored);
-                    }
-                    ignored.clear();
-                    if(std::filesystem::is_regular_file(
-                           previous_.string() + ".channel", ignored))
-                    {
-                        ignored.clear();
-                        std::filesystem::remove(
-                            active_.string() + ".channel", ignored);
-                        ignored.clear();
-                        std::filesystem::rename(
-                            previous_.string() + ".channel",
-                            active_.string() + ".channel",
-                            ignored);
-                    }
-                    originalMoved_ = false;
-                }
-            }
-
-            std::filesystem::path runtime_;
-            std::filesystem::path next_;
-            std::filesystem::path active_;
-            std::filesystem::path previous_;
-            std::string candidateVersion_;
-            std::string candidateChannel_;
-            bool attempted_ = false;
-            bool accepted_ = false;
-            bool hadActive_ = false;
-            bool originalMoved_ = false;
-            bool candidateActive_ = false;
         };
 
         const char* StateName(DownloadState state)
@@ -2029,7 +1719,7 @@ os.replace(temporary, job['destination'])
             std::string activeVersion;
             if(versionFile)
                 std::getline(versionFile, activeVersion);
-            if(DownloaderVersionIsOlder(activeVersion, BundledYtDlpVersion))
+            if(VersionIsOlder(activeVersion, BundledYtDlpVersion))
             {
                 std::error_code removeError;
                 std::filesystem::remove(active, removeError);
@@ -2057,10 +1747,10 @@ os.replace(temporary, job['destination'])
         }
 
         // Promote only after every fallible native/certificate prerequisite
-        // has passed. From this point until Accept(), DownloaderActivation
+        // has passed. From this point until Accept(), Activation
         // owns restoration if bridge registration, CPython initialization, or
         // validation fails.
-        DownloaderActivation activation{runtime};
+        Activation activation{runtime};
         if(!activation.Promote(error))
             return fail("BS-DL-INIT-105", std::move(error));
         const auto promotedCandidate = activation.Promoted();
@@ -2342,7 +2032,7 @@ os.replace(temporary, job['destination'])
         currentUpdateVersion_ = version.empty()
             ? std::string(BundledYtDlpVersion)
             : std::move(version);
-        currentUpdateChannel_ = NormalizeDownloaderChannel(
+        currentUpdateChannel_ = NormalizeChannel(
             std::move(channel), currentUpdateVersion_);
     }
 
@@ -2503,10 +2193,17 @@ os.replace(temporary, job['destination'])
             snapshot_.requestedHeight = request.requestedHeight;
             snapshot_.availableHeights = std::move(verifiedAvailableHeights);
         }
-        lastDiagnosticState_ = DownloadState::Idle;
-        lastDiagnosticProgressBucket_ = -1;
-        lastUnknownSizeDiagnostic_ = {};
-        lastDownloaderDiagnostic_.clear();
+        {
+            // PollStatusFile owns these throttle fields under this mutex. A
+            // previous operation's final status poll may still be completing
+            // while the next Start call initializes its state; serialize the
+            // reset so the std::string cannot receive concurrent writes.
+            std::scoped_lock statusReadLock(statusReadMutex_);
+            lastDiagnosticState_ = DownloadState::Idle;
+            lastDiagnosticProgressBucket_ = -1;
+            lastUnknownSizeDiagnostic_ = {};
+            lastDownloaderDiagnostic_.clear();
+        }
         PaperLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,

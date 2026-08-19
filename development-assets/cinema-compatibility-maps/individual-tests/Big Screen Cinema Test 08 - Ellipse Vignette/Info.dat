@@ -1,0 +1,51 @@
+{
+  "_version": "2.1.0",
+  "_songName": "Cinema Test 08 - Elliptical vignette aliases and softness",
+  "_songSubName": "PC Cinema vs Big Screen Quest",
+  "_songAuthorName": "Generated calibration pulses",
+  "_levelAuthorName": "Loud160 (AKA Whisp)",
+  "_beatsPerMinute": 120,
+  "_shuffle": 0.0,
+  "_shufflePeriod": 0.5,
+  "_previewStartTime": 0.0,
+  "_previewDuration": 20,
+  "_songFilename": "song.ogg",
+  "_coverImageFilename": "cover.jpg",
+  "_environmentName": "BigMirrorEnvironment",
+  "_allDirectionsEnvironmentName": "GlassDesertEnvironment",
+  "_songTimeOffset": 0.0,
+  "_difficultyBeatmapSets": [
+    {
+      "_beatmapCharacteristicName": "Standard",
+      "_difficultyBeatmaps": [
+        {
+          "_difficulty": "Expert",
+          "_difficultyRank": 7,
+          "_beatmapFilename": "StandardExpert.dat",
+          "_noteJumpMovementSpeed": 10.0,
+          "_noteJumpStartBeatOffset": 0.0,
+          "_customData": {
+            "_difficultyLabel": "NO NOTES - VISUAL TEST",
+            "_suggestions": [
+              "Cinema"
+            ],
+            "_requirements": [],
+            "_information": [
+              "Video is cut into a soft ellipse",
+              "Radius 0 and softness .10",
+              "The four corner labels disappear symmetrically"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "_customData": {
+    "_contributors": [
+      {
+        "_role": "Compatibility test",
+        "_name": "Loud160 (AKA Whisp)"
+      }
+    ]
+  }
+}

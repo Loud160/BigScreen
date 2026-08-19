@@ -147,6 +147,14 @@ add_library(
         ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/quickjs-ng/source/quickjs-amalgam.c
 )
 
+# Preserve the incomplete Cinema bloom/color-blending implementation without
+# allowing it to enter release builds accidentally. Developers can opt into a
+# dedicated investigation build explicitly; the shipped default remains off.
+option(BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
+        "Compile the unfinished Cinema bloom experiment" OFF)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM=$<BOOL:${BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM}>)
+
 # The ordinary Unity unlit shader writes opaque video alpha into Beat Saber's
 # main render target. Beat Saber's post-processing interprets that alpha as an
 # emission weight, which turns the complete screen white whenever the game's

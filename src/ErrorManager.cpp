@@ -126,10 +126,10 @@ namespace BigScreen {
         const std::string& context,
         const std::string& detail) noexcept
     {
-        const auto now = std::chrono::system_clock::now();
-        const auto correlationId = NewCorrelationId(now);
         try
         {
+            const auto now = std::chrono::system_clock::now();
+            const auto correlationId = NewCorrelationId(now);
             {
                 std::scoped_lock lock(persistentLogMutex_);
                 const std::filesystem::path logPath(PersistentErrorLog);
@@ -153,14 +153,15 @@ namespace BigScreen {
             // preventing diagnostics from creating a recursive lock path.
             DiagnosticSessionLogger::Instance().CorrelatedError(
                 correlationId, context, detail);
+            return correlationId;
         }
         catch(...)
         {
             // Diagnostics are fail-open. Reporting a logging failure through
             // this class would recurse and could turn a storage issue into a
             // circuit-breaker event.
+            return {};
         }
-        return correlationId;
     }
 
     void ErrorManager::RecordPerformance(
@@ -214,57 +215,80 @@ namespace BigScreen {
 
     void ErrorManager::ReportUserVisible(
         const std::string& title,
-        const std::string& detail)
+        const std::string& detail) noexcept
     {
-        PaperLogger.error("{}: {}", title, detail);
-        const auto correlationId = RecordError(title, detail);
-        DiagnosticSessionLogger::Instance().MenuEvent(
-            "dialog_opened", "ErrorManager", {
-                {"title", title}, {"correlationId", correlationId}});
-        std::scoped_lock lock(mutex_);
-        // Keep only the newest message. A single modal is useful; a backlog of
-        // stale popups can prevent the player from reaching the disable switch.
-        pendingDialog_ = std::make_pair(title, detail);
-        nextDialogAttempt_ = {};
-        dialogFailureLogged_ = false;
+        try
+        {
+            PaperLogger.error("{}: {}", title, detail);
+            const auto correlationId = RecordError(title, detail);
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                "dialog_opened", "ErrorManager", {
+                    {"title", title}, {"correlationId", correlationId}});
+            std::scoped_lock lock(mutex_);
+            // Keep only the newest message. A single modal is useful; a
+            // backlog of stale popups can prevent the player from reaching
+            // the disable switch.
+            pendingDialog_ = std::make_pair(title, detail);
+            nextDialogAttempt_ = {};
+            dialogFailureLogged_ = false;
+        }
+        catch(...)
+        {
+            // Guard() is noexcept and calls this function while recovering
+            // from another failure. Diagnostics must degrade silently if an
+            // allocation or logging sink also fails; never terminate Beat
+            // Saber while attempting to report the original problem.
+            RecordError(title, detail);
+        }
     }
 
     void ErrorManager::ReportInternal(
         const std::string& context,
-        const std::string& detail)
+        const std::string& detail) noexcept
     {
-        PaperLogger.error("Internal failure in {}: {}", context, detail);
-        RecordError("Internal failure in " + context, detail);
-        const auto now = std::chrono::steady_clock::now();
-        const auto signature = context + ": " + detail;
+        try
         {
-            std::scoped_lock lock(mutex_);
-            const bool secondFailure =
-                lastInternalError_ != std::chrono::steady_clock::time_point{} &&
-                CoreLogic::IsSecondFailureWithin(now - lastInternalError_);
-            lastInternalError_ = now;
-            if(secondFailure && !disabledByCircuitBreaker_)
+            PaperLogger.error("Internal failure in {}: {}", context, detail);
+            RecordError("Internal failure in " + context, detail);
+            const auto now = std::chrono::steady_clock::now();
+            const auto signature = context + ": " + detail;
             {
-                disabledByCircuitBreaker_ = true;
-                disableRequested_ = true;
-                pendingDialog_ = std::make_pair(
-                    "Big Screen disabled itself",
-                    "Big Screen encountered two internal errors within three minutes, so it turned itself off to protect Beat Saber.\n\nLast error: " +
-                    signature + "\n\nError log: " + PersistentErrorLog +
-                    "\n\nYou can turn the mod back on from its General tab after reviewing the log.");
+                std::scoped_lock lock(mutex_);
+                const bool secondFailure =
+                    lastInternalError_ !=
+                        std::chrono::steady_clock::time_point{} &&
+                    CoreLogic::IsSecondFailureWithin(now - lastInternalError_);
+                lastInternalError_ = now;
+                if(secondFailure && !disabledByCircuitBreaker_)
+                {
+                    disabledByCircuitBreaker_ = true;
+                    disableRequested_ = true;
+                    pendingDialog_ = std::make_pair(
+                        "Big Screen disabled itself",
+                        "Big Screen encountered two internal errors within three minutes, so it turned itself off to protect Beat Saber.\n\nLast error: " +
+                        signature + "\n\nError log: " + PersistentErrorLog +
+                        "\n\nYou can turn the mod back on from its General tab after reviewing the log.");
+                }
+                else if(!gameplayActive_)
+                {
+                    pendingDialog_ = std::make_pair(
+                        "Big Screen error",
+                        "Big Screen could not complete an internal operation.\n\n" +
+                        signature + "\n\nThe error was recorded in " +
+                        PersistentErrorLog + ".");
+                }
+                if(!gameplayActive_)
+                    menuExitRequested_ = true;
+                // During gameplay the first failure remains log-only. If a
+                // second failure follows soon after, one circuit-breaker
+                // dialog waits until gameplay ends.
             }
-            else if(!gameplayActive_)
-            {
-                pendingDialog_ = std::make_pair(
-                    "Big Screen error",
-                    "Big Screen could not complete an internal operation.\n\n" +
-                    signature + "\n\nThe error was recorded in " + PersistentErrorLog + ".");
-            }
-            if(!gameplayActive_)
-                menuExitRequested_ = true;
-            // During gameplay the first failure remains log-only. If a second
-            // failure follows soon after, one circuit-breaker dialog waits
-            // until gameplay ends.
+        }
+        catch(...)
+        {
+            // This is the final failure boundary used by every noexcept hook.
+            // RecordError is itself noexcept and catches all sink failures.
+            RecordError("Internal error reporting failed", context);
         }
         // Settings and its JSON document belong to the Unity thread. Worker
         // failures request the state change here; TickMainThread applies it
@@ -349,6 +373,40 @@ namespace BigScreen {
         // been dismissed, so it can safely use Beat Saber's main dialog.
         if(IsBigScreenMenuActive())
             return;
+
+        // Beat Saber can dismiss its shared prompt during a scene or flow
+        // transition without invoking Big Screen's OK delegate. Do not let
+        // that external dismissal leave dialogVisible_ latched for the rest
+        // of the game session and silently suppress every later error.
+        bool validateVisibleDialog = false;
+        {
+            std::scoped_lock lock(mutex_);
+            validateVisibleDialog = dialogVisible_;
+        }
+        if(validateVisibleDialog)
+        {
+            bool promptStillVisible = false;
+            try
+            {
+                auto* flow = BSML::Helpers::GetMainFlowCoordinator();
+                auto prompt = flow
+                    ? flow->__cordl_internal_get__simpleDialogPromptViewController()
+                    : nullptr;
+                promptStillVisible = prompt &&
+                    (prompt->get_isInViewControllerHierarchy() ||
+                     prompt->get_isInTransition());
+            }
+            catch(...)
+            {
+                // A failed liveness probe must reopen the error channel. The
+                // later presentation path remains guarded and retry-limited.
+            }
+            if(!promptStillVisible)
+            {
+                std::scoped_lock lock(mutex_);
+                dialogVisible_ = false;
+            }
+        }
 
         std::pair<std::string, std::string> message;
         {
@@ -452,6 +510,7 @@ namespace BigScreen {
         menuExitRequested_ = false;
         waitingForMenuExit_ = false;
         lastInternalError_ = {};
+        dialogVisible_ = false;
         dialogFailureLogged_ = false;
         nextDialogAttempt_ = {};
     }

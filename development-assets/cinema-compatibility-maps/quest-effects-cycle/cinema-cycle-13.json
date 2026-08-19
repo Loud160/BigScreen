@@ -1,0 +1,30 @@
+{
+  "title": "Cinema Compatibility Test 13",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00013",
+  "videoFile": "cinema-cycle-video.mp4",
+  "environmentName": "BigMirrorEnvironment",
+  "allowCustomPlatform": false,
+  "mergePropGroups": true,
+  "environment": [
+    {
+      "name": "CinemaMergedTestLight",
+      "cloneFrom": "NeonTubeDirectionalR",
+      "active": true,
+      "position": {
+        "x": 0.0,
+        "y": 18.0,
+        "z": 65.0
+      },
+      "scale": {
+        "x": 1.8,
+        "y": 1.8,
+        "z": 1.8
+      }
+    }
+  ]
+}

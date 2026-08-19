@@ -15,10 +15,12 @@
 #include <span>
 #include <vector>
 
-// BLOOM EXPERIMENT DISABLED (2026-08-18): implementation is retained under
-// #if 0 in CinemaBloomRenderer.cpp, but the active surface does not register
+#include "BigScreen/ExperimentalFeatures.hpp"
+
+// BLOOM EXPERIMENT DISABLED (2026-08-18): implementation is retained behind
+// one named build gate, but the ordinary release surface does not register
 // with it.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
 #include "BigScreen/CinemaBloomRenderer.hpp"
 #endif
 #include "BigScreen/FrameDecoder.hpp"
@@ -333,7 +335,7 @@ namespace BigScreen {
                     "unavailable; using stock unlit shaders that wash out "
                     "under Bloom");
             }
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
             // BLOOM EXPERIMENT DISABLED (2026-08-18): never select this stock
             // fallback while the no-bloom contract is active. It cannot clear
             // Beat Saber's framebuffer emission channel and may wash the
@@ -367,7 +369,7 @@ namespace BigScreen {
             // mapper bloom/color-blending request to make the video surface
             // emissive or see-through. Both shader choices now honor only
             // authored alpha and the player's video-opacity setting.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
             const bool softAdditive = colorBlending && !authoredAlpha;
 #else
             (void)colorBlending;
@@ -859,7 +861,7 @@ namespace BigScreen {
         // BLOOM EXPERIMENT DISABLED (2026-08-18): preserve this implementation
         // for later investigation, but maps must not inject a bloom pre-pass
         // into either visible video-material path right now.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         mapperBloom_ = config.bloomIntensity;
         if(!sharedTexture)
         {
@@ -1318,7 +1320,7 @@ namespace BigScreen {
         // surface; keep the bloom pre-pass boost in sync with the new size.
         // BLOOM EXPERIMENT DISABLED (2026-08-18): keep the live glow update
         // code available in source without executing it.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         mapperBloom_ = config.bloomIntensity;
         if(bloomRegistered_)
         {
@@ -1539,7 +1541,7 @@ namespace BigScreen {
         // BLOOM EXPERIMENT DISABLED (2026-08-18): retain the parsed Cinema
         // value for future compatibility work, but do not let it change the
         // visible material into a soft-additive surface.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         colorBlending_ = config.colorBlending.value_or(false);
 #else
         colorBlending_ = false;
@@ -2418,7 +2420,7 @@ namespace BigScreen {
         // pre-pass never draws a dying surface during the same frame.
         // BLOOM EXPERIMENT DISABLED (2026-08-18): registration is compiled
         // out above, but retain the matching cleanup code for restoration.
-#if 0
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         if(bloomRegistered_)
         {
             CinemaBloomRenderer::Instance().UnregisterSource(videoObject_);

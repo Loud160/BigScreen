@@ -115,6 +115,17 @@ namespace BigScreen {
         const FrameVisualEffects& visualEffects,
         std::string& error)
     {
+        const auto openStarted = std::chrono::steady_clock::now();
+        openMilliseconds_ = 0.0;
+        const auto finishOpenMeasurement = [this, openStarted](bool success)
+        {
+            openMilliseconds_ = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - openStarted).count();
+            PaperLogger.info(
+                "Decoder startup {} in {:.2f} ms",
+                success ? "completed" : "failed",
+                openMilliseconds_);
+        };
         PaperLogger.info(
             "Decoder open started for '{}'",
             videoPath.filename().string());
@@ -149,6 +160,7 @@ namespace BigScreen {
         if(!backend_)
         {
             error = "The selected FFmpeg decoder backend is unavailable.";
+            finishOpenMeasurement(false);
             return false;
         }
         // A missing JVM has already been reported above. Pass an effective
@@ -183,6 +195,7 @@ namespace BigScreen {
                     DecodeMethodName(),
                     backend_->RuntimeVersion());
             }
+            finishOpenMeasurement(true);
             return true;
         }
         CloseAndRetainBackendMetrics();
@@ -190,6 +203,7 @@ namespace BigScreen {
             "Decoder open failed for '{}': {}",
             videoPath.filename().string(),
             error);
+        finishOpenMeasurement(false);
         return false;
     }
 

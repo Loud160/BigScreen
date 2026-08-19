@@ -1,0 +1,24 @@
+{
+  "title": "Cinema Compatibility Test 04",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00004",
+  "videoFile": "cinema-cycle-video.mp4",
+  "screenPosition": {
+    "x": 0.0,
+    "y": 13.0,
+    "z": 58.0
+  },
+  "screenRotation": {
+    "x": -4.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "screenHeight": 24.0,
+  "screenCurvature": 100.0,
+  "curveYAxis": false,
+  "screenSubsurfaces": 64
+}

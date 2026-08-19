@@ -1,0 +1,13 @@
+{
+  "title": "Cinema Compatibility Test 09",
+  "author": "Big Screen compatibility suite",
+  "duration": 20,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00009",
+  "videoFile": "cinema-test-video.mp4",
+  "bloom": 1.8,
+  "colorBlending": true,
+  "transparency": true
+}

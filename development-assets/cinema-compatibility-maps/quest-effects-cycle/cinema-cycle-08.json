@@ -1,0 +1,15 @@
+{
+  "title": "Cinema Compatibility Test 08",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00008",
+  "videoFile": "cinema-cycle-video.mp4",
+  "vignette": {
+    "type": "oval",
+    "radius": 0.0,
+    "softness": 0.1
+  }
+}

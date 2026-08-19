@@ -1,0 +1,21 @@
+{
+  "title": "Cinema Compatibility Test 02",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00002",
+  "videoFile": "cinema-cycle-video.mp4",
+  "screenPosition": {
+    "x": 6.0,
+    "y": 15.0,
+    "z": 62.0
+  },
+  "screenRotation": {
+    "x": 12.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "screenHeight": 22.0
+}

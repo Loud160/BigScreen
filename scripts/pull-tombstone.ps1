@@ -34,8 +34,10 @@ for ($i = 0; $i -lt 3; $i++) {
     $stats = & adb shell stat /sdcard/Android/data/com.beatgames.beatsaber/files/tombstone_0$i
     $date = (Select-String -Input $stats -Pattern "(?<=Modify: )\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?=.\d{9})").Matches.Value
     if([string]::IsNullOrEmpty($date)) {
-        Write-Output "Failed to pull tombstone, exiting..."
-        exit 1;
+        # Quest retains a small rotating set and does not guarantee that every
+        # numbered slot exists. Missing a newer slot must not discard an older
+        # valid crash record that was already found.
+        continue
     }
     $dateObj = [datetime]::ParseExact($date, "yyyy-MM-dd HH:mm:ss", $Null)
     $difference = [math]::Round(($currentDate - $dateObj).TotalMinutes)
@@ -48,6 +50,11 @@ for ($i = 0; $i -lt 3; $i++) {
         $recentDate = $dateObj
         $recentTombstone = $i
     }
+}
+
+if ($Null -eq $recentTombstone) {
+    Write-Output "No Beat Saber tombstone was found in the checked Quest slots."
+    exit 1
 }
 
 Write-Output "Latest tombstone was tombstone_0$recentTombstone"

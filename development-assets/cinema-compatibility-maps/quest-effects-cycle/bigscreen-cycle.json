@@ -1,0 +1,76 @@
+{
+  "formatVersion": 1,
+  "phaseSeconds": 10,
+  "phases": [
+    {
+      "file": "cinema-cycle-01.json",
+      "hideScreen": false,
+      "title": "Baseline and mapper metadata"
+    },
+    {
+      "file": "cinema-cycle-02.json",
+      "hideScreen": false,
+      "title": "Screen position, tilt and height"
+    },
+    {
+      "file": "cinema-cycle-03.json",
+      "hideScreen": false,
+      "title": "Independent X, Y and Z screen rotation"
+    },
+    {
+      "file": "cinema-cycle-04.json",
+      "hideScreen": false,
+      "title": "Horizontal curvature and subsurfaces"
+    },
+    {
+      "file": "cinema-cycle-05.json",
+      "hideScreen": false,
+      "title": "Vertical curvature and curveYAxis"
+    },
+    {
+      "file": "cinema-cycle-06.json",
+      "hideScreen": false,
+      "title": "All color-correction controls"
+    },
+    {
+      "file": "cinema-cycle-07.json",
+      "hideScreen": false,
+      "title": "Rectangular vignette"
+    },
+    {
+      "file": "cinema-cycle-08.json",
+      "hideScreen": false,
+      "title": "Elliptical vignette aliases and softness"
+    },
+    {
+      "file": "cinema-cycle-09.json",
+      "hideScreen": false,
+      "title": "Content bloom at 1.0"
+    },
+    {
+      "file": "cinema-cycle-10.json",
+      "hideScreen": false,
+      "title": "Perfect visibility and opaque light-blocking body"
+    },
+    {
+      "file": "cinema-cycle-11.json",
+      "hideScreen": false,
+      "title": "Additional screen position, rotation and scale"
+    },
+    {
+      "file": "cinema-cycle-12.json",
+      "hideScreen": false,
+      "title": "Environment active, parent, transforms and cloning"
+    },
+    {
+      "file": "cinema-cycle-13.json",
+      "hideScreen": false,
+      "title": "Custom-platform preference and merged cloned-light groups"
+    },
+    {
+      "file": "cinema-cycle-14.json",
+      "hideScreen": true,
+      "title": "forceEnvironmentModifications without a video"
+    }
+  ]
+}

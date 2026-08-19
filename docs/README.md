@@ -26,9 +26,6 @@ This index separates ordinary player instructions from mapper and developer mate
 - [Self-updating core feasibility](SELF_UPDATING_FEASIBILITY.md) — analysis of a signed A/B core updater, startup health confirmation, automatic rollback, Android restrictions, and QMOD compatibility. This feature is not implemented.
 - [Quest and PC dual-platform feasibility](DUAL_PLATFORM_ARCHITECTURE_FEASIBILITY.md) — recommended shared C++ core, Quest and PC host boundaries, PC decoding pipeline, and why a Rust rewrite is not recommended.
 - [GPU video-pipeline feasibility](GPU_VIDEO_PIPELINE_FEASIBILITY.md) — research into YUV upload, SurfaceTexture, and AHardwareBuffer/Vulkan paths. No replacement pipeline is implemented.
-- [Diagnostic-session logging and source-removal workflow](MENU_DOWNLOAD_SESSION_LOGGING_AND_SOURCE_INSTALL_REMOVAL_WORKFLOW.md) — original requirements and investigation scope.
-- [Logging writer and MBF conflict analysis](RESOLVE_LOGGING_WRITER_DESIGN_AND_REPRODUCE_SOURCE_DEPLOY_MBF_CONFLICT.md) — follow-up comparison of synchronous, queued, and hybrid logging plus the controlled source-deploy/MBF ownership investigation.
-- [Mixed MBF/source ownership policy](RESOLVE_MIXED_MBF_SOURCE_OWNERSHIP_AND_LEGACY_SOURCE_INSTALLS.md) — approved receipt, legacy-install, conservative removal, and MBF transition policy.
-- [Implemented diagnostic and ownership-safe deployment specification](DETAILED_DIAGNOSTIC_SESSION_LOGGING_AND_OWNERSHIP_SAFE_SOURCE_DEPLOY_REMOVAL.md) — the implementation contract for JSONL sessions, support collection, source receipts, MBF refusal, legacy migration, and safe removal.
+- [AI-assisted development records](ai-assisted-development/README.md) — retained prompts, implementation contracts, planning notes, and external reviews. These are historical engineering records rather than canonical runtime documentation.
 - [Future work](FUTURE_WORK.md) — intentionally deferred ideas and known areas for wider testing.
 - [Third-party notices](../THIRD_PARTY_NOTICES.md) and [provenance](../PROVENANCE.md).

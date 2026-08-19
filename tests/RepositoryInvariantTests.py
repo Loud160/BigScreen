@@ -87,6 +87,9 @@ playback_header = (root / "include/BigScreen/PlaybackSession.hpp").read_text(
 )
 playback_source = (root / "src/PlaybackSession.cpp").read_text(encoding="utf-8")
 core_logic = (root / "include/BigScreen/CoreLogic.hpp").read_text(encoding="utf-8")
+experimental_features = (
+    root / "include/BigScreen/ExperimentalFeatures.hpp"
+).read_text(encoding="utf-8")
 performance_panel_source = (root / "src/PerformancePanel.cpp").read_text(
     encoding="utf-8"
 )
@@ -202,6 +205,18 @@ assert qpm["info"]["url"] == "https://github.com/Loud160/BigScreen"
 assert mod_template["packageVersion"] == "1.40.8_7379"
 assert qpm["version"] == mod_template["version"]
 assert qpm_shared["config"]["version"] == mod_template["version"]
+
+# Cinema compatibility maps are manual developer fixtures. They must remain
+# available for side-by-side testing without ever becoming QMOD content or a
+# source-deployment side effect.
+development_maps = root / "development-assets" / "cinema-compatibility-maps"
+assert development_maps.is_dir()
+assert (development_maps / "README.md").is_file()
+assert "development-assets" not in json.dumps(mod_template)
+assert "development-assets" not in cmake
+assert "development-assets" not in copy_script
+assert "development-assets" not in create_qmod
+assert "Big Screen Cinema Test" not in copy_script
 resolved_dependencies = {
     entry["dependency"]["id"]: entry["version"]
     for entry in qpm_shared["restoredDependencies"]
@@ -478,8 +493,8 @@ for documented_dependency in (
     "Building without the BAT launcher",
     "beatsaber-hook",
     "bs-cordl",
-    "FFmpeg | 4.4.8",
-    "FFmpeg | 9.0.1",
+    "FFmpeg comparison runtime | 4.4.8",
+    "FFmpeg default runtime | 9.0.1",
     "CPython Android runtime | 3.14.7",
     "QuickJS-NG amalgamation | 0.16.1",
     "yt-dlp | nightly 2026.08.18.122307",
@@ -606,14 +621,20 @@ assert 'config.colorBlending.value_or(false)' in screen_surface_source
 assert 'const bool softAdditive = false;' in screen_surface_source
 assert 'colorBlending_ = false;' in screen_surface_source
 # Preserve the complete Cinema bloom experiment in source, but compile it and
-# every runtime hook/registration call out. This is intentionally different
-# from deleting the implementation: it remains available for a later branch
-# without affecting current video presentation.
+# every runtime hook/registration call out behind one descriptive, default-off
+# feature gate. This is intentionally different from deleting the experiment:
+# it remains available for a later branch without affecting current playback.
 cinema_bloom_source = (root / "src/CinemaBloomRenderer.cpp").read_text(
     encoding="utf-8")
 assert 'BLOOM EXPERIMENT DISABLED (2026-08-18)' in cinema_bloom_source
-assert '#if 0' in cinema_bloom_source
-assert cinema_bloom_source.rstrip().endswith('#endif')
+assert '#define BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM 0' in \
+    experimental_features
+assert 'option(BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM' in cmake
+assert '"Compile the unfinished Cinema bloom experiment" OFF' in cmake
+assert '#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM' in \
+    cinema_bloom_source
+assert cinema_bloom_source.rstrip().endswith(
+    '#endif // BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM')
 assert 'RGB111110Float' in cinema_bloom_source
 assert 'GetBlurKernel' in cinema_bloom_source
 assert '->DoubleBlur(' not in cinema_bloom_source
@@ -641,7 +662,8 @@ capture_block = cinema_bloom_source.split(
 assert 'if(!material->SetPass(0))' not in capture_block
 assert '"SmoothCamera"' in cinema_bloom_source
 assert 'INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);' in main_source
-assert '#if 0\n    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);\n#endif' \
+assert ('#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM\n'
+        '    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);\n#endif') \
     in main_source
 bloom_hook = main_source.split('BloomPrePass_OnPreRender,', 1)[1]
 assert bloom_hook.index('BloomPrePass_OnPreRender(self);') < \
@@ -664,6 +686,7 @@ assert 'CinemaBloomIntensity' in core_logic
 disabled_bloom_ui = settings_menu_source.split(
     'BLOOM EXPERIMENT DISABLED (2026-08-18): retain the diagnostic UI', 1
 )[1].split('#endif', 1)[0]
+assert '#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM' in disabled_bloom_ui
 assert '"Native Bloom Level"' in disabled_bloom_ui
 assert '"Cinema Blur Level"' in disabled_bloom_ui
 assert '"Embedded Video Shader"' in settings_menu_source
@@ -1893,7 +1916,7 @@ assert "LayoutSelectorWidth = 50.0f" in selection_toggle_source
 assert "ToggleRootWidth = 44.0f" in selection_toggle_source
 assert "SongHeaderGroupSpan" in selection_toggle_source
 assert "setting->text->set_enableWordWrapping(false)" in selection_toggle_source
-assert "PlaceTopBarLayoutSelector(layoutUi_)" in selection_toggle_source
+assert "PlaceTopBarLayoutSelector(layoutUi_.ptr())" in selection_toggle_source
 assert 'root->Find("NameText")' in selection_toggle_source
 assert "TextAlignmentOptions::MidlineRight" in selection_toggle_source
 assert "labelRect->set_sizeDelta({21.5f, 8.0f})" in selection_toggle_source

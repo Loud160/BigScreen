@@ -1,0 +1,18 @@
+{
+  "title": "Cinema Compatibility Test 06",
+  "author": "Big Screen compatibility suite",
+  "duration": 20,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00006",
+  "videoFile": "cinema-test-video.mp4",
+  "colorCorrection": {
+    "brightness": 0.75,
+    "contrast": 1.45,
+    "saturation": 0.55,
+    "hue": 90.0,
+    "exposure": 1.2,
+    "gamma": 0.8
+  }
+}

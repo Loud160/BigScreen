@@ -1,0 +1,86 @@
+{
+  "title": "Cinema Compatibility Test 11",
+  "author": "Big Screen compatibility suite",
+  "duration": 140,
+  "offset": 0,
+  "configByMapper": true,
+  "formatVersion": 1,
+  "videoID": "BSTest00011",
+  "videoFile": "cinema-cycle-video.mp4",
+  "screenPosition": {
+    "x": 0.0,
+    "y": 12.0,
+    "z": 58.0
+  },
+  "screenHeight": 18.0,
+  "additionalScreens": [
+    {
+      "position": {
+        "x": -34.0,
+        "y": 11.0,
+        "z": 35.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": -28.0,
+        "z": 0.0
+      },
+      "scale": {
+        "x": 0.75,
+        "y": 0.75,
+        "z": 0.75
+      }
+    },
+    {
+      "position": {
+        "x": 34.0,
+        "y": 11.0,
+        "z": 35.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": 28.0,
+        "z": 0.0
+      },
+      "scale": {
+        "x": 0.75,
+        "y": 0.75,
+        "z": 0.75
+      }
+    },
+    {
+      "position": {
+        "x": 0.0,
+        "y": 34.0,
+        "z": 45.0
+      },
+      "rotation": {
+        "x": 18.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "scale": {
+        "x": 0.55,
+        "y": 0.55,
+        "z": 0.55
+      }
+    },
+    {
+      "position": {
+        "x": 0.0,
+        "y": 12.0,
+        "z": -28.0
+      },
+      "rotation": {
+        "x": 0.0,
+        "y": 180.0,
+        "z": 0.0
+      },
+      "scale": {
+        "x": 0.65,
+        "y": 0.65,
+        "z": 0.65
+      }
+    }
+  ]
+}
