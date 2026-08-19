@@ -77,13 +77,8 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     throw "ADB was not found. Install Android platform-tools or SideQuest before deploying."
 }
-$authorizedDevices = @((& adb devices) | Select-String "`tdevice$")
-if ($authorizedDevices.Count -eq 0) {
-    throw "No authorized Quest was available through ADB. Connect one headset and accept its USB debugging prompt."
-}
-if ($authorizedDevices.Count -gt 1) {
-    throw "More than one authorized Android device is connected. Disconnect every device except the Quest before source deployment."
-}
+. (Join-Path $PSScriptRoot "adb-target.ps1")
+[void](Select-BigScreenAdbTarget "source deployment")
 
 # The embedded video shader bundle must never be stale relative to its Unity
 # source, or the build silently ships a broken screen material. When any

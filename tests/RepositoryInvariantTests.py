@@ -50,6 +50,8 @@ copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
 ownership_script = (
     root / "scripts/source-install-ownership.ps1"
 ).read_text(encoding="utf-8")
+adb_target_script = (root / "scripts/adb-target.ps1").read_text(
+    encoding="utf-8")
 runtime_manifest_sync = (
     root / "scripts/sync-runtime-manifest.ps1"
 ).read_text(encoding="utf-8")
@@ -241,6 +243,17 @@ for packaging_guard in (
 ):
     assert packaging_guard in validate_mod_json
 assert "source%20license-GPL--3.0--only-blue" in readme
+
+# Source deployment/removal must pin every ADB call to the one authorized
+# Quest. Otherwise even an unauthorized phone/emulator makes `adb shell`
+# ambiguous, and its error text can be mistaken for ownership metadata.
+assert "Select-BigScreenAdbTarget \"source deployment\"" in copy_script
+assert '"adb-target.ps1"' in copy_script
+assert "$env:ANDROID_SERIAL = $serial" in adb_target_script
+assert "if ($listing.ExitCode -ne 0)" in ownership_script
+assert "ADB could not inspect ModsBeforeFriday package metadata" in \
+    ownership_script
+assert 'PSObject.Properties["modLink"]' in validate_mod_json
 assert "docs/DEPENDENCIES.md" in readme
 for marker in (
     "GPL-3.0-only",

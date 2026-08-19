@@ -7,6 +7,7 @@
 
 # Shared by source deployment, source removal, and isolated policy tests.
 # It deliberately owns decisions and receipts only; callers own build UX.
+. (Join-Path $PSScriptRoot "adb-target.ps1")
 Set-StrictMode -Version 2.0
 
 $script:BigScreenPackage = "com.beatgames.beatsaber"
@@ -77,12 +78,20 @@ function Assert-BigScreenRemotePath([string]$Path) {
 function Test-BigScreenRemoteFile([string]$Path) {
     Assert-BigScreenRemotePath $Path
     $result = Invoke-BigScreenAdb @("shell", "test -f '$Path'") -AllowFailure
+    if ($result.ExitCode -ne 0 -and
+        -not [string]::IsNullOrWhiteSpace($result.Text)) {
+        throw "ADB could not inspect Quest file $Path.`n$($result.Text)"
+    }
     return $result.ExitCode -eq 0
 }
 
 function Test-BigScreenRemoteDirectory([string]$Path) {
     Assert-BigScreenRemotePath $Path
     $result = Invoke-BigScreenAdb @("shell", "test -d '$Path'") -AllowFailure
+    if ($result.ExitCode -ne 0 -and
+        -not [string]::IsNullOrWhiteSpace($result.Text)) {
+        throw "ADB could not inspect Quest directory $Path.`n$($result.Text)"
+    }
     return $result.ExitCode -eq 0
 }
 
@@ -98,7 +107,10 @@ function Get-BigScreenRemoteHash([string]$Path) {
 function Get-BigScreenRemoteJson([string]$Path) {
     Assert-BigScreenRemotePath $Path
     $result = Invoke-BigScreenAdb @("exec-out", "cat", $Path) -AllowFailure
-    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Text)) {
+    if ($result.ExitCode -ne 0) {
+        throw "ADB could not read Quest metadata $Path.`n$($result.Text)"
+    }
+    if ([string]::IsNullOrWhiteSpace($result.Text)) {
         return $null
     }
     try { return $result.Text | ConvertFrom-Json } catch { return $null }
@@ -137,8 +149,17 @@ function Resolve-BigScreenInstallState {
 
 function Get-MbfBigScreenRegistration([string]$GameVersion) {
     $packageRoot = "$($script:BigScreenModData)/Packages/$GameVersion"
+    # A missing package-version directory is the normal state for a Quest that
+    # has never installed Big Screen through MBF. Avoid treating find's exit 1
+    # for that normal absence as an ADB transport failure.
+    if (-not (Test-BigScreenRemoteDirectory $packageRoot)) {
+        return @()
+    }
     $listing = Invoke-BigScreenAdb @(
         "shell", "find '$packageRoot' -type f -name mod.json -print 2>/dev/null") -AllowFailure
+    if ($listing.ExitCode -ne 0) {
+        throw "ADB could not inspect ModsBeforeFriday package metadata.`n$($listing.Text)"
+    }
     $matches = @()
     foreach ($path in ($listing.Text -split "`r?`n")) {
         $path = $path.Trim()

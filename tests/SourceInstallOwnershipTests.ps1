@@ -13,6 +13,39 @@ function Assert-Equal([string]$Expected, [string]$Actual, [string]$Case) {
     }
 }
 
+# ADB itself treats an unauthorized second device as an ambiguous target for
+# ordinary shell commands. Big Screen must select the sole authorized serial
+# rather than passing ADB's error text into ownership-path parsing.
+$selectedSerial = Resolve-BigScreenAdbTargetFromListing @(
+    "List of devices attached",
+    "QUEST123`tdevice",
+    "PHONE456`tunauthorized")
+Assert-Equal "QUEST123" $selectedSerial `
+    "one authorized Quest plus an unauthorized device"
+$multipleAuthorizedRejected = $false
+try {
+    [void](Resolve-BigScreenAdbTargetFromListing @(
+        "QUEST123`tdevice",
+        "QUEST456`tdevice"))
+} catch {
+    $multipleAuthorizedRejected = $_.Exception.Message -match
+        "More than one authorized Android device"
+}
+if (-not $multipleAuthorizedRejected) {
+    throw "Multiple authorized ADB targets were not rejected."
+}
+$unauthorizedOnlyRejected = $false
+try {
+    [void](Resolve-BigScreenAdbTargetFromListing @(
+        "PHONE456`tunauthorized"))
+} catch {
+    $unauthorizedOnlyRejected = $_.Exception.Message -match
+        "waiting for USB-debugging authorization"
+}
+if (-not $unauthorizedOnlyRejected) {
+    throw "An unauthorized-only ADB listing did not explain the headset prompt."
+}
+
 $cases = @(
     @{ Name="not installed"; Expected="NOT_INSTALLED"; Complete=$false; Partial=$false; Mbf=$false; MbfComplete=$false; Legacy=0 },
     @{ Name="source managed"; Expected="SOURCE_MANAGED"; Complete=$true; Partial=$false; Mbf=$false; MbfComplete=$false; Legacy=1 },

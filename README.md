@@ -26,13 +26,6 @@ video to **OST, DLC, custom, and WIP songs**, whether the mapper included one or
 the player chose their own. Normal use—including YouTube downloads, local-file
 selection, timing, screen setup, and playback—happens entirely inside the headset.
 
-> **Current development warning (August 18, 2026):** this repository is a
-> preservation checkpoint containing substantial recent shader, screen, and
-> Cinema-compatibility work. Its current on-device behavior has not been
-> independently established by this documentation audit, and the complete mod
-> must be retested on Quest before it is treated as a release candidate. See
-> [Current development checkpoint](docs/KNOWN_ISSUES.md).
-
 ## The screen is part of the experience
 
 Big Screen is not limited to placing a fixed rectangle behind the notes. Its

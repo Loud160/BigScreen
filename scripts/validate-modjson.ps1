@@ -130,7 +130,17 @@ if (Test-Path -LiteralPath $qpmShared) {
         $restored = $shared.restoredDependencies | Where-Object {
             $_.dependency.id -eq $configured.id
         } | Select-Object -First 1
-        if ($restored -and $restored.dependency.additionalData.modLink) {
+        # modLink is optional QPM metadata. Access it through the property bag
+        # so validation remains correct under StrictMode as well as in the
+        # ordinary standalone invocation.
+        $additionalData = if ($restored -and $restored.dependency) {
+            $restored.dependency.PSObject.Properties["additionalData"]
+        } else { $null }
+        $modLink = if ($additionalData -and $additionalData.Value) {
+            $additionalData.Value.PSObject.Properties["modLink"]
+        } else { $null }
+        if ($modLink -and
+            -not [string]::IsNullOrWhiteSpace([string]$modLink.Value)) {
             $expectedDependencyIds += [string]$configured.id
         }
     }

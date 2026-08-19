@@ -29,14 +29,7 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 $manifestPath = Join-Path $repoRoot "mod.template.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 
-$devices = @((& adb devices) | Select-String "`tdevice$")
-if ($devices.Count -ne 1) {
-    throw $(if ($devices.Count -eq 0) {
-        "No authorized Quest was found. Connect one headset and accept its USB debugging prompt."
-    } else {
-        "More than one authorized Android device is connected. Disconnect all but the Quest to remove Big Screen safely."
-    })
-}
+[void](Select-BigScreenAdbTarget "source removal")
 
 $classification = Get-BigScreenInstallClassification ([string]$manifest.packageVersion)
 Write-Output "Detected Big Screen installation state: $($classification.State)"
