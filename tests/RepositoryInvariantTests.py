@@ -249,7 +249,13 @@ assert "source%20license-GPL--3.0--only-blue" in readme
 # ambiguous, and its error text can be mistaken for ownership metadata.
 assert "Select-BigScreenAdbTarget \"source deployment\"" in copy_script
 assert '"adb-target.ps1"' in copy_script
-assert "$env:ANDROID_SERIAL = $serial" in adb_target_script
+assert "$env:ANDROID_SERIAL = $selected.Serial" in adb_target_script
+assert "Get-BigScreenQuestCandidates" in adb_target_script
+assert "com.beatgames.beatsaber" in adb_target_script
+assert "Choose the Quest to use" in adb_target_script
+assert '"adb-target.ps1"' in log_collector
+assert "Select-BigScreenAdbTarget `" in log_collector
+assert "-AdbCommand $script:Adb" in log_collector
 assert "if ($listing.ExitCode -ne 0)" in ownership_script
 assert "ADB could not inspect ModsBeforeFriday package metadata" in \
     ownership_script
@@ -759,8 +765,13 @@ embedded_shader_toggle = settings_menu_source.split(
     '"Embedded Video Shader"', 1)[1]
 assert 'ApplyDisplaySettingsAndRefreshPreview();' in \
     embedded_shader_toggle.split('BSML::Lite::AddHoverHint', 1)[0]
-assert 'static bool loadFailed = false;' in screen_surface_source
-assert screen_surface_source.count('loadFailed = true;') >= 6
+# The process-lifetime embedded shader cache must be a real GC/native lifetime
+# owner. A raw static Shader* can outlive its IL2CPP wrapper across scenes and
+# crash Material::CreateWithShader even though the address remains non-null.
+assert 'SafePtrUnity<UnityEngine::AssetBundle> bundle;' in screen_surface_source
+assert 'SafePtrUnity<UnityEngine::Shader> shader;' in screen_surface_source
+assert 'resources.bundle = bundle;' in screen_surface_source
+assert 'bundle->Unload(false);' not in screen_surface_source
 assert 'ApplyVideoMaterialMode' in screen_surface_source
 # UI/Default premultiplies by final alpha inside its fragment stage, so the
 # opacity tint must scale ONLY alpha (RGB too would darken twice), the
@@ -1516,6 +1527,16 @@ assert "BeginLibraryPreviewMeasurement" in playback_header
 assert "maySamplePlaybackFrame" in playback_source
 assert "context_ == PlaybackContext::Gameplay\n                        ? gameplayLastNoteTime_\n                        : std::nullopt" in playback_source
 assert "playWhenVideoReady_" in library_menu_source
+assert "bool RestartLibraryPreview(double songTimeSeconds);" in playback_header
+assert "libraryPreviewRestartGeneration_ = decoder_.Restart(" in playback_source
+assert "libraryPreviewRestartPending_" in playback_source
+assert "frame.generation != libraryPreviewRestartGeneration_" in playback_source
+assert "output.generation = targetGeneration;" in frame_decoder_source
+preview_loop = library_menu_source.split(
+    "void VideoLibraryMenu::LoopPreviewPlayback()", 1
+)[1].split("void VideoLibraryMenu::StopPreviewAudio", 1)[0]
+assert preview_loop.index("playback.RestartLibraryPreview(previewSongTime_)") < \
+    preview_loop.index("StartPreviewAudio();")
 assert "AdvanceSmoothedPreviewClock" in library_menu_source
 assert "playbackControlsTickCounter_ >= 6" in library_menu_source
 assert "downloadActive || periodicDownloadWasActive_" in library_menu_source
@@ -2054,6 +2075,8 @@ assert "Install-BigScreenSourcePlan `" in copy_script
 assert "-Receipt $receipt" in copy_script
 assert "ModsBeforeFriday" in copy_script
 assert "Remove-BigScreenReceiptFiles" in removal_script
+assert 'Select-BigScreenAdbTarget "source removal" `' in removal_script
+assert "-NonInteractive:$NonInteractive" in removal_script
 assert "Resolve-BigScreenReceiptRemovalAction" in ownership_script
 assert "Test-BigScreenExclusiveLibraryName" in ownership_script
 assert "Test-BigScreenRemoteDirectory" in ownership_script

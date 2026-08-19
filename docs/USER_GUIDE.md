@@ -37,7 +37,7 @@ The selected file is referenced in place; it is not copied into Big Screen stora
 
 ## Synchronizing video and song
 
-The playback group starts/stops both the map audio and video. Drag the scrubber to seek; the centered time shows current position and duration. A completed video can be scrubbed backward and played again. Long-running previews retain compressed packets while MediaCodec is busy and fully drain asynchronous final frames before looping, preventing intermittent freezes near the end.
+The playback group starts/stops both the map audio and video. Drag the scrubber to seek; the centered time shows current position and duration. At the natural end, the scrubber returns to zero and the synchronized song/video preview loops. Big Screen clears the completed decoder state and waits for a newly decoded opening picture before restarting the song; Pause/Play after completion uses the same restart path. Long-running previews retain compressed packets while MediaCodec is busy and fully drain asynchronous final frames before looping, preventing intermittent freezes near the end.
 
 The song editor keeps the full-height timing controls, **Playback Position**, and **Video Storage** visible together without a nested scroll area. The storage row shows the selected map's managed download, any active local-video size, all Big Screen downloads, free Quest space, and the video removal action.
 

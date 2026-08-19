@@ -34,6 +34,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "adb-target.ps1")
 
 $script:PackageName = "com.beatgames.beatsaber"
 $script:ModDataRoot = "/sdcard/ModData/$($script:PackageName)"
@@ -443,18 +444,11 @@ try {
 
     Write-Host "`nChecking the Quest connection..." -ForegroundColor Cyan
     $script:AdbWasUsed = $true
-    $devices = Invoke-Adb -Arguments @("devices")
-    $authorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sdevice$" })
-    $unauthorized = @($devices.Text -split "`r?`n" | Where-Object { $_ -match "\sunauthorized$" })
-    if ($authorized.Count -eq 0) {
-        if ($unauthorized.Count -gt 0) {
-            throw "The Quest is connected but has not authorized this computer. Put on the headset, accept USB debugging, and try again."
-        }
-        throw "No authorized Quest was found. Connect it by USB, turn it on, and accept USB debugging in the headset. Close ModsBeforeFriday or SideQuest if either is currently using the connection."
-    }
-    if ($authorized.Count -gt 1) {
-        throw "More than one Android device is connected. Disconnect the extra device so the collector cannot pull logs from the wrong headset."
-    }
+    # Use the same identity-safe selector as source deployment/removal. A phone
+    # connected for Android development is ignored; multiple actual Quests are
+    # listed for an explicit numbered choice before any logs are read.
+    [void](Select-BigScreenAdbTarget `
+        "support log collection" -AdbCommand $script:Adb)
 
     $epochText = (Invoke-AdbShell "date +%s").Text.Trim()
     if ($epochText -notmatch '^\d+$') { throw "The Quest did not return a usable clock value." }

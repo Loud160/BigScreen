@@ -576,6 +576,8 @@ namespace BigScreen {
             std::scoped_lock requestLock(requestMutex_);
             requestedSeconds_ = 0.0;
             requestVersion_ = 0;
+            presentationGeneration_ = 0;
+            restartPending_ = false;
         }
         {
             std::scoped_lock outputLock(outputMutex_);
@@ -624,6 +626,34 @@ namespace BigScreen {
             ++requestVersion_;
         }
         requestChanged_.notify_one();
+    }
+
+    std::uint64_t FrameDecoder::Restart(double mediaSeconds)
+    {
+        if(!open_)
+            return 0;
+
+        // A frame published before the rewind must never satisfy the new
+        // preview's readiness gate. Return its RGBA storage to the existing
+        // pool instead of freeing a multi-megabyte allocation.
+        {
+            std::scoped_lock lock(outputMutex_);
+            if(frameWaiting_ && !newestFrame_.rgba.empty())
+                RecycleBufferLocked(std::move(newestFrame_.rgba));
+            newestFrame_ = {};
+            frameWaiting_ = false;
+        }
+        std::uint64_t generation = 0;
+        {
+            std::scoped_lock lock(requestMutex_);
+            requestedSeconds_ = std::max(0.0, mediaSeconds);
+            restartPending_ = true;
+            ++presentationGeneration_;
+            ++requestVersion_;
+            generation = presentationGeneration_;
+        }
+        requestChanged_.notify_one();
+        return generation;
     }
 
     void FrameDecoder::UpdateVisualEffects(
@@ -739,6 +769,8 @@ namespace BigScreen {
         {
             double target = 0.0;
             std::uint64_t targetVersion = 0;
+            std::uint64_t targetGeneration = 0;
+            bool forceRestart = false;
             {
                 std::unique_lock lock(requestMutex_);
                 requestChanged_.wait(lock, [this, handledVersion]
@@ -749,6 +781,31 @@ namespace BigScreen {
                     break;
                 target = requestedSeconds_;
                 targetVersion = requestVersion_;
+                targetGeneration = presentationGeneration_;
+                forceRestart = restartPending_;
+                restartPending_ = false;
+            }
+
+            if(forceRestart)
+            {
+                // EOF is a codec state, not merely a timestamp. Always flush
+                // and seek for an explicit preview restart before any
+                // last-frame coverage/EOF fast path can accept the request.
+                // Reset the first-PTS guard as well: a stream whose opening
+                // frame has a small positive timestamp still needs that frame
+                // republished for the new loop.
+                std::string seekError;
+                if(!SeekNear(target, seekError))
+                {
+                    SetWorkerError(
+                        "FFmpeg could not restart the video at the requested position: " +
+                        seekError);
+                    break;
+                }
+                lastDecodedTime = -std::numeric_limits<double>::infinity();
+                lastDecodedDuration = nominalFrameSeconds_;
+                firstAvailableFrameTime.reset();
+                endOfStreamTime.reset();
             }
 
             // A normal 30 fps video does not need a new decode for every 90 Hz
@@ -873,6 +930,7 @@ namespace BigScreen {
                         conversionError);
                     break;
                 }
+                output.generation = targetGeneration;
                 const auto elapsed = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - requestWorkStarted).count();
                 const auto previous = averageDecodeMilliseconds_.load();

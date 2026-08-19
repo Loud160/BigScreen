@@ -221,6 +221,16 @@ namespace BigScreen {
         }
     }
 
+    std::uint64_t FrameDecoder::Restart(double mediaSeconds)
+    {
+        if(backend_)
+        {
+            lastRequestedSeconds_ = std::max(0.0, mediaSeconds);
+            return backend_->Restart(mediaSeconds);
+        }
+        return 0;
+    }
+
     void FrameDecoder::UpdateVisualEffects(
         const FrameVisualEffects& visualEffects)
     {

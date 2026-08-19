@@ -44,6 +44,9 @@
 - [ ] Mods menu, all tabs, dialogs, Reset to Defaults, and master disable work.
 - [ ] OST, DLC, custom, and WIP entries appear once per song and remain correctly ordered after search/letter jump/editor return.
 - [ ] Menu preview starts/stops with audio and cannot leak into the home/mod menus or resume after Quest focus changes.
+- [ ] Let a full Video Library preview reach its natural end repeatedly. Song,
+      video, and scrubber restart together; Pause/Play after completion also
+      produces a new opening video frame without leaving the song editor.
 - [ ] Mapper download, pasted URL download, cancellation, thumbnail, progress, and understandable errors work.
 - [ ] Closing song details cancels only its own song-screen download and does
       not cancel an active Video Library download.
@@ -53,6 +56,9 @@
 - [ ] A probed YouTube URL shows one Video Library button per available source tier; song selection opens the same tier list in a modal. 1440p warns that software decoding is unavailable.
 - [ ] Offset, Fit to Song, speed, lead-in, pause/resume, scrub after end, and download auto-preview work.
 - [ ] All five layouts, flat/curved caps, aspect retention, curve arrows, placement, transparency, and Chroma override work.
+- [ ] Repeatedly enter/leave song selection, Video Library, gameplay, restart,
+      and results screens with both video-material methods; material creation
+      must not crash after scene changes or garbage collection.
 - [ ] Respect Mapper Settings on/off is independent from Allow Chroma Override and preserves mapper media/timing in both states.
 - [ ] PC Cinema color correction, rectangular/elliptical vignette, color blending, opaque screen body, and end fade work on Quest; Refresh reloads an edited map/playlist file without background polling.
 - [ ] Rectangular and elliptical vignettes show no black rectangular backing; explicit black lead-in and mapper-authored opaque-body behavior remain intact.

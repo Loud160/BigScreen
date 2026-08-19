@@ -8,6 +8,12 @@ pressing Enter uses 30 minutes. The collector finds ADB automatically when it
 is available through Android platform-tools, SideQuest, QPM, or the Android SDK.
 No ADB commands are required.
 
+An authorized phone or tablet connected at the same time is ignored. The
+collector verifies that its target identifies as a Meta/Oculus Quest and has
+Beat Saber installed. If multiple matching Quests are connected, it lists
+their model names and serial numbers and asks which numbered headset should be
+used before reading any logs.
+
 The resulting `BigScreen-Support-<date>-<time>.zip` is saved beneath
 `BigScreen Support Logs`. Send the complete ZIP when reporting a problem. Its
 `REPORT.txt` separates each source into:

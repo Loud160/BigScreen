@@ -45,6 +45,10 @@ namespace BigScreen {
         // frame. nominalFrameSeconds_ remains the fallback for incomplete MP4
         // timing data.
         double durationSeconds = 0.0;
+        // Incremented by an explicit Restart. PlaybackSession rejects output
+        // from an older generation so a frame that finished decoding while
+        // the loop request was being posted cannot satisfy new-loop readiness.
+        std::uint64_t generation = 0;
     };
 
     /// ABI-neutral Cinema picture processing passed into either FFmpeg
@@ -87,6 +91,13 @@ namespace BigScreen {
         virtual bool WaitForWorkerStop(
             std::chrono::milliseconds timeout) = 0;
         virtual void Request(double mediaSeconds) = 0;
+        /// Starts a new presentation pass at the requested media position.
+        /// Unlike an ordinary clock request, this clears any completed-frame
+        /// mailbox and forces the worker to flush/seek even when the new time
+        /// happens to fall inside the last decoded frame. Library preview
+        /// looping uses this after EOF so stale completion state cannot be
+        /// mistaken for a newly decoded opening picture.
+        virtual std::uint64_t Restart(double mediaSeconds) = 0;
         /// Replaces CPU-side Cinema picture processing without reopening the
         /// stream. The decoder worker snapshots the small settings structure
         /// before touching a frame, so a ten-second test phase can change
@@ -189,6 +200,7 @@ namespace BigScreen {
         /// Publishes the newest externally-clocked target. The worker may
         /// intentionally coalesce obsolete targets so playback stays current.
         void Request(double mediaSeconds) override;
+        std::uint64_t Restart(double mediaSeconds) override;
         void UpdateVisualEffects(
             const FrameVisualEffects& visualEffects) override;
         bool TryTake(VideoFrame& destination) override;
@@ -310,6 +322,11 @@ namespace BigScreen {
         std::condition_variable requestChanged_;
         double requestedSeconds_ = 0.0;
         std::uint64_t requestVersion_ = 0;
+        std::uint64_t presentationGeneration_ = 0;
+        // Protected by requestMutex_. It remains set across ordinary Request
+        // calls until the worker consumes it, so a fast Unity Tick cannot
+        // overwrite the mandatory EOF rewind before the worker wakes.
+        bool restartPending_ = false;
         std::mutex outputMutex_;
         VideoFrame newestFrame_;
         std::vector<std::vector<std::uint8_t>> recycledBuffers_;
@@ -371,6 +388,9 @@ namespace BigScreen {
         }
         void Close();
         void Request(double mediaSeconds);
+        /// Clears stale decoded output and forces the active backend to begin
+        /// a fresh pass at mediaSeconds without replacing the Unity surface.
+        std::uint64_t Restart(double mediaSeconds);
         void UpdateVisualEffects(const FrameVisualEffects& visualEffects);
         bool TryTake(VideoFrame& destination);
         void Recycle(VideoFrame&& frame);

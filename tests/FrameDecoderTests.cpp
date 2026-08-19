@@ -175,20 +175,27 @@ namespace {
         decoder.UpdateVisualEffects({});
 
         // Exercise the exact long-running preview transition: drain beyond the
-        // final timestamp, then seek backward as the menu audio loops. A true
-        // EOF latch must clear and produce an opening frame every time.
+        // final timestamp, then use the explicit restart contract as the menu
+        // audio loops. A true EOF latch and any old mailbox picture must clear
+        // before an opening frame from the new pass is published.
+        std::uint64_t priorRestartGeneration = 0;
         for(int loop = 0; loop < 3; ++loop)
         {
             decoder.Request(decoder.DurationSeconds() + 0.25);
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            decoder.Request(0.1);
+            const auto restartGeneration = decoder.Restart(0.1);
+            Expect(restartGeneration > priorRestartGeneration,
+                   "each explicit restart should create a new frame generation");
+            priorRestartGeneration = restartGeneration;
             BigScreen::VideoFrame loopedFrame;
             Expect(WaitForFrame(decoder, loopedFrame),
-                   "a request after EOF should restart decoding for a preview loop");
+                   "an explicit restart after EOF should decode a new preview loop");
             if(!loopedFrame.rgba.empty())
             {
                 Expect(loopedFrame.presentationSeconds < 0.5,
                        "a preview loop should return to an opening video frame");
+                Expect(loopedFrame.generation == restartGeneration,
+                       "a preview loop should publish only the restarted generation");
                 decoder.Recycle(std::move(loopedFrame));
             }
         }

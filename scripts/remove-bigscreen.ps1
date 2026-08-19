@@ -29,7 +29,8 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 $manifestPath = Join-Path $repoRoot "mod.template.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 
-[void](Select-BigScreenAdbTarget "source removal")
+[void](Select-BigScreenAdbTarget "source removal" `
+    -NonInteractive:$NonInteractive)
 
 $classification = Get-BigScreenInstallClassification ([string]$manifest.packageVersion)
 Write-Output "Detected Big Screen installation state: $($classification.State)"

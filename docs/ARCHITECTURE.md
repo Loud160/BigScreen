@@ -153,6 +153,22 @@ Decoded RGBA frames enter the one-frame mailbox at that selected size. Queue and
 depth behavior depends on the active video material. Both selectable paths are
 included in the current on-device regression matrix; see `KNOWN_ISSUES.md`.
 
+Video Library looping is an explicit decoder transition, not an ordinary clock
+seek. `Restart` clears the one-frame mailbox, invalidates the previous pass's
+first-frame readiness, flushes the codec, and seeks before any last-frame or EOF
+fast path can accept the request. The song-preview channel remains stopped until
+a picture from that new pass reaches Unity. A Quest MediaCodec backend that
+does not produce a frame after the bounded restart interval is reopened once
+without recreating the Unity screen; there is no repeated reopen loop.
+
+The embedded video shader has process lifetime rather than scene lifetime. Its
+`AssetBundle` and `Shader` wrappers are retained through `SafePtrUnity` handles,
+which are real IL2CPP GC roots. Caching only a raw `Shader*` is unsafe: the
+address can remain non-null after scene/GC teardown while Unity's native shader
+has already been reclaimed, causing `Material::CreateWithShader` to crash.
+Keeping the small shader-only bundle loaded makes asset ownership explicit and
+prevents repeated bundle loads during menu/gameplay transitions.
+
 The current Cinema interoperability implementation is normalized by
 `MapVideoConfig` before it reaches
 Unity. Mapper screen ownership and Chroma environment ownership are independent:

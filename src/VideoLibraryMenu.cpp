@@ -3720,6 +3720,8 @@ namespace BigScreen {
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
             return;
 
+        bool completedPlaybackNeedsRestart = false;
+
         if(playWhenVideoReady_)
         {
             // A second press while the decoder is preparing is a stop request,
@@ -3757,14 +3759,20 @@ namespace BigScreen {
             }
 
             // The clip can finish between UI ticks. Normalize that stale
-            // "playing" flag here and continue into the normal start path.
+            // "playing" flag here and continue into the explicit EOF restart
+            // path. Unpausing an exhausted AudioSource cannot revive either
+            // its audio or the drained video decoder.
             previewPlaying_ = false;
             previewPaused_ = false;
+            completedPlaybackNeedsRestart = true;
         }
 
         const double duration = std::max(0.0f, selected_->songDuration);
         if(duration > 0.0 && previewSongTime_ >= duration - 0.01)
+        {
             previewSongTime_ = 0.0;
+            completedPlaybackNeedsRestart = true;
+        }
 
         RequestSelectedAudio();
         if(!IsAlive(previewAudioClip_) || !IsAlive(songPreviewPlayer_))
@@ -3815,6 +3823,13 @@ namespace BigScreen {
                     {"songTime", std::to_string(previewSongTime_)}});
             RefreshPlaybackControls();
             return;
+        }
+
+        if(completedPlaybackNeedsRestart)
+        {
+            auto& playback = PlaybackSession::Instance();
+            if(playback.IsLibraryPreviewActive())
+                playback.RestartLibraryPreview(previewSongTime_);
         }
         StartPreviewAudio();
     }
@@ -3941,10 +3956,14 @@ namespace BigScreen {
         scrubberFollowResumeTime_ = 0.0f;
         RefreshPlaybackControls();
 
-        // Keep FFmpeg and the Unity screen alive. PlaybackSession uses Beat
-        // Saber's audio position as its external clock, so ticking zero makes
-        // the decoder worker perform its normal backwards seek without a
-        // close/reopen allocation cycle at every loop.
+        // Keep the Unity screen alive, but explicitly begin a new decoder
+        // presentation pass. This clears EOF and stale mailbox/readiness state
+        // before StartPreviewAudio asks whether synchronized audio may begin.
+        // If a Quest MediaCodec implementation cannot resume after its flushed
+        // seek, PlaybackSession performs one bounded decoder-only reopen.
+        auto& playback = PlaybackSession::Instance();
+        if(playback.IsLibraryPreviewActive())
+            playback.RestartLibraryPreview(previewSongTime_);
         StartPreviewAudio();
         DiagnosticSessionLogger::Instance().MenuEvent(
             "preview_looped", "SystemNormalization");

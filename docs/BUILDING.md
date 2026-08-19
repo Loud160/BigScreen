@@ -293,6 +293,16 @@ With the intended Quest connected and authorized:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1
 ```
 
+The deployment selector ignores authorized Android phones and tablets. It
+verifies that a target identifies as a Meta/Oculus Quest and has Beat Saber
+installed before copying anything. If more than one matching Quest is
+connected, the script lists each headset by model and serial number and asks
+which numbered device should receive the build. Automated/noninteractive use
+fails instead of guessing when multiple Quests match. `Remove-BigScreen.bat`
+and `Collect-BigScreen-Logs.bat` use the same target policy, so neither tool
+can accidentally operate on an attached phone; both offer the same numbered
+choice when multiple Quests are present.
+
 On Windows, [Build-And-Deploy.bat](../Build-And-Deploy.bat) provides the same
 workflow as a double-clickable launcher. It keeps the console open afterward,
 prints a clear success or failure result, and preserves the underlying build or

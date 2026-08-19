@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -150,6 +151,11 @@ namespace BigScreen {
         /// negative lead-in is already ready because its correct presentation
         /// is the configured black or transparent background, not frame zero.
         bool SynchronizedAudioReady(double songTimeSeconds) const;
+        /// Begins a new Library-preview pass without rebuilding the Unity
+        /// screen. Readiness is invalidated until a picture produced after
+        /// this restart reaches the texture, preventing audio from running
+        /// ahead of a decoder that was previously drained at EOF.
+        bool RestartLibraryPreview(double songTimeSeconds);
         /// Starts the measured Library-preview interval after its untimed
         /// decoder prewarm. Gameplay gets this same boundary from Start(),
         /// which runs after PrewarmGameplay during the scene transition.
@@ -195,6 +201,7 @@ namespace BigScreen {
         void ResetAutomaticPerformanceWindow(double songTimeSeconds);
         void ResetAutomaticPerformanceController(double songTimeSeconds);
         void CaptureDiagnosticsSummary();
+        bool ReopenLibraryPreviewDecoder(double mediaTime);
 
         std::filesystem::path levelDirectory_;
         // Captured while the BeatmapLevel is known and retained through scene
@@ -236,6 +243,14 @@ namespace BigScreen {
         bool gameplayPrewarmFailed_ = false;
         std::string gameplayPrewarmError_;
         bool firstFrameUploaded_ = false;
+        // An EOF loop has a stricter readiness contract than an ordinary
+        // seek: only a picture decoded after Restart may release the audio.
+        // A single bounded reopen handles Android MediaCodec implementations
+        // that do not resume after avcodec_flush_buffers at drained EOF.
+        bool libraryPreviewRestartPending_ = false;
+        bool libraryPreviewRestartReopenAttempted_ = false;
+        std::uint64_t libraryPreviewRestartGeneration_ = 0;
+        std::chrono::steady_clock::time_point libraryPreviewRestartStarted_{};
         bool gameplayScreenEnabled_ = true;
         // A decoder failure hides only this session's screen. Beat Saber keeps
         // playing and ErrorManager postpones the explanation until it is safe.

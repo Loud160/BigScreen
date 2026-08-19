@@ -13,9 +13,7 @@ function Assert-Equal([string]$Expected, [string]$Actual, [string]$Case) {
     }
 }
 
-# ADB itself treats an unauthorized second device as an ambiguous target for
-# ordinary shell commands. Big Screen must select the sole authorized serial
-# rather than passing ADB's error text into ownership-path parsing.
+# ADB target parsing remains deterministic before any live device probe.
 $selectedSerial = Resolve-BigScreenAdbTargetFromListing @(
     "List of devices attached",
     "QUEST123`tdevice",
@@ -44,6 +42,35 @@ try {
 }
 if (-not $unauthorizedOnlyRejected) {
     throw "An unauthorized-only ADB listing did not explain the headset prompt."
+}
+
+# Extended ADB metadata and identity checks distinguish a Quest from an
+# authorized phone. Interactive selection is split into a pure helper so the
+# multi-headset policy can be tested without reading from the console.
+$parsedDevices = @(Get-BigScreenAdbDevicesFromListing @(
+    "QUEST123`tdevice product:hollywood model:Quest_2 device:hollywood",
+    "PHONE456`tdevice product:e1quew model:SM-S921U1 device:e1q"))
+Assert-Equal "Quest 2" $parsedDevices[0].Model "ADB model normalization"
+if (-not (Test-BigScreenQuestIdentity "Oculus" "Quest 2")) {
+    throw "An Oculus Quest 2 was not recognized as a Quest."
+}
+if (Test-BigScreenQuestIdentity "samsung" "SM-S921U1") {
+    throw "A Samsung phone was incorrectly recognized as a Quest."
+}
+$candidateOne = [pscustomobject]@{ Serial="QUEST123"; Model="Quest 2" }
+$candidateTwo = [pscustomobject]@{ Serial="QUEST456"; Model="Quest 3" }
+$singleCandidate = Select-BigScreenQuestCandidate @($candidateOne) -NonInteractive
+Assert-Equal "QUEST123" $singleCandidate.Serial "one Quest candidate"
+$nonInteractiveMultipleRejected = $false
+try {
+    [void](Select-BigScreenQuestCandidate @($candidateOne, $candidateTwo) `
+        -NonInteractive)
+} catch {
+    $nonInteractiveMultipleRejected = $_.Exception.Message -match
+        "More than one Quest with Beat Saber"
+}
+if (-not $nonInteractiveMultipleRejected) {
+    throw "Noninteractive multi-Quest selection did not fail safely."
 }
 
 $cases = @(

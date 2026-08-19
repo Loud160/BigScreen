@@ -589,6 +589,9 @@ namespace BigScreen {
         playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
+        libraryPreviewRestartPending_ = false;
+        libraryPreviewRestartReopenAttempted_ = false;
+        libraryPreviewRestartGeneration_ = 0;
         appliedMapperEndFade_ = 1.0f;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;
@@ -722,6 +725,68 @@ namespace BigScreen {
             mediaTime,
             mediaPastConfiguredEnd,
             firstFrameUploaded_);
+    }
+
+    bool PlaybackSession::RestartLibraryPreview(double songTimeSeconds)
+    {
+        if(!started_ || context_ != PlaybackContext::LibraryPreview ||
+           !config_ || playbackFailed_ || !decoder_.IsOpen())
+            return false;
+
+        const double mediaTime = config_->MediaTimeForSong(
+            songTimeSeconds,
+            decoder_.DurationSeconds());
+
+        // This invalidates the exact state StartPreviewAudio consults. Merely
+        // sending a backwards clock request left firstFrameUploaded_ true from
+        // the completed pass, allowing the song to restart while MediaCodec
+        // was still drained at EOF.
+        firstFrameUploaded_ = false;
+        libraryPreviewRestartPending_ = mediaTime >= 0.0;
+        libraryPreviewRestartReopenAttempted_ = false;
+        libraryPreviewRestartStarted_ = std::chrono::steady_clock::now();
+        lastPresentationSlot_.reset();
+        lastTickSongTime_ = songTimeSeconds;
+        expectedPresentationFraction_ = 0.0;
+        ResetAutomaticPerformanceWindow(songTimeSeconds);
+        ResetAutomaticPerformanceController(songTimeSeconds);
+        libraryPreviewRestartGeneration_ = decoder_.Restart(
+            std::max(0.0, mediaTime));
+        PaperLogger.info(
+            "Restarting Video Library decoder at media time {:.3f}; audio will wait for the new opening frame",
+            std::max(0.0, mediaTime));
+        return true;
+    }
+
+    bool PlaybackSession::ReopenLibraryPreviewDecoder(double mediaTime)
+    {
+        std::string error;
+        if(!OpenDecoder(error))
+        {
+            playbackFailed_ = true;
+            surface_.SetVisible(false);
+            cinemaScreens_.SetVisible(false);
+            PaperLogger.error(
+                "Video Library decoder could not recover after EOF: {}",
+                error);
+            ErrorManager::Instance().ReportUserVisible(
+                "Video preview could not restart",
+                "Big Screen could not reopen this video's decoder. Leave and reopen the song to try again. " +
+                    error);
+            return false;
+        }
+
+        // Keep the existing Unity screen and texture. Only the codec state is
+        // replaced, which avoids material churn during a normal preview loop
+        // and isolates MediaCodec implementations that cannot resume after a
+        // drained EOF flush.
+        libraryPreviewRestartGeneration_ = decoder_.Restart(
+            std::max(0.0, mediaTime));
+        libraryPreviewRestartStarted_ = std::chrono::steady_clock::now();
+        libraryPreviewRestartReopenAttempted_ = true;
+        PaperLogger.warn(
+            "Reopened the Video Library decoder after its EOF seek produced no frame");
+        return true;
     }
 
     bool PlaybackSession::OpenDecoder(std::string& error)
@@ -1300,7 +1365,21 @@ namespace BigScreen {
         if(decoder_.TryTake(frame))
         {
             bool uploadFailed = false;
-            if(surface_.Upload(frame))
+            const bool staleRestartFrame =
+                libraryPreviewRestartPending_ &&
+                frame.generation != libraryPreviewRestartGeneration_;
+            if(staleRestartFrame)
+            {
+                // The worker may have finished one old-pass conversion while
+                // the main thread posted Restart. Its generation cannot unlock
+                // synchronized audio or replace the opening frame requested
+                // for the new loop.
+                PaperLogger.debug(
+                    "Discarded stale Video Library frame from generation {}; waiting for generation {}",
+                    frame.generation,
+                    libraryPreviewRestartGeneration_);
+            }
+            else if(surface_.Upload(frame))
             {
                 // Count every distinct picture that actually reached Unity.
                 // The song-clock deadline accumulators above provide the
@@ -1311,6 +1390,12 @@ namespace BigScreen {
                 ++windowDeliveredPresentedFrames_;
                 ++diagnosticsWindowDeliveredPresentedFrames_;
                 firstFrameUploaded_ = true;
+                if(libraryPreviewRestartPending_)
+                {
+                    libraryPreviewRestartPending_ = false;
+                    PaperLogger.info(
+                        "Video Library restart frame reached the Unity texture");
+                }
                 if(showcase_.IsCreated() && showcase_.TimelineActive())
                 {
                     showcase_.SetMediaReady(true);
@@ -1355,6 +1440,26 @@ namespace BigScreen {
             decoder_.Recycle(std::move(frame));
             if(uploadFailed)
                 decoder_.Close();
+        }
+
+        if(libraryPreviewRestartPending_ && !firstFrameUploaded_ &&
+           !libraryPreviewRestartReopenAttempted_)
+        {
+            constexpr auto RestartFrameTimeout =
+                std::chrono::milliseconds(1000);
+            if(std::chrono::steady_clock::now() -
+                   libraryPreviewRestartStarted_ >= RestartFrameTimeout)
+            {
+                // avcodec_flush_buffers normally restarts both software and
+                // MediaCodec backends. Some Android codecs remain drained
+                // after EOF, however. One bounded reopen is the defined
+                // recovery—not an unbounded retry loop—and retains the
+                // already-created screen/material.
+                const double restartMediaTime = config_->MediaTimeForSong(
+                    songTimeSeconds,
+                    decoder_.DurationSeconds());
+                ReopenLibraryPreviewDecoder(restartMediaTime);
+            }
         }
 
         // Evaluate deadline outcomes after this tick's possible Unity upload.
@@ -1459,6 +1564,9 @@ namespace BigScreen {
         playbackFailed_ = false;
         gameplayScreenEnabled_ = true;
         firstFrameUploaded_ = false;
+        libraryPreviewRestartPending_ = false;
+        libraryPreviewRestartReopenAttempted_ = false;
+        libraryPreviewRestartGeneration_ = 0;
         appliedMapperEndFade_ = 1.0f;
         lastPresentationSlot_.reset();
         lastTickSongTime_ = 0.0;

@@ -52,6 +52,7 @@
 #include "UnityEngine/Vector3.hpp"
 #include "System/IntPtr.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-functions.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "beatsaber-hook/shared/utils/utils.h"
 
 extern "C" std::uint8_t _binary_bigscreen_video_shader_start[];
@@ -73,6 +74,24 @@ namespace BigScreen {
             object = nullptr;
         }
 
+        struct VideoShaderResources {
+            // Raw IL2CPP pointers are not GC roots. The previous static
+            // Shader* survived scene changes as a non-null address after its
+            // managed wrapper/native shader had been reclaimed, eventually
+            // sending an invalid Shader to Material::CreateWithShader. Keep
+            // both the bundle and shader behind SafePtrUnity handles for the
+            // complete process lifetime instead.
+            SafePtrUnity<UnityEngine::AssetBundle> bundle;
+            SafePtrUnity<UnityEngine::Shader> shader;
+            bool loadAttempted = false;
+        };
+
+        VideoShaderResources& CachedVideoShaderResources()
+        {
+            static VideoShaderResources resources;
+            return resources;
+        }
+
         UnityEngine::Shader* FindVideoShader()
         {
             // Beat Saber's bloom composite interprets render-target alpha as
@@ -81,17 +100,17 @@ namespace BigScreen {
             // the complete screen white when game bloom is enabled. The
             // embedded shader uses separate RGB/alpha blend equations: RGB
             // remains fully visible while the destination alpha is preserved.
-            static UnityEngine::Shader* shader = nullptr;
-            if(UnityW<UnityEngine::Shader>::isAlive(shader))
-                return shader;
+            auto& resources = CachedVideoShaderResources();
+            if(resources.shader)
+                return resources.shader.ptr();
 
             // A rejected bundle cannot succeed on a retry within the same
             // game session, and materials are rebuilt on every layout or
             // presentation change. Remember the failure so the log carries
             // one clear explanation instead of a repeated load attempt.
-            static bool loadFailed = false;
-            if(loadFailed)
+            if(resources.loadAttempted)
                 return nullptr;
+            resources.loadAttempted = true;
 
             try
             {
@@ -99,7 +118,6 @@ namespace BigScreen {
                 const auto* end = _binary_bigscreen_video_shader_end;
                 if(end <= begin)
                 {
-                    loadFailed = true;
                     PaperLogger.error("Embedded Big Screen video shader is empty");
                     return nullptr;
                 }
@@ -113,7 +131,6 @@ namespace BigScreen {
                         "UnityEngine.AssetBundle::LoadFromMemory_Internal"));
                 if(!loadFromMemory)
                 {
-                    loadFailed = true;
                     PaperLogger.error(
                         "Unity AssetBundle LoadFromMemory entry point is unavailable");
                     return nullptr;
@@ -122,7 +139,6 @@ namespace BigScreen {
                 auto* bundle = loadFromMemory(bundleBytes, 0);
                 if(!bundle)
                 {
-                    loadFailed = true;
                     PaperLogger.error(
                         "Unity rejected Big Screen's embedded Android video shader bundle");
                     return nullptr;
@@ -138,30 +154,31 @@ namespace BigScreen {
                         "assets/bigscreenvideo.shader");
                 }
                 if(loaded)
-                {
-                    shader = loaded;
-                    UnityEngine::Object::DontDestroyOnLoad(shader);
-                }
-                bundle->Unload(false);
+                    resources.shader = loaded;
 
-                if(!UnityW<UnityEngine::Shader>::isAlive(shader))
+                if(!resources.shader)
                 {
-                    shader = nullptr;
-                    loadFailed = true;
+                    bundle->Unload(true);
                     PaperLogger.error(
                         "Big Screen's embedded bundle did not contain its video shader");
                     return nullptr;
                 }
 
+                // Retaining this tiny, shader-only bundle is intentional.
+                // Unload(false) keeps Unity's native asset but releases the
+                // bundle that establishes its ownership. Combined with an
+                // unrooted managed pointer, that produced the observed crash
+                // after later scene/GC cycles. One process-lifetime owner is
+                // cheaper and safer than repeatedly loading the same bytes.
+                resources.bundle = bundle;
+
                 PaperLogger.info(
                     "Loaded Big Screen's bloom-compatible video material ({})",
-                    shader->get_name());
-                return shader;
+                    resources.shader->get_name());
+                return resources.shader.ptr();
             }
             catch(const std::exception& exception)
             {
-                shader = nullptr;
-                loadFailed = true;
                 PaperLogger.error(
                     "Could not load Big Screen's embedded video shader: {}",
                     exception.what());
@@ -169,8 +186,6 @@ namespace BigScreen {
             }
             catch(...)
             {
-                shader = nullptr;
-                loadFailed = true;
                 PaperLogger.error(
                     "Could not load Big Screen's embedded video shader");
                 return nullptr;
