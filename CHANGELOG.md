@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Routed every Big Screen menu warning, confirmation, help, and error dialog
+  through the currently visible center-screen controller. Settings and Video
+  Library popups can no longer open on or behind the curved side panels, even
+  while a center subpage is active.
+- Replaced per-action downloader threads and UI-thread joins with one persistent
+  background operation worker. Download completion now stays active until file
+  promotion and the library manifest transaction are fully finished, and menu
+  refreshes never wait behind that background commit.
+- Bounded decoder shutdown on Unity's thread to four milliseconds and moved a
+  slower FFmpeg/MediaCodec teardown to a dedicated background reaper. FFmpeg
+  container I/O is interruptible and startup has a one-second safety deadline.
+- Stopped automatically opening a newly downloaded video during its completion
+  update. The assignment becomes ready immediately and the player starts its
+  preview explicitly with Play, separating durable publication from decoder
+  teardown/startup and Beat Saber audio loading.
+- Shortened failed-download status text, with the stable `BS-DL-*` support code
+  placed first so it remains visible in the right-side menu. Full yt-dlp and
+  selected-stream diagnostics continue to be written to Big Screen's log.
+
 ## 0.7.0-alpha.9 — YouTube recovery and screen-presentation safeguards
 
 - Replaced the broken yt-dlp 2026.07.04 Android-VR download path with pinned

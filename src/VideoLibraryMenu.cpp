@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibraryMenu.hpp"
+#include "BigScreen/CenterScreenModal.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/UiUtility.hpp"
 #include "BigScreen/Utility.hpp"
@@ -372,6 +373,30 @@ namespace BigScreen {
 
         std::string DownloadStatus(const DownloadSnapshot& download)
         {
+            if(download.state == DownloadState::Failed)
+            {
+                // Keep the stable support code at the beginning so it cannot
+                // be clipped off the right side of the compact child panel.
+                // yt-dlp's full sanitized error and stream facts remain in the
+                // persistent error log under this same code.
+                const auto& code = download.errorCode;
+                const std::string_view summary =
+                    code == "BS-DL-HTTP-400" ? "YouTube rejected the request." :
+                    code == "BS-DL-HTTP-401" ? "This video requires sign-in." :
+                    code == "BS-DL-HTTP-403" ? "YouTube refused this stream." :
+                    code == "BS-DL-HTTP-404" ? "The video was not found." :
+                    code == "BS-DL-HTTP-410" ? "The video was removed." :
+                    code == "BS-DL-HTTP-429" ? "Rate limited; try again later." :
+                    code == "BS-DL-HTTP-5XX" ? "YouTube error; try again later." :
+                    code == "BS-DL-TLS-001" ? "Secure connection failed." :
+                    code == "BS-DL-STORAGE-001" ? "Not enough Quest storage." :
+                    code == "BS-DL-FORMAT-001" ? "No compatible format was found." :
+                    code == "BS-DL-ACCESS-001" ? "This video is restricted." :
+                    code == "BS-DL-PROBE-001" ? "Could not check this URL." :
+                    "Download failed. See the error log.";
+                return (code.empty() ? std::string("BS-DL-FAILED-001") : code) +
+                    ": " + std::string(summary);
+            }
             if(download.state != DownloadState::Downloading)
                 return download.message;
 
@@ -647,11 +672,13 @@ namespace BigScreen {
     void VideoLibraryMenu::CreateUi(
         HMUI::ViewController* browserController,
         HMUI::ViewController* editorController,
+        HMUI::ViewController* modalHostViewController,
         std::function<void(bool showEditor)> navigate,
         std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
         std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker)
     {
-        if(!browserController || !editorController) return;
+        if(!browserController || !editorController || !modalHostViewController)
+            return;
         browserController_ = browserController;
         editorController_ = editorController;
         navigate_ = std::move(navigate);
@@ -1114,7 +1141,7 @@ namespace BigScreen {
             "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
 
         downloadConfirmModal_ = BSML::Lite::CreateModal(
-            editorController,
+            modalHostViewController,
             {76.0f, 42.0f},
             [this]() { pendingDownloadHeight_ = 0; },
             true);
@@ -1575,7 +1602,7 @@ namespace BigScreen {
         // the destructive difference explicit without adding another permanent
         // button to an already dense storage row.
         removeConfirmModal_ = BSML::Lite::CreateModal(
-            editorController,
+            modalHostViewController,
             {72.0f, 38.0f},
             nullptr,
             true);
@@ -1653,7 +1680,7 @@ namespace BigScreen {
                             descriptor.activeMapFileName.value_or(
                                 "The assigned local video") +
                             "\n\nThe file will be gone for good - Big Screen cannot restore it and it is not re-downloadable.");
-                    deleteLocalConfirmModal_->Show();
+                    ShowModalOnCenterScreen(deleteLocalConfirmModal_);
                     return;
                 }
                 RemoveOverride(true);
@@ -1666,7 +1693,7 @@ namespace BigScreen {
 
         // Final safeguard for the only unrecoverable choice in this menu.
         deleteLocalConfirmModal_ = BSML::Lite::CreateModal(
-            editorController,
+            modalHostViewController,
             {72.0f, 38.0f},
             nullptr,
             true);
@@ -1810,7 +1837,7 @@ namespace BigScreen {
             [this]()
             {
                 if(removeConfirmModal_)
-                    removeConfirmModal_->Show();
+                    ShowModalOnCenterScreen(removeConfirmModal_);
             });
         ConfigureLayout(removeButton_, 13.5f, 6.5f, 0.0f);
         BSML::Lite::SetButtonTextSize(removeButton_, 2.15f);
@@ -2266,7 +2293,7 @@ namespace BigScreen {
                 confirmDownloadButton_,
                 "Download " + std::to_string(height) + "p");
         if(downloadConfirmModal_)
-            downloadConfirmModal_->Show();
+            ShowModalOnCenterScreen(downloadConfirmModal_);
     }
 
     void VideoLibraryMenu::ConfirmPendingResolutionDownload()
@@ -3098,8 +3125,18 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RefreshDetails()
     {
-        const auto libraryBytes = VideoLibrary::Instance().LibraryBytes();
-        const auto freeBytes = VideoLibrary::Instance().FreeBytes();
+        auto& library = VideoLibrary::Instance();
+        if(library.BackgroundCommitInProgress())
+        {
+            // Keep Unity responsive while the downloader persists library.json.
+            // The previous complete layout remains in place until the short
+            // background transaction publishes its final snapshot.
+            if(detailText_)
+                detailText_->set_text("Saving downloaded video...");
+            return;
+        }
+        const auto libraryBytes = library.LibraryBytes();
+        const auto freeBytes = library.FreeBytes();
         if(detailLibraryStorage_)
             detailLibraryStorage_->set_text(
                 StorageMetricText(
@@ -3121,7 +3158,7 @@ namespace BigScreen {
                 storagePanel_->SetActive(false);
             return;
         }
-        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto descriptor = library.Describe(selected_);
         const auto downloadedVideoBytes = selected_->levelID
             ? VideoLibrary::Instance().ManagedBytesForLevel(
                 std::string(selected_->levelID))
@@ -3427,25 +3464,17 @@ namespace BigScreen {
             const auto completedIdentity =
                 download.levelId + "|" + download.title + "|" +
                 std::to_string(download.totalBytes);
-            if(autoPlayedDownloadIdentity_ != completedIdentity)
+            if(refreshedDownloadIdentity_ != completedIdentity)
             {
-                autoPlayedDownloadIdentity_ = completedIdentity;
-                // A completed YouTube download atomically replaces any local
-                // assignment. Refresh the file rows once so the old filename
-                // immediately loses its green active state.
+                refreshedDownloadIdentity_ = completedIdentity;
+                // A completed YouTube replacement immediately removes the old
+                // local file's active highlight without opening the decoder.
                 RefreshLocalVideoStatus();
-                previewSongTime_ = 0.0;
-                playWhenAudioReady_ = true;
-                RequestSelectedAudio();
-                // StartPreviewAudio owns the single decoder-open attempt once
-                // audio is ready. Calling StartSelectedPreview first caused a
-                // failed container/hardware open to be attempted twice in one
-                // frame, producing duplicate dialogs and making the menu look
-                // locked behind stacked modal errors.
-                if(IsAlive(previewAudioClip_))
-                    StartPreviewAudio();
             }
         }
+        // Completion deliberately does not auto-open the new decoder. The
+        // explicit Play button starts preview initialization after file and
+        // manifest publication are fully separate from this Unity update.
         RefreshPlaybackControls();
     }
 

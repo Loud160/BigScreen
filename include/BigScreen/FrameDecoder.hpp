@@ -9,6 +9,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -78,6 +79,13 @@ namespace BigScreen {
             const FrameVisualEffects& visualEffects,
             std::string& error) = 0;
         virtual void Close() = 0;
+        /// Signals the decoder without waiting. The facade uses this before a
+        /// short bounded wait so Unity never performs an unbounded worker join.
+        virtual void RequestStop() = 0;
+        /// Waits only for the worker-exited signal; resource destruction still
+        /// belongs to Close() on either the caller or retirement worker.
+        virtual bool WaitForWorkerStop(
+            std::chrono::milliseconds timeout) = 0;
         virtual void Request(double mediaSeconds) = 0;
         /// Replaces CPU-side Cinema picture processing without reopening the
         /// stream. The decoder worker snapshots the small settings structure
@@ -175,6 +183,8 @@ namespace BigScreen {
                 error);
         }
         void Close() override;
+        void RequestStop() override;
+        bool WaitForWorkerStop(std::chrono::milliseconds timeout) override;
 
         /// Publishes the newest externally-clocked target. The worker may
         /// intentionally coalesce obsolete targets so playback stays current.
@@ -224,6 +234,7 @@ namespace BigScreen {
 
     private:
         void WorkerMain() noexcept;
+        static int InterruptFfmpegIo(void* opaque);
         void WorkerLoop(std::uint64_t cpuStartedNanoseconds);
         void SetWorkerError(std::string message);
         /// Reads one decoded picture and distinguishes ordinary end-of-stream
@@ -280,6 +291,10 @@ namespace BigScreen {
         std::thread worker_;
         std::atomic<bool> open_{false};
         std::atomic<bool> stopWorker_{false};
+        std::atomic<std::int64_t> openDeadlineNanoseconds_{0};
+        std::atomic<bool> workerExited_{true};
+        std::mutex workerExitMutex_;
+        std::condition_variable workerExitedChanged_;
         std::atomic<double> averageDecodeMilliseconds_{0.0};
         // Highest complete decode-and-convert request observed since this
         // decoder was opened. Keeping it beside the moving average explains

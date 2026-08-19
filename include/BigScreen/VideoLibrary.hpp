@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <chrono>
 #include <filesystem>
@@ -223,6 +224,12 @@ namespace BigScreen {
         std::vector<std::string> ReferencedThumbnailFileNames() const;
         /// Returns and clears a one-time startup recovery message for the UI.
         std::optional<std::string> TakeRecoveryNotice();
+        /// True only while a background download is publishing new library
+        /// metadata. Menu refreshes use this narrow signal to avoid waiting on
+        /// the manifest mutex while shared-storage I/O is in progress.
+        bool BackgroundCommitInProgress() const {
+            return backgroundCommitInProgress_.load();
+        }
         /// Rebuilds manifest entries for managed MP4s after all backups failed.
         /// Level metadata is supplied only after SongCore has completed loading.
         void RecoverManagedFiles(
@@ -270,6 +277,7 @@ namespace BigScreen {
         mutable std::uint64_t cachedFreeBytes_ = 0;
         mutable std::chrono::steady_clock::time_point libraryBytesCacheTime_{};
         mutable std::chrono::steady_clock::time_point freeBytesCacheTime_{};
+        std::atomic<bool> backgroundCommitInProgress_{false};
         bool recoveryScanNeeded_ = false;
         std::optional<std::string> recoveryNotice_;
     };

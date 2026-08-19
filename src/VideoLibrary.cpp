@@ -957,28 +957,41 @@ namespace BigScreen {
         VideoOrigin origin,
         StoredVideo video)
     {
-        std::scoped_lock lock(mutex_);
-        auto found = FindRecord(records_, levelId);
-        if(found == records_.end())
+        // This method runs on the downloader operation thread. Advertise the
+        // persistence window before taking mutex_ so Unity never queues behind
+        // JSON serialization, backup rotation, or shared-storage replacement.
+        backgroundCommitInProgress_ = true;
+        try
         {
-            records_.emplace_back(levelId, LevelVideoRecords{});
-            found = std::prev(records_.end());
-        }
-        found->second.songName = songName;
-        found->second.songAuthor = songAuthor;
-        auto& target = origin == VideoOrigin::User
-            ? found->second.user
-            : found->second.mapper;
+            std::scoped_lock lock(mutex_);
+            auto found = FindRecord(records_, levelId);
+            if(found == records_.end())
+            {
+                records_.emplace_back(levelId, LevelVideoRecords{});
+                found = std::prev(records_.end());
+            }
+            found->second.songName = songName;
+            found->second.songAuthor = songAuthor;
+            auto& target = origin == VideoOrigin::User
+                ? found->second.user
+                : found->second.mapper;
 
-        // A replacement is committed only after the new file exists. Delete
-        // the superseded owned file afterwards so failed downloads can never
-        // erase the user's last working video.
-        const auto previous = target;
-        target = std::move(video);
-        SaveLocked();
-        if(previous && !IsUserOwnedFile(*previous) &&
-           previous->fileName != target->fileName)
-            RemoveManagedFile(videoPath_, previous->fileName);
+            // A replacement is committed only after the new file exists. Delete
+            // the superseded owned file afterwards so failed downloads can never
+            // erase the user's last working video.
+            const auto previous = target;
+            target = std::move(video);
+            SaveLocked();
+            if(previous && !IsUserOwnedFile(*previous) &&
+               previous->fileName != target->fileName)
+                RemoveManagedFile(videoPath_, previous->fileName);
+        }
+        catch(...)
+        {
+            backgroundCommitInProgress_ = false;
+            throw;
+        }
+        backgroundCommitInProgress_ = false;
     }
 
     std::vector<LocalVideoFile> VideoLibrary::DiscoverLocalVideos(

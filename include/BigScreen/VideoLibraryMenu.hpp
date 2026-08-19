@@ -55,6 +55,7 @@ namespace BigScreen {
         void CreateUi(
             HMUI::ViewController* browserController,
             HMUI::ViewController* editorController,
+            HMUI::ViewController* modalHostViewController,
             std::function<void(bool showEditor)> navigate,
             std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
             std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker);
@@ -242,8 +243,8 @@ namespace BigScreen {
         std::string loadedThumbnailPath_;
         std::string probedUrl_;
         std::string completedVideoThumbnailIdentity_;
+        std::string refreshedDownloadIdentity_;
         std::string audioLoadLevelId_;
-        std::string autoPlayedDownloadIdentity_;
         UnityEngine::Sprite* loadedThumbnailSprite_ = nullptr;
         double offset_ = 0.0;
         double rate_ = 1.0;

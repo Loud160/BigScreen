@@ -12,7 +12,13 @@
 #include "main.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <jni.h>
+#include <mutex>
+#include <pthread.h>
+#include <thread>
 #include <utility>
 
 // Scotland2 captures the process JavaVM from the JNIEnv passed to its preload
@@ -41,6 +47,61 @@ namespace BigScreen {
             }
             return modloader_jvm;
         }
+
+        /// Owns decoder backends whose worker did not stop inside the short UI
+        /// budget. The queue is intentionally process-lifetime: Quest never
+        /// unloads a native mod from a running Beat Saber process, and avoiding
+        /// static-destruction ordering prevents a late PlaybackSession teardown
+        /// from targeting an already-destroyed reaper.
+        class DecoderRetirementQueue final {
+        public:
+            static DecoderRetirementQueue& Instance()
+            {
+                static auto* queue = new DecoderRetirementQueue();
+                return *queue;
+            }
+
+            void Retire(std::unique_ptr<FrameDecoderBackend> backend)
+            {
+                if(!backend)
+                    return;
+                {
+                    std::scoped_lock lock(mutex_);
+                    retired_.push_back(std::move(backend));
+                }
+                wake_.notify_one();
+            }
+
+        private:
+            DecoderRetirementQueue()
+            {
+                std::thread([this]() {
+                    pthread_setname_np(pthread_self(), "BigScreenReap");
+                    while(true)
+                    {
+                        std::unique_ptr<FrameDecoderBackend> backend;
+                        {
+                            std::unique_lock lock(mutex_);
+                            wake_.wait(lock, [this]() {
+                                return !retired_.empty();
+                            });
+                            backend = std::move(retired_.front());
+                            retired_.pop_front();
+                        }
+                        PaperLogger.info(
+                            "Background decoder retirement started");
+                        backend->Close();
+                        backend.reset();
+                        PaperLogger.info(
+                            "Background decoder retirement finished");
+                    }
+                }).detach();
+            }
+
+            std::mutex mutex_;
+            std::condition_variable wake_;
+            std::deque<std::unique_ptr<FrameDecoderBackend>> retired_;
+        };
     }
 
     FrameDecoder::~FrameDecoder()
@@ -54,6 +115,9 @@ namespace BigScreen {
         const FrameVisualEffects& visualEffects,
         std::string& error)
     {
+        PaperLogger.info(
+            "Decoder open started for '{}'",
+            videoPath.filename().string());
         Close();
         videoPath_ = videoPath;
         maximumOutputHeight_ = maximumOutputHeight;
@@ -122,6 +186,10 @@ namespace BigScreen {
             return true;
         }
         CloseAndRetainBackendMetrics();
+        PaperLogger.error(
+            "Decoder open failed for '{}': {}",
+            videoPath.filename().string(),
+            error);
         return false;
     }
 
@@ -306,15 +374,25 @@ namespace BigScreen {
         if(!backend_)
             return;
 
-        // Close joins the worker. Its final CPU slice and counters are only
-        // authoritative after that join and must be folded in before reset.
-        backend_->Close();
+        backend_->RequestStop();
+        const bool stoppedWithinUiBudget =
+            backend_->WaitForWorkerStop(std::chrono::milliseconds(4));
+        if(stoppedWithinUiBudget)
+            backend_->Close();
         retainedPeakDecodeMilliseconds_ = std::max(
             retainedPeakDecodeMilliseconds_,
             backend_->PeakDecodeMilliseconds());
         accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();
         accumulatedBufferAllocations_ += backend_->BufferAllocations();
-        backend_.reset();
+        if(stoppedWithinUiBudget)
+        {
+            backend_.reset();
+            return;
+        }
+
+        PaperLogger.warn(
+            "Decoder teardown exceeded 4 ms; cleanup moved off Unity's thread");
+        DecoderRetirementQueue::Instance().Retire(std::move(backend_));
     }
 
     bool FrameDecoder::ReopenWithSoftwareAfterHardwareFailure(

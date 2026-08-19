@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/MenuFlowCoordinator.hpp"
 
+#include "BigScreen/CenterScreenModal.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
@@ -28,6 +29,7 @@
 #include "UnityEngine/Transform.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
+#include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/BSML/MenuButtons/MenuButton.hpp"
 #include "bsml/shared/BSML/MenuButtons/MenuButtons.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
@@ -193,6 +195,60 @@ namespace BigScreen {
     bool IsBigScreenMenuActive()
     {
         return activeMenuFlow;
+    }
+
+    HMUI::ViewController* ActiveCenterModalHost() noexcept
+    {
+        try
+        {
+            auto* coordinator = activeMenuFlow.ptr();
+            if(!coordinator)
+                return nullptr;
+            auto* controllers =
+                coordinator->__cordl_internal_get__mainScreenViewControllers();
+            if(!controllers || controllers->get_Count() <= 0)
+                return coordinator->centerViewController;
+            return controllers->get_Item(controllers->get_Count() - 1);
+        }
+        catch(...)
+        {
+            return nullptr;
+        }
+    }
+
+    void ShowModalOnCenterScreen(BSML::ModalView* modal) noexcept
+    {
+        if(!modal)
+            return;
+        try
+        {
+            // Modal objects are retained with their menu controllers. Resolve
+            // the top center page every time so opening Storage, Showcase, or
+            // the file browser cannot leave a side-triggered dialog parented
+            // beneath an inactive neutral center controller.
+            if(auto* host = ActiveCenterModalHost())
+            {
+                auto modalTransform = modal->get_transform();
+                auto hostTransform = host->get_transform();
+                if(modalTransform && hostTransform &&
+                   modalTransform->get_parent().ptr() != hostTransform.ptr())
+                {
+                    modalTransform->SetParent(hostTransform.ptr(), false);
+                }
+            }
+            modal->Show();
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not present a Big Screen dialog on the center screen: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not present a Big Screen dialog on the center screen");
+        }
     }
 
     bool IsBigScreenMenuTransitionPending() noexcept
@@ -587,6 +643,7 @@ namespace BigScreen {
             VideoLibraryMenu::Instance().CreateUi(
                 libraryBrowserViewController,
                 libraryEditorViewController,
+                centerViewController,
                 [this](bool showEditor)
                 {
                     SetRightScreenViewController(

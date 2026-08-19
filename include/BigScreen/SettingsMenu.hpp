@@ -40,7 +40,7 @@ namespace BigScreen {
         void Register();
         void CreateUi(
             HMUI::ViewController* viewController,
-            HMUI::ViewController* errorHostViewController,
+            HMUI::ViewController* modalHostViewController,
             std::function<void()> onBack,
             std::function<void()> onManageStorage,
             std::function<void()> onShowShowcase,

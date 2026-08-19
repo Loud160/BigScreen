@@ -64,6 +64,9 @@ error_manager_source = (root / "src/ErrorManager.cpp").read_text(
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
 settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
+center_modal_header = (
+    root / "include/BigScreen/CenterScreenModal.hpp"
+).read_text(encoding="utf-8")
 library_menu_header = (
     root / "include/BigScreen/VideoLibraryMenu.hpp"
 ).read_text(encoding="utf-8")
@@ -541,7 +544,7 @@ assert 'ReadBool(\n            document, "hardwareDecodingEnabled", true)' in se
 assert 'Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_)' in settings_source
 assert '"Hardware Video Decoding"' in settings_menu_source
 assert '"Uses the Quest\'s dedicated MediaCodec decoders by default' in settings_menu_source
-assert 'automaticPerformanceWarningModal_->Show()' in settings_menu_source
+assert 'ShowModalOnCenterScreen(automaticPerformanceWarningModal_)' in settings_menu_source
 assert '"Enable Automatic Performance?\\n\\nAutomatic Performance is an experimental feature' in settings_menu_source
 assert 'Settings::Instance().SetAutomaticPerformanceEnabled(true)' in settings_menu_source
 
@@ -886,12 +889,15 @@ assert "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON" in build_script
 
 # Decoder shutdown changes the wait predicate under the waiter's mutex, and
 # ordinary FFmpeg EOF/EAGAIN remains distinct from a hard worker failure.
-for function_name in ("FrameDecoder::Close()", "FrameDecoder::SetWorkerError"):
+for function_name in ("FrameDecoder::RequestStop()", "FrameDecoder::SetWorkerError"):
     function = frame_decoder_source.split(function_name, 1)[1]
     function = function.split("\n    }", 1)[0]
     assert "std::scoped_lock lock(requestMutex_)" in function
     assert function.index("lock(requestMutex_)") < function.index("stopWorker_ = true")
 assert "AVERROR(EAGAIN)" in frame_decoder_source
+assert "WaitForWorkerStop(std::chrono::milliseconds timeout)" in frame_decoder_source
+assert "InterruptFfmpegIo" in frame_decoder_source
+assert "DecoderRetirementQueue::Instance().Retire" in frame_decoder_facade
 assert "std::optional<double> endOfStreamTime" in frame_decoder_source
 assert "std::optional<double> firstAvailableFrameTime" in frame_decoder_source
 assert "ReadDecodedFrame(bool& reachedEndOfStream)" in frame_decoder_source
@@ -903,6 +909,9 @@ assert "MaximumDrainWaitAttempts = 250" in frame_decoder_source
 assert "finalResult == AVERROR_EOF || finalResult == AVERROR(EAGAIN)" not in frame_decoder_source
 open_body = frame_decoder_source.split("bool FrameDecoder::Open(", 1)[1].split(
     "void FrameDecoder::Close()", 1)[0]
+assert open_body.index("Close();") < open_body.index("stopWorker_ = false;")
+assert open_body.index("stopWorker_ = false;") < open_body.index(
+    "int result = avformat_open_input")
 close_body = frame_decoder_source.split("void FrameDecoder::Close()", 1)[1].split(
     "void FrameDecoder::Request", 1)[0]
 for retained_counter in ("peakDecodeMilliseconds_ = 0.0", "bufferAllocations_ = 0"):
@@ -967,25 +976,64 @@ tick_main_thread = error_manager_source.split(
 assert 'Guard("disabling Big Screen after repeated errors"' in tick_main_thread
 assert "if(IsBigScreenMenuActive())\n            return;" in tick_main_thread
 assert "SimpleDialogPrompt while this child flow is" in tick_main_thread
-assert "CreateModal(\n            errorHostViewController" in settings_menu_source
-assert "CreateModal(\n            viewController, {72.0f, 42.0f}" not in settings_menu_source
+# Every popup opened from Big Screen's left or right side panel is created on
+# the neutral center controller, then moved to the currently active center
+# subpage immediately before presentation. Parenting only the error dialog to
+# center left warnings and confirmations behind the curved side menus.
+assert "ShowModalOnCenterScreen" in center_modal_header
+assert "ActiveCenterModalHost" in menu_flow_source
+center_popup_host = menu_flow_source.split(
+    "HMUI::ViewController* ActiveCenterModalHost() noexcept", 1
+)[1].split("void ShowModalOnCenterScreen", 1)[0]
+center_popup_presenter = menu_flow_source.split(
+    "void ShowModalOnCenterScreen(BSML::ModalView* modal) noexcept", 1
+)[1].split("bool IsBigScreenMenuTransitionPending()", 1)[0]
+assert "__cordl_internal_get__mainScreenViewControllers()" in center_popup_host
+assert "ActiveCenterModalHost()" in center_popup_presenter
+assert "modalTransform->SetParent(hostTransform.ptr(), false);" in center_popup_presenter
+assert center_popup_presenter.index("SetParent(hostTransform.ptr(), false)") < \
+    center_popup_presenter.index("modal->Show();")
+assert "CreateModal(\n            modalHostViewController" in settings_menu_source
+assert "CreateModal(\n            viewController" not in settings_menu_source
+assert "CreateModal(\n            modalHostViewController" in library_menu_source
+assert "CreateModal(\n            editorController" not in library_menu_source
+assert "ShowModalOnCenterScreen(errorModal_);" in settings_menu_source
+assert "ShowModalOnCenterScreen(downloadConfirmModal_);" in library_menu_source
 
 # Downloader state transitions must be serialized and a C++ terminal failure
 # must not be overwritten by a stale on-disk active state.
 assert "std::mutex startMutex_" in download_manager_header
+assert "void RunOperationQueue();" in download_manager_header
+assert "std::atomic<bool> operationBusy_" in download_manager_header
 assert download_manager_source.count(
     "std::scoped_lock startLock(startMutex_)") >= 3
+for start_name in (
+    "bool DownloadManager::Start(DownloadRequest request",
+    "bool DownloadManager::StartMapPackage(",
+    "bool DownloadManager::StartProbe(",
+    "bool DownloadManager::StartUpdaterCheck(",
+):
+    start_body = download_manager_source.split(start_name, 1)[1].split("\n    }", 1)[0]
+    assert "worker_.join()" not in start_body
 set_failure = download_manager_source.split(
     "void DownloadManager::SetFailure(std::string message)", 1
 )[1].split("\n    }", 1)[0]
-assert "std::filesystem::remove(statusPath_, removeError)" in set_failure
-assert set_failure.index("remove(statusPath_, removeError)") < set_failure.index(
-    "snapshot_.state = DownloadState::Failed")
+assert "std::filesystem::remove(statusPath, removeError)" in set_failure
 assert "ignoreStatusFile_ = true;" in set_failure
+assert set_failure.index("ignoreStatusFile_ = true;") < set_failure.index(
+    "std::filesystem::remove(statusPath, removeError)")
 refresh_snapshot = download_manager_source.split(
-    "void DownloadManager::RefreshSnapshotFromDiskLocked()", 1
+    "void DownloadManager::RefreshSnapshotFromDisk()", 1
 )[1].split("void DownloadManager::SetFailure", 1)[0]
 assert "if(ignoreStatusFile_)" in refresh_snapshot
+assert "Shared-storage reads and JSON parsing deliberately happen without" in (
+    refresh_snapshot
+)
+assert "void DownloadManager::RunStatusPolling()" in download_manager_source
+snapshot_body = download_manager_source.split(
+    "DownloadSnapshot DownloadManager::Snapshot()", 1
+)[1].split("void DownloadManager::Run(", 1)[0]
+assert "RefreshSnapshotFromDisk" not in snapshot_body
 assert "PyErr_Print" not in download_manager_source
 assert "PyEval_GetBuiltins" not in download_manager_source
 assert "PyImport_ImportModule(\"builtins\")" in download_manager_source
@@ -1114,6 +1162,10 @@ assert "IncomingSibling(finalPath)" in download_manager_source
 assert download_manager_source.index("videoReplacement.Promote()") < (
     download_manager_source.index("VideoLibrary::Instance().CommitDownload(")
 )
+assert "BackgroundCommitInProgress()" in video_library_header
+assert "Saving downloaded video..." in library_menu_source
+assert "Completion deliberately does not auto-open" in library_menu_source
+assert "BS-DL-HTTP-403\" ? \"YouTube refused this stream." in library_menu_source
 
 # The optional demo is fetched rather than redistributed. Its map revision is
 # immutable, extraction is bounded/contained, both required mods are checked by
@@ -1386,7 +1438,7 @@ assert 'document.RemoveMember("automaticPerformanceResponseSeconds")' in setting
 assert '"Frame Rate Loss Trigger"' in settings_menu_source
 assert '"Use the 60 FPS limit?' in settings_menu_source
 assert '"Use 60 FPS"' in settings_menu_source
-assert "highFrameRateWarningModal_->Show();" in settings_menu_source
+assert "ShowModalOnCenterScreen(highFrameRateWarningModal_);" in settings_menu_source
 assert "RefreshPlaybackFpsControl();" in settings_menu_source
 assert '"Attack Time"' in settings_menu_source
 assert '"Release Time"' in settings_menu_source

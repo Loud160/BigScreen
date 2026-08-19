@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/SettingsMenu.hpp"
+#include "BigScreen/CenterScreenModal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -151,13 +152,13 @@ namespace BigScreen {
 
     void SettingsMenu::CreateUi(
         HMUI::ViewController* viewController,
-        HMUI::ViewController* errorHostViewController,
+        HMUI::ViewController* modalHostViewController,
         std::function<void()> onBack,
         std::function<void()> onManageStorage,
         std::function<void()> onShowShowcase,
         std::function<void(bool)> onModEnabledChanged)
     {
-        if(!viewController || !errorHostViewController)
+        if(!viewController || !modalHostViewController)
             return;
         // The manager owns the once-per-process guard, so rebuilding or
         // reopening this view can safely ask without creating another request.
@@ -625,7 +626,7 @@ namespace BigScreen {
                     // this callback. Restore the saved value until the player
                     // explicitly confirms the more demanding ceiling.
                     RefreshPlaybackFpsControl();
-                    highFrameRateWarningModal_->Show();
+                    ShowModalOnCenterScreen(highFrameRateWarningModal_);
                     return;
                 }
                 Settings::Instance().SetPlaybackFpsLimit(selectedFps);
@@ -757,7 +758,7 @@ namespace BigScreen {
                         automaticPerformanceToggle_, false);
                     suppressAutomaticPerformanceCallback_ = false;
                     if(automaticPerformanceWarningModal_)
-                        automaticPerformanceWarningModal_->Show();
+                        ShowModalOnCenterScreen(automaticPerformanceWarningModal_);
                     return;
                 }
                 Settings::Instance().SetAutomaticPerformanceEnabled(false);
@@ -1303,7 +1304,7 @@ namespace BigScreen {
                             " Advanced Controls?\n\nThis enables detailed video framing and free screen placement for the selected layout. Extreme settings may reduce performance or interact poorly with mapper-authored effects. Other layouts are not changed.");
                     }
                     if(advancedWarningModal_)
-                        advancedWarningModal_->Show();
+                        ShowModalOnCenterScreen(advancedWarningModal_);
                     return;
                 }
                 Settings::Instance().SetAdvancedOptionsEnabled(false);
@@ -1733,7 +1734,7 @@ namespace BigScreen {
                     SetToggleWithoutNotification(undockScreenToggle_, false);
                     suppressUndockCallback_ = false;
                     if(undockWarningModal_)
-                        undockWarningModal_->Show();
+                        ShowModalOnCenterScreen(undockWarningModal_);
                     return;
                 }
                 Settings::Instance().SetUndockedScreenEnabled(false);
@@ -1914,7 +1915,7 @@ namespace BigScreen {
             "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
 
         highFrameRateWarningModal_ = BSML::Lite::CreateModal(
-            viewController, {72.0f, 38.0f}, nullptr, false);
+            modalHostViewController, {72.0f, 38.0f}, nullptr, false);
         auto* highFrameRateWarningText = BSML::Lite::CreateText(
             highFrameRateWarningModal_,
             "Use the 60 FPS limit?\n\n60 FPS requires Big Screen to prepare and upload twice as many video frames as the 30 FPS default. If video playback stutters or looks choppy, enable Automatic Performance in the Misc tab so Big Screen can lower the frame-rate limit when needed.",
@@ -1952,7 +1953,7 @@ namespace BigScreen {
             });
 
         automaticPerformanceWarningModal_ = BSML::Lite::CreateModal(
-            viewController, {72.0f, 38.0f}, nullptr, false);
+            modalHostViewController, {72.0f, 38.0f}, nullptr, false);
         auto* automaticPerformanceWarningText = BSML::Lite::CreateText(
             automaticPerformanceWarningModal_,
             "Enable Automatic Performance?\n\nAutomatic Performance is an experimental feature that is still under development. It can lower and restore the video frame-rate limit when sustained frame loss is detected. Attack, release, step size, and oscillation controls determine how it reacts. It never changes video resolution. Results may vary by video, map, and headset.",
@@ -1998,7 +1999,7 @@ namespace BigScreen {
             });
 
         advancedWarningModal_ = BSML::Lite::CreateModal(
-            viewController, {72.0f, 38.0f}, nullptr, false);
+            modalHostViewController, {72.0f, 38.0f}, nullptr, false);
         advancedWarningText_ = BSML::Lite::CreateText(
             advancedWarningModal_,
             "Enable Screen 1 Advanced Controls?\n\nThis enables detailed video framing and free screen placement for the selected layout. Extreme settings may reduce performance or interact poorly with mapper-authored effects. Other layouts are not changed.",
@@ -2039,7 +2040,7 @@ namespace BigScreen {
             });
 
         undockWarningModal_ = BSML::Lite::CreateModal(
-            viewController, {72.0f, 38.0f}, nullptr, false);
+            modalHostViewController, {72.0f, 38.0f}, nullptr, false);
         auto* undockWarningText = BSML::Lite::CreateText(
             undockWarningModal_,
             "Undock this screen?\n\nFree placement is an advanced feature. Keep the screen clear of Beat Saber's menus and use a comfortable size and distance. Big Screen asks before leaving with unsaved edits; opening the Quest system menu safely discards them.",
@@ -2080,7 +2081,7 @@ namespace BigScreen {
             });
 
         unsavedScreenModal_ = BSML::Lite::CreateModal(
-            viewController, {78.0f, 36.0f}, nullptr, false);
+            modalHostViewController, {78.0f, 36.0f}, nullptr, false);
         auto* unsavedText = BSML::Lite::CreateText(
             unsavedScreenModal_,
             "Save screen changes?\n\nThe unlocked screen has changes that have not been saved. Save them before leaving, discard them, or keep editing.",
@@ -2129,7 +2130,7 @@ namespace BigScreen {
             });
 
         nightlyWarningModal_ = BSML::Lite::CreateModal(
-            viewController,
+            modalHostViewController,
             {64.0f, 31.0f},
             nullptr,
             false);
@@ -2287,7 +2288,7 @@ namespace BigScreen {
                 SetToggleWithoutNotification(nightlyUpdatesToggle_, false);
                 suppressNightlyCallback_ = false;
                 if(nightlyWarningModal_)
-                    nightlyWarningModal_->Show();
+                    ShowModalOnCenterScreen(nightlyWarningModal_);
             });
         BSML::Lite::AddHoverHint(
             nightlyUpdatesToggle_,
@@ -2311,7 +2312,7 @@ namespace BigScreen {
         configureUpdateText(updaterStatus_, 8.0f, 1.9f, 2.5f);
 
         localVideoInstructionsModal_ = BSML::Lite::CreateModal(
-            viewController,
+            modalHostViewController,
             {70.0f, 46.0f},
             nullptr,
             true);
@@ -2372,7 +2373,7 @@ namespace BigScreen {
             [this]()
             {
                 if(localVideoInstructionsModal_)
-                    localVideoInstructionsModal_->Show();
+                    ShowModalOnCenterScreen(localVideoInstructionsModal_);
             });
         BSML::Lite::AddHoverHint(
             addLocalVideoButton,
@@ -2386,14 +2387,14 @@ namespace BigScreen {
             [this]()
             {
                 if(resetConfirmationModal_)
-                    resetConfirmationModal_->Show();
+                    ShowModalOnCenterScreen(resetConfirmationModal_);
             });
         BSML::Lite::AddHoverHint(
             resetButton_,
             "Restores every Big Screen setting and all five screen layouts to their original values. Downloaded videos and timing assignments are not removed.");
 
         resetConfirmationModal_ = BSML::Lite::CreateModal(
-            viewController,
+            modalHostViewController,
             {64.0f, 32.0f},
             nullptr,
             true);
@@ -2440,7 +2441,7 @@ namespace BigScreen {
         // left-panel modal is easy to overlook. ErrorManager keeps only the
         // newest pending message and never permits this UI over gameplay.
         errorModal_ = BSML::Lite::CreateModal(
-            errorHostViewController, {72.0f, 42.0f}, nullptr, true);
+            modalHostViewController, {72.0f, 42.0f}, nullptr, true);
         errorModalText_ = BSML::Lite::CreateText(
             errorModal_, "", TMPro::FontStyles::Normal, 3.0f,
             {0.0f, 3.0f}, {66.0f, 30.0f});
@@ -3155,7 +3156,7 @@ namespace BigScreen {
 
         pendingScreenNavigation_ = std::move(continuation);
         if(unsavedScreenModal_)
-            unsavedScreenModal_->Show();
+            ShowModalOnCenterScreen(unsavedScreenModal_);
     }
 
     void SettingsMenu::RefreshUpdaterHint()
@@ -3221,7 +3222,7 @@ namespace BigScreen {
             {
                 errorModalText_->set_text(
                     "<b>" + message->first + "</b>\n\n" + message->second);
-                errorModal_->Show();
+                ShowModalOnCenterScreen(errorModal_);
                 RefreshControls();
             }
         }

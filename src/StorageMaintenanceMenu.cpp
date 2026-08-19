@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/StorageMaintenanceMenu.hpp"
+#include "BigScreen/CenterScreenModal.hpp"
 #include "BigScreen/UiUtility.hpp"
 #include "BigScreen/Utility.hpp"
 
@@ -244,7 +245,7 @@ namespace BigScreen {
                         Utility::FormatStorageSize(bytes, 1, 2) +
                         " will be removed. Unchecked files and user-owned map-folder or Video Import MP4s will remain untouched.");
                 }
-                confirmationModal_->Show();
+                ShowModalOnCenterScreen(confirmationModal_);
             });
         ConfigureLayout(cleanButton_, 28.0f, 8.0f, 1.0f);
         BSML::Lite::SetButtonTextSize(cleanButton_, 2.55f);

@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
+#include "BigScreen/CenterScreenModal.hpp"
 #include "BigScreen/UiUtility.hpp"
 #include "BigScreen/Utility.hpp"
 
@@ -779,7 +780,7 @@ namespace BigScreen {
                     ? "Big Screen could not identify a compatible video stream in this file."
                     : file.problem));
         }
-        if(helpModal_) helpModal_->Show();
+        if(helpModal_) ShowModalOnCenterScreen(helpModal_);
     }
 
     void LocalVideoBrowserMenu::Cancel()

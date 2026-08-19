@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -169,9 +170,12 @@ namespace BigScreen {
         void RunUpdater(bool nightly, bool install);
         void RunModReleaseCheck(bool automatic);
         void RunThumbnailQueue();
+        void RunOperationQueue();
+        void RunStatusPolling();
+        bool QueueOperation(std::function<void()> operation, std::string& error);
         bool StartModReleaseCheck(bool automatic, std::string& error);
         void SetCurrentYtDlpVersion(std::string version);
-        void RefreshSnapshotFromDiskLocked();
+        void RefreshSnapshotFromDisk();
         void SetFailure(std::string message);
 
         struct ThumbnailRequest {
@@ -181,13 +185,31 @@ namespace BigScreen {
         };
 
         mutable std::mutex mutex_;
-        // Serializes the check/join/recheck/start sequence. Unity currently
-        // invokes starts on its main thread, but keeping that assumption out
-        // of the manager prevents a future background caller from assigning
-        // over a joinable std::thread and terminating the process.
+        // Serializes validation and publication of one downloader operation.
+        // The operation thread is persistent: UI callbacks enqueue work and
+        // never join a prior Python/network worker on Unity's main thread.
         std::mutex startMutex_;
+        // Long-lived operation ownership replaces one std::thread per action.
+        // operationBusy_ covers both queued and executing work, so clearing it
+        // is the final publication step after promotion and persistence.
         std::thread worker_;
+        // Reads Python's atomic JSON status mailbox away from Unity's thread.
+        std::thread statusWorker_;
+        std::mutex operationMutex_;
+        std::condition_variable operationWake_;
+        std::function<void()> pendingOperation_;
+        std::atomic<bool> operationBusy_{false};
+        bool stopOperationWorker_ = false;
+        std::mutex statusWaitMutex_;
+        // Serializes the polling read with the operation worker's mandatory
+        // terminal refresh without holding the public snapshot mutex for I/O.
+        std::mutex statusReadMutex_;
+        std::condition_variable statusWake_;
+        bool stopStatusWorker_ = false;
         std::thread modReleaseWorker_;
+        // A completed release-check handle may be detached by the next UI
+        // request; an active one is never joined by that request.
+        std::atomic<bool> modReleaseWorkerFinished_{true};
         std::mutex modReleaseStartMutex_;
         mutable std::mutex modReleaseMutex_;
         ModReleaseSnapshot modReleaseSnapshot_;
@@ -207,7 +229,6 @@ namespace BigScreen {
         mutable std::mutex versionMutex_;
         std::string currentUpdateVersion_ = std::string(BundledYtDlpVersion);
         std::optional<std::string> updateNotice_;
-        std::chrono::steady_clock::time_point lastStatusRefresh_{};
         // Set when C++ itself publishes a terminal failure. A filesystem
         // permission/handle error can prevent deletion or truncation of the
         // worker's older JSON; ignoring it until the next explicitly started

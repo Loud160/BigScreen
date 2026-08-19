@@ -10,6 +10,7 @@
 
 #include <Python.h>
 #include <dlfcn.h>
+#include <pthread.h>
 
 #include <algorithm>
 #include <array>
@@ -1713,7 +1714,22 @@ os.replace(temporary, job['destination'])
     DownloadManager::~DownloadManager()
     {
         Cancel();
+        {
+            std::scoped_lock lock(operationMutex_);
+            stopOperationWorker_ = true;
+            pendingOperation_ = {};
+        }
+        {
+            std::scoped_lock lock(statusWaitMutex_);
+            stopStatusWorker_ = true;
+        }
+        operationWake_.notify_all();
+        statusWake_.notify_all();
+        // Singleton destruction occurs during process shutdown, never from a
+        // menu callback. This is the only join for the persistent downloader
+        // worker; ordinary UI operations never wait for Python/network work.
         if(worker_.joinable()) worker_.join();
+        if(statusWorker_.joinable()) statusWorker_.join();
         if(modReleaseWorker_.joinable()) modReleaseWorker_.join();
         {
             std::scoped_lock lock(thumbnailMutex_);
@@ -2026,6 +2042,24 @@ os.replace(temporary, job['destination'])
             activation.Accept();
         }
         PyEval_SaveThread();
+        try
+        {
+            worker_ = std::thread([this]() { RunOperationQueue(); });
+            statusWorker_ = std::thread([this]() { RunStatusPolling(); });
+        }
+        catch(const std::exception& exception)
+        {
+            {
+                std::scoped_lock lock(operationMutex_);
+                stopOperationWorker_ = true;
+            }
+            operationWake_.notify_all();
+            if(worker_.joinable()) worker_.join();
+            return fail(
+                "BS-DL-INIT-115",
+                std::string("Could not start the downloader operation worker: ") +
+                    exception.what());
+        }
         initialized_ = true;
         PaperLogger.info(
             "Embedded CPython downloader initialized with QuickJS-NG {} and CA bundle '{}'",
@@ -2085,9 +2119,13 @@ os.replace(temporary, job['destination'])
             error = UnavailableMessage();
             return false;
         }
+        if(operationBusy_)
+        {
+            error = "Another video is already downloading.";
+            return false;
+        }
         {
             std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
             if(snapshot_.Active())
             {
                 error = "Another video is already downloading.";
@@ -2117,45 +2155,38 @@ os.replace(temporary, job['destination'])
             error = "Only HTTPS YouTube and youtu.be video addresses are supported.";
             return false;
         }
-        // Join only after releasing the state mutex. A worker can have written
-        // its terminal status while still waiting to commit library metadata.
-        if(worker_.joinable()) worker_.join();
-        std::scoped_lock lock(mutex_);
         auto& library = VideoLibrary::Instance();
         const auto finalPath = library.AllocateVideoPath(
             request.levelId,
             request.origin,
             request.requestedHeight == 1440 ? ".webm" : ".mp4");
-        statusPath_ = library.RuntimePath() / "download-status.json";
-        cancelPath_ = library.RuntimePath() / "download.cancel";
-        ignoreStatusFile_ = false;
-        std::filesystem::remove(cancelPath_);
-        std::filesystem::remove(statusPath_);
-        snapshot_ = {};
-        snapshot_.state = DownloadState::Preparing;
-        snapshot_.levelId = request.levelId;
-        snapshot_.message = "Checking video information";
-        snapshot_.requestedHeight = request.requestedHeight;
-        snapshot_.availableHeights = std::move(verifiedAvailableHeights);
+        const auto statusPath = library.RuntimePath() / "download-status.json";
+        const auto cancelPath = library.RuntimePath() / "download.cancel";
+        std::filesystem::remove(cancelPath);
+        std::filesystem::remove(statusPath);
+        {
+            std::scoped_lock lock(mutex_);
+            statusPath_ = statusPath;
+            cancelPath_ = cancelPath;
+            ignoreStatusFile_ = false;
+            snapshot_ = {};
+            snapshot_.state = DownloadState::Preparing;
+            snapshot_.levelId = request.levelId;
+            snapshot_.message = "Checking video information";
+            snapshot_.requestedHeight = request.requestedHeight;
+            snapshot_.availableHeights = std::move(verifiedAvailableHeights);
+        }
         PaperLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
             request.levelId);
-        try
+        if(!QueueOperation(
+            [this, request = std::move(request), finalPath]() mutable {
+                Run(std::move(request), finalPath);
+            },
+            error))
         {
-            worker_ = std::thread(
-                [this, request = std::move(request), finalPath]() mutable {
-                    Run(std::move(request), finalPath);
-                });
-        }
-        catch(const std::exception& exception)
-        {
-            error = std::string("Could not start the video download worker: ") +
-                exception.what();
-            snapshot_.state = DownloadState::Failed;
-            snapshot_.message = error;
-            ErrorManager::Instance().RecordError(
-                "Starting the video download worker", exception.what());
+            SetFailure(error);
             return false;
         }
         return true;
@@ -2171,9 +2202,13 @@ os.replace(temporary, job['destination'])
             error = UnavailableMessage();
             return false;
         }
+        if(operationBusy_)
+        {
+            error = "Another downloader task is already running.";
+            return false;
+        }
         {
             std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
             if(snapshot_.Active())
             {
                 error = "Another downloader task is already running.";
@@ -2201,36 +2236,32 @@ os.replace(temporary, job['destination'])
             return false;
         }
 
-        if(worker_.joinable()) worker_.join();
-        std::scoped_lock lock(mutex_);
         const auto runtime = VideoLibrary::Instance().RuntimePath();
-        statusPath_ = runtime / "showcase-map-status.json";
-        cancelPath_ = runtime / "showcase-map.cancel";
-        ignoreStatusFile_ = false;
-        std::filesystem::remove(statusPath_);
-        std::filesystem::remove(cancelPath_);
-        snapshot_ = {};
-        snapshot_.state = DownloadState::Preparing;
-        snapshot_.levelId = "__showcase_map__";
-        snapshot_.message = "Finding exact BeatSaver map revision";
+        const auto statusPath = runtime / "showcase-map-status.json";
+        const auto cancelPath = runtime / "showcase-map.cancel";
+        std::filesystem::remove(statusPath);
+        std::filesystem::remove(cancelPath);
+        {
+            std::scoped_lock lock(mutex_);
+            statusPath_ = statusPath;
+            cancelPath_ = cancelPath;
+            ignoreStatusFile_ = false;
+            snapshot_ = {};
+            snapshot_.state = DownloadState::Preparing;
+            snapshot_.levelId = "__showcase_map__";
+            snapshot_.message = "Finding exact BeatSaver map revision";
+        }
         PaperLogger.info(
             "Starting managed BeatSaver map download for key '{}' revision '{}'",
             request.mapKey,
             request.expectedHash);
-        try
-        {
-            worker_ = std::thread([this, request = std::move(request)]() mutable {
+        if(!QueueOperation(
+            [this, request = std::move(request)]() mutable {
                 RunMapPackage(std::move(request));
-            });
-        }
-        catch(const std::exception& exception)
+            },
+            error))
         {
-            error = std::string("Could not start the showcase map worker: ") +
-                exception.what();
-            snapshot_.state = DownloadState::Failed;
-            snapshot_.message = error;
-            ErrorManager::Instance().RecordError(
-                "Starting the showcase map worker", exception.what());
+            SetFailure(error);
             return false;
         }
         return true;
@@ -2247,9 +2278,13 @@ os.replace(temporary, job['destination'])
             error = UnavailableMessage();
             return false;
         }
+        if(operationBusy_)
+        {
+            error = "Another downloader task is already running.";
+            return false;
+        }
         {
             std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
             if(snapshot_.Active())
             {
                 error = "Another downloader task is already running.";
@@ -2266,38 +2301,33 @@ os.replace(temporary, job['destination'])
             error = "Only HTTPS YouTube and youtu.be video addresses are supported.";
             return false;
         }
-        if(worker_.joinable()) worker_.join();
-        std::scoped_lock lock(mutex_);
         const auto runtime = VideoLibrary::Instance().RuntimePath();
-        statusPath_ = runtime / "url-probe-status.json";
-        cancelPath_ = runtime / "url-probe.cancel";
-        ignoreStatusFile_ = false;
-        std::filesystem::remove(statusPath_);
-        std::filesystem::remove(cancelPath_);
-        snapshot_ = {};
-        snapshot_.state = DownloadState::Probing;
-        snapshot_.levelId = levelId;
-        snapshot_.message = "Checking YouTube URL";
-        snapshot_.metadataOnly = true;
-        PaperLogger.info("Checking a YouTube URL for {}", levelId);
-        try
+        const auto statusPath = runtime / "url-probe-status.json";
+        const auto cancelPath = runtime / "url-probe.cancel";
+        std::filesystem::remove(statusPath);
+        std::filesystem::remove(cancelPath);
         {
-            worker_ = std::thread([
+            std::scoped_lock lock(mutex_);
+            statusPath_ = statusPath;
+            cancelPath_ = cancelPath;
+            ignoreStatusFile_ = false;
+            snapshot_ = {};
+            snapshot_.state = DownloadState::Probing;
+            snapshot_.levelId = levelId;
+            snapshot_.message = "Checking YouTube URL";
+            snapshot_.metadataOnly = true;
+        }
+        PaperLogger.info("Checking a YouTube URL for {}", levelId);
+        if(!QueueOperation([
                 this,
                 levelId = std::move(levelId),
                 sourceUrl = std::move(sourceUrl)]() mutable
             {
                 RunProbe(std::move(levelId), std::move(sourceUrl));
-            });
-        }
-        catch(const std::exception& exception)
+            },
+            error))
         {
-            error = std::string("Could not start the video check worker: ") +
-                exception.what();
-            snapshot_.state = DownloadState::Failed;
-            snapshot_.message = error;
-            ErrorManager::Instance().RecordError(
-                "Starting the video check worker", exception.what());
+            SetFailure(error);
             return false;
         }
         return true;
@@ -2307,35 +2337,31 @@ os.replace(temporary, job['destination'])
     {
         std::scoped_lock startLock(startMutex_);
         if(!initialized_) { error = UnavailableMessage(); return false; }
+        if(operationBusy_) { error = "A downloader task is already running."; return false; }
         {
             std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
             if(snapshot_.Active()) { error = "A downloader task is already running."; return false; }
         }
-        if(worker_.joinable()) worker_.join();
-        std::scoped_lock lock(mutex_);
-        statusPath_ = VideoLibrary::Instance().RuntimePath() / "update-status.json";
-        cancelPath_ = VideoLibrary::Instance().RuntimePath() / "update.cancel";
-        ignoreStatusFile_ = false;
-        std::filesystem::remove(statusPath_);
-        std::filesystem::remove(cancelPath_);
-        snapshot_ = {};
-        snapshot_.state = DownloadState::Preparing;
-        snapshot_.levelId = "__updater__";
-        snapshot_.message = "Checking yt-dlp releases";
-        try
+        const auto runtime = VideoLibrary::Instance().RuntimePath();
+        const auto statusPath = runtime / "update-status.json";
+        const auto cancelPath = runtime / "update.cancel";
+        std::filesystem::remove(statusPath);
+        std::filesystem::remove(cancelPath);
         {
-            worker_ = std::thread(
-                [this, nightly, install]() { RunUpdater(nightly, install); });
+            std::scoped_lock lock(mutex_);
+            statusPath_ = statusPath;
+            cancelPath_ = cancelPath;
+            ignoreStatusFile_ = false;
+            snapshot_ = {};
+            snapshot_.state = DownloadState::Preparing;
+            snapshot_.levelId = "__updater__";
+            snapshot_.message = "Checking yt-dlp releases";
         }
-        catch(const std::exception& exception)
+        if(!QueueOperation(
+            [this, nightly, install]() { RunUpdater(nightly, install); },
+            error))
         {
-            error = std::string("Could not start the downloader update worker: ") +
-                exception.what();
-            snapshot_.state = DownloadState::Failed;
-            snapshot_.message = error;
-            ErrorManager::Instance().RecordError(
-                "Starting the downloader update worker", exception.what());
+            SetFailure(error);
             return false;
         }
         return true;
@@ -2407,7 +2433,17 @@ os.replace(temporary, job['destination'])
             }
         }
         if(modReleaseWorker_.joinable())
-            modReleaseWorker_.join();
+        {
+            if(!modReleaseWorkerFinished_)
+            {
+                error = "A Big Screen release check is still finishing.";
+                return false;
+            }
+            // The completion flag is the worker's final shared-state action.
+            // Release its completed thread handle instead of joining from the
+            // Check Update button callback on Unity's main thread.
+            modReleaseWorker_.detach();
+        }
         {
             std::scoped_lock lock(modReleaseMutex_);
             modReleaseSnapshot_ = {
@@ -2418,11 +2454,45 @@ os.replace(temporary, job['destination'])
         }
         try
         {
+            modReleaseWorkerFinished_ = false;
             modReleaseWorker_ = std::thread(
-                [this, automatic]() { RunModReleaseCheck(automatic); });
+                [this, automatic]() {
+                    try
+                    {
+                        RunModReleaseCheck(automatic);
+                    }
+                    catch(const std::exception& exception)
+                    {
+                        {
+                            std::scoped_lock lock(modReleaseMutex_);
+                            modReleaseSnapshot_.state =
+                                ModReleaseCheckState::Unavailable;
+                            modReleaseSnapshot_.message =
+                                "The update check stopped unexpectedly.";
+                        }
+                        ErrorManager::Instance().RecordError(
+                            "Checking for a Big Screen release",
+                            exception.what());
+                    }
+                    catch(...)
+                    {
+                        {
+                            std::scoped_lock lock(modReleaseMutex_);
+                            modReleaseSnapshot_.state =
+                                ModReleaseCheckState::Unavailable;
+                            modReleaseSnapshot_.message =
+                                "The update check stopped unexpectedly.";
+                        }
+                        ErrorManager::Instance().RecordError(
+                            "Checking for a Big Screen release",
+                            "Unexpected release-check worker failure");
+                    }
+                    modReleaseWorkerFinished_ = true;
+                });
         }
         catch(const std::exception& exception)
         {
+            modReleaseWorkerFinished_ = true;
             error = std::string("Could not start the release-check worker: ") +
                 exception.what();
             std::scoped_lock lock(modReleaseMutex_);
@@ -2482,43 +2552,151 @@ os.replace(temporary, job['destination'])
         thumbnailWake_.notify_one();
     }
 
+    bool DownloadManager::QueueOperation(
+        std::function<void()> operation,
+        std::string& error)
+    {
+        if(!operation)
+        {
+            error = "The downloader operation was empty.";
+            return false;
+        }
+        if(operationBusy_.exchange(true))
+        {
+            error = "Another downloader task is already running.";
+            return false;
+        }
+        try
+        {
+            std::scoped_lock lock(operationMutex_);
+            if(stopOperationWorker_)
+            {
+                operationBusy_ = false;
+                error = "The downloader is shutting down.";
+                return false;
+            }
+            pendingOperation_ = std::move(operation);
+        }
+        catch(const std::exception& exception)
+        {
+            operationBusy_ = false;
+            error = std::string("Could not queue the downloader task: ") +
+                exception.what();
+            return false;
+        }
+        operationWake_.notify_one();
+        return true;
+    }
+
+    void DownloadManager::RunOperationQueue()
+    {
+        pthread_setname_np(pthread_self(), "BigScreenDL");
+        while(true)
+        {
+            std::function<void()> operation;
+            {
+                std::unique_lock lock(operationMutex_);
+                operationWake_.wait(lock, [this]() {
+                    return stopOperationWorker_ ||
+                        static_cast<bool>(pendingOperation_);
+                });
+                if(stopOperationWorker_ && !pendingOperation_)
+                    return;
+                operation = std::move(pendingOperation_);
+                pendingOperation_ = {};
+            }
+
+            PaperLogger.info("Downloader background operation started");
+            try
+            {
+                operation();
+            }
+            catch(const std::exception& exception)
+            {
+                SetFailure(
+                    std::string("Downloader stopped: ") + exception.what());
+            }
+            catch(...)
+            {
+                SetFailure(
+                    "Downloader stopped because of an unexpected internal error.");
+            }
+            // Run()/RunProbe()/RunUpdater publish their terminal snapshots
+            // before returning. Clear busy last so a new UI action can never
+            // overlap final file promotion or manifest persistence.
+            operationBusy_ = false;
+            PaperLogger.info("Downloader background operation finished");
+        }
+    }
+
+    void DownloadManager::RunStatusPolling()
+    {
+        pthread_setname_np(pthread_self(), "BigScreenDLStat");
+        while(true)
+        {
+            {
+                std::unique_lock lock(statusWaitMutex_);
+                if(statusWake_.wait_for(
+                       lock,
+                       std::chrono::milliseconds(100),
+                       [this]() { return stopStatusWorker_; }))
+                    return;
+            }
+            if(operationBusy_)
+                RefreshSnapshotFromDisk();
+        }
+    }
+
     void DownloadManager::Cancel()
     {
-        std::scoped_lock lock(mutex_);
-        if(!snapshot_.Active()) return;
-        std::ofstream stream(cancelPath_, std::ios::binary | std::ios::trunc);
+        std::filesystem::path cancelPath;
+        std::string levelId;
+        {
+            std::scoped_lock lock(mutex_);
+            if(!snapshot_.Active()) return;
+            cancelPath = cancelPath_;
+            levelId = snapshot_.levelId;
+            snapshot_.message = "Stopping download";
+        }
+        std::ofstream stream(cancelPath, std::ios::binary | std::ios::trunc);
         stream << "cancel";
         stream.flush();
         if(!stream)
         {
-            snapshot_.message = "Could not request downloader cancellation.";
+            {
+                std::scoped_lock lock(mutex_);
+                if(cancelPath_ == cancelPath)
+                    snapshot_.message =
+                        "Could not request downloader cancellation.";
+            }
             PaperLogger.error(
                 "Could not write downloader cancellation marker '{}'.",
-                cancelPath_.string());
+                cancelPath.string());
             ErrorManager::Instance().RecordError(
                 "Cancelling downloader operation",
                 "The cancellation marker could not be written to " +
-                    cancelPath_.string());
+                    cancelPath.string());
             return;
         }
-        snapshot_.message = "Stopping download";
-        PaperLogger.info("Downloader cancellation requested for {}", snapshot_.levelId);
+        PaperLogger.info("Downloader cancellation requested for {}", levelId);
     }
 
     DownloadSnapshot DownloadManager::Snapshot()
     {
         std::scoped_lock lock(mutex_);
-        const auto now = std::chrono::steady_clock::now();
-        // The Python worker owns the recovery file while active. Reading and
-        // reparsing it once per Unity frame added needless storage and CPU work;
-        // 10 Hz is considerably faster than a user can perceive in a progress
-        // label while terminal states are still imported directly by workers.
-        if(now - lastStatusRefresh_ >= std::chrono::milliseconds(100))
+        // Status-file I/O is owned by RunStatusPolling. Unity only copies this
+        // in-memory mailbox and can never stall on shared-storage reads.
+        auto result = snapshot_;
+        if(operationBusy_ && !result.Active())
         {
-            RefreshSnapshotFromDiskLocked();
-            lastStatusRefresh_ = now;
+            // A status file can reach a terminal state a few milliseconds
+            // before the operation thread finishes promotion, persistence, or
+            // diagnostic logging. Do not let UI code start another task or
+            // open the new decoder until that worker is genuinely finished.
+            result.state = DownloadState::Preparing;
+            result.message = "Finishing downloader task";
         }
-        return snapshot_;
+        return result;
     }
 
     void DownloadManager::Run(DownloadRequest request, std::filesystem::path finalPath)
@@ -2673,9 +2851,21 @@ os.replace(temporary, job['destination'])
                 return;
             }
 
-            std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
-            if(snapshot_.state == DownloadState::Failed)
+            DownloadSnapshot terminalSnapshot;
+            RefreshSnapshotFromDisk();
+            {
+                std::scoped_lock lock(mutex_);
+                terminalSnapshot = snapshot_;
+                // Python publishes "completed" before C++ promotes the staged
+                // media and durably commits library.json. Keep the public state
+                // active until every fallible publication phase is finished.
+                if(terminalSnapshot.state == DownloadState::Completed)
+                {
+                    snapshot_.state = DownloadState::Preparing;
+                    snapshot_.message = "Saving downloaded video";
+                }
+            }
+            if(terminalSnapshot.state == DownloadState::Failed)
             {
                 // The status shown in VR stays concise. Persist yt-dlp's raw,
                 // sanitized failure and selected-stream facts under the same
@@ -2690,9 +2880,9 @@ os.replace(temporary, job['destination'])
                 const auto detail = ReadString(diagnosticStatus, "diagnostic");
                 ErrorManager::Instance().RecordError(
                     code.empty() ? "Downloader failure" : code,
-                    detail.empty() ? snapshot_.message : detail);
+                    detail.empty() ? terminalSnapshot.message : detail);
             }
-            if(snapshot_.state == DownloadState::Completed)
+            if(terminalSnapshot.state == DownloadState::Completed)
             {
                 std::ifstream stream(statusPath_, std::ios::binary);
                 const std::string json{std::istreambuf_iterator<char>(stream), {}};
@@ -2715,6 +2905,9 @@ os.replace(temporary, job['destination'])
                 // Promote only after yt-dlp has published a complete, probed
                 // file. The transactions roll back automatically if either
                 // filesystem publication or the manifest update throws.
+                PaperLogger.info(
+                    "Publishing downloaded video file for {}",
+                    request.levelId);
                 StagedFileReplacement videoReplacement(
                     incomingVideoPath, finalPath);
                 videoReplacement.Promote();
@@ -2734,10 +2927,13 @@ os.replace(temporary, job['destination'])
                     request.songAuthor,
                     request.origin,
                     std::move(stored));
+                PaperLogger.info(
+                    "Committed downloaded video manifest for {}",
+                    request.levelId);
                 videoReplacement.Commit();
                 if(thumbnailReplacement)
                     thumbnailReplacement->Commit();
-                snapshot_.thumbnailPath =
+                terminalSnapshot.thumbnailPath =
                     Utility::IsRegularFile(thumbnailPath)
                         ? thumbnailPath.string()
                         : std::string{};
@@ -2747,11 +2943,15 @@ os.replace(temporary, job['destination'])
                         "Video download completed with a non-fatal warning: {}",
                         diagnostic);
             }
+            {
+                std::scoped_lock lock(mutex_);
+                snapshot_ = terminalSnapshot;
+            }
             PaperLogger.info(
                 "Downloader finished for {} with state '{}': {}",
                 request.levelId,
-                StateName(snapshot_.state),
-                snapshot_.message);
+                StateName(terminalSnapshot.state),
+                terminalSnapshot.message);
         }
         catch(const std::exception& exception)
         {
@@ -2839,11 +3039,18 @@ os.replace(temporary, job['destination'])
                 return;
             }
 
-            std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
-            if(snapshot_.state == DownloadState::Failed)
+            RefreshSnapshotFromDisk();
+            DownloadSnapshot terminalSnapshot;
+            std::filesystem::path terminalStatusPath;
             {
-                std::ifstream diagnosticStream(statusPath_, std::ios::binary);
+                std::scoped_lock lock(mutex_);
+                terminalSnapshot = snapshot_;
+                terminalStatusPath = statusPath_;
+            }
+            if(terminalSnapshot.state == DownloadState::Failed)
+            {
+                std::ifstream diagnosticStream(
+                    terminalStatusPath, std::ios::binary);
                 const std::string diagnosticJson{
                     std::istreambuf_iterator<char>(diagnosticStream), {}};
                 rapidjson::Document diagnosticStatus;
@@ -2853,12 +3060,12 @@ os.replace(temporary, job['destination'])
                 const auto detail = ReadString(diagnosticStatus, "diagnostic");
                 ErrorManager::Instance().RecordError(
                     code.empty() ? "Showcase map download" : code,
-                    detail.empty() ? snapshot_.message : detail);
+                    detail.empty() ? terminalSnapshot.message : detail);
             }
             PaperLogger.info(
                 "Showcase map downloader finished with state '{}': {}",
-                StateName(snapshot_.state),
-                snapshot_.message);
+                StateName(terminalSnapshot.state),
+                terminalSnapshot.message);
         }
         catch(const std::exception& exception)
         {
@@ -2922,24 +3129,28 @@ os.replace(temporary, job['destination'])
                 return;
             }
 
-            std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
-            if(snapshot_.state == DownloadState::Failed)
+            RefreshSnapshotFromDisk();
+            DownloadSnapshot terminalSnapshot;
+            {
+                std::scoped_lock lock(mutex_);
+                terminalSnapshot = snapshot_;
+            }
+            if(terminalSnapshot.state == DownloadState::Failed)
             {
                 ErrorManager::Instance().RecordError(
                     "Checking a YouTube URL",
-                    (snapshot_.errorCode.empty()
+                    (terminalSnapshot.errorCode.empty()
                         ? std::string("BS-DL-PROBE-001")
-                        : snapshot_.errorCode) + ": " +
-                    (snapshot_.diagnostic.empty()
-                        ? snapshot_.message
-                        : snapshot_.diagnostic));
+                        : terminalSnapshot.errorCode) + ": " +
+                    (terminalSnapshot.diagnostic.empty()
+                        ? terminalSnapshot.message
+                        : terminalSnapshot.diagnostic));
             }
             PaperLogger.info(
                 "URL check finished for {} with state '{}': {}",
                 levelId,
-                StateName(snapshot_.state),
-                snapshot_.message);
+                StateName(terminalSnapshot.state),
+                terminalSnapshot.message);
         }
         catch(const std::exception& exception)
         {
@@ -3007,8 +3218,7 @@ os.replace(temporary, job['destination'])
                     "The embedded downloader could not run the yt-dlp update check. Big Screen recorded the internal error; try again after restarting Beat Saber.");
                 return;
             }
-            std::scoped_lock lock(mutex_);
-            RefreshSnapshotFromDiskLocked();
+            RefreshSnapshotFromDisk();
         }
         catch(const std::exception& exception)
         {
@@ -3227,69 +3437,93 @@ os.replace(temporary, job['destination'])
         }
     }
 
-    void DownloadManager::RefreshSnapshotFromDiskLocked()
+    void DownloadManager::RefreshSnapshotFromDisk()
     {
-        if(ignoreStatusFile_)
-            return;
-        std::ifstream stream(statusPath_, std::ios::binary);
+        std::scoped_lock statusReadLock(statusReadMutex_);
+        std::filesystem::path statusPath;
+        DownloadSnapshot refreshed;
+        {
+            std::scoped_lock lock(mutex_);
+            if(ignoreStatusFile_)
+                return;
+            statusPath = statusPath_;
+            refreshed = snapshot_;
+        }
+
+        // Shared-storage reads and JSON parsing deliberately happen without
+        // mutex_. Unity's Snapshot() can always copy the last complete mailbox
+        // even if Android storage temporarily responds slowly.
+        std::ifstream stream(statusPath, std::ios::binary);
         if(!stream) return;
         const std::string json{std::istreambuf_iterator<char>(stream), {}};
         rapidjson::Document document;
         document.Parse(json.data(), json.size());
         if(document.HasParseError() || !document.IsObject()) return;
-        snapshot_.state = ParseState(ReadString(document, "state"));
-        snapshot_.message = ReadString(document, "message");
-        snapshot_.errorCode = ReadString(document, "errorCode");
-        snapshot_.diagnostic = ReadString(document, "diagnostic");
-        snapshot_.downloadedBytes = static_cast<std::uint64_t>(ReadNumber(document, "downloadedBytes"));
-        snapshot_.totalBytes = static_cast<std::uint64_t>(ReadNumber(document, "totalBytes"));
-        snapshot_.speedBytesPerSecond = ReadNumber(document, "speed");
-        snapshot_.etaSeconds = ReadNumber(document, "eta");
+        refreshed.state = ParseState(ReadString(document, "state"));
+        refreshed.message = ReadString(document, "message");
+        refreshed.errorCode = ReadString(document, "errorCode");
+        refreshed.diagnostic = ReadString(document, "diagnostic");
+        refreshed.downloadedBytes = static_cast<std::uint64_t>(ReadNumber(document, "downloadedBytes"));
+        refreshed.totalBytes = static_cast<std::uint64_t>(ReadNumber(document, "totalBytes"));
+        refreshed.speedBytesPerSecond = ReadNumber(document, "speed");
+        refreshed.etaSeconds = ReadNumber(document, "eta");
         const auto title = ReadString(document, "title");
         const auto thumbnailPath = ReadString(document, "thumbnailPath");
-        if(!title.empty()) snapshot_.title = title;
-        if(!thumbnailPath.empty()) snapshot_.thumbnailPath = thumbnailPath;
+        if(!title.empty()) refreshed.title = title;
+        if(!thumbnailPath.empty()) refreshed.thumbnailPath = thumbnailPath;
         const auto heights = ReadIntegerArray(document, "availableHeights");
-        if(!heights.empty()) snapshot_.availableHeights = heights;
+        if(!heights.empty()) refreshed.availableHeights = heights;
         const int requestedHeight =
             static_cast<int>(ReadNumber(document, "requestedHeight"));
         if(requestedHeight > 0)
-            snapshot_.requestedHeight = requestedHeight;
+            refreshed.requestedHeight = requestedHeight;
+
+        {
+            std::scoped_lock lock(mutex_);
+            if(ignoreStatusFile_ || statusPath_ != statusPath)
+                return;
+            snapshot_ = std::move(refreshed);
+        }
     }
 
     void DownloadManager::SetFailure(std::string message)
     {
-        std::scoped_lock lock(mutex_);
-        ignoreStatusFile_ = true;
+        std::filesystem::path statusPath;
+        {
+            std::scoped_lock lock(mutex_);
+            ignoreStatusFile_ = true;
+            statusPath = statusPath_;
+            snapshot_.state = DownloadState::Failed;
+            snapshot_.message = message;
+        }
         // The Python status file may still describe the last non-terminal
-        // progress update. Remove it before publishing the C++ terminal state
-        // so Snapshot() cannot resurrect a wedged Preparing/Downloading job.
+        // progress update. ignoreStatusFile_ is published with the C++ failure
+        // before cleanup, so Snapshot() cannot resurrect a wedged active job
+        // while this background thread removes the stale file.
         std::error_code removeError;
-        std::filesystem::remove(statusPath_, removeError);
+        std::filesystem::remove(statusPath, removeError);
         if(removeError)
         {
             // Retry a transient handle race once. If deletion still fails,
             // invalidate the JSON so Snapshot() cannot revive an active state.
             removeError.clear();
-            std::filesystem::remove(statusPath_, removeError);
+            std::filesystem::remove(statusPath, removeError);
             if(removeError)
             {
                 std::ofstream staleStatus(
-                    statusPath_, std::ios::binary | std::ios::trunc);
+                    statusPath, std::ios::binary | std::ios::trunc);
                 staleStatus.flush();
                 const std::string cleanupDetail =
                     "Could not remove stale downloader status '" +
-                    statusPath_.string() + "': " + removeError.message();
+                    statusPath.string() + "': " + removeError.message();
                 PaperLogger.warn("{}", cleanupDetail);
                 ErrorManager::Instance().RecordError(
                     "Cleaning downloader status", cleanupDetail);
             }
         }
-        snapshot_.state = DownloadState::Failed;
-        snapshot_.message = std::move(message);
-        PaperLogger.error("{}", snapshot_.message);
+        PaperLogger.error("{}", message);
         ErrorManager::Instance().RecordError(
             "Downloader operation",
-            snapshot_.message);
+            message);
     }
 }

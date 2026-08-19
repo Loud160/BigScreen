@@ -207,6 +207,21 @@ namespace BigScreen {
         Close();
     }
 
+    int FrameDecoder::InterruptFfmpegIo(void* opaque)
+    {
+        auto* decoder = static_cast<FrameDecoder*>(opaque);
+        if(!decoder)
+            return 0;
+        if(decoder->stopWorker_)
+            return 1;
+        const auto deadline = decoder->openDeadlineNanoseconds_.load();
+        if(deadline <= 0)
+            return 0;
+        const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return now >= deadline ? 1 : 0;
+    }
+
     bool FrameDecoder::Open(
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
@@ -216,6 +231,10 @@ namespace BigScreen {
         std::string& error)
     {
         Close();
+        // Close publishes stop=true for any prior worker. Clear it before the
+        // interrupt callback is installed or every new avformat_open_input()
+        // would cancel itself immediately.
+        stopWorker_ = false;
         // Close intentionally preserves the final worker total so its owner
         // can read it after join. A new Open begins a distinct decoder
         // lifetime and therefore resets the counter here.
@@ -238,7 +257,20 @@ namespace BigScreen {
             workerError_.reset();
         }
 
-        int result = avformat_open_input(&format_, videoPath.string().c_str(), nullptr, nullptr);
+        format_ = avformat_alloc_context();
+        if(!format_)
+        {
+            error = "FFmpeg could not allocate the video container";
+            return false;
+        }
+        format_->interrupt_callback.callback = &FrameDecoder::InterruptFfmpegIo;
+        format_->interrupt_callback.opaque = this;
+        openDeadlineNanoseconds_ =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                (std::chrono::steady_clock::now() + std::chrono::seconds(1))
+                    .time_since_epoch()).count();
+        int result = avformat_open_input(
+            &format_, videoPath.string().c_str(), nullptr, nullptr);
         if(result < 0)
         {
             error = "FFmpeg could not open the video container: " + FfmpegError(result);
@@ -253,6 +285,7 @@ namespace BigScreen {
             Close();
             return false;
         }
+        openDeadlineNanoseconds_ = 0;
 
         // av_find_best_stream accounts for containers with artwork or multiple
         // video tracks. Decoder selection happens through the explicit codec
@@ -479,6 +512,7 @@ namespace BigScreen {
             durationSeconds_ = format_->duration / static_cast<double>(AV_TIME_BASE);
 
         stopWorker_ = false;
+        workerExited_ = false;
         open_ = true;
         try
         {
@@ -496,19 +530,10 @@ namespace BigScreen {
 
     void FrameDecoder::Close()
     {
-        open_ = false;
-        // The worker evaluates the wait predicate while holding requestMutex_.
-        // Publish the stop flag under that same mutex before notifying. An
-        // atomic flag alone does not close the gap between a false predicate
-        // evaluation and the worker actually blocking, which could otherwise
-        // lose this wakeup and leave the Unity thread stuck in join().
-        {
-            std::scoped_lock lock(requestMutex_);
-            stopWorker_ = true;
-        }
-        requestChanged_.notify_all();
+        RequestStop();
         if(worker_.joinable())
             worker_.join();
+        workerExited_ = true;
 
         if(converter_)
             sws_freeContext(converter_);
@@ -539,6 +564,7 @@ namespace BigScreen {
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
+        openDeadlineNanoseconds_ = 0;
         compressedPacketPending_ = false;
         decoderDraining_ = false;
         codecName_ = "unknown";
@@ -557,6 +583,34 @@ namespace BigScreen {
             recycledBuffers_.clear();
             frameWaiting_ = false;
         }
+    }
+
+    void FrameDecoder::RequestStop()
+    {
+        open_ = false;
+        // Also interrupts avformat_open_input/find_stream_info/av_read_frame.
+        // Local files normally return immediately, but a damaged container or
+        // storage fault must not leave teardown waiting forever.
+        // The worker evaluates the wait predicate while holding requestMutex_.
+        // Publish the stop flag under that same mutex before notifying. An
+        // atomic flag alone does not close the gap between a false predicate
+        // evaluation and the worker actually blocking, which could otherwise
+        // lose this wakeup and leave the Unity thread stuck in join().
+        {
+            std::scoped_lock lock(requestMutex_);
+            stopWorker_ = true;
+        }
+        requestChanged_.notify_all();
+    }
+
+    bool FrameDecoder::WaitForWorkerStop(std::chrono::milliseconds timeout)
+    {
+        if(!worker_.joinable() || workerExited_)
+            return true;
+        std::unique_lock lock(workerExitMutex_);
+        return workerExitedChanged_.wait_for(lock, timeout, [this]() {
+            return workerExited_.load();
+        });
     }
 
     void FrameDecoder::Request(double mediaSeconds)
@@ -662,6 +716,8 @@ namespace BigScreen {
             SetWorkerError("The video decoder stopped because of an unexpected internal error.");
         }
         updateCpuTotal();
+        workerExited_ = true;
+        workerExitedChanged_.notify_all();
     }
 
     void FrameDecoder::WorkerLoop(std::uint64_t cpuStartedNanoseconds)

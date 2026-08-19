@@ -19,6 +19,15 @@ isolated QuickJS runtime with memory, stack, source, output, and time limits.
 yt-dlp updates are staged transactionally and tested with both real EJS solver
 bundles, the provider API, and the engine before activation.
 
+Video, map-package, URL-probe, and yt-dlp-update actions are serialized through
+one persistent downloader operation worker. A menu callback only validates and
+queues an action; it never joins a previous network/Python thread. Python may
+publish a terminal status file before C++ has promoted the staged media, so the
+public snapshot remains active until file replacement, manifest persistence,
+and diagnostic publication have all returned. The manifest commit advertises
+its narrow background persistence window, allowing the Video Library to retain
+its previous complete view instead of waiting on the filesystem mutex.
+
 Beat Saber's audio/song position is the only video clock. That preserves pause,
 practice speed, seeking, and Replay behavior. The decoder uses each frame's
 container duration when available, with nominal FPS only as a fallback, so VFR
@@ -57,6 +66,14 @@ reopens the same runtime and file at the latest requested timestamp with
 software decoding when policy permits before the session decides playback has
 failed. Unsupported 10-bit, HDR, and alpha video is rejected explicitly.
 
+Stopping a decoder signals both the worker condition variable and FFmpeg's I/O
+interrupt callback. Unity waits no longer than four milliseconds for ordinary
+cleanup; a backend that needs longer is transferred intact to a process-lifetime
+retirement worker, which owns the final join and FFmpeg/MediaCodec destruction.
+Container open and stream discovery have a one-second interrupt deadline. A
+finished download does not automatically open its decoder—the explicit Play
+action starts preview preparation after durable publication has completed.
+
 The URL probe publishes exact compatible source tiers through an atomic JSON
 status file. Both the Video Library and song-selection modal consume that same
 list and write the chosen height plus the saved FPS ceiling into the download
@@ -92,6 +109,15 @@ recreation calls each menu's `ForgetUi` boundary before new controllers are
 created, and the active coordinator is retained through `UnityW`. Per-frame UI
 refreshes are gated by the active Big Screen flow. This is required because a
 non-null raw pointer from a destroyed menu scene is not a valid liveness check.
+
+All Big Screen flow dialogs are presented through the active center-controller
+stack. Dialogs may be created while a left, right, or retained center page is
+built, but their transform is moved to the center page that is actually visible
+immediately before `Show`. This prevents a warning or confirmation opened from
+a curved side panel from rendering behind that panel, and keeps the same rule
+when Storage, Showcase, or the local-file browser has replaced the neutral
+center page. The stock song-selection resolution dialog remains owned by Beat
+Saber's center song-detail controller because it is outside Big Screen's flow.
 
 The local-video browser follows the same boundary. Unity renders immutable
 directory snapshots on the center screen, while a worker thread enumerates the
