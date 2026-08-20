@@ -30,6 +30,7 @@
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/QuickJsEngine.hpp"
 #include "BigScreen/QuickJsPythonModule.hpp"
+#include "BigScreen/VideoContainerNormalizer.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -822,13 +823,24 @@ try:
     within_fps_limit = [candidate for candidate in formats
         if float(candidate.get('fps') or 0) <= maximum_fps + 0.01]
     selection_pool = within_fps_limit or formats
+    # Direct HTTPS MP4s are already seek-safe for MediaCodec. Current YouTube
+    # clients can expose the same H.264 tier through fragmented HLS; keep that
+    # as a compatibility fallback, but do not choose it merely for a slightly
+    # higher bitrate because it must be normalized after transfer.
+    def direct_transport(candidate):
+        return 1 if str(candidate.get('protocol') or '').lower() in ('http', 'https') else 0
     chosen = max(selection_pool, key=lambda f: (
+        direct_transport(f),
         float(f.get('fps') or 0) if within_fps_limit else -float(f.get('fps') or 0),
         float(f.get('tbr') or 0),
         int(f.get('filesize') or f.get('filesize_approx') or 0)))
+    BigScreenYtDlpLogger().info(
+        '[Big Screen] selected ' + stream_summary(chosen))
     expected = int(chosen.get('filesize') or chosen.get('filesize_approx') or 0)
     free = shutil.disk_usage(os.path.dirname(job['finalPath'])).free
-    required = expected + int(job['reserveBytes']) if expected else int(job['unknownRequiredBytes'])
+    requires_remux_space = direct_transport(chosen) == 0 and requested_height <= 1080
+    required = (expected * (2 if requires_remux_space else 1) + int(job['reserveBytes'])
+        if expected else int(job['unknownRequiredBytes']))
     if free < required:
         raise OSError('Not enough free Quest storage. Need at least %.1f MB free; %.1f MB is available.' % (required / 1048576, free / 1048576))
     options = dict(common, outtmpl=job['finalPath'], format=chosen['format_id'])
@@ -2071,6 +2083,14 @@ os.replace(temporary, job['destination'])
         return result;
     }
 
+    std::optional<DownloadNotice> DownloadManager::TakeDownloadNotice()
+    {
+        std::scoped_lock lock(mutex_);
+        auto result = downloadNotice_;
+        downloadNotice_.reset();
+        return result;
+    }
+
     std::optional<ModReleaseNotice> DownloadManager::TakeModReleaseNotice()
     {
         std::scoped_lock lock(modReleaseMutex_);
@@ -3079,8 +3099,10 @@ os.replace(temporary, job['destination'])
                 // active until every fallible publication phase is finished.
                 if(terminalSnapshot.state == DownloadState::Completed)
                 {
-                    snapshot_.state = DownloadState::Preparing;
-                    snapshot_.message = "Saving downloaded video";
+                    // C++ owns all status after Python finishes. Without this
+                    // handoff, the status reader can restore Python's earlier
+                    // completed state over the remux progress shown in VR.
+                    ignoreStatusFile_ = true;
                 }
             }
             if(terminalSnapshot.state == DownloadState::Failed)
@@ -3100,6 +3122,133 @@ os.replace(temporary, job['destination'])
                     code.empty() ? "Downloader failure" : code,
                     detail.empty() ? terminalSnapshot.message : detail);
             }
+            bool softwareDecoderRequired = false;
+            if(terminalSnapshot.state == DownloadState::Completed)
+            {
+                const auto preparedVideoPath = std::filesystem::path(
+                    incomingVideoPath.string() + ".prepared.mp4");
+                std::error_code stalePreparedError;
+                std::filesystem::remove(
+                    preparedVideoPath, stalePreparedError);
+
+                const auto normalization =
+                    VideoContainerNormalizer::PrepareDownloadedVideo(
+                        incomingVideoPath,
+                        preparedVideoPath,
+                        request.requestedHeight,
+                        [this](std::uint64_t completed, std::uint64_t total)
+                        {
+                            // This callback runs on the downloader operation
+                            // thread. Publish only POD/string state; Unity UI
+                            // reads the snapshot later on its own thread.
+                            std::scoped_lock lock(mutex_);
+                            snapshot_.state = DownloadState::Preparing;
+                            snapshot_.containerPreparation = true;
+                            snapshot_.message =
+                                "Preparing video for playback";
+                            snapshot_.downloadedBytes = completed;
+                            snapshot_.totalBytes = total;
+                            snapshot_.speedBytesPerSecond = 0.0;
+                            snapshot_.etaSeconds = 0.0;
+                        },
+                        [this]()
+                        {
+                            std::error_code error;
+                             return std::filesystem::is_regular_file(
+                                 cancelPath_, error) && !error;
+                         });
+
+                // Record the container-preparation outcome independently of
+                // the final download result. This proves whether a transfer
+                // arrived as a directly usable container, was remuxed from
+                // MPEG-TS, or had to retain the verified software-decoder
+                // fallback without relying on transient in-headset text.
+                const char* normalizationAction = "failed";
+                switch(normalization.state)
+                {
+                    case VideoNormalizationState::Ready:
+                        normalizationAction = "direct_container";
+                        break;
+                    case VideoNormalizationState::Remuxed:
+                        normalizationAction = "remuxed_mpegts_to_mp4";
+                        break;
+                    case VideoNormalizationState::SoftwareDecoderRequired:
+                        normalizationAction = "software_fallback";
+                        break;
+                    case VideoNormalizationState::Cancelled:
+                        normalizationAction = "cancelled";
+                        break;
+                    case VideoNormalizationState::Failed:
+                        break;
+                }
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "video_container_prepared",
+                    "VideoContainerNormalizer",
+                    {
+                        {"levelId", request.levelId},
+                        {"action", normalizationAction},
+                        {"detail", normalization.detail},
+                        {"outputBytes", std::to_string(
+                            normalization.outputBytes)}
+                    });
+
+                if(normalization.state ==
+                   VideoNormalizationState::Remuxed)
+                {
+                    // This replaces only the unpublished incoming sibling.
+                    // The currently assigned video remains protected by the
+                    // separate transaction used during final publication.
+                    StagedFileReplacement preparedReplacement(
+                        preparedVideoPath, incomingVideoPath);
+                    preparedReplacement.Promote();
+                    preparedReplacement.Commit();
+                    PaperLogger.info(
+                        "Normalized downloaded MPEG-TS into a seek-safe MP4");
+                }
+                else if(normalization.state ==
+                        VideoNormalizationState::SoftwareDecoderRequired)
+                {
+                    softwareDecoderRequired = true;
+                    terminalSnapshot.diagnostic = normalization.detail;
+                    PaperLogger.warn(
+                        "Downloaded video could not be remuxed; verified software playback remains available: {}",
+                        normalization.detail);
+                    ErrorManager::Instance().RecordError(
+                        "BS-DL-PREP-SW-001",
+                        normalization.detail);
+                }
+                else if(normalization.state ==
+                        VideoNormalizationState::Cancelled)
+                {
+                    terminalSnapshot.state = DownloadState::Cancelled;
+                    terminalSnapshot.message =
+                        "Video preparation cancelled. Select Resume to download it again.";
+                }
+                else if(normalization.state ==
+                        VideoNormalizationState::Failed)
+                {
+                    terminalSnapshot.state = DownloadState::Failed;
+                    terminalSnapshot.errorCode = "BS-DL-PREP-001";
+                    terminalSnapshot.message =
+                        "BS-DL-PREP-001: Video preparation failed.";
+                    terminalSnapshot.diagnostic = normalization.detail;
+                    ErrorManager::Instance().RecordError(
+                        terminalSnapshot.errorCode,
+                        normalization.detail);
+                }
+
+                if(terminalSnapshot.state == DownloadState::Completed)
+                {
+                    std::error_code preparedSizeError;
+                    terminalSnapshot.downloadedBytes =
+                        std::filesystem::file_size(
+                            incomingVideoPath, preparedSizeError);
+                    terminalSnapshot.totalBytes = preparedSizeError
+                        ? 0
+                        : terminalSnapshot.downloadedBytes;
+                    terminalSnapshot.message = "Video downloaded";
+                }
+            }
             if(terminalSnapshot.state == DownloadState::Completed)
             {
                 std::ifstream stream(statusPath_, std::ios::binary);
@@ -3116,7 +3265,7 @@ os.replace(temporary, job['destination'])
                 stored.fitToSong = request.fitToSong;
                 stored.blackDuringLeadIn = request.blackDuringLeadIn;
                 stored.durationSeconds = ReadNumber(status, "duration");
-                stored.bytes = static_cast<std::uint64_t>(ReadNumber(status, "bytes"));
+                stored.bytes = terminalSnapshot.totalBytes;
                 stored.width = static_cast<int>(ReadNumber(status, "width"));
                 stored.height = static_cast<int>(ReadNumber(status, "height"));
 
@@ -3160,6 +3309,16 @@ os.replace(temporary, job['destination'])
                     PaperLogger.warn(
                         "Video download completed with a non-fatal warning: {}",
                         diagnostic);
+
+                if(softwareDecoderRequired)
+                {
+                    std::scoped_lock lock(mutex_);
+                    downloadNotice_ = DownloadNotice{
+                        "Software video decoding required",
+                        "Big Screen could not prepare this video for hardware decoding. "
+                        "It can still play using software decoding, but the video frame rate "
+                        "or gameplay performance may be reduced."};
+                }
             }
             {
                 std::scoped_lock lock(mutex_);

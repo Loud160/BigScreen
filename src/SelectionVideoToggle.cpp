@@ -1307,6 +1307,14 @@ namespace BigScreen {
         if(now < nextDownloadUiRefreshTime_)
             return;
         nextDownloadUiRefreshTime_ = now + 0.1f;
+        if(controlsVisibleRequested_)
+        {
+            if(auto notice = DownloadManager::Instance().TakeDownloadNotice())
+            {
+                ErrorManager::Instance().ReportUserVisible(
+                    notice->title, notice->message);
+            }
+        }
         const auto snapshot = DownloadManager::Instance().Snapshot();
         RefreshResolutionDialog();
         if(!snapshot.Active() && snapshot.levelId == ownedDownloadLevelId_)
@@ -1339,7 +1347,26 @@ namespace BigScreen {
             BSML::Lite::SetButtonText(
                 downloadButton_.ptr(), "Cancel Download");
             downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
-            if(snapshot.totalBytes)
+            if(snapshot.state == DownloadState::Preparing)
+            {
+                if(snapshot.totalBytes)
+                {
+                    const float progress = CoreLogic::DownloadProgressFraction(
+                        snapshot.downloadedBytes,
+                        snapshot.totalBytes);
+                    downloadStatus_->set_text(
+                        "Preparing video for playback " +
+                        std::to_string(static_cast<int>(
+                            std::round(progress * 100.0f))) + "%");
+                }
+                else
+                {
+                    downloadStatus_->set_text(snapshot.message.empty()
+                        ? "Preparing video for playback..."
+                        : snapshot.message);
+                }
+            }
+            else if(snapshot.totalBytes)
             {
                 const float progress = CoreLogic::DownloadProgressFraction(
                     snapshot.downloadedBytes,

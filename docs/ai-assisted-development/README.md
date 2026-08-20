@@ -23,9 +23,22 @@ this archive were changed, deferred, rejected, or superseded after testing.
 ## Planning records
 
 - [Movement-authoring planning](planning/bigscreen-movement-authoring-planning.md)
+- [Buffered decoder design](planning/BUFFERED_DECODER_DESIGN.md) — deferred
+  bounded-frame-queue proposal with memory, synchronization, and measurement
+  requirements; it is not an implemented playback feature.
+- [Self-updating core feasibility](planning/SELF_UPDATING_FEASIBILITY.md) —
+  research into a signed A/B core updater and automatic rollback.
+- [Quest and PC dual-platform feasibility](planning/DUAL_PLATFORM_ARCHITECTURE_FEASIBILITY.md) —
+  research into a shared core and separate platform hosts.
+- [GPU video-pipeline feasibility](planning/GPU_VIDEO_PIPELINE_FEASIBILITY.md) —
+  research into YUV upload, SurfaceTexture, and AHardwareBuffer/Vulkan paths.
+- [Deferred menu environment preview](planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md) —
+  failed approaches, crash evidence, and requirements for a future safe design.
 
 ## Independent reviews
 
 - [Claude Code Opus 4.8 review](reviews/BigScreen-Code-Review_1.md) — external
   review input retained for provenance; its findings are guidance and are not
   automatically accepted as current repository truth.
+- [External code-review resolution](reviews/CODE_REVIEW_RESOLUTION.md) — the
+  recorded evaluation of accepted, rejected, and deferred review findings.

@@ -135,7 +135,9 @@ installation so a slow first run does not look frozen.
 Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. YouTube downloads
 offer the compatible 480p, 720p, 1080p, and hardware-only 1440p files that the
 source actually provides. Playback preserves the selected file's native
-resolution, with configurable 15, 30, and 60 FPS presentation ceilings.
+resolution, with configurable 15, 30, and 60 FPS presentation ceilings. Direct
+H.264 MP4 is preferred; compatible HLS downloads are prepared as seek-safe MP4
+files in the background without re-encoding or reducing quality.
 
 For comparison and performance tuning, the mod includes:
 
@@ -465,7 +467,6 @@ licenses/               Redistributable third-party license texts
 - [Downloader security and rollback](docs/DOWNLOADER_SECURITY.md)
 - [Building and packaging](docs/BUILDING.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
-- [External code-review resolution](docs/CODE_REVIEW_RESOLUTION.md)
 - [Known limitations and future work](docs/FUTURE_WORK.md)
 - [Current development checkpoint and required retesting](docs/KNOWN_ISSUES.md)
 - [Complete documentation index](docs/README.md)

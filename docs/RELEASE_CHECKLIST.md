@@ -22,7 +22,9 @@
 ## Automated validation
 
 - [ ] Host tests pass from a clean test build directory.
-- [ ] `CODE_REVIEW_RESOLUTION.md` still reflects the current implementation;
+- [ ] The archived
+      [code-review resolution](ai-assisted-development/reviews/CODE_REVIEW_RESOLUTION.md)
+      still reflects the current implementation;
       deferred items have either been completed or deliberately carried forward.
 - [ ] Linux decoder tests generate landscape/portrait H.264 fixtures and pass; RGBA allocation growth remains bounded.
 - [ ] QuickJS output, exception, timeout, recursion, source-limit, and output-limit tests pass in a Release build; the pinned source hash was reviewed.

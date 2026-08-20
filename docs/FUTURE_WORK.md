@@ -5,8 +5,8 @@
 The attempted partial gameplay host was removed after repeatable Quest menu
 crashes. Do not restore or repeat that scene-stack implementation. The full
 failure history, Beat Saber scene contract, rejected approaches, recommended
-render-only proxy design, and required headset validation are recorded in
-[`MENU_ENVIRONMENT_PREVIEW_DEFERRED.md`](MENU_ENVIRONMENT_PREVIEW_DEFERRED.md).
+render-only proxy design, and required headset validation are recorded in the
+archived [menu environment preview planning note](ai-assisted-development/planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md).
 
 ## TODO: Split oversized source files after major behavior stabilizes
 
@@ -34,8 +34,9 @@ tests and the Quest ARM64 build after each move, and update `ARCHITECTURE.md`,
 behavior changes. Do not combine the entire split with unrelated feature work;
 that would make regressions unnecessarily difficult to isolate.
 
-- Evaluate the bounded timestamped decoder queue described in
-  `BUFFERED_DECODER_DESIGN.md` only after native-resolution/FPS-only playback
+- Evaluate the bounded timestamped decoder queue described in the archived
+  [buffered-decoder planning note](ai-assisted-development/planning/BUFFERED_DECODER_DESIGN.md)
+  only after native-resolution/FPS-only playback
   has been measured on-device. Keep it opportunistic and memory-bounded so a
   short decoder stall can consume prepared frames without adding persistent
   latency or converting frames that the FPS limiter would never present.

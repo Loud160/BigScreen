@@ -171,18 +171,19 @@ sed -i "s/^LIBSWSCALE_/${symbol_namespace}_LIBSWSCALE_/" "${source_root}/libswsc
 mkdir -p "${build_root}"
 cd "${build_root}"
 
-# This is intentionally a decoder-only configuration.  In particular, it does
+# This is intentionally a decode-and-remux-only configuration. In particular, it does
 # not use --enable-gpl, --enable-version3, --enable-nonfree, libx264, libx265,
-# libvidstab, or any encoder/filter dependency.  Big Screen downloads an
-# existing H.264/VP8/VP9 stream and only needs to demux, decode, seek, and
-# convert decoded frames to RGBA. HEVC is deliberately MediaCodec-only: Big
+# libvidstab, or any encoder/filter dependency. Big Screen downloads an
+# existing H.264/VP8/VP9 stream and only needs to demux, copy H.264 packets
+# from MPEG-TS into MP4, decode, seek, and convert decoded frames to RGBA. HEVC
+# is deliberately MediaCodec-only: Big
 # Screen does not compile or ship FFmpeg's software HEVC decoder. All enabled
 # components remain LGPL and the explicit allowlist below is the license and
 # footprint boundary.
 #
-# The yt-dlp workaround can select fragmented HLS/MPEG-TS media instead of the
-# rejected Android-VR MP4 URL. Keep the MPEG-TS demuxer in both private FFmpeg
-# builds or those successful downloads cannot be opened on Quest.
+# Current yt-dlp clients can select fragmented HLS/MPEG-TS media when a direct
+# MP4 is unavailable. Keep the MPEG-TS demuxer and MP4 muxer in both private
+# FFmpeg builds so Big Screen can normalize that payload without re-encoding.
 "${source_root}/configure" \
     --prefix="${native_install_root}" \
     --target-os=android \
@@ -226,6 +227,7 @@ cd "${build_root}"
     --enable-demuxer=mov \
     --enable-demuxer=matroska \
     --enable-demuxer=mpegts \
+    --enable-muxer=mp4 \
     --enable-parser=h264 \
     --enable-parser=hevc \
     --enable-parser=vp8 \
@@ -267,6 +269,7 @@ for required_option in \
     CONFIG_MOV_DEMUXER \
     CONFIG_MATROSKA_DEMUXER \
     CONFIG_MPEGTS_DEMUXER \
+    CONFIG_MP4_MUXER \
     CONFIG_H264_PARSER \
     CONFIG_HEVC_PARSER \
     CONFIG_VP8_PARSER \

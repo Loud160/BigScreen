@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Preferred direct HTTPS H.264 MP4 streams at each selected YouTube tier and
+  added background MPEG-TS-to-MP4 normalization when HLS is the only usable
+  transport. Preparation reports progress, copies packets without re-encoding,
+  validates the MP4 before atomic publication, and preserves the prior assigned
+  video if the new file cannot be prepared. A failed remux may retain the
+  original only after a software decoder produces a test frame; the user then
+  receives a one-time warning that software playback may affect frame rate.
+- Restored the song editor's terminal download-state transition. Completed
+  transfers now replace their progress display with a one-time confirmation,
+  hide the finished progress bar, and return to the active-video status after
+  reopening the song. Fit to Song and other timing feedback can immediately
+  replace the completion message instead of being masked by retained download
+  history. Only an actual MPEG-TS remux shows container-preparation progress;
+  direct MP4 downloads retain the original finalization behavior. Disabling
+  Fit to Song now restores the neutral 1.00x manual playback speed.
+
 ## 0.7.0-alpha.10 — Menu, updater, and deployment hardening
 
 - Removed the source deployment helper's post-restart shader-tier polling. It
@@ -271,7 +287,9 @@
 - Simplified the live and results diagnostics to show actual video resolution,
   source FPS, and the active FPS limit. Power benchmark CSVs use the same native
   resolution schema and preserve older headers in timestamped legacy files.
-- Added `docs/BUFFERED_DECODER_DESIGN.md` for a future bounded, timestamped
+- Added the archived
+  `docs/ai-assisted-development/planning/BUFFERED_DECODER_DESIGN.md` design for
+  a future bounded, timestamped
   ready-frame queue intended to absorb brief decoder stalls. The design records
   memory budgets, MediaCodec constraints, synchronization hazards, FPS-limiter
   interaction, diagnostics, and the required host/on-device test plan.

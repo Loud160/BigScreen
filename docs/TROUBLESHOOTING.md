@@ -108,6 +108,16 @@ fix is published, and the optional nightly channel may receive that fix first.
 The notice does not mean every failed URL is an updater problem—private,
 restricted, removed, or region-limited videos can still fail independently.
 
+Some YouTube clients provide an H.264 tier as fragmented HLS/MPEG-TS rather
+than a normal MP4. After the transfer, **Preparing video for playback** copies
+that stream into a seek-safe MP4 without re-encoding, so the picture quality is
+unchanged. This temporarily requires room for both files. If preparation fails
+but the original produces a software-decoded test frame, Big Screen assigns it,
+records `BS-DL-PREP-SW-001`, and warns the player; hardware decoding is
+unavailable for that file and software playback may reduce video or gameplay frame rate. A
+`BS-DL-PREP-001` failure means neither a validated MP4 nor a verified software
+fallback could be published, so the previous assignment remains unchanged.
+
 If the video library JSON is damaged, Big Screen quarantines it and restores the
 newest of two known-good backups. If neither backup is usable, it reconstructs
 managed downloads from installed song IDs and deterministic filenames. Timing

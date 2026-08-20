@@ -121,7 +121,8 @@ foreach ($runtime in @(
                 "CONFIG_VP9_DECODER=yes",
                 "CONFIG_VP9_MEDIACODEC_DECODER=yes",
                 "CONFIG_MATROSKA_DEMUXER=yes",
-                "CONFIG_MPEGTS_DEMUXER=yes")) {
+                "CONFIG_MPEGTS_DEMUXER=yes",
+                "CONFIG_MP4_MUXER=yes")) {
                 # FFmpeg records disabled features as lines such as
                 # !CONFIG_MPEGTS_DEMUXER=yes. A substring check accepts that
                 # negated line and can silently reuse a runtime that lacks the
@@ -212,6 +213,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Output ""
 Write-Output "Building Big Screen's native Quest libraries. A clean build can take several minutes."
 Write-Output "The final link/LTO step may remain on the last Ninja progress line for a while; this is normal and the build is still working."
+$buildSuccessStamp = Join-Path $buildDirectory ".bigscreen-build-success"
+Remove-Item -LiteralPath $buildSuccessStamp -Force -ErrorAction SilentlyContinue
 $nativeBuildStarted = Get-Date
 # Keep CMake/Ninja attached to this console so their normal [x/y] progress is
 # still visible. Wait in bounded intervals around the process to add a
@@ -219,20 +222,30 @@ $nativeBuildStarted = Get-Date
 # final native link. The linker does not expose a truthful sub-percentage, so
 # elapsed time is more useful than a fabricated progress bar.
 if ($env:OS -eq "Windows_NT") {
-    $nativeBuildProcess = Start-Process `
-        -FilePath $cmakeExe `
-        -ArgumentList @("--build", "build") `
-        -WorkingDirectory $repositoryRoot `
-        -NoNewWindow `
-        -PassThru
+    # Windows PowerShell can leave Start-Process.ExitCode unset after a timed
+    # WaitForExit loop. Comparing that null value and then `exit $null` made a
+    # failed Ninja build look successful to copy.ps1. Use Process directly so
+    # the native exit code remains authoritative while preserving the heartbeat.
+    $nativeBuildStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $nativeBuildStartInfo.FileName = $cmakeExe
+    $nativeBuildStartInfo.Arguments = "--build `"$buildDirectory`""
+    $nativeBuildStartInfo.WorkingDirectory = $repositoryRoot
+    $nativeBuildStartInfo.UseShellExecute = $false
+    $nativeBuildStartInfo.CreateNoWindow = $true
+    $nativeBuildProcess = New-Object System.Diagnostics.Process
+    $nativeBuildProcess.StartInfo = $nativeBuildStartInfo
+    if (-not $nativeBuildProcess.Start()) {
+        throw "CMake could not start the native Quest build."
+    }
     while (-not $nativeBuildProcess.WaitForExit(15000)) {
         $elapsed = [int]((Get-Date) - $nativeBuildStarted).TotalSeconds
         Write-Output "Still building Big Screen... $elapsed seconds elapsed. The current compiler or linker step is still running."
     }
     $nativeBuildProcess.WaitForExit()
-    $nativeBuildProcess.Refresh()
-    if ($nativeBuildProcess.ExitCode -ne 0) {
-        exit $nativeBuildProcess.ExitCode
+    $nativeBuildExitCode = $nativeBuildProcess.ExitCode
+    $nativeBuildProcess.Dispose()
+    if ($nativeBuildExitCode -ne 0) {
+        throw "The native Quest build failed with exit code $nativeBuildExitCode."
     }
 } else {
     # Start-Process argument forwarding differs between Windows PowerShell and
@@ -252,3 +265,32 @@ if ($env:OS -eq "Windows_NT") {
 if (-not $?) {
     throw "Dual FFmpeg backend ELF isolation validation failed."
 }
+
+# Never let the deploy script reuse an older native library after a compiler or
+# linker failure. Some Windows PowerShell/Start-Process combinations have been
+# observed to report a successful wrapper exit even when Ninja printed a failed
+# subcommand. The output itself must therefore be at least as new as every
+# first-party native source/build input before this run receives a success stamp.
+$nativeLibrary = Join-Path $buildDirectory "libbigscreen.so"
+if (-not (Test-Path -LiteralPath $nativeLibrary)) {
+    throw "The native build did not produce $nativeLibrary."
+}
+$nativeInputs = @(
+    Get-ChildItem -LiteralPath (Join-Path $repositoryRoot "src") -Recurse -File
+    Get-ChildItem -LiteralPath (Join-Path $repositoryRoot "include") -Recurse -File
+    Get-Item -LiteralPath (Join-Path $repositoryRoot "CMakeLists.txt")
+    Get-Item -LiteralPath (Join-Path $repositoryRoot "extern.cmake")
+    Get-Item -LiteralPath (Join-Path $repositoryRoot "qpm_defines.cmake")
+)
+$newestNativeInput = $nativeInputs |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+$nativeOutput = Get-Item -LiteralPath $nativeLibrary
+if ($newestNativeInput -and
+    $nativeOutput.LastWriteTimeUtc -lt $newestNativeInput.LastWriteTimeUtc) {
+    throw "The native build output is older than '$($newestNativeInput.FullName)'. Deployment is blocked so a failed build cannot install a stale mod binary."
+}
+Set-Content -LiteralPath $buildSuccessStamp -Value (
+    "completedUtc={0:o}`nbinarySha256={1}" -f
+        (Get-Date).ToUniversalTime(),
+        (Get-FileHash -LiteralPath $nativeLibrary -Algorithm SHA256).Hash.ToLowerInvariant())

@@ -239,6 +239,10 @@ namespace BigScreen {
         std::string search_;
         std::string url_;
         std::string transientStatus_;
+        // The text property can change while Unity retains the old generated
+        // TMP mesh after download rows collapse. Track the last resolved value
+        // so RefreshDetails can recycle this one component only when needed.
+        std::string renderedDetailStatus_;
         std::string loadedThumbnailPath_;
         std::string probedUrl_;
         std::string completedVideoThumbnailIdentity_;

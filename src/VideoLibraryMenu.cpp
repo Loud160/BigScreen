@@ -136,7 +136,7 @@ namespace BigScreen {
         constexpr std::string_view MapperTimingLockedHint =
             "This timing comes from the map author's Cinema configuration. Download or assign the video before changing it.";
         constexpr std::string_view FitTimingHint =
-            "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed.";
+            "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed; turning Fit to Song off restores normal 1.00x playback.";
         constexpr std::string_view RateTimingHint =
             "Controls how quickly the video advances. 1.00 is normal speed; lower values slow it down and higher values speed it up. Fit to Song manages this value automatically when enabled.";
         constexpr std::string_view OffsetTimingHint =
@@ -397,6 +397,17 @@ namespace BigScreen {
                     "Download failed. See the error log.";
                 return (code.empty() ? std::string("BS-DL-FAILED-001") : code) +
                     ": " + std::string(summary);
+            }
+            if(download.state == DownloadState::Preparing &&
+               download.containerPreparation &&
+               download.totalBytes > 0)
+            {
+                const auto percent = static_cast<int>(std::clamp(
+                    100.0 * download.downloadedBytes / download.totalBytes,
+                    0.0,
+                    100.0));
+                return "Preparing video for playback  (" +
+                    std::to_string(percent) + "%)";
             }
             if(download.state != DownloadState::Downloading)
                 return download.message;
@@ -1258,9 +1269,20 @@ namespace BigScreen {
                         suppressTimingCallbacks_ = false;
                     }
                 }
-                else if(SaveTiming())
+                else
                 {
-                    transientStatus_ = "Automatic song fitting disabled; playback speed is now manual.";
+                    // Fit to Song owns the calculated rate. Returning to manual
+                    // mode must start from the neutral 1.00x baseline rather
+                    // than leaving a fitted value such as 0.98x that makes the
+                    // next 0.05 arrow step land on an unexpected 1.03x.
+                    rate_ = 1.0;
+                    if(!SaveTiming())
+                        return;
+                    suppressTimingCallbacks_ = true;
+                    if(rateSetting_) rateSetting_->set_Value(1.0f);
+                    suppressTimingCallbacks_ = false;
+                    transientStatus_ =
+                        "Automatic song fitting disabled; playback speed reset to 1.00x.";
                     StartSelectedPreview();
                     RefreshDetails();
                 }
@@ -2423,6 +2445,13 @@ namespace BigScreen {
                 "download_started", "VideoLibraryMenu", {
                     {"height", std::to_string(height)}});
             ownedDownloadLevelId_ = selectedLevelId;
+            // The same URL and tier can legitimately produce the same title,
+            // byte count, and deterministic paths as the previous download.
+            // Clear the per-transfer presentation identities when a new job
+            // starts so its completion and replacement thumbnail are still
+            // acknowledged exactly once.
+            refreshedDownloadIdentity_.clear();
+            completedVideoThumbnailIdentity_.clear();
             transientStatus_.clear();
         }
         RefreshDetails();
@@ -2438,14 +2467,16 @@ namespace BigScreen {
                 clipboardValue ? std::string(clipboardValue) : std::string{});
             if(clipboard.empty())
             {
-                detailText_->set_text(
-                    "The Quest clipboard is empty. Copy a video link first.");
+                transientStatus_ =
+                    "The Quest clipboard is empty. Copy a video link first.";
+                RefreshDetails();
                 return;
             }
             if(!IsWebUrl(clipboard))
             {
-                detailText_->set_text(
-                    "Clipboard text is not a valid http or https URL.");
+                transientStatus_ =
+                    "Clipboard text is not a valid http or https URL.";
+                RefreshDetails();
                 return;
             }
 
@@ -2463,7 +2494,8 @@ namespace BigScreen {
             ErrorManager::Instance().RecordError(
                 "Reading the Quest clipboard",
                 error.what());
-            detailText_->set_text("Could not read the Quest clipboard.");
+            transientStatus_ = "Could not read the Quest clipboard.";
+            RefreshDetails();
         }
     }
 
@@ -3194,6 +3226,11 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RefreshDetails()
     {
+        if(auto notice = DownloadManager::Instance().TakeDownloadNotice())
+        {
+            ErrorManager::Instance().ReportUserVisible(
+                notice->title, notice->message);
+        }
         auto& library = VideoLibrary::Instance();
         if(library.BackgroundCommitInProgress())
         {
@@ -3354,10 +3391,46 @@ namespace BigScreen {
                     error.what());
             }
         }
-        detailText_->set_text(!transientStatus_.empty()
+        const bool downloadOperationInProgress =
+            DownloadManager::Instance().OperationInProgress();
+        const bool terminalDownloadStatus = thisDownload &&
+            (download.state == DownloadState::ProbeCompleted ||
+             download.state == DownloadState::Failed ||
+             download.state == DownloadState::Cancelled);
+        const bool liveDownloadStatus = thisDownload &&
+            downloadOperationInProgress &&
+            download.state != DownloadState::Idle &&
+            download.state != DownloadState::Completed;
+        bool downloadJustCompleted = false;
+        // A completed YouTube replacement immediately removes the old local
+        // file's active highlight without opening the decoder. The completion
+        // result is local to this refresh; it must not be stored in
+        // transientStatus_, which belongs to later user actions such as timing
+        // changes and is cleared whenever another song is selected.
+        if(thisDownload && download.state == DownloadState::Completed)
+        {
+            const auto completedIdentity =
+                download.levelId + "|" + download.title + "|" +
+                std::to_string(download.totalBytes);
+            if(refreshedDownloadIdentity_ != completedIdentity)
+            {
+                refreshedDownloadIdentity_ = completedIdentity;
+                downloadJustCompleted = true;
+                RefreshLocalVideoStatus();
+            }
+        }
+
+        // Keep this as one status owner. The bdd74ff implementation used this
+        // single-label precedence successfully: user action first, then a
+        // live/actionable downloader result, then the selected map assignment.
+        // The retained Completed snapshot is intentionally excluded so it can
+        // never own this line after a setting changes or another map opens.
+        const std::string resolvedDetailStatus = !transientStatus_.empty()
             ? transientStatus_
-            : thisDownload && download.state != DownloadState::Idle
+            : liveDownloadStatus || terminalDownloadStatus
                 ? DownloadStatus(download)
+            : downloadJustCompleted
+                ? "Download Complete"
             : descriptor.userOverrideIsMapLocal
                 ? "Local map video active: " +
                     descriptor.activeMapFileName.value_or("selected video")
@@ -3370,14 +3443,44 @@ namespace BigScreen {
             : descriptor.hasUserOverride ? "Downloaded user video active" :
               descriptor.CanPlay() ? "Mapper video ready" :
               descriptor.CanDownload() ? "Mapper video available to download" :
-              "Paste a youtube.com or youtu.be URL to add a video");
+              "Paste a youtube.com or youtu.be URL to add a video";
+        const bool detailStatusChanged =
+            renderedDetailStatus_ != resolvedDetailStatus;
+        detailText_->set_text(resolvedDetailStatus);
+        if(detailStatusChanged)
+        {
+            // TMP's managed text property was changing correctly, but after the
+            // download/progress rows changed visibility Unity could retain the
+            // prior CanvasRenderer mesh. Disabling and immediately re-enabling
+            // only this text component invalidates that renderer without
+            // rebuilding the editor, changing layout, or scanning/cloning UI.
+            detailText_->set_enabled(false);
+            detailText_->set_enabled(true);
+            renderedDetailStatus_ = resolvedDetailStatus;
+            PaperLogger.debug(
+                "Video editor status for '{}': '{}' (playable {}, override {}, download state {}, busy {})",
+                selected_->levelID ? std::string(selected_->levelID) : std::string{},
+                resolvedDetailStatus,
+                descriptor.CanPlay(),
+                descriptor.hasUserOverride,
+                static_cast<int>(download.state),
+                downloadOperationInProgress);
+        }
+
         if(downloadProgressTrack_ && downloadProgressFill_)
         {
             // Metadata lookup has no byte total, so it uses a pulsing fill.
             // Once yt-dlp starts transferring the MP4, the same bar switches
             // to an exact byte ratio and changes color for terminal outcomes.
+            // A completed file is already represented by the active-video
+            // status and must not leave a frozen full progress bar behind.
+            // Probe results and failures remain visible because their next
+            // action (choose a tier, retry, or resume) is still on this page.
             const bool showProgress = thisDownload &&
-                download.state != DownloadState::Idle;
+                ((downloadOperationInProgress && download.Active()) ||
+                 download.state == DownloadState::ProbeCompleted ||
+                 download.state == DownloadState::Failed ||
+                 download.state == DownloadState::Cancelled);
             downloadProgressTrack_->get_gameObject()->SetActive(showProgress);
             if(showProgress)
             {
@@ -3502,21 +3605,40 @@ namespace BigScreen {
         }
         const bool mapperTimingWaitingForVideo = !descriptor.CanPlay() &&
             descriptor.mapperDefinition.has_value();
+        // A replacement download deliberately leaves the previous assigned
+        // file intact until validation and atomic publication finish. Do not
+        // expose timing or playback controls for that preserved old file while
+        // the new transfer is downloading/preparing: it makes an unfinished
+        // replacement look ready and lets preview start against the wrong
+        // media generation.
+        const bool videoTransferPending = thisDownload &&
+            downloadOperationInProgress &&
+            !download.metadataOnly &&
+            (download.state == DownloadState::Preparing ||
+             download.state == DownloadState::Downloading);
         for(auto* row : timingRows_)
             if(row) row->SetActive(
-                descriptor.CanPlay() || mapperTimingWaitingForVideo);
+                !videoTransferPending &&
+                (descriptor.CanPlay() || mapperTimingWaitingForVideo));
         for(auto* row : videoOnlyRows_)
-            if(row) row->SetActive(descriptor.CanPlay());
-        if(offsetSetting_) offsetSetting_->set_interactable(descriptor.CanPlay());
+            if(row) row->SetActive(
+                descriptor.CanPlay() && !videoTransferPending);
+        if(offsetSetting_) offsetSetting_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
         if(rateSetting_) rateSetting_->set_interactable(
-            descriptor.CanPlay() && !fitToSong_);
-        if(fitToggle_) fitToggle_->set_interactable(descriptor.CanPlay());
-        if(blackLeadInToggle_) blackLeadInToggle_->set_interactable(descriptor.CanPlay());
-        if(playbackScrubber_) playbackScrubber_->set_interactable(descriptor.CanPlay());
-        if(playPauseButton_) playPauseButton_->set_interactable(descriptor.CanPlay());
+            descriptor.CanPlay() && !videoTransferPending && !fitToSong_);
+        if(fitToggle_) fitToggle_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
+        if(blackLeadInToggle_) blackLeadInToggle_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
+        if(playbackScrubber_) playbackScrubber_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
+        if(playPauseButton_) playPauseButton_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
         if(removeButton_) removeButton_->set_interactable(
-            descriptor.hasUserOverride || descriptor.hasMapperDownload ||
-            descriptor.hasMapperLocalFile);
+            !videoTransferPending &&
+            (descriptor.hasUserOverride || descriptor.hasMapperDownload ||
+             descriptor.hasMapperLocalFile));
         const auto timingHint = mapperTimingWaitingForVideo
             ? std::string(MapperTimingLockedHint)
             : std::string{};
@@ -3528,19 +3650,6 @@ namespace BigScreen {
             mapperTimingWaitingForVideo ? timingHint : std::string(OffsetTimingHint));
         if(leadInTimingHint_) leadInTimingHint_->set_text(
             mapperTimingWaitingForVideo ? timingHint : std::string(LeadInTimingHint));
-        if(thisDownload && download.state == DownloadState::Completed)
-        {
-            const auto completedIdentity =
-                download.levelId + "|" + download.title + "|" +
-                std::to_string(download.totalBytes);
-            if(refreshedDownloadIdentity_ != completedIdentity)
-            {
-                refreshedDownloadIdentity_ = completedIdentity;
-                // A completed YouTube replacement immediately removes the old
-                // local file's active highlight without opening the decoder.
-                RefreshLocalVideoStatus();
-            }
-        }
         // Completion deliberately does not auto-open the new decoder. The
         // explicit Play button starts preview initialization after file and
         // manifest publication are fully separate from this Unity update.
@@ -4440,8 +4549,11 @@ namespace BigScreen {
             // most of the editor hierarchy. Keep it event-driven during normal
             // playback; poll only while a download is changing, plus once more
             // to render its terminal state.
+            // Keep the throttled progress redraw alive through C++ container
+            // preparation and manifest publication, not merely while the
+            // Python-authored snapshot reports an active transfer state.
             const bool downloadActive =
-                DownloadManager::Instance().Snapshot().Active();
+                DownloadManager::Instance().OperationInProgress();
             if(editorVisible_ &&
                (downloadActive || periodicDownloadWasActive_))
                 RefreshDetails();

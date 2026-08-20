@@ -135,6 +135,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Output "Failed to build, exiting..."
     exit $LASTEXITCODE
 }
+$buildSuccessStamp = Join-Path $PSScriptRoot "../build/.bigscreen-build-success"
+if (-not (Test-Path -LiteralPath $buildSuccessStamp)) {
+    throw "The build did not publish its verified success stamp. Deployment is blocked so an older binary cannot be installed after a failed compile or link."
+}
 
 & $PSScriptRoot/validate-modjson.ps1
 if ($LASTEXITCODE -ne 0) {

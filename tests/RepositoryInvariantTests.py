@@ -60,6 +60,9 @@ download_manager_header = (
 ).read_text(encoding="utf-8")
 download_manager_source = (root / "src/DownloadManager.cpp").read_text(
     encoding="utf-8")
+video_normalizer_source = (
+    root / "src/VideoContainerNormalizer.cpp"
+).read_text(encoding="utf-8")
 frame_decoder_source = (root / "src/FrameDecoder.cpp").read_text(
     encoding="utf-8")
 frame_decoder_facade = (root / "src/FrameDecoderFacade.cpp").read_text(
@@ -548,6 +551,7 @@ for required_media_option in (
     "--enable-decoder=vp9_mediacodec",
     "--enable-demuxer=matroska",
     "--enable-demuxer=mpegts",
+    "--enable-muxer=mp4",
 ):
     assert required_media_option in ffmpeg_build
 for required_config_gate in (
@@ -556,8 +560,19 @@ for required_config_gate in (
     "CONFIG_H264_DECODER",
     "CONFIG_H264_MEDIACODEC_DECODER",
     "CONFIG_MPEGTS_DEMUXER",
+    "CONFIG_MP4_MUXER",
 ):
     assert required_config_gate in ffmpeg_build
+assert "VideoContainerNormalizer::PrepareDownloadedVideo" in download_manager_source
+assert '"video_container_prepared"' in download_manager_source
+assert '"remuxed_mpegts_to_mp4"' in download_manager_source
+assert "OperationInProgress()" in download_manager_header
+assert "bool containerPreparation = false" in download_manager_header
+assert "snapshot_.containerPreparation = true" in download_manager_source
+assert "forceHlsRemuxTest" not in download_manager_source
+assert "av_interleaved_write_frame" in video_normalizer_source
+assert "CanDecodeSoftwareFrame" in video_normalizer_source
+assert "SoftwareDecoderRequired" in video_normalizer_source
 for runtime_tag in ("44", "9"):
     assert f"libavformat-bigscreen{runtime_tag}.so" in cmake
     assert f"libavcodec-bigscreen{runtime_tag}.so" in cmake
@@ -1224,6 +1239,36 @@ assert download_manager_source.index("videoReplacement.Promote()") < (
 )
 assert "BackgroundCommitInProgress()" in video_library_header
 assert "Saving downloaded video..." in library_menu_source
+# DownloadManager intentionally retains its terminal result for retry and
+# diagnostics. The song editor must not mistake that retained Completed state
+# for a live transfer after the newly assigned video is already playable, and
+# download completion must never overwrite the user-action status field used by
+# Fit to Song, playback speed, and playback offset.
+assert 'transientStatus_ = "Video downloaded and assigned.";' not in (
+    library_menu_source
+)
+assert "download.state != DownloadState::Completed" in library_menu_source
+assert "const bool showProgress = thisDownload &&" in library_menu_source
+assert "downloadOperationInProgress && download.Active()" in library_menu_source
+assert "liveDownloadStatus || terminalDownloadStatus" in library_menu_source
+assert "bool downloadJustCompleted = false;" in library_menu_source
+assert '? "Download Complete"' in library_menu_source
+# The known-good bdd74ff editor had one status component and one direct write.
+# Do not reintroduce cached/cloned TMP surfaces: they create a second UI
+# lifecycle that can retain one song's completion text after selection changes.
+assert "const std::string resolvedDetailStatus = !transientStatus_.empty()" in (
+    library_menu_source
+)
+assert "detailText_->set_text(resolvedDetailStatus);" in library_menu_source
+assert "detailText_->set_enabled(false);" in library_menu_source
+assert "detailText_->set_enabled(true);" in library_menu_source
+assert "PublishDetailStatus" not in library_menu_source
+assert "detailStatusSurfaces_" not in library_menu_header
+assert "const bool videoTransferPending = thisDownload &&" in (
+    library_menu_source
+)
+assert "descriptor.CanPlay() && !videoTransferPending" in library_menu_source
+assert "playback speed reset to 1.00x" in library_menu_source
 assert "Completion deliberately does not auto-open" in library_menu_source
 assert "BS-DL-HTTP-403\" ? \"YouTube refused this stream." in library_menu_source
 
@@ -2032,7 +2077,7 @@ assert "is_regular_file(entryError)" in chroma_detector_source
 future = (root / "docs/FUTURE_WORK.md").read_text(encoding="utf-8")
 checklist = (root / "docs/RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
 review_resolution = (
-    root / "docs/CODE_REVIEW_RESOLUTION.md"
+    root / "docs/ai-assisted-development/reviews/CODE_REVIEW_RESOLUTION.md"
 ).read_text(encoding="utf-8")
 assert "TODO: Split oversized source files" in future
 assert "large-file refactor" in checklist.lower()

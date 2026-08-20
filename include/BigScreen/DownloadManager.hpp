@@ -84,6 +84,10 @@ namespace BigScreen {
         std::string errorCode;
         std::string diagnostic;
         bool metadataOnly = false;
+        // True only while C++ is actively remuxing an H.264 MPEG-TS transfer.
+        // Generic downloader finalization and already-valid MP4/WebM files do
+        // not use the user-visible container-preparation state.
+        bool containerPreparation = false;
         std::vector<int> availableHeights;
         // Retained in memory across status-file refreshes so Retry/Resume and
         // progress UI continue referring to the exact tier the user selected.
@@ -114,6 +118,11 @@ namespace BigScreen {
     };
 
     struct ModReleaseNotice {
+        std::string title;
+        std::string message;
+    };
+
+    struct DownloadNotice {
         std::string title;
         std::string message;
     };
@@ -195,6 +204,10 @@ namespace BigScreen {
             std::filesystem::path destination);
         void Cancel();
         DownloadSnapshot Snapshot();
+        /// True from successful queue ownership through the final publication
+        /// of every operation result. Unlike DownloadSnapshot::Active(), this
+        /// remains true while C++ remuxes media and commits library metadata.
+        bool OperationInProgress() const { return operationBusy_.load(); }
         bool IsReady() const { return initialized_; }
         /// Short, stable diagnostic shown when an operation is requested after
         /// startup initialization failed. The detailed exception remains in
@@ -205,6 +218,7 @@ namespace BigScreen {
         YtDlpReleaseSnapshot YtDlpReleaseStatus() const;
         ModReleaseSnapshot ModReleaseStatus() const;
         std::optional<std::string> TakeUpdateNotice();
+        std::optional<DownloadNotice> TakeDownloadNotice();
         std::optional<ModReleaseNotice> TakeModReleaseNotice();
         std::optional<YtDlpReleaseNotice> TakeYtDlpReleaseNotice();
 
@@ -294,6 +308,10 @@ namespace BigScreen {
         std::unordered_set<std::string> requestedThumbnails_;
         bool stopThumbnailWorker_ = false;
         DownloadSnapshot snapshot_;
+        // A compatibility warning is published only after the downloaded file
+        // and manifest commit succeed. Either UI surface consumes this single
+        // mailbox, preventing duplicate dialogs when both controllers exist.
+        std::optional<DownloadNotice> downloadNotice_;
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
         std::filesystem::path downloaderDiagnosticPath_;

@@ -39,11 +39,17 @@ Metadata probing reports only compatible exact resolution tiers. A selected
 tier is pinned into the job rather than delegated to yt-dlp's changing `best`
 policy: H.264 is required through 1080p and VP9 at 1440p. Both probing and
 transfer explicitly exclude the `android_vr` client. Current yt-dlp may deliver
-the selected H.264 tier through fragmented HLS, whose concatenated MPEG-TS
-payload is supported directly by Big Screen's private FFmpeg runtimes. A replacement
-downloads to a sibling staging file and is atomically promoted only after the
-transfer completes; the prior assignment is restored if publication or the
-manifest commit fails.
+the selected H.264 tier through fragmented HLS. Big Screen prefers a direct
+HTTPS MP4 at the same tier; when only the HLS/MPEG-TS representation is usable,
+the background download worker copies its H.264 packets into a seek-safe MP4
+without decoding or re-encoding them. The UI reports this distinct preparation
+stage and its file progress. The prepared MP4 is validated before publication.
+If preparation fails, the original stream is retained only after the software
+decoder produces a test frame; the player then receives a warning that hardware
+decoding is unavailable and software playback may reduce video or gameplay
+performance. A replacement downloads to a sibling staging file and is atomically
+promoted only after preparation completes; the prior assignment is restored if
+preparation, publication, or the manifest commit fails.
 
 The shipped baseline is also reproducible from pinned yt-dlp and yt-dlp-ejs
 source archives. The source-build recipe checks both archives, rebuilds the EJS

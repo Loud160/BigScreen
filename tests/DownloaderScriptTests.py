@@ -296,6 +296,95 @@ assert "continuedl=False" in download_script
 assert "BS-DL-HTTP-403" in download_script
 assert "stream_summary(chosen)" in download_script
 
+# Prefer a direct HTTPS H.264 MP4 over a higher-bitrate HLS representation at
+# the same tier. HLS remains eligible when it is the only usable transport,
+# but selecting it unnecessarily forces a second on-device preparation pass.
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    final_path = root / "video.mp4"
+    status_path = root / "status.json"
+    chosen_formats = []
+    direct_candidate = {
+        "format_id": "direct-1080",
+        "ext": "mp4",
+        "vcodec": "avc1.640028",
+        "acodec": "none",
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "tbr": 2500,
+        "filesize": 32,
+        "protocol": "https",
+    }
+    hls_candidate = dict(
+        direct_candidate,
+        format_id="hls-1080",
+        protocol="m3u8_native",
+        tbr=5000,
+    )
+    info = {
+        "title": "Transport preference test",
+        "duration": 10,
+        "age_limit": 0,
+        "formats": [hls_candidate, direct_candidate],
+    }
+
+    class TransportYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def extract_info(self, _url, download=False):
+            if not download:
+                return dict(info)
+            chosen_formats.append(self.options["format"])
+            final_path.write_bytes(b"direct-video")
+            return dict(info)
+
+    old_modules = {
+        name: sys.modules.get(name)
+        for name in ("bigscreen_jsc_provider", "yt_dlp")
+    }
+    sys.modules["bigscreen_jsc_provider"] = types.ModuleType(
+        "bigscreen_jsc_provider"
+    )
+    fake_yt_dlp = types.ModuleType("yt_dlp")
+    fake_yt_dlp.YoutubeDL = TransportYoutubeDL
+    sys.modules["yt_dlp"] = fake_yt_dlp
+    try:
+        namespace = {
+            "BIGSCREEN_JOB": json.dumps(
+                {
+                    "sourceUrl": "https://youtu.be/transport",
+                    "finalPath": str(final_path),
+                    "thumbnailPath": str(root / "thumbnail.jpg"),
+                    "statusPath": str(status_path),
+                    "cancelPath": str(root / "cancel"),
+                    "explicitContentAllowed": True,
+                    "requestedHeight": 1080,
+                    "maximumSourceFps": 30,
+                    "reserveBytes": 0,
+                    "unknownRequiredBytes": 0,
+                }
+            )
+        }
+        exec(compile(download_script, "<transport-preference-test>", "exec"), namespace)
+    finally:
+        for name, module in old_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "completed", status
+    assert chosen_formats == ["direct-1080"], chosen_formats
+
 # Execute the production script against a small fake yt-dlp implementation.
 # This exercises the recovery branch rather than merely checking its spelling:
 # metadata succeeds, the first transfer leaves a `.part` and receives 403, and

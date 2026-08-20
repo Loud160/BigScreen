@@ -108,7 +108,7 @@ the current tree and were addressed as follows:
   and storage fingerprinting.
 
 The large-file responsibility split remains deliberately deferred and tracked
-in `FUTURE_WORK.md`; combining that mechanical refactor with this behavioral
+in [FUTURE_WORK.md](../../FUTURE_WORK.md); combining that mechanical refactor with this behavioral
 hardening would make on-headset regression isolation substantially harder.
 
 ## August 14 first review
@@ -246,7 +246,7 @@ behavior.
 ## Deferred with explicit release tracking
 
 - Splitting the largest UI/manager translation units is still tracked in
-  `FUTURE_WORK.md`. It should be done after the major behavior is stable because
+  [FUTURE_WORK.md](../../FUTURE_WORK.md). It should be done after the major behavior is stable because
   a mechanical split currently carries more regression risk than runtime value.
 - FFmpeg 4.4.8 and 9.0.1 now ship together under isolated SONAMEs, symbol
   namespaces, and decoder backend libraries. This review initially retained
