@@ -89,6 +89,23 @@ int main()
     Expect(!SafeSingleFilename("folder/video.mp4"), "nested path is rejected");
     Expect(!SafeSingleFilename("C:\\video.mp4"), "drive path is rejected");
 
+    Expect(ShouldAttemptCachedUnityResourceLoad(false, false, false),
+           "a Unity resource is loaded on its first request");
+    Expect(!ShouldAttemptCachedUnityResourceLoad(true, false, false),
+           "a failed Unity resource does not retry on every presentation");
+    Expect(!ShouldAttemptCachedUnityResourceLoad(true, true, true),
+           "a live cached Unity resource is reused");
+    Expect(ShouldAttemptCachedUnityResourceLoad(true, true, false),
+           "a previously loaded Unity resource can recover after invalidation");
+    bool everLoadedSuccessfully = true;
+    bool resourceAlive = false;
+    const bool recoverySucceeded = false;
+    if(recoverySucceeded)
+        resourceAlive = true;
+    Expect(ShouldAttemptCachedUnityResourceLoad(
+               true, everLoadedSuccessfully, resourceAlive),
+           "a failed recovery still permits a later Unity resource retry");
+
     auto [changed60, fps60] = NextPerformanceFpsLimit(60, 60.0, 1.0);
     Expect(changed60 && fps60 == 55,
            "automatic performance lowers a 60 FPS source in five-FPS steps");

@@ -26,9 +26,13 @@
 #include "GlobalNamespace/MainFlowCoordinator.hpp"
 #include "GlobalNamespace/SimpleDialogPromptViewController.hpp"
 #include "HMUI/FlowCoordinator.hpp"
+#include "HMUI/ViewController.hpp"
+#include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Transform.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "custom-types/shared/delegate.hpp"
 #include "System/Action_1.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
@@ -46,6 +50,161 @@ namespace BigScreen {
         }
 
         std::atomic<std::uint64_t> errorSequence{0};
+
+        struct ActiveDialogTarget {
+            SafePtrUnity<HMUI::FlowCoordinator> host;
+            SafePtrUnity<GlobalNamespace::SimpleDialogPromptViewController> prompt;
+
+            ActiveDialogTarget(
+                HMUI::FlowCoordinator* hostObject,
+                GlobalNamespace::SimpleDialogPromptViewController* promptObject)
+                : host(hostObject), prompt(promptObject)
+            {}
+        };
+
+        struct ActiveDialogLifetime {
+            // A dialog can span several frames and a complete flow transition.
+            // Raw IL2CPP pointers are not roots, so retain the presenting flow
+            // and shared prompt until dismissal is observed in the hierarchy.
+            std::optional<SafePtrUnity<HMUI::FlowCoordinator>> host;
+            std::optional<SafePtrUnity<
+                GlobalNamespace::SimpleDialogPromptViewController>> prompt;
+
+            void Retain(
+                HMUI::FlowCoordinator* hostObject,
+                GlobalNamespace::SimpleDialogPromptViewController* promptObject)
+            {
+                host.emplace(hostObject);
+                prompt.emplace(promptObject);
+            }
+
+            HMUI::FlowCoordinator* Host() const
+            {
+                return host && static_cast<bool>(*host)
+                    ? host->ptr()
+                    : nullptr;
+            }
+
+            GlobalNamespace::SimpleDialogPromptViewController* Prompt() const
+            {
+                return prompt && static_cast<bool>(*prompt)
+                    ? prompt->ptr()
+                    : nullptr;
+            }
+
+            void Clear()
+            {
+                prompt.reset();
+                host.reset();
+            }
+        };
+
+        ActiveDialogLifetime& TrackedDialogLifetime()
+        {
+            static ActiveDialogLifetime lifetime;
+            return lifetime;
+        }
+
+        GlobalNamespace::SimpleDialogPromptViewController*
+        FindSharedDialogPrompt()
+        {
+            auto* main = BSML::Helpers::GetMainFlowCoordinator();
+            if(!UnityW<GlobalNamespace::MainFlowCoordinator>::isAlive(main))
+                return nullptr;
+            auto promptValue =
+                main->__cordl_internal_get__simpleDialogPromptViewController();
+            auto* prompt = promptValue ? promptValue.unsafePtr() : nullptr;
+            return UnityW<GlobalNamespace::SimpleDialogPromptViewController>::isAlive(
+                       prompt)
+                ? prompt
+                : nullptr;
+        }
+
+        std::optional<ActiveDialogTarget> ResolveActiveDialogTarget()
+        {
+            auto* main = BSML::Helpers::GetMainFlowCoordinator();
+            if(!UnityW<GlobalNamespace::MainFlowCoordinator>::isAlive(main) ||
+               !main->get_isActivated() || main->get_isInTransition())
+                return std::nullopt;
+
+            auto youngest = main->YoungestChildFlowCoordinatorOrSelf();
+            auto* host = youngest ? youngest.unsafePtr() : nullptr;
+            if(!UnityW<HMUI::FlowCoordinator>::isAlive(host) ||
+               !host->get_isActivated() || host->get_isInTransition())
+                return std::nullopt;
+
+            auto topView = host->get_topViewController();
+            auto* top = topView ? topView.unsafePtr() : nullptr;
+            if(!UnityW<HMUI::ViewController>::isAlive(top) ||
+               !top->get_isActivated() || top->get_isInTransition() ||
+               !top->get_isInViewControllerHierarchy())
+                return std::nullopt;
+            auto topObject = top->get_gameObject();
+            if(!topObject || !topObject->get_activeInHierarchy())
+                return std::nullopt;
+
+            auto* prompt = FindSharedDialogPrompt();
+            if(!prompt)
+                return std::nullopt;
+            return ActiveDialogTarget(host, prompt);
+        }
+
+        bool DialogPromptVisible(
+            GlobalNamespace::SimpleDialogPromptViewController* prompt)
+        {
+            return UnityW<GlobalNamespace::SimpleDialogPromptViewController>::isAlive(
+                       prompt) &&
+                   (prompt->get_isInViewControllerHierarchy() ||
+                    prompt->get_isInTransition());
+        }
+
+        void BringDialogPromptToFront(
+            GlobalNamespace::SimpleDialogPromptViewController* prompt)
+        {
+            if(!UnityW<GlobalNamespace::SimpleDialogPromptViewController>::isAlive(
+                   prompt))
+                return;
+            auto transform = prompt->get_transform();
+            if(UnityW<UnityEngine::Transform>::isAlive(transform))
+                transform->SetAsLastSibling();
+        }
+
+        bool TryDismissDialogPrompt(
+            HMUI::FlowCoordinator* host,
+            GlobalNamespace::SimpleDialogPromptViewController* prompt) noexcept
+        {
+            try
+            {
+                if(!DialogPromptVisible(prompt))
+                    return true;
+
+                if(UnityW<HMUI::FlowCoordinator>::isAlive(host))
+                {
+                    host->DismissViewController(
+                        prompt,
+                        HMUI::ViewController::AnimationDirection::Horizontal,
+                        nullptr,
+                        true);
+                }
+                else
+                {
+                    // The presenting flow can be destroyed before the shared
+                    // prompt. Dismiss the controller directly as a last-resort
+                    // cleanup so its input blocker cannot outlive its owner.
+                    prompt->__DismissViewController(
+                        nullptr,
+                        HMUI::ViewController::AnimationDirection::Horizontal,
+                        true);
+                }
+                return !DialogPromptVisible(prompt);
+            }
+            catch(...)
+            {
+                // Keep the rooted prompt tracked. TickMainThread retries after
+                // the transition rather than forgetting a live input blocker.
+                return false;
+            }
+        }
 
         std::string NewCorrelationId(
             std::chrono::system_clock::time_point now) noexcept
@@ -306,7 +465,147 @@ namespace BigScreen {
         return result;
     }
 
-    void ErrorManager::TickMainThread()
+    void ErrorManager::RecordDialogTickFailure(
+        const std::string& detail) noexcept
+    {
+        bool shouldLog = false;
+        try
+        {
+            std::scoped_lock lock(mutex_);
+            shouldLog = !dialogFailureLogged_;
+            dialogFailureLogged_ = true;
+            nextDialogAttempt_ = std::chrono::steady_clock::now() +
+                std::chrono::seconds(1);
+        }
+        catch(...)
+        {
+            // The persistent record below is still safe and noexcept.
+            shouldLog = true;
+        }
+
+        if(shouldLog)
+        {
+            try
+            {
+                PaperLogger.error(
+                    "Could not update Big Screen's error dialog: {}",
+                    detail);
+            }
+            catch(...)
+            {
+                // Paper is diagnostic-only at this failure boundary.
+            }
+            RecordError("Updating Big Screen error dialog", detail);
+        }
+    }
+
+    void ErrorManager::ReleaseTrackedDialog(
+        std::uint64_t generation,
+        bool requeue) noexcept
+    {
+        bool released = false;
+        try
+        {
+            std::scoped_lock lock(mutex_);
+            if(!dialogVisible_ || dialogGeneration_ != generation)
+                return;
+
+            // A newer pending message wins. Otherwise move the interrupted
+            // active message back without allocating another string copy.
+            if(requeue && activeDialog_ && !pendingDialog_)
+                pendingDialog_ = std::move(activeDialog_);
+            activeDialog_.reset();
+            dialogVisible_ = false;
+            dialogAcknowledged_ = false;
+            ++dialogGeneration_;
+            dialogFailureLogged_ = false;
+            nextDialogAttempt_ = requeue
+                ? std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(250)
+                : std::chrono::steady_clock::time_point{};
+            released = true;
+        }
+        catch(...)
+        {
+            RecordError(
+                "Releasing Big Screen error dialog",
+                "Could not safely update the tracked dialog state");
+            return;
+        }
+
+        if(released)
+        {
+            try
+            {
+                TrackedDialogLifetime().Clear();
+            }
+            catch(...)
+            {
+                // State is already released. A stale safe handle is preferable
+                // to allowing cleanup code to escape into Beat Saber's hook.
+                RecordError(
+                    "Releasing Big Screen error dialog",
+                    "Could not release a retained Unity dialog handle");
+            }
+        }
+    }
+
+    void ErrorManager::AcknowledgeDialog(
+        std::uint64_t generation) noexcept
+    {
+        try
+        {
+            {
+                std::scoped_lock lock(mutex_);
+                if(!dialogVisible_ || dialogGeneration_ != generation)
+                    return;
+                // Do not forget the prompt until Unity confirms that it left
+                // the hierarchy. If immediate dismissal races a transition,
+                // TickMainThread will retry without re-showing the message.
+                dialogAcknowledged_ = true;
+            }
+
+            auto& lifetime = TrackedDialogLifetime();
+            auto* host = lifetime.Host();
+            auto* prompt = lifetime.Prompt();
+            if(TryDismissDialogPrompt(host, prompt))
+            {
+                ReleaseTrackedDialog(generation, false);
+                return;
+            }
+            BringDialogPromptToFront(prompt);
+        }
+        catch(const std::exception& exception)
+        {
+            RecordDialogTickFailure(exception.what());
+        }
+        catch(...)
+        {
+            RecordDialogTickFailure(
+                "Unknown native exception while acknowledging the dialog");
+        }
+    }
+
+    void ErrorManager::TickMainThread() noexcept
+    {
+        try
+        {
+            TickMainThreadImpl();
+        }
+        catch(const std::exception& exception)
+        {
+            // This method is called directly from a Beat Saber Update hook.
+            // No Cordl/IL2CPP transition exception may cross that boundary.
+            RecordDialogTickFailure(exception.what());
+        }
+        catch(...)
+        {
+            RecordDialogTickFailure(
+                "Unknown native exception while resolving the active UI flow");
+        }
+    }
+
+    void ErrorManager::TickMainThreadImpl()
     {
         bool disable = false;
         bool requestMenuExit = false;
@@ -362,143 +661,170 @@ namespace BigScreen {
             nextDialogAttempt_ = {};
         }
 
-        // Big Screen owns a dedicated modal on its settings panel. Presenting
-        // MainFlowCoordinator's SimpleDialogPrompt while this child flow is
-        // active places the prompt behind Big Screen, but its modal blocker
-        // still captures every controller click. The visible menu then looks
-        // completely frozen even though Unity is continuing to render. Leave
-        // ordinary user-facing errors queued here; SettingsMenu consumes them
-        // through TakePendingDialog and displays them on the active flow. A
-        // recovery-requested error reaches this point only after the menu has
-        // been dismissed, so it can safely use Beat Saber's main dialog.
-        if(IsBigScreenMenuActive())
-            return;
+        // The stock prompt is shared by MainFlowCoordinator, but it must be
+        // PRESENTED by the youngest active flow. Presenting it through MainFlow
+        // while Solo, Campaign, or another child is visible puts the picture
+        // behind that child while the prompt's blocker still consumes input.
+        // That exact mismatch looks like a frozen game. A transition is not a
+        // valid host: keep the message queued until both the flow and its top
+        // controller are active, in-hierarchy, and stable.
+        auto target = ResolveActiveDialogTarget();
 
-        // Beat Saber can dismiss its shared prompt during a scene or flow
-        // transition without invoking Big Screen's OK delegate. Do not let
-        // that external dismissal leave dialogVisible_ latched for the rest
-        // of the game session and silently suppress every later error.
         bool validateVisibleDialog = false;
+        bool dialogAcknowledged = false;
+        std::uint64_t previousGeneration = 0;
         {
             std::scoped_lock lock(mutex_);
             validateVisibleDialog = dialogVisible_;
+            dialogAcknowledged = dialogAcknowledged_;
+            previousGeneration = dialogGeneration_;
         }
         if(validateVisibleDialog)
         {
-            bool promptStillVisible = false;
-            try
+            auto& lifetime = TrackedDialogLifetime();
+            auto* previousHost = lifetime.Host();
+            auto* prompt = lifetime.Prompt();
+            const bool promptVisible = DialogPromptVisible(prompt);
+            const bool correctFrontHost = target &&
+                target->host.ptr() == previousHost &&
+                target->prompt.ptr() == prompt &&
+                !IsBigScreenMenuActive();
+            if(!promptVisible)
             {
-                auto* flow = BSML::Helpers::GetMainFlowCoordinator();
-                auto prompt = flow
-                    ? flow->__cordl_internal_get__simpleDialogPromptViewController()
-                    : nullptr;
-                promptStillVisible = prompt &&
-                    (prompt->get_isInViewControllerHierarchy() ||
-                     prompt->get_isInTransition());
+                // Beat Saber can remove its shared prompt during a scene
+                // transition without invoking the button callback.
+                ReleaseTrackedDialog(
+                    previousGeneration,
+                    !dialogAcknowledged);
+                target.reset();
             }
-            catch(...)
+            else if(dialogAcknowledged || !correctFrontHost)
             {
-                // A failed liveness probe must reopen the error channel. The
-                // later presentation path remains guarded and retry-limited.
+                // Dismiss from the old owner before re-presenting. Crucially,
+                // retain ownership if Unity is still transitioning or throws:
+                // clearing now would orphan the prompt's input blocker.
+                if(TryDismissDialogPrompt(previousHost, prompt))
+                {
+                    ReleaseTrackedDialog(
+                        previousGeneration,
+                        !dialogAcknowledged);
+                    target.reset();
+                }
+                else
+                {
+                    BringDialogPromptToFront(prompt);
+                    return;
+                }
             }
-            if(!promptStillVisible)
+            else
             {
-                std::scoped_lock lock(mutex_);
-                dialogVisible_ = false;
+                // Other UI can append canvases while the dialog is open.
+                // Reassert the shared prompt's sibling order so its visible
+                // surface and raycast blocker remain together at the front.
+                BringDialogPromptToFront(prompt);
+                return;
             }
         }
 
+        // Big Screen's settings controller owns a dedicated same-panel modal
+        // and ShowModalInFront keeps it above that panel. Leave a queued error
+        // for SettingsMenu rather than placing the shared stock prompt over a
+        // different controller inside the three-screen mod flow.
+        if(IsBigScreenMenuActive())
+            return;
+
+        if(!target)
+        {
+            auto resolved = ResolveActiveDialogTarget();
+            if(resolved)
+                target.emplace(std::move(*resolved));
+        }
+        if(!target || DialogPromptVisible(target->prompt.ptr()))
+            return;
+
         std::pair<std::string, std::string> message;
+        std::uint64_t generation = 0;
         {
             std::scoped_lock lock(mutex_);
             if(gameplayActive_ || dialogVisible_ || !pendingDialog_ ||
                std::chrono::steady_clock::now() < nextDialogAttempt_)
                 return;
+
+            // Root the Unity objects before the pending message changes state.
+            // If creating either root fails, the outer failure boundary leaves
+            // the pending message untouched for a later safe retry.
             message = *pendingDialog_;
+            TrackedDialogLifetime().Retain(
+                target->host.ptr(),
+                target->prompt.ptr());
             pendingDialog_.reset();
+            activeDialog_ = message;
             dialogVisible_ = true;
+            dialogAcknowledged_ = false;
+            generation = ++dialogGeneration_;
         }
 
         try
         {
-            auto* flow = BSML::Helpers::GetMainFlowCoordinator();
-            auto prompt = flow
-                ? flow->__cordl_internal_get__simpleDialogPromptViewController()
-                : nullptr;
-            if(!flow || !prompt)
-                throw std::runtime_error("Beat Saber's main dialog is unavailable");
-            if(prompt->get_isInViewControllerHierarchy() || prompt->get_isInTransition())
-            {
-                // Do not replace Beat Saber's own confirmation/error prompt.
-                // Put this message back and retry after that dialog closes.
-                std::scoped_lock lock(mutex_);
-                dialogVisible_ = false;
-                pendingDialog_ = std::move(message);
-                nextDialogAttempt_ = std::chrono::steady_clock::now() +
-                    std::chrono::milliseconds(250);
-                return;
-            }
+            auto& lifetime = TrackedDialogLifetime();
+            auto* host = lifetime.Host();
+            auto* prompt = lifetime.Prompt();
+            if(!UnityW<HMUI::FlowCoordinator>::isAlive(host) ||
+               !UnityW<GlobalNamespace::SimpleDialogPromptViewController>::isAlive(
+                   prompt))
+                throw std::runtime_error(
+                    "The active Beat Saber dialog host became unavailable");
             prompt->Init(
                 message.first,
                 message.second,
                 "OK",
                 custom_types::MakeDelegate<System::Action_1<int>*>(
                     std::function<void(int)>{
-                        [this, flow, prompt](int)
+                        [this, generation](int)
                         {
-                            flow->DismissViewController(
-                                prompt,
-                                HMUI::ViewController::AnimationDirection::Horizontal,
-                                nullptr,
-                                false);
-                            std::scoped_lock lock(mutex_);
-                            dialogVisible_ = false;
-                            dialogFailureLogged_ = false;
+                            AcknowledgeDialog(generation);
                         }}));
-            flow->PresentViewController(
+            host->PresentViewController(
                 prompt,
                 nullptr,
                 HMUI::ViewController::AnimationDirection::Horizontal,
-                false);
+                true);
+            BringDialogPromptToFront(prompt);
             std::scoped_lock lock(mutex_);
             dialogFailureLogged_ = false;
         }
         catch(const std::exception& exception)
         {
-            std::scoped_lock lock(mutex_);
-            if(!dialogFailureLogged_)
+            RecordDialogTickFailure(exception.what());
+            bool confirmedHidden = false;
+            try
             {
-                PaperLogger.error(
-                    "Could not show Big Screen error dialog: {}",
-                    exception.what());
-                RecordError(
-                    "Showing Big Screen error dialog",
-                    exception.what());
-                dialogFailureLogged_ = true;
+                confirmedHidden = !DialogPromptVisible(
+                    TrackedDialogLifetime().Prompt());
             }
-            dialogVisible_ = false;
-            // Retain the message for the dedicated Big Screen modal or the
-            // next main-flow frame instead of silently losing it.
-            pendingDialog_ = std::move(message);
-            nextDialogAttempt_ = std::chrono::steady_clock::now() +
-                std::chrono::seconds(1);
+            catch(...)
+            {
+                // Preserve ownership when liveness itself cannot be proven.
+            }
+            if(confirmedHidden)
+                ReleaseTrackedDialog(generation, true);
         }
         catch(...)
         {
-            std::scoped_lock lock(mutex_);
-            if(!dialogFailureLogged_)
+            RecordDialogTickFailure(
+                "Unknown native exception while presenting the dialog");
+            bool confirmedHidden = false;
+            try
             {
-                PaperLogger.error(
-                    "Could not show Big Screen error dialog: unknown exception");
-                RecordError(
-                    "Showing Big Screen error dialog",
-                    "Unknown native exception");
-                dialogFailureLogged_ = true;
+                confirmedHidden = !DialogPromptVisible(
+                    TrackedDialogLifetime().Prompt());
             }
-            dialogVisible_ = false;
-            pendingDialog_ = std::move(message);
-            nextDialogAttempt_ = std::chrono::steady_clock::now() +
-                std::chrono::seconds(1);
+            catch(...)
+            {
+                // Preserve ownership when liveness itself cannot be proven.
+            }
+            if(confirmedHidden)
+                ReleaseTrackedDialog(generation, true);
         }
     }
 
@@ -510,7 +836,10 @@ namespace BigScreen {
         menuExitRequested_ = false;
         waitingForMenuExit_ = false;
         lastInternalError_ = {};
-        dialogVisible_ = false;
+        // Do not clear an active prompt here. Reset may be requested while a
+        // shared Beat Saber dialog is still in the hierarchy; forgetting its
+        // owner would leave an untracked input blocker. TickMainThread owns
+        // prompt liveness and safely requeues it if the flow changes.
         dialogFailureLogged_ = false;
         nextDialogAttempt_ = {};
     }

@@ -13,7 +13,10 @@ release checker. Only the main-thread menu refresh consumes notices and opens
 BSML dialogs. Each dialog remains attached to the left, right, or center panel
 that owns its action and is moved to that controller's frontmost sibling order
 before presentation, preventing an invisible dialog blocker from being hidden
-behind another menu. Three consecutive transfer failures can request an
+behind another menu. ErrorManager's stock Beat Saber prompt follows a separate
+rule outside Big Screen's own flow: it is presented by the youngest stable
+active flow, brought to the front, and requeued if that host changes before the
+player acknowledges it. Three consecutive transfer failures can request an
 additional background yt-dlp check; a successful transfer resets that streak.
 
 The downloader embeds CPython and compiles QuickJS-NG into `libbigscreen.so`.
@@ -115,14 +118,19 @@ created, and the active coordinator is retained through `UnityW`. Per-frame UI
 refreshes are gated by the active Big Screen flow. This is required because a
 non-null raw pointer from a destroyed menu scene is not a valid liveness check.
 
-All Big Screen flow dialogs are presented through the active center-controller
-stack. Dialogs may be created while a left, right, or retained center page is
-built, but their transform is moved to the center page that is actually visible
-immediately before `Show`. This prevents a warning or confirmation opened from
-a curved side panel from rendering behind that panel, and keeps the same rule
-when Storage, Showcase, or the local-file browser has replaced the neutral
-center page. The stock song-selection resolution dialog remains owned by Beat
-Saber's center song-detail controller because it is outside Big Screen's flow.
+Every Big Screen flow dialog remains attached to the controller that owns the
+action that opened it. Immediately before and after `Show`, its transform is
+moved to that controller's final sibling position, keeping the visible dialog
+and its input blocker together above the left, right, or center panel. The stock
+song-selection resolution dialog remains owned by Beat Saber's center
+song-detail controller because it is outside Big Screen's flow. Internal-error
+prompts use Beat Saber's shared prompt only after the youngest active flow and
+its top controller are stable. If a transition dismisses that prompt or replaces
+its host, ErrorManager restores the active message to the queue instead of
+leaving an invisible blocker or silently losing the error. The presenting flow
+and prompt are held by Unity-safe GC roots until their dismissal is confirmed;
+if an immediate dismissal races a transition, ErrorManager keeps ownership,
+keeps the prompt frontmost, and retries rather than orphaning its blocker.
 
 The local-video browser follows the same boundary. Unity renders immutable
 directory snapshots on the center screen, while a worker thread enumerates the
@@ -166,8 +174,12 @@ The embedded video shader has process lifetime rather than scene lifetime. Its
 which are real IL2CPP GC roots. Caching only a raw `Shader*` is unsafe: the
 address can remain non-null after scene/GC teardown while Unity's native shader
 has already been reclaimed, causing `Material::CreateWithShader` to crash.
-Keeping the small shader-only bundle loaded makes asset ownership explicit and
-prevents repeated bundle loads during menu/gameplay transitions.
+The shader also carries `DontUnloadUnusedAsset`, and the small shader-only bundle
+remains loaded as its explicit owner. SafePtr liveness is checked on every
+screen creation: if Unity nevertheless invalidates a resource after gameplay,
+Big Screen first reloads the shader from the retained bundle, then falls back to
+a clean embedded-bundle reload. A genuine first-load failure is still remembered
+so a hot presentation path cannot retry and spam the log every frame.
 
 The current Cinema interoperability implementation is normalized by
 `MapVideoConfig` before it reaches

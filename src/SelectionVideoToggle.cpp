@@ -989,7 +989,19 @@ namespace BigScreen {
             playback.Start(PlaybackContext::MenuPreview);
             resumeWhenSongAudioStarts_ = false;
             resumeWaitReported_ = false;
-            PaperLogger.info("Resumed menu video with Beat Saber's song-preview audio");
+            if(playback.IsMenuPreviewActive())
+            {
+                PaperLogger.info(
+                    "Resumed menu video with Beat Saber's song-preview audio");
+            }
+            else
+            {
+                // Start reports the actionable surface/decoder error. Do not
+                // follow it with a false success line that sends support-log
+                // diagnosis in the wrong direction.
+                PaperLogger.warn(
+                    "Menu video did not resume after song-preview audio started");
+            }
         }
 
         // Drive the video only while the selected song clip is genuinely

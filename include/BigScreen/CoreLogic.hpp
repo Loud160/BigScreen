@@ -1370,6 +1370,19 @@ namespace BigScreen::CoreLogic {
                elapsed <= window;
     }
 
+    /// Decides whether a cached Unity resource should be loaded. A first
+    /// failure is remembered so a hot presentation path does not retry every
+    /// frame, while a resource that loaded successfully and was later
+    /// invalidated by Unity is allowed one recovery attempt.
+    inline bool ShouldAttemptCachedUnityResourceLoad(
+        bool loadAttempted,
+        bool everLoadedSuccessfully,
+        bool resourceAlive) noexcept
+    {
+        return !resourceAlive &&
+               (!loadAttempted || everLoadedSuccessfully);
+    }
+
     /// Converts yt-dlp byte counters into a UI-safe progress fraction. The
     /// total can be unknown while YouTube is preparing a stream, and some
     /// servers briefly report estimates smaller than the bytes already read.

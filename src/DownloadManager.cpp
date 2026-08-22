@@ -39,6 +39,11 @@
 namespace BigScreen {
     namespace {
         constexpr std::uint64_t RequiredReserve = 512ull * 1024ull * 1024ull;
+        // Internal developer validation switch. Leave false for normal builds:
+        // direct H.264 MP4 is preferred and HLS remains only a compatibility
+        // fallback. Temporarily set true to force a compatible HLS stream at
+        // 1080p or lower through the MPEG-TS-to-MP4 remux/status path.
+        constexpr bool ForceHlsRemuxTest = false;
         const std::filesystem::path InternalNativeRuntime{
             "/data/user/0/com.beatgames.beatsaber/code_cache/BigScreen"};
 
@@ -829,8 +834,18 @@ try:
     # higher bitrate because it must be normalized after transfer.
     def direct_transport(candidate):
         return 1 if str(candidate.get('protocol') or '').lower() in ('http', 'https') else 0
+    # The internal C++ validation switch sets this job flag when a developer
+    # needs the exact same URL to use an HLS/MPEG-TS transport. Normal builds
+    # leave it false and retain direct-MP4 preference below.
+    force_hls_remux_test = bool(job.get('forceHlsRemuxTest', False))
+    if force_hls_remux_test:
+        hls_pool = [candidate for candidate in selection_pool
+            if str(candidate.get('protocol') or '').lower().startswith('m3u8')]
+        if not hls_pool:
+            raise RuntimeError('HLS remux test requested, but this video has no compatible HLS stream at the selected tier')
+        selection_pool = hls_pool
     chosen = max(selection_pool, key=lambda f: (
-        direct_transport(f),
+        direct_transport(f) if not force_hls_remux_test else 0,
         float(f.get('fps') or 0) if within_fps_limit else -float(f.get('fps') or 0),
         float(f.get('tbr') or 0),
         int(f.get('filesize') or f.get('filesize_approx') or 0)))
@@ -2943,6 +2958,11 @@ os.replace(temporary, job['destination'])
             document.AddMember("explicitContentAllowed", request.explicitContentAllowed, allocator);
             document.AddMember("requestedHeight", request.requestedHeight, allocator);
             document.AddMember("maximumSourceFps", request.maximumSourceFps, allocator);
+            // Keep the validation path available without maintaining a second
+            // downloader script. ForceHlsRemuxTest remains false in normal
+            // builds and is changed only for explicit on-device remux testing.
+            document.AddMember(
+                "forceHlsRemuxTest", ForceHlsRemuxTest, allocator);
             document.AddMember(
                 "reserveBytes",
                 static_cast<std::uint64_t>(RequiredReserve),

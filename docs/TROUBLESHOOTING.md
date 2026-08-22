@@ -83,6 +83,11 @@ three minutes, the mod turns its own Enabled switch off, queues one explanatory
 dialog, and leaves Beat Saber/map playback running. Re-enable it from General
 after reviewing the log.
 
+Outside Big Screen's own menu, error dialogs wait for the currently visible Beat
+Saber flow to finish transitioning, then open in front of that flow. If the user
+changes screens while a dialog is open, the message is requeued for the next
+stable screen rather than leaving an invisible input blocker behind the UI.
+
 During a map, playback failures are logged silently and any user-facing notice
 is deferred until gameplay has ended. This prevents a dialog from interrupting
 normal play or Replay capture.

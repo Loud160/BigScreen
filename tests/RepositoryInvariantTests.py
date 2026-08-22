@@ -576,7 +576,13 @@ assert '"remuxed_mpegts_to_mp4"' in download_manager_source
 assert "OperationInProgress()" in download_manager_header
 assert "bool containerPreparation = false" in download_manager_header
 assert "snapshot_.containerPreparation = true" in download_manager_source
-assert "forceHlsRemuxTest" not in download_manager_source
+assert "force_hls_remux_test = bool(job.get('forceHlsRemuxTest', False))" in (
+    download_manager_source
+)
+assert "constexpr bool ForceHlsRemuxTest = false;" in download_manager_source
+assert '"forceHlsRemuxTest", ForceHlsRemuxTest, allocator);' in (
+    download_manager_source
+)
 assert "av_interleaved_write_frame" in video_normalizer_source
 assert "CanDecodeSoftwareFrame" in video_normalizer_source
 assert "SoftwareDecoderRequired" in video_normalizer_source
@@ -761,8 +767,9 @@ assert video_shader_editor.index('EnsureAndroidMultiviewXr();') < \
     video_shader_editor.index('BuildPipeline.BuildAssetBundles')
 assert 'Packages/manifest.json' in copy_script
 # These are structural regression checks only. They prove that both selectable
-# material paths and their fallback ladder remain wired; visual behavior still
-# requires the on-device matrix documented in docs/KNOWN_ISSUES.md.
+# picture paths remain wired and that the shared embedded material dependency
+# is resolved before UI/Default; visual behavior still requires the on-device
+# matrix documented in docs/KNOWN_ISSUES.md.
 assert 'ResolveVideoShader' in screen_surface_source
 assert 'UnityEngine::Shader::Find("UI/Default")' in screen_surface_source
 assert 'material->SetInt("_ColorMask", 14)' in screen_surface_source
@@ -792,7 +799,17 @@ assert 'ApplyDisplaySettingsAndRefreshPreview();' in \
 # crash Material::CreateWithShader even though the address remains non-null.
 assert 'SafePtrUnity<UnityEngine::AssetBundle> bundle;' in screen_surface_source
 assert 'SafePtrUnity<UnityEngine::Shader> shader;' in screen_surface_source
+assert 'bool everLoadedSuccessfully = false;' in screen_surface_source
+assert screen_surface_source.count('everLoadedSuccessfully = false') == 1
+assert 'nextRecoveryAttempt = now +' in screen_surface_source
+assert 'resources.nextRecoveryAttempt = {};' in screen_surface_source
 assert 'resources.bundle = bundle;' in screen_surface_source
+assert 'ShouldAttemptCachedUnityResourceLoad' in screen_surface_source
+assert 'HideFlags::DontUnloadUnusedAsset' in screen_surface_source
+assert 'UnityW<UnityEngine::Shader>::isAlive(shader)' in screen_surface_source
+assert 'resources.bundle.ptr() != bundle' in screen_surface_source
+assert 'resources.bundle->Unload(true);' in screen_surface_source
+assert 'Recovered Big Screen\'s cached video shader' in screen_surface_source
 assert 'bundle->Unload(false);' not in screen_surface_source
 assert 'ApplyVideoMaterialMode' in screen_surface_source
 # UI/Default premultiplies by final alpha inside its fragment stage, so the
@@ -1036,11 +1053,30 @@ assert 'if(!backend_)\n            return "none";' in frame_decoder_facade
 # update hook. It must guard its own cleanup rather than allowing a second
 # exception to escape into il2cpp.
 tick_main_thread = error_manager_source.split(
-    "void ErrorManager::TickMainThread()", 1)[1].split(
-    "void ErrorManager::SetGameplayActive", 1)[0]
+    "void ErrorManager::TickMainThread() noexcept", 1)[1].split(
+    "void ErrorManager::ResetCircuitBreaker", 1)[0]
 assert 'Guard("disabling Big Screen after repeated errors"' in tick_main_thread
 assert "if(IsBigScreenMenuActive())\n            return;" in tick_main_thread
-assert "SimpleDialogPrompt while this child flow is" in tick_main_thread
+assert "YoungestChildFlowCoordinatorOrSelf()" in error_manager_source
+assert "host->PresentViewController(" in tick_main_thread
+assert "SafePtrUnity<HMUI::FlowCoordinator> host;" in error_manager_source
+assert "TrackedDialogLifetime().Retain(" in tick_main_thread
+assert "target->host.ptr() == previousHost" in tick_main_thread
+assert "BringDialogPromptToFront(prompt);" in tick_main_thread
+assert "TryDismissDialogPrompt(previousHost, prompt)" in tick_main_thread
+assert "ReleaseTrackedDialog(" in tick_main_thread
+assert "TickMainThreadImpl();" in tick_main_thread
+assert "[this, generation](int)" in tick_main_thread
+assert "[this, host, prompt" not in tick_main_thread
+assert "main-flow frame" not in tick_main_thread
+reset_circuit_breaker = error_manager_source.split(
+    "void ErrorManager::ResetCircuitBreaker()", 1)[1]
+assert "dialogVisible_ = false" not in reset_circuit_breaker
+resume_preview = selection_toggle_source.split(
+    "if(resumeWhenSongAudioStarts_)", 1)[1].split(
+    "// Drive the video only while", 1)[0]
+assert "if(playback.IsMenuPreviewActive())" in resume_preview
+assert "Menu video did not resume" in resume_preview
 # Every popup stays on the left, right, or center controller that owns the
 # action which opened it. Presentation moves the modal root to the final
 # sibling position before and after Show(), keeping both the visible dialog and

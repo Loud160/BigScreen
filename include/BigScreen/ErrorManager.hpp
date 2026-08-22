@@ -8,6 +8,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -43,9 +44,9 @@ namespace BigScreen {
             const std::string& title,
             const std::string& detail) noexcept;
         std::optional<std::pair<std::string, std::string>> TakePendingDialog();
-        /// Presents one pending message through Beat Saber's normal main-flow
-        /// dialog. Must be called from a Unity main-thread Update hook.
-        void TickMainThread();
+        /// Presents one pending message through Beat Saber's shared dialog on
+        /// the frontmost stable flow. Must run on the Unity main thread.
+        void TickMainThread() noexcept;
         bool GameplayActive() const;
         /// Prevents another update of the failed mod menu while Beat Saber is
         /// animating its dismissal and preparing the main-flow dialog.
@@ -81,6 +82,13 @@ namespace BigScreen {
     private:
         ErrorManager() = default;
 
+        void TickMainThreadImpl();
+        void AcknowledgeDialog(std::uint64_t generation) noexcept;
+        void ReleaseTrackedDialog(
+            std::uint64_t generation,
+            bool requeue) noexcept;
+        void RecordDialogTickFailure(const std::string& detail) noexcept;
+
         mutable std::mutex mutex_;
         bool gameplayActive_ = false;
         bool disabledByCircuitBreaker_ = false;
@@ -89,7 +97,10 @@ namespace BigScreen {
         bool waitingForMenuExit_ = false;
         std::chrono::steady_clock::time_point lastInternalError_{};
         std::optional<std::pair<std::string, std::string>> pendingDialog_;
+        std::optional<std::pair<std::string, std::string>> activeDialog_;
         bool dialogVisible_ = false;
+        bool dialogAcknowledged_ = false;
+        std::uint64_t dialogGeneration_ = 0;
         bool dialogFailureLogged_ = false;
         std::chrono::steady_clock::time_point nextDialogAttempt_{};
         std::mutex persistentLogMutex_;
