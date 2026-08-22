@@ -102,10 +102,11 @@ release manually:
 4. Choose the downloaded Big Screen `.qmod` file and let ModsBeforeFriday install it.
 5. Start or restart Beat Saber. Big Screen will appear in the game's **Mods** menu.
 
-`Big.Screen.qmod` is the complete install package. The separately attached
-`libbigscreen.so` is only a developer replacement binary for a Quest that
-already has the complete QMOD installed; it does not contain the FFmpeg or
-embedded downloader runtimes. The exact FFmpeg source archives are kept in the
+`Big.Screen.qmod` is the complete install package and the only release asset
+that should be uploaded to a Quest. A standalone `libbigscreen.so` is not
+published because replacing it outside the QMOD can leave the installed
+runtimes or manifest out of sync; developers who need that binary should build
+it from source. The exact FFmpeg source archives are kept in the
 [permanent FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1)
 for rebuilding and license compliance, not installation.
 
