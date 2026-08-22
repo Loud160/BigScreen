@@ -188,7 +188,14 @@ automatically rebuilds older cached runtimes that do not contain it.
 
 The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA buffers without an extra frame copy.
 
-For LGPL corresponding-source redistribution, publish both unmodified archives identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and `FFMPEG-9.0.1-BUILD-INFO.txt` records alongside the QMOD. The QMOD includes both exact build records and generated source diffs. Both upstream archive SHA-256 values and all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+For LGPL corresponding-source redistribution, both unmodified archives
+identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and
+`FFMPEG-9.0.1-BUILD-INFO.txt` records are maintained in the
+[permanent FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1).
+Every public QMOD release must link directly to that source release while it
+distributes these exact FFmpeg builds. The QMOD includes both exact build
+records and generated source diffs. Both upstream archive SHA-256 values and
+all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
 
 To make a clean dual-runtime build and retain a clearly named comparison QMOD,
 native library, and both reproducibility records, run:

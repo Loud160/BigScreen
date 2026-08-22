@@ -39,7 +39,9 @@ under their own terms. None of those components is relicensed by Big Screen.
   MP4/MOV, Matroska/WebM, and MPEG-TS demuxing, local-file/JNI integration,
   and frame scaling.
   The QMOD includes the LGPL text, exact build configuration, and source-change
-  records for both versions.
+  records for both versions. The matching unmodified source archives are
+  permanently available from the
+  [Big Screen FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1).
 - **beatsaber-hook 6.4.2** — MIT License. The QMOD includes the resolved runtime
   library because Big Screen directly requires it.
 

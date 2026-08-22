@@ -12,9 +12,10 @@
 - [ ] The canonical public source URL is present in project/release metadata
       and `NOTICE`; the complete matching Big Screen Corresponding Source is
       available from the same public release path used for the QMOD.
-- [ ] Both exact FFmpeg source versions, build configurations, and patches are
-      available beside the downloadable QMOD as required by the LGPL release
-      process.
+- [ ] Both exact FFmpeg source versions remain available from the permanent
+      [FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1),
+      and the public QMOD release links directly to it. The packaged build
+      configurations and patches match those source archives.
 - [ ] Review the tracked large-file refactor in `FUTURE_WORK.md`; either complete
       it after major behavior is stable or explicitly carry it as documented
       technical debt for this release.
