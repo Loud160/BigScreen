@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.11 — Preview, remux, and menu recovery hardening
+
+- Rebuilt completed Video Library preview looping around an explicit decoder
+  generation. The stale mailbox is cleared, synchronized audio waits for the
+  new opening picture, and a drained Android MediaCodec receives one bounded
+  decoder reopen so natural looping and Play after EOF do not require leaving
+  and reopening the song.
+- Retained the embedded video shader and its source AssetBundle through
+  process-lifetime Unity-safe roots, added native-liveness validation, and
+  now recovers from the retained or freshly loaded bundle after gameplay or
+  Showcase scene cleanup invalidates a cached resource. A bounded retry
+  cooldown prevents a transient recovery failure from permanently disabling
+  later previews or repeatedly loading the bundle in one frame.
+- Presented shared Beat Saber error prompts through the youngest stable active
+  flow, kept their host and prompt alive across transitions, and raised the
+  prompt above the active UI until Unity confirms dismissal. Errors can no
+  longer leave an invisible input blocker behind the song-selection screen.
 - Preferred direct HTTPS H.264 MP4 streams at each selected YouTube tier and
   added background MPEG-TS-to-MP4 normalization when HLS is the only usable
   transport. Preparation reports progress, copies packets without re-encoding,
@@ -17,6 +34,17 @@
   history. Only an actual MPEG-TS remux shows container-preparation progress;
   direct MP4 downloads retain the original finalization behavior. Disabling
   Fit to Song now restores the neutral 1.00x manual playback speed.
+- Made the song editor's transient status owner explicitly per map and per
+  visit. Leaving a map destroys the old label and clears transfer, preview, and
+  revision tokens, so delayed work cannot repaint another map with stale
+  download or preparation text.
+- Made source deployment, removal, and support-log collection identify an
+  authorized Meta/Oculus Quest with Beat Saber installed, ignore unrelated
+  Android devices, and offer a numbered choice when more than one valid Quest
+  is connected.
+- Preserved a false-by-default developer switch that forces the HLS remux path
+  for deterministic regression testing while production downloads continue to
+  prefer direct MP4.
 
 ## 0.7.0-alpha.10 — Menu, updater, and deployment hardening
 
