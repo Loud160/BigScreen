@@ -831,6 +831,12 @@ namespace BigScreen {
         if(!centerViewController)
             return;
 
+        // Tear down the editor before changing HMUI ownership. If replacing
+        // the right controller throws, the selected map's notice/decoder state
+        // has still crossed its mandatory close boundary.
+        if(!enabled)
+            VideoLibraryMenu::Instance().Deactivate();
+
         // The Video Library is functional Big Screen UI rather than navigation
         // needed to recover from a disabled mod. Remove its right panel until
         // the master switch is turned back on. Do not touch the center stack
@@ -863,9 +869,7 @@ namespace BigScreen {
         SetRightScreenViewController(
             enabled ? libraryBrowserViewController : nullptr,
             HMUI::ViewController::AnimationType::None);
-        if(!enabled)
-            VideoLibraryMenu::Instance().Deactivate();
-        else
+        if(enabled)
             VideoLibraryMenu::Instance().Refresh();
     }
 
@@ -875,6 +879,31 @@ namespace BigScreen {
     {
         DiagnosticSessionLogger::Instance().MenuEvent(
             "menu_deactivation_started", "MenuFlowCoordinator");
+
+        // Clear the selected map and its operation notice before any unrelated
+        // Unity teardown. PerformancePanel or ScreenPreview can encounter a
+        // destroyed scene object; that must never prevent the video editor's
+        // native strings/tokens and map-owned TMP surface from being retired.
+        try
+        {
+            VideoLibraryMenu::Instance().Deactivate();
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Video Library deactivation failed while closing Big Screen: {}",
+                exception.what());
+            ErrorManager::Instance().RecordError(
+                "Closing the Video Library", exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Video Library deactivation failed while closing Big Screen");
+            ErrorManager::Instance().RecordError(
+                "Closing the Video Library", "Unknown native exception");
+        }
+
         try
         {
         BeginMenuReentryGuard();
@@ -884,7 +913,6 @@ namespace BigScreen {
         // The world screen only belongs to this page. Releasing it here keeps
         // the placement preview at zero GPU cost everywhere else in the menu.
         ScreenPreview::Instance().Suspend();
-        VideoLibraryMenu::Instance().Deactivate();
         // Closes the picker's private decoder if the whole menu is dismissed
         // while a frame was still being chosen; nothing was saved yet.
         ThumbnailPickerMenu::Instance().Hide();

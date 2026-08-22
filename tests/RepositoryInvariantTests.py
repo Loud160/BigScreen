@@ -84,6 +84,13 @@ library_menu_header = (
 library_menu_source = (root / "src/VideoLibraryMenu.cpp").read_text(
     encoding="utf-8"
 )
+video_editor_notice_model = (
+    root / "include/BigScreen/VideoEditorNoticeModel.hpp"
+).read_text(encoding="utf-8")
+video_editor_notice_tests = (
+    root / "tests/VideoEditorNoticeModelTests.cpp"
+).read_text(encoding="utf-8")
+host_test_cmake = (root / "tests/CMakeLists.txt").read_text(encoding="utf-8")
 frame_decoder_header = (root / "include/BigScreen/FrameDecoder.hpp").read_text(
     encoding="utf-8"
 )
@@ -1217,9 +1224,6 @@ assert "SetBrightButtonLabel(mapperRefreshButton_, 6.0f);" in (
 )
 assert "timingToggleColumn" not in library_menu_source
 assert "/diagnostics/" in gitignore
-assert "ConfigureLayout(detailText_, -1.0f, 5.5f, 1.0f);" in (
-    library_menu_source
-)
 assert "ConfigureLayout(storageSpacer, -1.0f, 0.8f, 1.0f);" in (
     library_menu_source
 )
@@ -1238,39 +1242,229 @@ assert download_manager_source.index("videoReplacement.Promote()") < (
     download_manager_source.index("VideoLibrary::Instance().CommitDownload(")
 )
 assert "BackgroundCommitInProgress()" in video_library_header
-assert "Saving downloaded video..." in library_menu_source
-# DownloadManager intentionally retains its terminal result for retry and
-# diagnostics. The song editor must not mistake that retained Completed state
-# for a live transfer after the newly assigned video is already playable, and
-# download completion must never overwrite the user-action status field used by
-# Fit to Song, playback speed, and playback offset.
-assert 'transientStatus_ = "Video downloaded and assigned.";' not in (
-    library_menu_source
+# The old operation line accumulated status caches, owner precedence, retained
+# terminal snapshots, and Unity mesh/layout workarounds. The replacement is a
+# fresh event model keyed by editor-visit and transfer tokens; none of the old
+# symbols or presentation workarounds may return.
+assert not (root / "include/BigScreen/DetailStatusState.hpp").exists()
+poisoned_status_symbols = (
+    "DetailStatusState",
+    "DetailStatusOwner",
+    "BeginDetailStatusVisit",
+    "EndDetailStatusVisit",
+    "SetDetailStatus",
+    "ClearDetailStatus",
+    "DetailStatusForSelection",
+    "DetailStatusOwnedBy",
+    "RenderDetailStatus",
+    "detailText_",
+    "transientStatus_",
+    "renderedDetailStatus_",
+    "pendingDetailStatus_",
+    "detailStatusSettleTicks_",
+    "observedDownloadLevelId_",
+    "PublishDetailStatus",
+    "detailStatusSurfaces_",
+    "STATUSDBG",
 )
-assert "download.state != DownloadState::Completed" in library_menu_source
+for symbol in poisoned_status_symbols:
+    assert symbol not in library_menu_header, symbol
+    assert symbol not in library_menu_source, symbol
+assert "BigScreen/DetailStatusState.hpp" not in library_menu_header
+assert "DownloadStatus(" not in library_menu_source
+assert '"Download Complete"' not in library_menu_source
+assert '"Stopping download..."' not in library_menu_source
+assert "UnityEngine::RectTransform* editorLayoutRoot_" not in library_menu_header
+assert "LayoutRebuilder::ForceRebuildLayoutImmediate(" not in library_menu_source
+assert "UnityEngine::Canvas::ForceUpdateCanvases();" not in library_menu_source
+
+assert "class VideoEditorNoticeModel final" in video_editor_notice_model
+assert "VisitToken Enter(std::string levelId)" in video_editor_notice_model
+assert "void Reset() noexcept" in video_editor_notice_model
+assert "BeginTransfer(" in video_editor_notice_model
+assert "FinishTransfer(" in video_editor_notice_model
+assert "AbandonTransfer(" in video_editor_notice_model
+assert "ClearIfCurrent(" in video_editor_notice_model
+assert "activeTransfer_.reset();" in video_editor_notice_model
+assert "VideoEditorNoticeModel editorNoticeModel_" in library_menu_header
+assert "OpenEditorNotice();" in library_menu_source
+assert "PollEditorTransferNotice();" in library_menu_source
+assert "CreateEditorNoticeSurface();" in library_menu_source
+assert "DestroyEditorNoticeSurface();" in library_menu_source
+assert "QueueEditorNoticePaint();" in library_menu_source
+assert "Saving downloaded video..." in library_menu_source
+assert "Video download complete." in library_menu_source
+assert library_menu_source.count("operationStatusText_->set_text(") == 1
+assert "operationStatusText_->get_text(" not in library_menu_source
+assert "operationStatusText_->set_enabled(" not in library_menu_source
+paint_editor_notice = library_menu_source.split(
+    "void VideoLibraryMenu::PaintEditorNotice()", 1
+)[1].split("void VideoLibraryMenu::RefreshUrlTextColor()", 1)[0]
+assert paint_editor_notice.count("operationStatusText_->set_text(") == 1
+refresh_details = library_menu_source.split(
+    "void VideoLibraryMenu::RefreshDetails()", 1
+)[1].split("void VideoLibraryMenu::StartSelectedPreview()", 1)[0]
+assert "operationStatusText_" not in refresh_details
+assert "PaintEditorNotice" not in refresh_details
+assert "editorNoticeModel_" not in refresh_details
+select_row = library_menu_source.split(
+    "void VideoLibraryMenu::SelectRow(int row)", 1
+)[1].split("void VideoLibraryMenu::ShowBrowser()", 1)[0]
+assert select_row.index("CloseEditorNotice();") < (
+    select_row.index("selected_ = visible_[row]->level;")
+)
+assert select_row.index("ShowEditor();") < select_row.index("OpenEditorNotice();")
+open_editor_notice = library_menu_source.split(
+    "void VideoLibraryMenu::OpenEditorNotice()", 1
+)[1].split("void VideoLibraryMenu::CloseEditorNotice()", 1)[0]
+assert open_editor_notice.index("editorNoticeModel_.Enter(") < (
+    open_editor_notice.index("CreateEditorNoticeSurface();")
+)
+assert open_editor_notice.index("CreateEditorNoticeSurface();") < (
+    open_editor_notice.index("QueueEditorNoticePaint();")
+)
+close_editor_notice = library_menu_source.split(
+    "void VideoLibraryMenu::CloseEditorNotice()", 1
+)[1].split("VideoLibraryMenu::PublishEditorNotice", 1)[0]
+for cleared_notice_state in (
+    "editorNoticeModel_.Reset();",
+    "editorNoticeVisit_ = {};",
+    "editorTransferNotice_ = {};",
+    "previewNoticeRevision_ = {};",
+    "editorTransferKind_ = EditorTransferKind::None;",
+    "editorTransferCancellationRequested_ = false;",
+    "pendingDownloadRefreshLevelId_.clear();",
+    "terminalDownloadProgressLevelId_.clear();",
+    "editorNoticePaintPending_ = false;",
+    "editorNoticePaintAfterFrame_ = -1;",
+    "DestroyEditorNoticeSurface();",
+):
+    assert cleared_notice_state in close_editor_notice
+create_ui = library_menu_source.split(
+    "void VideoLibraryMenu::CreateUi(", 1
+)[1].split("void VideoLibraryMenu::RebuildCatalog()", 1)[0]
+assert "operationStatusHost_ =" in create_ui
+assert 'CreateText(editorBody, "", 2.35f)' not in create_ui
+create_notice_surface = library_menu_source.split(
+    "void VideoLibraryMenu::CreateEditorNoticeSurface()", 1
+)[1].split("void VideoLibraryMenu::DestroyEditorNoticeSurface()", 1)[0]
+assert 'CreateText(operationStatusHost_, "", 2.35f)' in (
+    create_notice_surface
+)
+destroy_notice_surface = library_menu_source.split(
+    "void VideoLibraryMenu::DestroyEditorNoticeSurface()", 1
+)[1].split("void VideoLibraryMenu::QueueEditorNoticePaint()", 1)[0]
+assert "operationStatusText_ = nullptr;" in destroy_notice_surface
+assert "object->SetActive(false);" in destroy_notice_surface
+assert "UnityEngine::Object::Destroy(object);" in destroy_notice_surface
+queue_notice_paint = library_menu_source.split(
+    "void VideoLibraryMenu::QueueEditorNoticePaint()", 1
+)[1].split("void VideoLibraryMenu::PaintEditorNotice()", 1)[0]
+assert "editorNoticePaintPending_ = true;" in queue_notice_paint
+assert "UnityEngine::Time::get_frameCount()" in queue_notice_paint
+tick_notice_paint = library_menu_source.split(
+    "void VideoLibraryMenu::Tick(", 1
+)[1].split("void VideoLibraryMenu::Refresh()", 1)[0]
+assert tick_notice_paint.rstrip().endswith("PaintEditorNotice();\n    }")
+show_browser = library_menu_source.split(
+    "void VideoLibraryMenu::ShowBrowser()", 1
+)[1].split("void VideoLibraryMenu::ChangeFilter(", 1)[0]
+assert show_browser.index("CloseEditorNotice();") < (
+    show_browser.index("editorVisible_ = false;")
+)
+deactivate_video_library = library_menu_source.split(
+    "void VideoLibraryMenu::Deactivate()", 1
+)[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
+assert deactivate_video_library.index("CloseEditorNotice();") < (
+    deactivate_video_library.index("editorVisible_ = false;")
+)
+apply_enabled_ui = menu_flow_source.split(
+    "void MenuFlowCoordinator::ApplyModEnabledUi(bool enabled)", 1
+)[1].split("void MenuFlowCoordinator::DidDeactivate(", 1)[0]
+assert apply_enabled_ui.index("VideoLibraryMenu::Instance().Deactivate();") < (
+    apply_enabled_ui.index("SetRightScreenViewController(")
+)
+flow_deactivation = menu_flow_source.split(
+    "void MenuFlowCoordinator::DidDeactivate(", 1
+)[1].split("void MenuFlowCoordinator::BackButtonWasPressed(", 1)[0]
+assert flow_deactivation.index("VideoLibraryMenu::Instance().Deactivate();") < (
+    flow_deactivation.index("PerformancePanel::Instance().SuspendMenu();")
+)
+forget_video_library_ui = library_menu_source.split(
+    "void VideoLibraryMenu::ForgetUi()", 1
+)[1].split("void VideoLibraryMenu::CreateUi(", 1)[0]
+assert "*this = VideoLibraryMenu{};" in forget_video_library_ui
+request_selected_audio = library_menu_source.split(
+    "void VideoLibraryMenu::RequestSelectedAudio()", 1
+)[1].split("void VideoLibraryMenu::ReleaseOfficialSongAudio()", 1)[0]
+assert 'PublishPreviewNotice("Loading full song audio...")' not in (
+    request_selected_audio
+)
+assert 'PublishPreviewNotice("Loading song audio...")' not in (
+    request_selected_audio
+)
+assert "bigscreen-video-editor-notice-tests" in host_test_cmake
+for required_notice_case in (
+    "a newly opened map starts with a blank notice",
+    "a delayed terminal event cannot overwrite a newer user action",
+    "a retained terminal event cannot overwrite a later user action",
+    "an abandoned transfer cannot leave stale progress text",
+    "leaving a map clears transfer-owned progress text",
+    "leaving a map rejects delayed transfer progress",
+    "leaving a map rejects delayed transfer completion",
+    "a delayed close cannot erase the current map's notice",
+    "an unconditional map-exit reset clears the retained string",
+    "an unconditional map-exit reset invalidates the visit token",
+    "switching maps starts with a blank notice",
+    "reopening the same map does not revive old operation text",
+    "preview completion cannot clear a newer user action",
+):
+    assert required_notice_case in video_editor_notice_tests
+
+# Rebuilding the line must not remove or rewrite the operations it describes.
+# Downloads still update the independent progress bar, replacement publication
+# remains atomic, unfinished media keeps playback/timing controls locked, and
+# all four timing settings still persist and rebuild the preview.
+assert "if(!suppressUrlCallback_)" in library_menu_source
 assert "const bool showProgress = thisDownload &&" in library_menu_source
 assert "downloadOperationInProgress && download.Active()" in library_menu_source
-assert "liveDownloadStatus || terminalDownloadStatus" in library_menu_source
-assert "bool downloadJustCompleted = false;" in library_menu_source
-assert '? "Download Complete"' in library_menu_source
-# The known-good bdd74ff editor had one status component and one direct write.
-# Do not reintroduce cached/cloned TMP surfaces: they create a second UI
-# lifecycle that can retain one song's completion text after selection changes.
-assert "const std::string resolvedDetailStatus = !transientStatus_.empty()" in (
+assert "downloadProgressTrack_->get_gameObject()->SetActive(showProgress);" in (
     library_menu_source
 )
-assert "detailText_->set_text(resolvedDetailStatus);" in library_menu_source
-assert "detailText_->set_enabled(false);" in library_menu_source
-assert "detailText_->set_enabled(true);" in library_menu_source
-assert "PublishDetailStatus" not in library_menu_source
-assert "detailStatusSurfaces_" not in library_menu_header
+assert "downloadProgressFill_->set_color(" in library_menu_source
+assert "fillRect->set_anchorMax({progress, 1.0f});" in library_menu_source
 assert "const bool videoTransferPending = thisDownload &&" in (
     library_menu_source
 )
 assert "descriptor.CanPlay() && !videoTransferPending" in library_menu_source
-assert "playback speed reset to 1.00x" in library_menu_source
+assert "VideoLibrary::Instance().UpdateTiming(" in library_menu_source
+assert library_menu_source.count("ApplyFitToSong()") >= 3
+assert "rate_ = 1.0;" in library_menu_source
+assert "blackDuringLeadIn_ = enabled;" in library_menu_source
+assert library_menu_source.count("StartSelectedPreview();") >= 5
+assert '"Video timing was not saved"' in library_menu_source
+
+# Every synchronization control must publish its own event after the preview
+# and detail rows have been refreshed. This protects the status line from a
+# future callback regression without coupling it to the downloader snapshot.
+fit_toggle_callback = library_menu_source.split(
+    'fitToggle_ = BSML::Lite::CreateToggle(', 1
+)[1].split('rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
+assert "PublishEditorNotice(" in fit_toggle_callback
+rate_callback = library_menu_source.split(
+    'rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1
+)[1].split('offsetSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
+assert "PublishEditorNotice(message.str());" in rate_callback
+offset_callback = library_menu_source.split(
+    'offsetSetting_ = BSML::Lite::CreateIncrementSetting(', 1
+)[1].split('blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1)[0]
+assert "PublishEditorNotice(message.str());" in offset_callback
+lead_in_callback = library_menu_source.split(
+    'blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1
+)[1].split('timingRows_.push_back(', 1)[0]
+assert "PublishEditorNotice(" in lead_in_callback
 assert "Completion deliberately does not auto-open" in library_menu_source
-assert "BS-DL-HTTP-403\" ? \"YouTube refused this stream." in library_menu_source
+assert "BS-DL-HTTP-403" in download_manager_source
 
 # The optional demo is fetched rather than redistributed. Its map revision is
 # immutable, extraction is bounded/contained, both required mods are checked by
@@ -1586,7 +1780,6 @@ assert "AdvanceSmoothedPreviewClock" in library_menu_source
 assert "playbackControlsTickCounter_ >= 6" in library_menu_source
 assert "downloadActive || periodicDownloadWasActive_" in library_menu_source
 assert "IsLibraryPreviewActive()) return;" in selection_toggle_source
-assert '"Preparing synchronized video preview..."' in library_menu_source
 preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
 )[1].split("void VideoLibraryMenu::LoopPreviewPlayback()", 1)[0]
@@ -1685,8 +1878,7 @@ assert "if(activeLocalFile && deleteLocalConfirmModal_)" in library_menu_source
 assert '"<color=#FF3838>Delete Forever</color>"' in library_menu_source
 assert "pendingLocalDeleteLevelId_" in library_menu_header
 assert "pendingLocalDeletePath_" in library_menu_header
-assert "The assigned video changed while confirmation was open" in (
-    library_menu_source)
+assert "if(!sameAssignment)" in library_menu_source
 
 # The one-to-four exact-resolution download choices share the whole action row
 # at one uniform flexible size instead of the old fixed cramped grouping.

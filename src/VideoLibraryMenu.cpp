@@ -121,7 +121,6 @@ namespace BigScreen {
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
         constexpr std::string_view StorageMetricLineHeight = "70%";
-
         std::string StorageMetricText(
             std::string_view heading,
             std::string_view value)
@@ -372,68 +371,94 @@ namespace BigScreen {
             return encoded;
         }
 
-        std::string DownloadStatus(const DownloadSnapshot& download)
+        std::string TransferFailureNotice(const DownloadSnapshot& transfer)
         {
-            if(download.state == DownloadState::Failed)
-            {
-                // Keep the stable support code at the beginning so it cannot
-                // be clipped off the right side of the compact child panel.
-                // yt-dlp's full sanitized error and stream facts remain in the
-                // persistent error log under this same code.
-                const auto& code = download.errorCode;
-                const std::string_view summary =
-                    code == "BS-DL-HTTP-400" ? "YouTube rejected the request." :
-                    code == "BS-DL-HTTP-401" ? "This video requires sign-in." :
-                    code == "BS-DL-HTTP-403" ? "YouTube refused this stream." :
-                    code == "BS-DL-HTTP-404" ? "The video was not found." :
-                    code == "BS-DL-HTTP-410" ? "The video was removed." :
-                    code == "BS-DL-HTTP-429" ? "Rate limited; try again later." :
-                    code == "BS-DL-HTTP-5XX" ? "YouTube error; try again later." :
-                    code == "BS-DL-TLS-001" ? "Secure connection failed." :
-                    code == "BS-DL-STORAGE-001" ? "Not enough Quest storage." :
-                    code == "BS-DL-FORMAT-001" ? "No compatible format was found." :
-                    code == "BS-DL-ACCESS-001" ? "This video is restricted." :
-                    code == "BS-DL-PROBE-001" ? "Could not check this URL." :
-                    "Download failed. See the error log.";
-                return (code.empty() ? std::string("BS-DL-FAILED-001") : code) +
-                    ": " + std::string(summary);
-            }
-            if(download.state == DownloadState::Preparing &&
-               download.containerPreparation &&
-               download.totalBytes > 0)
-            {
-                const auto percent = static_cast<int>(std::clamp(
-                    100.0 * download.downloadedBytes / download.totalBytes,
-                    0.0,
-                    100.0));
-                return "Preparing video for playback  (" +
-                    std::to_string(percent) + "%)";
-            }
-            if(download.state != DownloadState::Downloading)
-                return download.message;
+            const std::string code = transfer.errorCode.empty()
+                ? "BS-DL-FAILED-001"
+                : transfer.errorCode;
+            const std::string_view explanation =
+                code == "BS-DL-HTTP-400" ? "YouTube rejected the request." :
+                code == "BS-DL-HTTP-401" ? "This video requires sign-in." :
+                code == "BS-DL-HTTP-403" ? "YouTube refused the video stream." :
+                code == "BS-DL-HTTP-404" ? "The video was not found." :
+                code == "BS-DL-HTTP-410" ? "The video is no longer available." :
+                code == "BS-DL-HTTP-429" ? "YouTube is rate limiting requests." :
+                code == "BS-DL-HTTP-5XX" ? "YouTube reported a server error." :
+                code == "BS-DL-TLS-001" ? "The secure connection failed." :
+                code == "BS-DL-STORAGE-001" ? "The Quest does not have enough free storage." :
+                code == "BS-DL-FORMAT-001" ? "No compatible video format was found." :
+                code == "BS-DL-ACCESS-001" ? "This video is restricted." :
+                code == "BS-DL-PROBE-001" ? "The YouTube link could not be checked." :
+                "See the Big Screen error log for details.";
+            return code + ": " + std::string(explanation);
+        }
 
-            std::ostringstream text;
-            text << "Downloading  " << Utility::FormatMegabytes(download.downloadedBytes);
-            if(download.totalBytes)
+        std::string ActiveTransferNotice(
+            const DownloadSnapshot& transfer,
+            bool metadataOnly,
+            bool cancellationRequested)
+        {
+            if(cancellationRequested)
+                return metadataOnly
+                    ? "Stopping the YouTube link check..."
+                    : "Stopping the video download...";
+            if(metadataOnly)
+                return "Checking YouTube link...";
+            if(transfer.state == DownloadState::Preparing &&
+               transfer.containerPreparation && transfer.totalBytes > 0)
             {
                 const auto percent = static_cast<int>(std::clamp(
-                    100.0 * download.downloadedBytes / download.totalBytes,
+                    100.0 * transfer.downloadedBytes / transfer.totalBytes,
                     0.0,
                     100.0));
-                text << " / " << Utility::FormatMegabytes(download.totalBytes)
-                     << "  (" << percent << "%)";
+                return "Preparing video for playback (" +
+                    std::to_string(percent) + "%).";
             }
-            if(download.speedBytesPerSecond > 0.0)
-                text << "  |  " << std::fixed << std::setprecision(1)
-                     << download.speedBytesPerSecond / 1048576.0 << " MB/s";
-            if(download.etaSeconds > 0.0)
+            if(transfer.state != DownloadState::Downloading)
+                return "Starting video download...";
+
+            std::ostringstream message;
+            message << "Downloading video: "
+                    << Utility::FormatMegabytes(transfer.downloadedBytes);
+            if(transfer.totalBytes > 0)
             {
-                const auto seconds = static_cast<int>(download.etaSeconds);
-                text << "  |  " << seconds / 60 << ':'
-                     << std::setfill('0') << std::setw(2) << seconds % 60
-                     << " left";
+                const auto percent = static_cast<int>(std::clamp(
+                    100.0 * transfer.downloadedBytes / transfer.totalBytes,
+                    0.0,
+                    100.0));
+                message << " / " << Utility::FormatMegabytes(transfer.totalBytes)
+                        << " (" << percent << "%)";
             }
-            return text.str();
+            if(transfer.speedBytesPerSecond > 0.0)
+                message << " | " << std::fixed << std::setprecision(1)
+                        << transfer.speedBytesPerSecond / 1048576.0 << " MB/s";
+            if(transfer.etaSeconds > 0.0)
+            {
+                const auto seconds = static_cast<int>(transfer.etaSeconds);
+                message << " | " << seconds / 60 << ':'
+                        << std::setfill('0') << std::setw(2) << seconds % 60
+                        << " left";
+            }
+            return message.str();
+        }
+
+        std::string FinishedTransferNotice(
+            const DownloadSnapshot& transfer,
+            bool metadataOnly)
+        {
+            if(transfer.state == DownloadState::Failed)
+                return TransferFailureNotice(transfer);
+            if(transfer.state == DownloadState::Cancelled)
+                return metadataOnly
+                    ? "YouTube link check cancelled."
+                    : "Video download cancelled.";
+            if(metadataOnly && transfer.state == DownloadState::ProbeCompleted)
+                return "Video download options are ready.";
+            if(!metadataOnly && transfer.state == DownloadState::Completed)
+                return "Video download complete.";
+            return metadataOnly
+                ? "YouTube link check finished."
+                : "Video downloader task finished.";
         }
 
         std::string BrowserSummary(
@@ -1010,9 +1035,9 @@ namespace BigScreen {
         urlInput_ = BSML::Lite::CreateStringSetting(
             urlEntryRow, "YouTube URL", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
-                transientStatus_.clear();
                 if(!suppressUrlCallback_)
                 {
+                    terminalDownloadProgressLevelId_.clear();
                     mapperProvidedUrl_ = false;
                     RefreshUrlTextColor();
                     BeginUrlProbe();
@@ -1202,17 +1227,18 @@ namespace BigScreen {
             {29.0f, 8.0f},
             [this]() { ConfirmPendingResolutionDownload(); });
 
-        // Status and progress belong directly below the controls they describe.
-        // This keeps recognition errors and active download feedback visually
-        // attached to the thumbnail/download row instead of the song heading.
-        detailText_ = BSML::Lite::CreateText(
-            editorBody, "", 2.35f);
-        ConfigureLayout(detailText_, -1.0f, 5.5f, 1.0f);
-        detailText_->set_enableWordWrapping(false);
-        detailText_->set_enableAutoSizing(true);
-        detailText_->set_fontSizeMin(1.9f);
-        detailText_->set_fontSizeMax(2.35f);
-        detailText_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        // Only this fixed-height host belongs to the long-lived controller.
+        // Each selected-map visit creates its own TextMeshPro child inside the
+        // host and destroys that child on exit. A CanvasRenderer mesh from one
+        // map therefore cannot reappear when another map changes the layout.
+        operationStatusHost_ =
+            BSML::Lite::CreateVerticalLayoutGroup(editorBody);
+        ConfigureGroup(operationStatusHost_);
+        operationStatusHost_->set_childForceExpandWidth(true);
+        ConfigureLayout(operationStatusHost_, -1.0f, 5.5f, 1.0f);
+        if(auto* statusHostLayout = EnsureLayout(operationStatusHost_))
+            statusHostLayout->set_minHeight(5.5f);
+
         downloadProgressTrack_ = BSML::Lite::CreateImage(
             editorBody,
             BSML::Utilities::ImageResources::GetBlankSprite());
@@ -1261,7 +1287,7 @@ namespace BigScreen {
                 fitToSong_ = enabled;
                 if(enabled)
                 {
-                    if(!ApplyFitToSong(true))
+                    if(!ApplyFitToSong())
                     {
                         fitToSong_ = false;
                         suppressTimingCallbacks_ = true;
@@ -1281,10 +1307,11 @@ namespace BigScreen {
                     suppressTimingCallbacks_ = true;
                     if(rateSetting_) rateSetting_->set_Value(1.0f);
                     suppressTimingCallbacks_ = false;
-                    transientStatus_ =
-                        "Automatic song fitting disabled; playback speed reset to 1.00x.";
+                    terminalDownloadProgressLevelId_.clear();
                     StartSelectedPreview();
                     RefreshDetails();
+                    PublishEditorNotice(
+                        "Fit to Song disabled. Playback speed reset to 1.00x.");
                 }
             });
         EnforceTimingControlHeight(fitToggle_);
@@ -1300,12 +1327,13 @@ namespace BigScreen {
                 rate_ = value;
                 if(SaveTiming())
                 {
-                    std::ostringstream status;
-                    status << std::fixed << std::setprecision(2)
-                           << "Manual playback speed saved at " << rate_ << "x.";
-                    transientStatus_ = status.str();
+                    terminalDownloadProgressLevelId_.clear();
                     StartSelectedPreview();
                     RefreshDetails();
+                    std::ostringstream message;
+                    message << std::fixed << std::setprecision(2)
+                            << "Playback speed saved: " << rate_ << "x.";
+                    PublishEditorNotice(message.str());
                 }
             });
         EnforceTimingControlHeight(rateSetting_);
@@ -1319,21 +1347,25 @@ namespace BigScreen {
                 if(suppressTimingCallbacks_) return;
                 offset_ = value;
                 if(fitToSong_)
-                    ApplyFitToSong(false);
+                    ApplyFitToSong();
                 else if(SaveTiming())
                 {
-                    std::ostringstream status;
-                    status << std::fixed << std::setprecision(2);
-                    if(offset_ < 0.0)
-                        status << "Video delayed by " << -offset_ << " seconds; lead-in is "
-                               << (blackDuringLeadIn_ ? "black" : "transparent") << ".";
-                    else if(offset_ > 0.0)
-                        status << "Video skips forward " << offset_ << " seconds at song start.";
-                    else
-                        status << "Video starts at frame zero with the song.";
-                    transientStatus_ = status.str();
+                    terminalDownloadProgressLevelId_.clear();
                     StartSelectedPreview();
                     RefreshDetails();
+                    std::ostringstream message;
+                    message << std::fixed << std::setprecision(2);
+                    if(offset_ < 0.0)
+                        message << "Video delayed " << -offset_
+                                << " seconds; lead-in is "
+                                << (blackDuringLeadIn_ ? "black" : "transparent")
+                                << '.';
+                    else if(offset_ > 0.0)
+                        message << "Video skips " << offset_
+                                << " seconds at song start.";
+                    else
+                        message << "Video starts with the song.";
+                    PublishEditorNotice(message.str());
                 }
             });
         EnforceTimingControlHeight(offsetSetting_);
@@ -1351,11 +1383,12 @@ namespace BigScreen {
                 blackDuringLeadIn_ = enabled;
                 if(SaveTiming())
                 {
-                    transientStatus_ = enabled
-                        ? "Video lead-in will use a solid black background."
-                        : "Video lead-in will remain transparent.";
+                    terminalDownloadProgressLevelId_.clear();
                     StartSelectedPreview();
                     RefreshDetails();
+                    PublishEditorNotice(enabled
+                        ? "Lead-in background set to black."
+                        : "Lead-in background set to transparent.");
                 }
             });
         EnforceTimingControlHeight(blackLeadInToggle_);
@@ -1782,9 +1815,10 @@ namespace BigScreen {
                 pendingLocalDeletePath_.clear();
                 if(!sameAssignment)
                 {
-                    transientStatus_ =
-                        "The assigned video changed while confirmation was open. Nothing was deleted.";
+                    terminalDownloadProgressLevelId_.clear();
                     RefreshDetails();
+                    PublishEditorNotice(
+                        "The assigned video changed. Nothing was deleted.");
                     return;
                 }
                 RemoveOverride(true);
@@ -1898,7 +1932,7 @@ namespace BigScreen {
 
         for(auto* text : {
                 browserTitle_, browserStorage_, filterText_, detailTitle_,
-                detailText_, detailMapStorage_, detailLocalStorage_, detailLibraryStorage_,
+                detailMapStorage_, detailLocalStorage_, detailLibraryStorage_,
                 detailFreeStorage_, playbackTimeText_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
@@ -2089,6 +2123,11 @@ namespace BigScreen {
     void VideoLibraryMenu::SelectRow(int row)
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
+        // Selection is a hard notice-lifecycle boundary even if a caller
+        // reaches this method without first navigating through ShowBrowser.
+        // Remove the preceding map's renderer and invalidate every token before
+        // selected_ can refer to the next map.
+        CloseEditorNotice();
         if(list_ && list_->tableView)
         {
             // Freeze a possibly animated A-Z jump before hiding the browser.
@@ -2115,7 +2154,15 @@ namespace BigScreen {
             selected_ && selected_->levelID
                 ? std::string(selected_->levelID) : std::string("no level id"));
         previewSongTime_ = 0.0;
-        transientStatus_.clear();
+        pendingDownloadRefreshLevelId_.clear();
+        terminalDownloadProgressLevelId_.clear();
+        if(selected_ && selected_->levelID)
+        {
+            const auto download = DownloadManager::Instance().Snapshot();
+            if(DownloadManager::Instance().OperationInProgress() &&
+               download.levelId == std::string(selected_->levelID))
+                pendingDownloadRefreshLevelId_ = download.levelId;
+        }
         ClearThumbnail();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const auto* timing = EditorTimingConfig(descriptor);
@@ -2141,6 +2188,7 @@ namespace BigScreen {
         suppressTimingCallbacks_ = false;
         RefreshLocalVideoStatus();
         ShowEditor();
+        OpenEditorNotice();
         RequestSelectedAudio();
         // A mapper URL has already been supplied on the user's behalf. Probe
         // it automatically so the hidden Download Video action can appear
@@ -2156,7 +2204,10 @@ namespace BigScreen {
 
     void VideoLibraryMenu::ShowBrowser()
     {
+        CloseEditorNotice();
         editorVisible_ = false;
+        pendingDownloadRefreshLevelId_.clear();
+        terminalDownloadProgressLevelId_.clear();
         StopPreviewAudio(true);
         if(navigate_) navigate_(false);
         ScreenPreview::Instance().ActivateUserLayout();
@@ -2208,16 +2259,19 @@ namespace BigScreen {
         ClearThumbnail();
         if(!selected_ || !selected_->levelID)
         {
-            transientStatus_ = "Select a song before checking a video URL.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice(
+                "Select a song before checking a YouTube link.");
             RefreshDetails();
             return;
         }
         url_ = Trim(url_);
         if(!IsYouTubeUrl(url_))
         {
-            transientStatus_ = url_.empty()
-                ? "Paste a youtube.com or youtu.be URL first."
-                : "That is not a recognized YouTube URL. Use youtube.com or youtu.be.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice(url_.empty()
+                ? "Enter a YouTube link first."
+                : "Use a youtube.com or youtu.be link.");
             RefreshDetails();
             return;
         }
@@ -2228,19 +2282,24 @@ namespace BigScreen {
             url_,
             error))
         {
-            transientStatus_ = error.empty()
-                ? "The YouTube URL could not be checked."
-                : error;
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice(error.empty()
+                ? "The YouTube link could not be checked."
+                : error);
         }
         else
         {
             ownedDownloadLevelId_ = std::string(selected_->levelID);
+            pendingDownloadRefreshLevelId_ = std::string(selected_->levelID);
+            terminalDownloadProgressLevelId_.clear();
             // Bind the asynchronous probe result to the exact text currently
             // in the field. Clearing or replacing that text invalidates this
             // identity, preventing a completed older probe from restoring a
             // stale thumbnail during RefreshDetails.
             probedUrl_ = url_;
-            transientStatus_.clear();
+            BeginEditorTransferNotice(
+                EditorTransferKind::Probe,
+                "Checking YouTube link...");
         }
         RefreshDetails();
     }
@@ -2251,7 +2310,8 @@ namespace BigScreen {
         const auto current = downloader.Snapshot();
         if(!selected_)
         {
-            transientStatus_ = "Select a song before downloading a video.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice("Select a song before downloading a video.");
             RefreshDetails();
             return;
         }
@@ -2266,12 +2326,25 @@ namespace BigScreen {
         {
             if(current.levelId == selectedLevelId)
             {
+                if(!editorTransferNotice_)
+                {
+                    BeginEditorTransferNotice(
+                        current.metadataOnly
+                            ? EditorTransferKind::Probe
+                            : EditorTransferKind::Download,
+                        ActiveTransferNotice(
+                            current,
+                            current.metadataOnly,
+                            false));
+                }
                 downloader.Cancel();
-                transientStatus_ = "Stopping download...";
+                CancelEditorTransferNotice();
             }
             else
             {
-                transientStatus_ = "Another downloader task is already running.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishEditorNotice(
+                    "Another downloader task is already running.");
             }
             RefreshDetails();
             return;
@@ -2387,14 +2460,15 @@ namespace BigScreen {
         url_ = Trim(url_);
         if(url_.empty())
         {
-            transientStatus_ = "Paste a youtube.com or youtu.be URL first.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice("Enter a YouTube link first.");
             RefreshDetails();
             return;
         }
         if(!IsYouTubeUrl(url_))
         {
-            transientStatus_ =
-                "That is not a recognized YouTube URL. Use youtube.com or youtu.be.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice("Use a youtube.com or youtu.be link.");
             RefreshDetails();
             return;
         }
@@ -2428,16 +2502,18 @@ namespace BigScreen {
                     {"stage", "start"}, {"message", error}});
             DiagnosticSessionLogger::Instance().EndDownloadSession(
                 "failed_to_start");
-            transientStatus_ = error.empty()
+            const std::string failureMessage = error.empty()
                 ? "The download could not be started."
                 : error;
+            terminalDownloadProgressLevelId_.clear();
             PaperLogger.error(
                 "Could not start download for {}: {}",
                 selectedLevelId,
-                transientStatus_);
+                failureMessage);
             ErrorManager::Instance().RecordError(
                 "Starting a video download for " + selectedLevelId,
-                transientStatus_);
+                failureMessage);
+            PublishEditorNotice(failureMessage);
         }
         else
         {
@@ -2445,6 +2521,8 @@ namespace BigScreen {
                 "download_started", "VideoLibraryMenu", {
                     {"height", std::to_string(height)}});
             ownedDownloadLevelId_ = selectedLevelId;
+            pendingDownloadRefreshLevelId_ = selectedLevelId;
+            terminalDownloadProgressLevelId_.clear();
             // The same URL and tier can legitimately produce the same title,
             // byte count, and deterministic paths as the previous download.
             // Clear the per-transfer presentation identities when a new job
@@ -2452,14 +2530,16 @@ namespace BigScreen {
             // acknowledged exactly once.
             refreshedDownloadIdentity_.clear();
             completedVideoThumbnailIdentity_.clear();
-            transientStatus_.clear();
+            BeginEditorTransferNotice(
+                EditorTransferKind::Download,
+                "Starting video download...");
         }
         RefreshDetails();
     }
 
     void VideoLibraryMenu::PasteUrlFromClipboard()
     {
-        if(!urlInput_ || !detailText_) return;
+        if(!urlInput_) return;
         try
         {
             const auto clipboardValue = UnityEngine::GUIUtility::get_systemCopyBuffer();
@@ -2467,15 +2547,17 @@ namespace BigScreen {
                 clipboardValue ? std::string(clipboardValue) : std::string{});
             if(clipboard.empty())
             {
-                transientStatus_ =
-                    "The Quest clipboard is empty. Copy a video link first.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishEditorNotice(
+                    "The Quest clipboard is empty. Copy a YouTube link first.");
                 RefreshDetails();
                 return;
             }
             if(!IsWebUrl(clipboard))
             {
-                transientStatus_ =
-                    "Clipboard text is not a valid http or https URL.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishEditorNotice(
+                    "Clipboard text is not a valid web address.");
                 RefreshDetails();
                 return;
             }
@@ -2494,7 +2576,8 @@ namespace BigScreen {
             ErrorManager::Instance().RecordError(
                 "Reading the Quest clipboard",
                 error.what());
-            transientStatus_ = "Could not read the Quest clipboard.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice("The Quest clipboard could not be read.");
             RefreshDetails();
         }
     }
@@ -2503,7 +2586,9 @@ namespace BigScreen {
     {
         if(!selected_ || !selected_->levelID)
         {
-            transientStatus_ = "Select a song before refreshing mapper settings.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice(
+                "Select a song before refreshing mapper settings.");
             RefreshDetails();
             return;
         }
@@ -2536,13 +2621,14 @@ namespace BigScreen {
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
 
-        transientStatus_ = descriptor.mapperDefinition
-            ? "Mapper video settings refreshed from Quest storage."
-            : "No Cinema mapper settings were found for this song.";
+        terminalDownloadProgressLevelId_.clear();
         RefreshLocalVideoStatus();
         StartSelectedPreview();
         RefreshDetails();
         RefreshPlaybackControls();
+        PublishEditorNotice(descriptor.mapperDefinition
+            ? "Mapper video settings refreshed."
+            : "This song has no Cinema mapper settings.");
     }
 
     void VideoLibraryMenu::SearchSelectedSongOnYouTube()
@@ -2559,8 +2645,9 @@ namespace BigScreen {
         const auto query = Trim(song + (artist.empty() ? "" : " " + artist));
         if(query.empty())
         {
-            transientStatus_ =
-                "This map does not provide a song or artist name to search.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishEditorNotice(
+                "This song does not provide enough information to search.");
             RefreshDetails();
             return;
         }
@@ -2622,15 +2709,15 @@ namespace BigScreen {
             intent->Dispose();
             uri->Dispose();
             uriClass->Dispose();
-            transientStatus_ = "Opened YouTube search in the Quest browser.";
+            terminalDownloadProgressLevelId_.clear();
             PaperLogger.info(
                 "Opened YouTube search for '{}'",
                 query);
+            PublishEditorNotice("Opened YouTube search in Quest Browser.");
         }
         catch(const std::exception& error)
         {
-            transientStatus_ =
-                "Quest could not open the YouTube search in a browser.";
+            terminalDownloadProgressLevelId_.clear();
             PaperLogger.error(
                 "Could not launch YouTube search '{}': {}",
                 url,
@@ -2638,17 +2725,18 @@ namespace BigScreen {
             ErrorManager::Instance().RecordError(
                 "Opening a YouTube search",
                 error.what());
+            PublishEditorNotice("Quest Browser could not open the search.");
         }
         catch(...)
         {
-            transientStatus_ =
-                "Quest could not open the YouTube search in a browser.";
+            terminalDownloadProgressLevelId_.clear();
             PaperLogger.error(
                 "Could not launch YouTube search '{}'",
                 url);
             ErrorManager::Instance().RecordError(
                 "Opening a YouTube search",
                 "Unknown native exception");
+            PublishEditorNotice("Quest Browser could not open the search.");
         }
         RefreshDetails();
     }
@@ -2728,7 +2816,7 @@ namespace BigScreen {
             RefreshUrlTextColor();
         }
         ClearThumbnail();
-        transientStatus_ = "Local video assigned: " + fileName;
+        terminalDownloadProgressLevelId_.clear();
         DiagnosticSessionLogger::Instance().MenuEvent(
             "video_assigned", "LocalVideoBrowser", {
                 {"levelId", std::string(selected_->levelID)},
@@ -2742,6 +2830,7 @@ namespace BigScreen {
         if(IsAlive(previewAudioClip_))
             StartPreviewAudio();
         RefreshDetails();
+        PublishEditorNotice("Local video assigned: " + fileName);
     }
 
     void VideoLibraryMenu::LocalThumbnailChanged(const std::string& thumbnailPath)
@@ -2756,9 +2845,10 @@ namespace BigScreen {
             loadedThumbnailSprite_ = nullptr;
             loadedThumbnailPath_.clear();
         }
-        transientStatus_ = "Thumbnail updated from the picked video frame.";
+        terminalDownloadProgressLevelId_.clear();
         RefreshDetails();
         RebuildVisibleRows(true);
+        PublishEditorNotice("Video thumbnail updated.");
     }
 
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
@@ -2801,9 +2891,9 @@ namespace BigScreen {
         {
             if(!removedDescriptor.playableConfig)
             {
-                transientStatus_ =
-                    "The assigned local video changed. Nothing was deleted.";
+                terminalDownloadProgressLevelId_.clear();
                 RefreshDetails();
+                PublishEditorNotice("No removable video file was found.");
                 return;
             }
             localPathToDelete =
@@ -2834,8 +2924,9 @@ namespace BigScreen {
 
         if(!removed)
         {
-            transientStatus_ = "No removable video was available for this song.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishEditorNotice("This song has no video assignment to remove.");
             return;
         }
 
@@ -2851,14 +2942,16 @@ namespace BigScreen {
                 std::string restoreError;
                 const bool restored = library.SetVideoFileOverride(
                     selected_, *localPathToDelete, restoreError);
-                transientStatus_ = restored
+                const std::string deletionFailureMessage = restored
                     ? (deleteError.empty()
                         ? "The local file could not be deleted. Its assignment was restored."
                         : deleteError + " Its assignment was restored.")
                     : "The local file could not be deleted and remains on the Quest, but its assignment could not be restored. Select it again with Show File Browser.";
+                terminalDownloadProgressLevelId_.clear();
                 ErrorManager::Instance().RecordError(
-                    "Deleting a local video", transientStatus_);
+                    "Deleting a local video", deletionFailureMessage);
                 RefreshDetails();
+                PublishEditorNotice(deletionFailureMessage);
                 return;
             }
 
@@ -2904,14 +2997,7 @@ namespace BigScreen {
             }
         }
         ClearThumbnail();
-        if(activeLocalFile)
-            transientStatus_ = deleteFile
-                ? "Local video unlinked and deleted from the Quest."
-                : "Local video unlinked. The file remains on the Quest and can be deleted later with the Quest file browser.";
-        else
-            transientStatus_ = deleteFile
-                ? "Downloaded video unlinked and deleted. The mapper URL remains available."
-                : "Downloaded video unlinked and kept on the Quest. Use Show File Browser to assign it again or Storage Maintenance to remove it later.";
+        terminalDownloadProgressLevelId_.clear();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
@@ -2937,26 +3023,33 @@ namespace BigScreen {
         RefreshLocalVideoStatus();
         RefreshDetails();
         StartSelectedPreview();
+        PublishEditorNotice(deleteFile
+            ? "Video file deleted."
+            : "Video unlinked from this song.");
         }
         catch(const std::exception& exception)
         {
-            transientStatus_ =
+            constexpr std::string_view failureMessage =
                 "The video assignment could not be saved. The previous library state was restored.";
+            terminalDownloadProgressLevelId_.clear();
             ErrorManager::Instance().ReportInternal(
                 "removing a video assignment", exception.what());
             ErrorManager::Instance().ReportUserVisible(
-                "Video change was not saved", transientStatus_);
+                "Video change was not saved", std::string(failureMessage));
             RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
         }
         catch(...)
         {
-            transientStatus_ =
+            constexpr std::string_view failureMessage =
                 "The video assignment could not be saved. The previous library state was restored.";
+            terminalDownloadProgressLevelId_.clear();
             ErrorManager::Instance().ReportInternal(
                 "removing a video assignment", "Unknown native exception");
             ErrorManager::Instance().ReportUserVisible(
-                "Video change was not saved", transientStatus_);
+                "Video change was not saved", std::string(failureMessage));
             RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
         }
     }
 
@@ -3129,49 +3222,56 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            transientStatus_ =
+            constexpr std::string_view failureMessage =
                 "Timing could not be saved. The previous values remain active.";
+            terminalDownloadProgressLevelId_.clear();
             ErrorManager::Instance().ReportInternal(
                 "saving video timing", exception.what());
             ErrorManager::Instance().ReportUserVisible(
-                "Video timing was not saved", transientStatus_);
+                "Video timing was not saved", std::string(failureMessage));
             restorePersistedTiming();
             RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
             return false;
         }
         catch(...)
         {
-            transientStatus_ =
+            constexpr std::string_view failureMessage =
                 "Timing could not be saved. The previous values remain active.";
+            terminalDownloadProgressLevelId_.clear();
             ErrorManager::Instance().ReportInternal(
                 "saving video timing", "Unknown native exception");
             ErrorManager::Instance().ReportUserVisible(
-                "Video timing was not saved", transientStatus_);
+                "Video timing was not saved", std::string(failureMessage));
             restorePersistedTiming();
             RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
             return false;
         }
     }
 
-    bool VideoLibraryMenu::ApplyFitToSong(bool reportStatus)
+    bool VideoLibraryMenu::ApplyFitToSong()
     {
         if(!selected_)
         {
-            transientStatus_ = "Select a song before enabling Fit to Song.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishEditorNotice("Select a song before using Fit to Song.");
             return false;
         }
         if(selected_->songDuration <= 0.0f)
         {
-            transientStatus_ = "Song duration is unavailable, so Fit to Song could not run.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishEditorNotice("Fit to Song needs a valid song duration.");
             return false;
         }
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         if(!descriptor.playableConfig || descriptor.playableConfig->declaredDurationSeconds <= 0.0)
         {
-            transientStatus_ = "Video duration is unavailable, so Fit to Song could not run.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishEditorNotice("Fit to Song needs a valid video duration.");
             return false;
         }
 
@@ -3186,8 +3286,9 @@ namespace BigScreen {
         rate_ = std::clamp(requestedRate, 0.05, 8.0);
         if(!SaveTiming())
         {
-            transientStatus_ = "Fit to Song could not save the new playback speed.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishEditorNotice("Fit to Song could not save the new speed.");
             return false;
         }
         suppressTimingCallbacks_ = true;
@@ -3195,18 +3296,270 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         suppressTimingCallbacks_ = false;
         StartSelectedPreview();
-
-        std::ostringstream status;
-        status << std::fixed << std::setprecision(2)
-               << (reportStatus ? "Automatic fit enabled: " : "Automatic fit updated: ")
-               << "playback speed " << rate_
-               << "x with " << offset_ << "s offset";
-        if(std::abs(requestedRate - rate_) > 0.0001)
-            status << " (limited from " << requestedRate << "x)";
-        status << ".";
-        transientStatus_ = status.str();
+        terminalDownloadProgressLevelId_.clear();
         RefreshDetails();
+        std::ostringstream message;
+        message << std::fixed << std::setprecision(2)
+                << "Fit to Song enabled: " << rate_ << "x.";
+        PublishEditorNotice(message.str());
         return true;
+    }
+
+    void VideoLibraryMenu::OpenEditorNotice()
+    {
+        const std::string levelId = selected_ && selected_->levelID
+            ? std::string(selected_->levelID)
+            : std::string{};
+        editorNoticeVisit_ = editorNoticeModel_.Enter(levelId);
+        editorTransferNotice_ = {};
+        previewNoticeRevision_ = {};
+        editorTransferKind_ = EditorTransferKind::None;
+        editorTransferCancellationRequested_ = false;
+        CreateEditorNoticeSurface();
+        QueueEditorNoticePaint();
+
+        // Attach only to work that is genuinely running. DownloadManager keeps
+        // its last terminal snapshot for diagnostics and Retry/Resume, but a
+        // retained result is not an event in this newly opened editor visit.
+        const auto transfer = DownloadManager::Instance().Snapshot();
+        if(!levelId.empty() &&
+           DownloadManager::Instance().OperationInProgress() &&
+           transfer.levelId == levelId)
+        {
+            BeginEditorTransferNotice(
+                transfer.metadataOnly
+                    ? EditorTransferKind::Probe
+                    : EditorTransferKind::Download,
+                ActiveTransferNotice(
+                    transfer,
+                    transfer.metadataOnly,
+                    false));
+        }
+    }
+
+    void VideoLibraryMenu::CloseEditorNotice()
+    {
+        // This is deliberately unconditional. Map exit must erase the model's
+        // retained string even if a preceding exception left the controller's
+        // local visit token inconsistent with the model.
+        editorNoticeModel_.Reset();
+        editorNoticeVisit_ = {};
+        editorTransferNotice_ = {};
+        previewNoticeRevision_ = {};
+        editorTransferKind_ = EditorTransferKind::None;
+        editorTransferCancellationRequested_ = false;
+        pendingDownloadRefreshLevelId_.clear();
+        terminalDownloadProgressLevelId_.clear();
+        editorNoticePaintPending_ = false;
+        editorNoticePaintAfterFrame_ = -1;
+        DestroyEditorNoticeSurface();
+    }
+
+    std::optional<VideoEditorNoticeModel::RevisionToken>
+    VideoLibraryMenu::PublishEditorNotice(std::string message)
+    {
+        if(!selected_ || !selected_->levelID || !editorNoticeVisit_)
+            return std::nullopt;
+        terminalDownloadProgressLevelId_.clear();
+        auto revision = editorNoticeModel_.Publish(
+            editorNoticeVisit_,
+            std::string(selected_->levelID),
+            std::move(message));
+        if(revision)
+        {
+            // Publish() deliberately supersedes any transfer notice that was
+            // waiting for the throttled UI poll. Mirror that retirement in
+            // the controller so the old token is never polled again.
+            editorTransferNotice_ = {};
+            editorTransferKind_ = EditorTransferKind::None;
+            editorTransferCancellationRequested_ = false;
+            QueueEditorNoticePaint();
+        }
+        return revision;
+    }
+
+    void VideoLibraryMenu::PublishPreviewNotice(std::string message)
+    {
+        if(auto revision = PublishEditorNotice(std::move(message)))
+            previewNoticeRevision_ = *revision;
+    }
+
+    void VideoLibraryMenu::ClearPreviewNotice()
+    {
+        if(!previewNoticeRevision_)
+            return;
+        const bool cleared =
+            editorNoticeModel_.ClearIfCurrent(previewNoticeRevision_);
+        previewNoticeRevision_ = {};
+        if(cleared)
+            QueueEditorNoticePaint();
+    }
+
+    void VideoLibraryMenu::BeginEditorTransferNotice(
+        EditorTransferKind kind,
+        std::string initialMessage)
+    {
+        if(!selected_ || !selected_->levelID || !editorNoticeVisit_ ||
+           kind == EditorTransferKind::None)
+            return;
+
+        // A newly accepted downloader operation supersedes any transfer token
+        // left between the worker's terminal publication and this UI tick.
+        // Retiring that token without reading its snapshot prevents it from
+        // producing a late result after the new operation begins.
+        if(editorTransferNotice_)
+            editorNoticeModel_.ForgetTransfer(editorTransferNotice_);
+        editorTransferNotice_ = {};
+        editorTransferKind_ = EditorTransferKind::None;
+        editorTransferCancellationRequested_ = false;
+
+        auto token = editorNoticeModel_.BeginTransfer(
+            editorNoticeVisit_, std::string(selected_->levelID));
+        if(!token)
+            return;
+        editorTransferNotice_ = *token;
+        editorTransferKind_ = kind;
+        terminalDownloadProgressLevelId_.clear();
+        if(editorNoticeModel_.PublishTransfer(
+               editorTransferNotice_, std::move(initialMessage)))
+            QueueEditorNoticePaint();
+    }
+
+    void VideoLibraryMenu::CancelEditorTransferNotice()
+    {
+        if(!editorTransferNotice_)
+            return;
+        editorTransferCancellationRequested_ = true;
+        const bool metadataOnly =
+            editorTransferKind_ == EditorTransferKind::Probe;
+        const auto transfer = DownloadManager::Instance().Snapshot();
+        if(editorNoticeModel_.PublishTransfer(
+               editorTransferNotice_,
+               ActiveTransferNotice(transfer, metadataOnly, true)))
+            QueueEditorNoticePaint();
+    }
+
+    void VideoLibraryMenu::PollEditorTransferNotice()
+    {
+        if(!editorVisible_ || !selected_ || !selected_->levelID ||
+           !editorTransferNotice_)
+            return;
+
+        const std::string levelId(selected_->levelID);
+        const auto transfer = DownloadManager::Instance().Snapshot();
+        if(transfer.levelId != levelId)
+        {
+            const bool cleared =
+                editorNoticeModel_.AbandonTransfer(editorTransferNotice_);
+            editorTransferNotice_ = {};
+            editorTransferKind_ = EditorTransferKind::None;
+            editorTransferCancellationRequested_ = false;
+            if(cleared)
+                QueueEditorNoticePaint();
+            return;
+        }
+
+        const bool metadataOnly =
+            editorTransferKind_ == EditorTransferKind::Probe;
+        if(!metadataOnly &&
+           VideoLibrary::Instance().BackgroundCommitInProgress())
+        {
+            if(editorNoticeModel_.PublishTransfer(
+                   editorTransferNotice_, "Saving downloaded video..."))
+                QueueEditorNoticePaint();
+            return;
+        }
+
+        if(DownloadManager::Instance().OperationInProgress())
+        {
+            if(editorNoticeModel_.PublishTransfer(
+                   editorTransferNotice_,
+                   ActiveTransferNotice(
+                       transfer,
+                       metadataOnly,
+                       editorTransferCancellationRequested_)))
+                QueueEditorNoticePaint();
+            return;
+        }
+
+        if(editorNoticeModel_.FinishTransfer(
+               editorTransferNotice_,
+               FinishedTransferNotice(transfer, metadataOnly)))
+            QueueEditorNoticePaint();
+        editorTransferNotice_ = {};
+        editorTransferKind_ = EditorTransferKind::None;
+        editorTransferCancellationRequested_ = false;
+    }
+
+    void VideoLibraryMenu::CreateEditorNoticeSurface()
+    {
+        DestroyEditorNoticeSurface();
+        if(!operationStatusHost_)
+            return;
+
+        operationStatusText_ =
+            BSML::Lite::CreateText(operationStatusHost_, "", 2.35f);
+        ConfigureLayout(operationStatusText_, -1.0f, 5.5f, 1.0f);
+        operationStatusText_->set_enableWordWrapping(false);
+        operationStatusText_->set_enableAutoSizing(true);
+        operationStatusText_->set_fontSizeMin(1.9f);
+        operationStatusText_->set_fontSizeMax(2.35f);
+        operationStatusText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        operationStatusText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+    }
+
+    void VideoLibraryMenu::DestroyEditorNoticeSurface()
+    {
+        auto* surface = operationStatusText_;
+        operationStatusText_ = nullptr;
+        if(!surface)
+            return;
+
+        // Destroy is deferred by Unity until the end of the frame. Disable the
+        // old object first so its cached CanvasRenderer mesh cannot overlap a
+        // newly created map-owned surface during that frame.
+        try
+        {
+            if(auto object = surface->get_gameObject())
+            {
+                object->SetActive(false);
+                UnityEngine::Object::Destroy(object);
+            }
+        }
+        catch(...)
+        {
+            // Native state and the cached pointer were already cleared above.
+            // A scene transition may have destroyed the Unity object first;
+            // never let that prevent the remainder of menu teardown.
+            PaperLogger.warn(
+                "Status-label surface was already unavailable during map exit");
+        }
+    }
+
+    void VideoLibraryMenu::QueueEditorNoticePaint()
+    {
+        if(!editorVisible_ || !operationStatusText_ || !editorNoticeVisit_)
+            return;
+        if(!editorNoticePaintPending_)
+            editorNoticePaintAfterFrame_ = UnityEngine::Time::get_frameCount();
+        editorNoticePaintPending_ = true;
+    }
+
+    void VideoLibraryMenu::PaintEditorNotice()
+    {
+        if(!editorNoticePaintPending_ || !operationStatusText_ ||
+           !editorVisible_ || !editorNoticeVisit_ ||
+           UnityEngine::Time::get_frameCount() <= editorNoticePaintAfterFrame_)
+            return;
+        const std::string levelId = selected_ && selected_->levelID
+            ? std::string(selected_->levelID)
+            : std::string{};
+        editorNoticePaintPending_ = false;
+        editorNoticePaintAfterFrame_ = -1;
+        operationStatusText_->set_text(std::string(
+            editorNoticeModel_.Current(editorNoticeVisit_, levelId)));
     }
 
     void VideoLibraryMenu::RefreshUrlTextColor()
@@ -3232,13 +3585,23 @@ namespace BigScreen {
                 notice->title, notice->message);
         }
         auto& library = VideoLibrary::Instance();
+        auto& downloader = DownloadManager::Instance();
+        const auto download = downloader.Snapshot();
+        const std::string selectedLevelId = selected_ && selected_->levelID
+            ? std::string(selected_->levelID)
+            : std::string{};
+        const bool thisDownload = !selectedLevelId.empty() &&
+            download.levelId == selectedLevelId;
+        const bool downloadOperationInProgress =
+            downloader.OperationInProgress();
+        if(thisDownload && downloadOperationInProgress)
+            pendingDownloadRefreshLevelId_ = selectedLevelId;
+
         if(library.BackgroundCommitInProgress())
         {
             // Keep Unity responsive while the downloader persists library.json.
             // The previous complete layout remains in place until the short
             // background transaction publishes its final snapshot.
-            if(detailText_)
-                detailText_->set_text("Saving downloaded video...");
             return;
         }
         const auto libraryBytes = library.LibraryBytes();
@@ -3251,7 +3614,7 @@ namespace BigScreen {
             detailFreeStorage_->set_text(
                 StorageMetricText(
                     "Free Space", Utility::FormatStorageSize(freeBytes)));
-        if(!selected_ || !detailText_)
+        if(!selected_)
         {
             if(detailMapStorage_)
                 detailMapStorage_->set_text(
@@ -3329,10 +3692,6 @@ namespace BigScreen {
                     label->set_color(UnityEngine::Color::get_white());
                 }
         }
-        const auto download = DownloadManager::Instance().Snapshot();
-        const bool thisDownload = download.levelId == std::string(selected_->levelID);
-        if(transientStatus_ == "Stopping download..." && !download.Active())
-            transientStatus_.clear();
         // A replacement can reuse the same deterministic file name. Evict the
         // prior decoded sprite once the new download publishes its thumbnail,
         // otherwise Unity would continue showing the old video's pixels even
@@ -3391,22 +3750,37 @@ namespace BigScreen {
                     error.what());
             }
         }
-        const bool downloadOperationInProgress =
-            DownloadManager::Instance().OperationInProgress();
-        const bool terminalDownloadStatus = thisDownload &&
-            (download.state == DownloadState::ProbeCompleted ||
-             download.state == DownloadState::Failed ||
-             download.state == DownloadState::Cancelled);
-        const bool liveDownloadStatus = thisDownload &&
-            downloadOperationInProgress &&
-            download.state != DownloadState::Idle &&
-            download.state != DownloadState::Completed;
-        bool downloadJustCompleted = false;
+        // A retained downloader snapshot is durable diagnostic/retry state,
+        // not proof that this editor observed the operation. Consume the
+        // non-text refresh latch once the worker and library publication have
+        // both finished. Only probe/failure/cancellation outcomes retain their
+        // progress bar; a completed video is represented by its assignment.
+        if(thisDownload && !downloadOperationInProgress &&
+           pendingDownloadRefreshLevelId_ == selectedLevelId)
+        {
+            // A URL may be edited while its earlier probe is still running.
+            // The downloader correctly rejects the overlapping replacement,
+            // but its old terminal probe snapshot must not overwrite the
+            // newer validation message. Full transfers remain map-scoped
+            // because their completion actually replaces that map's video.
+            const bool terminalMatchesCurrentRequest =
+                !download.metadataOnly ||
+                (!probedUrl_.empty() && url_ == probedUrl_);
+            const bool retainsTerminalProgress = terminalMatchesCurrentRequest &&
+                (download.state == DownloadState::ProbeCompleted ||
+                 download.state == DownloadState::Failed ||
+                 download.state == DownloadState::Cancelled);
+            if(retainsTerminalProgress)
+                terminalDownloadProgressLevelId_ = selectedLevelId;
+            else
+                terminalDownloadProgressLevelId_.clear();
+            pendingDownloadRefreshLevelId_.clear();
+        }
+
         // A completed YouTube replacement immediately removes the old local
-        // file's active highlight without opening the decoder. The completion
-        // result is local to this refresh; it must not be stored in
-        // transientStatus_, which belongs to later user actions such as timing
-        // changes and is cleared whenever another song is selected.
+        // file's active highlight without opening the decoder. This identity
+        // exists only for refreshing assignment/thumbnail state; it does not
+        // own the operation-status label.
         if(thisDownload && download.state == DownloadState::Completed)
         {
             const auto completedIdentity =
@@ -3415,56 +3789,8 @@ namespace BigScreen {
             if(refreshedDownloadIdentity_ != completedIdentity)
             {
                 refreshedDownloadIdentity_ = completedIdentity;
-                downloadJustCompleted = true;
                 RefreshLocalVideoStatus();
             }
-        }
-
-        // Keep this as one status owner. The bdd74ff implementation used this
-        // single-label precedence successfully: user action first, then a
-        // live/actionable downloader result, then the selected map assignment.
-        // The retained Completed snapshot is intentionally excluded so it can
-        // never own this line after a setting changes or another map opens.
-        const std::string resolvedDetailStatus = !transientStatus_.empty()
-            ? transientStatus_
-            : liveDownloadStatus || terminalDownloadStatus
-                ? DownloadStatus(download)
-            : downloadJustCompleted
-                ? "Download Complete"
-            : descriptor.userOverrideIsMapLocal
-                ? "Local map video active: " +
-                    descriptor.activeMapFileName.value_or("selected video")
-            : descriptor.userOverrideIsImported
-                ? "Imported video active: " +
-                    descriptor.activeMapFileName.value_or("selected video")
-            : descriptor.userOverrideIsExternal
-                ? "Local video active: " +
-                    descriptor.activeMapFileName.value_or("selected video")
-            : descriptor.hasUserOverride ? "Downloaded user video active" :
-              descriptor.CanPlay() ? "Mapper video ready" :
-              descriptor.CanDownload() ? "Mapper video available to download" :
-              "Paste a youtube.com or youtu.be URL to add a video";
-        const bool detailStatusChanged =
-            renderedDetailStatus_ != resolvedDetailStatus;
-        detailText_->set_text(resolvedDetailStatus);
-        if(detailStatusChanged)
-        {
-            // TMP's managed text property was changing correctly, but after the
-            // download/progress rows changed visibility Unity could retain the
-            // prior CanvasRenderer mesh. Disabling and immediately re-enabling
-            // only this text component invalidates that renderer without
-            // rebuilding the editor, changing layout, or scanning/cloning UI.
-            detailText_->set_enabled(false);
-            detailText_->set_enabled(true);
-            renderedDetailStatus_ = resolvedDetailStatus;
-            PaperLogger.debug(
-                "Video editor status for '{}': '{}' (playable {}, override {}, download state {}, busy {})",
-                selected_->levelID ? std::string(selected_->levelID) : std::string{},
-                resolvedDetailStatus,
-                descriptor.CanPlay(),
-                descriptor.hasUserOverride,
-                static_cast<int>(download.state),
-                downloadOperationInProgress);
         }
 
         if(downloadProgressTrack_ && downloadProgressFill_)
@@ -3476,11 +3802,14 @@ namespace BigScreen {
             // status and must not leave a frozen full progress bar behind.
             // Probe results and failures remain visible because their next
             // action (choose a tier, retry, or resume) is still on this page.
-            const bool showProgress = thisDownload &&
-                ((downloadOperationInProgress && download.Active()) ||
-                 download.state == DownloadState::ProbeCompleted ||
+            const bool showTerminalProgress =
+                terminalDownloadProgressLevelId_ == selectedLevelId &&
+                (download.state == DownloadState::ProbeCompleted ||
                  download.state == DownloadState::Failed ||
                  download.state == DownloadState::Cancelled);
+            const bool showProgress = thisDownload &&
+                ((downloadOperationInProgress && download.Active()) ||
+                 showTerminalProgress);
             downloadProgressTrack_->get_gameObject()->SetActive(showProgress);
             if(showProgress)
             {
@@ -3732,8 +4061,9 @@ namespace BigScreen {
                 if(!model || !officialSongAudioLoader_)
                 {
                     officialSongAudioLoader_ = nullptr;
-                    transientStatus_ =
-                        "Beat Saber could not provide the full song-audio loader.";
+                    terminalDownloadProgressLevelId_.clear();
+                    PublishPreviewNotice(
+                        "Beat Saber could not provide full song audio.");
                     return;
                 }
 
@@ -3756,12 +4086,16 @@ namespace BigScreen {
                 if(!levelDataLoadTask_)
                 {
                     officialSongAudioLoader_ = nullptr;
-                    transientStatus_ =
-                        "Beat Saber could not start loading this song's full audio.";
+                    terminalDownloadProgressLevelId_.clear();
+                    PublishPreviewNotice(
+                        "Beat Saber could not start loading this song.");
                 }
                 else
                 {
-                    transientStatus_ = "Loading full song audio for preview...";
+                    // Opening a map preloads its audio opportunistically but
+                    // is not itself a user operation. Keep a fresh editor's
+                    // notice blank; the Play action publishes a loading notice
+                    // if this task has not completed by the time it is needed.
                     PaperLogger.info(
                         "Loading full official song audio for Video Library preview: '{}'",
                         levelId);
@@ -3771,7 +4105,9 @@ namespace BigScreen {
             {
                 levelDataLoadTask_ = nullptr;
                 officialSongAudioLoader_ = nullptr;
-                transientStatus_ = "Beat Saber could not load this song's full audio.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishPreviewNotice(
+                    "Beat Saber could not load this song's full audio.");
                 PaperLogger.error(
                     "Could not start full official-song audio load for '{}': {}",
                     levelId,
@@ -3783,7 +4119,8 @@ namespace BigScreen {
         previewMediaData_ = selected_->__cordl_internal_get_previewMediaData();
         if(!previewMediaData_)
         {
-            transientStatus_ = "This song does not expose preview audio.";
+            terminalDownloadProgressLevelId_.clear();
+            PublishPreviewNotice("This song does not provide preview audio.");
             return;
         }
 
@@ -3791,7 +4128,13 @@ namespace BigScreen {
         // longer accepts a caller-provided CancellationToken.
         audioLoadTask_ = previewMediaData_->GetPreviewAudioClip();
         if(!audioLoadTask_)
-            transientStatus_ = "Beat Saber could not start loading this song's audio.";
+        {
+            terminalDownloadProgressLevelId_.clear();
+            PublishPreviewNotice(
+                "Beat Saber could not start loading preview audio.");
+        }
+        // Successful background preload remains silent. TogglePreviewPlayback
+        // reports the wait only when the player explicitly presses Play.
     }
 
     void VideoLibraryMenu::ReleaseOfficialSongAudio()
@@ -3841,7 +4184,7 @@ namespace BigScreen {
             DiagnosticSessionLogger::Instance().MenuEvent(
                 "preview_paused", "VideoLibraryMenu", {
                     {"reason", "preparing_cancelled"}});
-            transientStatus_.clear();
+            ClearPreviewNotice();
             RefreshPlaybackControls();
             return;
         }
@@ -3887,8 +4230,9 @@ namespace BigScreen {
         if(!IsAlive(previewAudioClip_) || !IsAlive(songPreviewPlayer_))
         {
             playWhenAudioReady_ = true;
-            transientStatus_ = "Loading song audio for synchronized preview...";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
+            PublishPreviewNotice("Loading song audio...");
             return;
         }
 
@@ -3908,9 +4252,11 @@ namespace BigScreen {
             {
                 playWhenVideoReady_ = true;
                 playWhenAudioReady_ = false;
-                transientStatus_ = "Preparing synchronized video preview...";
+                terminalDownloadProgressLevelId_.clear();
                 RefreshDetails();
                 RefreshPlaybackControls();
+                PublishPreviewNotice(
+                    "Preparing synchronized video preview...");
                 return;
             }
             if(!previewMeasurementStarted_ && playback.FirstFrameUploaded())
@@ -3925,11 +4271,11 @@ namespace BigScreen {
             previewPaused_ = false;
             playWhenAudioReady_ = false;
             playWhenVideoReady_ = false;
-            transientStatus_.clear();
             DiagnosticSessionLogger::Instance().MenuEvent(
                 "preview_started", "VideoLibraryMenu", {
                     {"mode", "resume"},
                     {"songTime", std::to_string(previewSongTime_)}});
+            ClearPreviewNotice();
             RefreshPlaybackControls();
             return;
         }
@@ -3973,9 +4319,10 @@ namespace BigScreen {
         {
             playWhenAudioReady_ = false;
             playWhenVideoReady_ = false;
-            transientStatus_ = "Video preview could not be prepared.";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
             RefreshPlaybackControls();
+            PublishPreviewNotice("Video preview could not be prepared.");
             return;
         }
         playback.Tick(previewSongTime_);
@@ -3984,9 +4331,11 @@ namespace BigScreen {
             previewPlaying_ = false;
             playWhenAudioReady_ = false;
             playWhenVideoReady_ = true;
-            transientStatus_ = "Preparing synchronized video preview...";
+            terminalDownloadProgressLevelId_.clear();
             RefreshDetails();
             RefreshPlaybackControls();
+            PublishPreviewNotice(
+                "Preparing synchronized video preview...");
             return;
         }
         if(!previewMeasurementStarted_ && playback.FirstFrameUploaded())
@@ -4039,11 +4388,11 @@ namespace BigScreen {
         previewPaused_ = false;
         playWhenAudioReady_ = false;
         playWhenVideoReady_ = false;
-        transientStatus_.clear();
         DiagnosticSessionLogger::Instance().MenuEvent(
             "preview_started", "VideoLibraryMenu", {
                 {"mode", "play"},
                 {"songTime", std::to_string(previewSongTime_)}});
+        ClearPreviewNotice();
         RefreshPlaybackControls();
     }
 
@@ -4081,6 +4430,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)
     {
+        ClearPreviewNotice();
         // Clear ownership before calling back into Unity. A flow transition can
         // destroy SongPreviewPlayer, AudioSource, or AudioClip between frames.
         // If CrossfadeToDefault then throws, no later menu tick can see stale
@@ -4143,9 +4493,10 @@ namespace BigScreen {
         playWhenAudioReady_ = shouldResume;
         playWhenVideoReady_ = false;
         previewClockValid_ = false;
-        transientStatus_ = shouldResume
+        terminalDownloadProgressLevelId_.clear();
+        PublishPreviewNotice(shouldResume
             ? "Beat Saber replaced the preview audio. Reloading it..."
-            : "Beat Saber replaced the preview audio. Press Play to reload it.";
+            : "Beat Saber replaced the preview audio. Press Play to reload.");
         PaperLogger.warn("Recovered invalid menu preview audio during {}", context);
         ErrorManager::Instance().RecordError(
             "Recovering menu preview audio",
@@ -4355,12 +4706,11 @@ namespace BigScreen {
                         GlobalNamespace::AudioClipAsyncLoaderExtensions::LoadSong(
                             officialSongAudioLoader_,
                             officialSongLevelData_);
-                    if(audioLoadTask_)
-                        transientStatus_ = "Loading full song audio for preview...";
-                    else
+                    if(!audioLoadTask_)
                     {
-                        transientStatus_ =
-                            "Beat Saber could not start loading this song's full audio.";
+                        terminalDownloadProgressLevelId_.clear();
+                        PublishPreviewNotice(
+                            "Beat Saber could not start loading full song audio.");
                         ReleaseOfficialSongAudio();
                         playWhenAudioReady_ = false;
                     }
@@ -4373,8 +4723,9 @@ namespace BigScreen {
                         audioLoadLevelId_,
                         result.isError,
                         result.beatmapLevelData != nullptr);
-                    transientStatus_ =
-                        "Beat Saber could not load this song's full level data.";
+                    terminalDownloadProgressLevelId_.clear();
+                    PublishPreviewNotice(
+                        "Beat Saber could not load this song's level data.");
                     officialSongAudioLoader_ = nullptr;
                     playWhenAudioReady_ = false;
                 }
@@ -4388,8 +4739,9 @@ namespace BigScreen {
                     completedTask->get_IsCompletedSuccessfully(),
                     completedTask->get_IsCanceled(),
                     completedTask->get_IsFaulted());
-                transientStatus_ =
-                    "Beat Saber could not load this song's full level data.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishPreviewNotice(
+                    "Beat Saber could not load this song's level data.");
                 officialSongAudioLoader_ = nullptr;
                 playWhenAudioReady_ = false;
             }
@@ -4410,7 +4762,11 @@ namespace BigScreen {
                         ? clip.unsafePtr()
                         : nullptr;
                 if(!IsAlive(previewAudioClip_))
-                    transientStatus_ = "Beat Saber returned no audio for this song.";
+                {
+                    terminalDownloadProgressLevelId_.clear();
+                    PublishPreviewNotice(
+                        "Beat Saber returned no audio for this song.");
+                }
                 else
                 {
                     PaperLogger.info(
@@ -4420,11 +4776,15 @@ namespace BigScreen {
                         selected_->songDuration);
                     if(playWhenAudioReady_)
                         StartPreviewAudio();
+                    else
+                        ClearPreviewNotice();
                 }
             }
             else
             {
-                transientStatus_ = "Beat Saber could not load this song's audio.";
+                terminalDownloadProgressLevelId_.clear();
+                PublishPreviewNotice(
+                    "Beat Saber could not load this song's audio.");
                 playWhenAudioReady_ = false;
                 ReleaseOfficialSongAudio();
             }
@@ -4555,10 +4915,19 @@ namespace BigScreen {
             const bool downloadActive =
                 DownloadManager::Instance().OperationInProgress();
             if(editorVisible_ &&
-               (downloadActive || periodicDownloadWasActive_))
+               (downloadActive || periodicDownloadWasActive_ ||
+                 !pendingDownloadRefreshLevelId_.empty() ||
+                 static_cast<bool>(editorTransferNotice_)))
+            {
                 RefreshDetails();
+                PollEditorTransferNotice();
+            }
             periodicDownloadWasActive_ = downloadActive;
         }
+        // Apply the latest event only after this frame's controller activation,
+        // sibling SetActive calls, and downloader refresh have completed. TMP
+        // then builds the mesh against the final layout on the following frame.
+        PaintEditorNotice();
     }
 
     void VideoLibraryMenu::Refresh()
@@ -4597,7 +4966,10 @@ namespace BigScreen {
     void VideoLibraryMenu::Deactivate()
     {
         active_ = false;
+        CloseEditorNotice();
         editorVisible_ = false;
+        pendingDownloadRefreshLevelId_.clear();
+        terminalDownloadProgressLevelId_.clear();
         const std::string selectedLevelId =
             selected_ && selected_->levelID
                 ? std::string(selected_->levelID)

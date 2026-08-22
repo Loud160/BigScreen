@@ -16,6 +16,20 @@ target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DI
 add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)
 
 add_executable(
+    bigscreen-video-editor-notice-tests
+    VideoEditorNoticeModelTests.cpp)
+target_compile_features(bigscreen-video-editor-notice-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-video-editor-notice-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(
+    NAME bigscreen-video-editor-notice-tests
+    COMMAND bigscreen-video-editor-notice-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-video-editor-notice-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(
     bigscreen-downloader-activation-tests
     DownloaderActivationTests.cpp)
 target_compile_features(bigscreen-downloader-activation-tests PRIVATE cxx_std_20)

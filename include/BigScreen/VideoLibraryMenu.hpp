@@ -8,9 +8,11 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "BigScreen/VideoEditorNoticeModel.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "beatsaber-hook/shared/utils/typedefs.h"
 
@@ -34,7 +36,7 @@ namespace HMUI { class HoverHint; class ImageView; class InputFieldView; class V
 namespace TMPro { class TextMeshProUGUI; }
 namespace System::Threading::Tasks { template<class TResult> class Task_1; }
 namespace UnityEngine { class AudioClip; class AudioSource; class GameObject; class Sprite; }
-namespace UnityEngine::UI { class Button; }
+namespace UnityEngine::UI { class Button; class VerticalLayoutGroup; }
 
 namespace BigScreen {
     enum class SongLibraryGroup { Custom, Wip, Ost, Dlc };
@@ -75,6 +77,8 @@ namespace BigScreen {
         void LocalThumbnailChanged(const std::string& thumbnailPath);
 
     private:
+        enum class EditorTransferKind { None, Probe, Download };
+
         VideoLibraryMenu() = default;
         void RebuildCatalog();
         void RebuildVisibleRows(bool preserveScrollPosition = false);
@@ -100,8 +104,26 @@ namespace BigScreen {
         /// active physical file after VideoLibrary validates its ownership
         /// boundary.
         void RemoveOverride(bool deleteFile);
-        bool ApplyFitToSong(bool reportStatus);
+        bool ApplyFitToSong();
         bool SaveTiming();
+        void OpenEditorNotice();
+        void CloseEditorNotice();
+        std::optional<VideoEditorNoticeModel::RevisionToken> PublishEditorNotice(
+            std::string message);
+        void PublishPreviewNotice(std::string message);
+        void ClearPreviewNotice();
+        void BeginEditorTransferNotice(
+            EditorTransferKind kind,
+            std::string initialMessage);
+        void CancelEditorTransferNotice();
+        void PollEditorTransferNotice();
+        void CreateEditorNoticeSurface();
+        void DestroyEditorNoticeSurface();
+        void QueueEditorNoticePaint();
+        /// This is the replacement's only TextMeshPro write site. Events only
+        /// queue a paint; the next main-thread frame applies it after BSML has
+        /// finished changing controller visibility and layout.
+        void PaintEditorNotice();
         /// Keeps mapper-authored addresses visually distinct from addresses
         /// the user typed or pasted without changing whether the field can be
         /// edited. Mapper metadata is muted gray; user input is full white.
@@ -144,6 +166,19 @@ namespace BigScreen {
         // disabled or closed. Updater, showcase, and song-screen jobs share the
         // downloader singleton but have independent lifetimes.
         std::string ownedDownloadLevelId_;
+        // Keeps the editor refreshing until a menu-owned download has finished
+        // both its worker operation and its short library.json publication.
+        // This is operational state only; it does not retain or render text.
+        std::string pendingDownloadRefreshLevelId_;
+        // Terminal probe/failure/cancellation progress remains visible until a
+        // new editor action begins, independently from any status-text model.
+        std::string terminalDownloadProgressLevelId_;
+        VideoEditorNoticeModel editorNoticeModel_;
+        VideoEditorNoticeModel::VisitToken editorNoticeVisit_;
+        VideoEditorNoticeModel::TransferToken editorTransferNotice_;
+        VideoEditorNoticeModel::RevisionToken previewNoticeRevision_;
+        EditorTransferKind editorTransferKind_ = EditorTransferKind::None;
+        bool editorTransferCancellationRequested_ = false;
         BSML::CustomListTableData* list_ = nullptr;
         HMUI::InputFieldView* searchInput_ = nullptr;
         HMUI::InputFieldView* urlInput_ = nullptr;
@@ -156,7 +191,8 @@ namespace BigScreen {
         TMPro::TextMeshProUGUI* browserStorage_ = nullptr;
         TMPro::TextMeshProUGUI* filterText_ = nullptr;
         TMPro::TextMeshProUGUI* detailTitle_ = nullptr;
-        TMPro::TextMeshProUGUI* detailText_ = nullptr;
+        UnityEngine::UI::VerticalLayoutGroup* operationStatusHost_ = nullptr;
+        TMPro::TextMeshProUGUI* operationStatusText_ = nullptr;
         TMPro::TextMeshProUGUI* detailMapStorage_ = nullptr;
         TMPro::TextMeshProUGUI* detailLocalStorage_ = nullptr;
         TMPro::TextMeshProUGUI* detailLibraryStorage_ = nullptr;
@@ -238,11 +274,6 @@ namespace BigScreen {
         SongLibraryFilter filter_ = SongLibraryFilter::All;
         std::string search_;
         std::string url_;
-        std::string transientStatus_;
-        // The text property can change while Unity retains the old generated
-        // TMP mesh after download rows collapse. Track the last resolved value
-        // so RefreshDetails can recycle this one component only when needed.
-        std::string renderedDetailStatus_;
         std::string loadedThumbnailPath_;
         std::string probedUrl_;
         std::string completedVideoThumbnailIdentity_;
@@ -273,6 +304,8 @@ namespace BigScreen {
         bool suppressTimingCallbacks_ = false;
         bool suppressUrlCallback_ = false;
         bool mapperProvidedUrl_ = false;
+        bool editorNoticePaintPending_ = false;
+        int editorNoticePaintAfterFrame_ = -1;
         int tickCounter_ = 0;
         int thumbnailTickCounter_ = 0;
         int playbackControlsTickCounter_ = 0;
