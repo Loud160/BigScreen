@@ -6,11 +6,12 @@ remains the normal update channel and nightly updates are opt-in and clearly
 warned as higher risk. A once-per-session background check follows the package
 actually loaded: stable checks stable only, while nightly checks stable first
 and checks nightly only when stable has not caught up. Automatic checks never
-move a stable installation to nightly. The QMOD temporarily ships pinned official
-nightly 2026.08.18.122307 because upstream identified nightly as the fix for
-stable 2026.07.04's Android-VR HTTP 403 regression. An explicit return from
-nightly to stable is treated as a channel switch rather than an accidental
-downgrade. The release package is checked against the SHA-256 list published with
+move a stable installation to nightly. The QMOD ships pinned official stable
+2026.08.19, which contains the YouTube recovery that temporarily required
+nightly 2026.08.18.122307 after stable 2026.07.04 began returning partial HTTP
+403 failures. An explicit return from nightly to stable is treated as a channel
+switch rather than an accidental downgrade. The release package is checked
+against the SHA-256 list published with
 that same release, inspected as an archive, checked for the expected module,
 and staged without replacing the working package.
 
@@ -55,6 +56,12 @@ The shipped baseline is also reproducible from pinned yt-dlp and yt-dlp-ejs
 source archives. The source-build recipe checks both archives, rebuilds the EJS
 payload using the upstream lockfile, verifies the generated solver hashes, and
 compares every packaged byte with the pinned official release.
+
+The Update-tab channel switch reports the package that CPython actually loaded,
+not a separate preference. A downloaded replacement remains staged until the
+next Beat Saber start; the switch changes only after activation, import, and the
+embedded yt-dlp/yt-dlp-ejs/QuickJS smoke test succeed. Failed activation rolls
+back without showing the requested channel as active.
 
 QuickJS-NG is compiled into `libbigscreen.so`; it is not downloaded or executed
 from writable storage. Each challenge receives a new runtime with a 128 MiB

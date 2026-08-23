@@ -666,6 +666,10 @@ def classify(value):
     lower = text.lower()
     if 'bigscreen_cancelled' in lower:
         return 'cancelled', 'Download paused. Select Resume to continue it.'
+    if ('google workspace administrator' in lower or
+            'network administrator restrictions' in lower or
+            ('video is restricted' in lower and 'administrator' in lower)):
+        return 'failed', 'YouTube or the current network administrator has restricted access to this video.'
     if ('sign in to confirm your age' in lower or
             'confirm your age' in lower or
             'age-restricted' in lower):
@@ -683,14 +687,15 @@ def classify(value):
         return 'failed', 'YouTube requires a signed-in account to view this video; Big Screen does not use or store YouTube login credentials.'
     if 'premium' in lower and ('required' in lower or 'only' in lower):
         return 'failed', 'This video requires a YouTube Premium account and cannot be downloaded without signing in.'
-    if ('removed by the uploader' in lower or
-            'video has been removed' in lower or
-            'video unavailable' in lower):
-        return 'failed', 'This YouTube video is unavailable or has been removed.'
+    if 'not available in your country' in lower or 'geo' in lower and 'restricted' in lower:
+        return 'failed', 'YouTube has not made this video available in the Quest\'s current region.'
     if 'copyright' in lower and ('blocked' in lower or 'claim' in lower):
         return 'failed', 'YouTube has blocked this video because of a copyright restriction.'
-    if 'not available in your country' in lower or 'geo' in lower and 'restricted' in lower:
-        return 'failed', 'This video is not available in your region.'
+    if ('removed by the uploader' in lower or
+            'video has been removed' in lower):
+        return 'failed', 'The uploader removed this YouTube video.'
+    if 'video unavailable' in lower:
+        return 'failed', 'YouTube reports that this video is unavailable.'
     if 'requested format is not available' in lower or 'no video formats' in lower:
         return 'failed', 'The requested video resolution and codec are not available.'
     if 'no space left' in lower:
@@ -711,15 +716,47 @@ def classify(value):
         return 'failed', 'YouTube returned a 5xx server error. YouTube could not complete the request; this is normally temporary, so try again later.'
     if 'certificate verify failed' in lower:
         return 'failed', 'Secure connection failed because the certificate could not be verified.'
-    if 'unable to download' in lower or 'network is unreachable' in lower or 'timed out' in lower:
-        return 'failed', 'Network download failed: ' + text
-    return 'failed', 'YouTube download failed: ' + text
+    if ('network is unreachable' in lower or 'timed out' in lower or
+            'temporary failure in name resolution' in lower or
+            'connection refused' in lower):
+        return 'failed', 'The Quest could not reach YouTube. Check Wi-Fi and try again.'
+    if ('extractor' in lower or 'signature' in lower or
+            'challenge solving' in lower or 'javascript runtime' in lower):
+        return 'failed', 'YouTube changed how this video is delivered. A yt-dlp update may be required.'
+    return 'failed', 'YouTube could not provide this video. See Big Screen\'s error log for the technical reason.'
 
 def diagnostic_code(value):
     """Return a stable support code without exposing yt-dlp internals in UI."""
     lower = clean_error(value).lower()
     if 'bigscreen_cancelled' in lower:
         return 'BS-DL-CANCELLED'
+    if ('google workspace administrator' in lower or
+            'network administrator restrictions' in lower or
+            ('video is restricted' in lower and 'administrator' in lower)):
+        return 'BS-DL-ACCESS-RESTRICTED'
+    if 'private video' in lower:
+        return 'BS-DL-ACCESS-PRIVATE'
+    if ('sign in to confirm your age' in lower or
+            'confirm your age' in lower or 'age-restricted' in lower):
+        return 'BS-DL-ACCESS-AGE'
+    if ('members-only' in lower or 'members only' in lower or
+            'join this channel' in lower):
+        return 'BS-DL-ACCESS-MEMBERS'
+    if 'premium' in lower and ('required' in lower or 'only' in lower):
+        return 'BS-DL-ACCESS-PREMIUM'
+    if ('sign in to confirm you' in lower or 'login required' in lower or
+            ('log in' in lower and 'required' in lower) or
+            ('authentication' in lower and 'required' in lower) or
+            'cookies-from-browser' in lower):
+        return 'BS-DL-ACCESS-SIGNIN'
+    if 'not available in your country' in lower or ('geo' in lower and 'restricted' in lower):
+        return 'BS-DL-ACCESS-REGION'
+    if 'copyright' in lower and ('blocked' in lower or 'claim' in lower):
+        return 'BS-DL-COPYRIGHT-001'
+    if 'removed by the uploader' in lower or 'video has been removed' in lower:
+        return 'BS-DL-VIDEO-REMOVED'
+    if 'video unavailable' in lower:
+        return 'BS-DL-VIDEO-UNAVAILABLE'
     if 'http error 400' in lower:
         return 'BS-DL-HTTP-400'
     if 'http error 401' in lower:
@@ -740,10 +777,13 @@ def diagnostic_code(value):
         return 'BS-DL-STORAGE-001'
     if 'requested format is not available' in lower or 'no video formats' in lower:
         return 'BS-DL-FORMAT-001'
-    if ('private video' in lower or 'members-only' in lower or
-            'members only' in lower or 'age-restricted' in lower or
-            'sign in' in lower or 'login required' in lower):
-        return 'BS-DL-ACCESS-001'
+    if ('network is unreachable' in lower or 'timed out' in lower or
+            'temporary failure in name resolution' in lower or
+            'connection refused' in lower):
+        return 'BS-DL-NETWORK-001'
+    if ('extractor' in lower or 'signature' in lower or
+            'challenge solving' in lower or 'javascript runtime' in lower):
+        return 'BS-DL-EXTRACTOR-001'
     return 'BS-DL-FAILED-001'
 
 def stream_summary(candidate):
@@ -1213,6 +1253,10 @@ def publish(state, message='', **values):
 def classify(value):
     text = clean_error(value)
     lower = text.lower()
+    if ('google workspace administrator' in lower or
+            'network administrator restrictions' in lower or
+            ('video is restricted' in lower and 'administrator' in lower)):
+        return 'YouTube or the current network administrator has restricted access to this video.'
     if 'private video' in lower:
         return 'This YouTube video is private and cannot be downloaded.'
     if ('sign in to confirm your age' in lower or 'confirm your age' in lower or
@@ -1227,10 +1271,13 @@ def classify(value):
             'cookies-from-browser' in lower):
         return 'YouTube requires a signed-in account to view this video; Big Screen does not use or store YouTube login credentials.'
     if 'not available in your country' in lower or ('geo' in lower and 'restricted' in lower):
-        return 'This video is not available in your region.'
-    if ('removed by the uploader' in lower or 'video has been removed' in lower or
-            'video unavailable' in lower):
-        return 'This YouTube video is unavailable or has been removed.'
+        return 'YouTube has not made this video available in the Quest\'s current region.'
+    if 'copyright' in lower and ('blocked' in lower or 'claim' in lower):
+        return 'YouTube has blocked this video because of a copyright restriction.'
+    if 'removed by the uploader' in lower or 'video has been removed' in lower:
+        return 'The uploader removed this YouTube video.'
+    if 'video unavailable' in lower:
+        return 'YouTube reports that this video is unavailable.'
     if 'http error 400' in lower or ('400' in lower and 'bad request' in lower):
         return 'YouTube returned HTTP 400 (Bad Request). It rejected the video request, usually because the link is malformed or the downloader needs an update.'
     if 'http error 401' in lower or ('401' in lower and 'unauthorized' in lower):
@@ -1247,9 +1294,66 @@ def classify(value):
         return 'YouTube returned a 5xx server error. YouTube could not complete the request; this is normally temporary, so try again later.'
     if 'certificate verify failed' in lower:
         return 'Secure connection failed because the YouTube certificate could not be verified.'
-    if 'network is unreachable' in lower or 'timed out' in lower:
-        return 'The Quest could not reach YouTube: ' + text
-    return 'YouTube could not recognize this URL: ' + text
+    if ('network is unreachable' in lower or 'timed out' in lower or
+            'temporary failure in name resolution' in lower or
+            'connection refused' in lower):
+        return 'The Quest could not reach YouTube. Check Wi-Fi and try again.'
+    if ('extractor' in lower or 'signature' in lower or
+            'challenge solving' in lower or 'javascript runtime' in lower):
+        return 'YouTube changed how this video is delivered. A yt-dlp update may be required.'
+    return 'YouTube could not provide information for this video. See Big Screen\'s error log for the technical reason.'
+
+def diagnostic_code(value):
+    lower = clean_error(value).lower()
+    if ('google workspace administrator' in lower or
+            'network administrator restrictions' in lower or
+            ('video is restricted' in lower and 'administrator' in lower)):
+        return 'BS-DL-ACCESS-RESTRICTED'
+    if 'private video' in lower:
+        return 'BS-DL-ACCESS-PRIVATE'
+    if ('sign in to confirm your age' in lower or
+            'confirm your age' in lower or 'age-restricted' in lower):
+        return 'BS-DL-ACCESS-AGE'
+    if ('members-only' in lower or 'members only' in lower or
+            'join this channel' in lower):
+        return 'BS-DL-ACCESS-MEMBERS'
+    if ('sign in to confirm you' in lower or 'login required' in lower or
+            ('log in' in lower and 'required' in lower) or
+            ('authentication' in lower and 'required' in lower) or
+            'cookies-from-browser' in lower):
+        return 'BS-DL-ACCESS-SIGNIN'
+    if 'not available in your country' in lower or ('geo' in lower and 'restricted' in lower):
+        return 'BS-DL-ACCESS-REGION'
+    if 'copyright' in lower and ('blocked' in lower or 'claim' in lower):
+        return 'BS-DL-COPYRIGHT-001'
+    if 'removed by the uploader' in lower or 'video has been removed' in lower:
+        return 'BS-DL-VIDEO-REMOVED'
+    if 'video unavailable' in lower:
+        return 'BS-DL-VIDEO-UNAVAILABLE'
+    if 'http error 400' in lower or ('400' in lower and 'bad request' in lower):
+        return 'BS-DL-HTTP-400'
+    if 'http error 401' in lower or ('401' in lower and 'unauthorized' in lower):
+        return 'BS-DL-HTTP-401'
+    if 'http error 403' in lower or ('403' in lower and 'forbidden' in lower):
+        return 'BS-DL-HTTP-403'
+    if 'http error 404' in lower or ('404' in lower and 'not found' in lower):
+        return 'BS-DL-HTTP-404'
+    if 'http error 410' in lower or ('410' in lower and 'gone' in lower):
+        return 'BS-DL-HTTP-410'
+    if 'http error 429' in lower or 'too many requests' in lower:
+        return 'BS-DL-HTTP-429'
+    if re.search(r'http error 5\d\d', lower):
+        return 'BS-DL-HTTP-5XX'
+    if 'certificate verify failed' in lower:
+        return 'BS-DL-TLS-001'
+    if ('network is unreachable' in lower or 'timed out' in lower or
+            'temporary failure in name resolution' in lower or
+            'connection refused' in lower):
+        return 'BS-DL-NETWORK-001'
+    if ('extractor' in lower or 'signature' in lower or
+            'challenge solving' in lower or 'javascript runtime' in lower):
+        return 'BS-DL-EXTRACTOR-001'
+    return 'BS-DL-PROBE-001'
 
 try:
     publish('probing', 'Checking YouTube URL')
@@ -1338,7 +1442,7 @@ except KeyboardInterrupt:
     publish('cancelled', 'Video URL check cancelled')
 except BaseException as error:
     publish(
-        'failed', classify(error), errorCode='BS-DL-PROBE-001',
+        'failed', classify(error), errorCode=diagnostic_code(error),
         diagnostic=clean_error(error))
 )PY";
 
@@ -1780,7 +1884,8 @@ os.replace(temporary, job['destination'])
                             removeError.message());
                 }
                 SetCurrentYtDlpIdentity(
-                    std::string(BundledYtDlpVersion), "nightly");
+                    std::string(BundledYtDlpVersion),
+                    std::string(BundledYtDlpChannel));
                 PaperLogger.info(
                     "Replaced obsolete active yt-dlp {} with shipped baseline {}",
                     activeVersion,
@@ -1810,7 +1915,8 @@ os.replace(temporary, job['destination'])
         }
         else
             SetCurrentYtDlpIdentity(
-                std::string(BundledYtDlpVersion), "nightly");
+                std::string(BundledYtDlpVersion),
+                std::string(BundledYtDlpChannel));
 
         // Register the compiled bridge before CPython starts. Keeping this as
         // a built-in module avoids Android's prohibition on executing a qjs
@@ -1929,7 +2035,7 @@ os.replace(temporary, job['destination'])
                     return false;
                 }
                 std::string restoredVersionText(BundledYtDlpVersion);
-                std::string restoredChannelText = "nightly";
+                std::string restoredChannelText(BundledYtDlpChannel);
                 std::ifstream restoredVersion(active.string() + ".version");
                 if(restoredVersion)
                     std::getline(restoredVersion, restoredVersionText);
@@ -1985,7 +2091,8 @@ os.replace(temporary, job['destination'])
                         std::ios::binary | std::ios::trunc);
                     rejected << (rejectedVersion.empty() ? "unknown" : rejectedVersion);
                     SetCurrentYtDlpIdentity(
-                        std::string(BundledYtDlpVersion), "nightly");
+                        std::string(BundledYtDlpVersion),
+                        std::string(BundledYtDlpChannel));
                     smokeTestError = smokeTest();
                     if(smokeTestError.empty())
                     {
@@ -3040,7 +3147,8 @@ os.replace(temporary, job['destination'])
                                 ? "unknown"
                                 : rejectedVersion);
                             std::string restoredVersionText(BundledYtDlpVersion);
-                            std::string restoredChannelText = "nightly";
+                            std::string restoredChannelText(
+                                BundledYtDlpChannel);
                             std::ifstream restoredVersion(
                                 active.string() + ".version", std::ios::binary);
                             if(restoredVersion)

@@ -329,9 +329,14 @@ namespace BigScreen {
                     ? std::format("{:.1f}", d.maximumFps)
                     : std::string("--"));
             row(rightRows_[0], "Decoder",
-                live ? (d.decodeMethod == "hardware"
-                            ? std::string("Hardware")
-                            : std::string("Software"))
+                live ? std::format(
+                           "{} · {}",
+                           d.decodeMethod == "hardware"
+                               ? "Hardware"
+                               : "Software",
+                           d.presentationMethod.empty()
+                               ? "CPU RGBA"
+                               : d.presentationMethod)
                      : std::string("--"));
             row(rightRows_[1], "Video",
                 live ? std::format(
@@ -349,10 +354,10 @@ namespace BigScreen {
             row(rightRows_[4], "Frame Rate Loss",
                 live ? std::format("{:.1f}%", d.missedVideoFramePercent)
                      : std::string("--"));
-            row(rightRows_[5], "Decode Average",
+            row(rightRows_[5], "Prep CPU Average",
                 live ? std::format("{:.2f} ms", d.averageDecodeMilliseconds)
                      : std::string("--"));
-            row(rightRows_[6], "Decode Peak",
+            row(rightRows_[6], "Prep CPU Peak",
                 live ? std::format("{:.2f} ms", d.peakDecodeMilliseconds)
                      : std::string("--"));
         }

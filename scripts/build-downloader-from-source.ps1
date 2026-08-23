@@ -15,15 +15,13 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-# These pins intentionally mirror fetch-downloader-runtime.ps1. The pinned
-# nightly includes yt-dlp's upstream recovery for the August 2026 YouTube 403
-# regression; the stable 2026.07.04 package still selects the rejected
-# Android-VR media path. Update both scripts as one reviewed change when a
-# later stable release contains the fix and passes Quest testing.
-$ytDlpVersion = "2026.08.18.122307"
-$ytDlpSourceSha256 = "e9169887a9863bc635e1d3760f90cb37588dad2111064d454c790aaaa121349a"
-$ytDlpReleaseSha256 = "7c2e017b19c249447445e776913d54bcea81b85b21b51d50ff36b7b8cae956e1"
-$ytDlpRepository = "yt-dlp/yt-dlp-nightly-builds"
+# These pins intentionally mirror fetch-downloader-runtime.ps1. Stable
+# 2026.08.19 contains the recovery that temporarily required the August 18
+# nightly, so both the shipped runtime and reproducibility audit use stable.
+$ytDlpVersion = "2026.08.19"
+$ytDlpSourceSha256 = "072aad4f2a7604e92155f61a275a4752dc64046c8f6d90df3710525d94cd37c1"
+$ytDlpReleaseSha256 = "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6"
+$ytDlpRepository = "yt-dlp/yt-dlp"
 $ejsVersion = "0.8.0"
 $ejsSourceSha256 = "2704dfcac899fcb443d3b80cb8bb6337c5eb98d09ebf0760295d1c58e9461e53"
 $ejsCoreSha256 = "18da6ce0758b416e7ae645084f4f8801f9f9d59d6c477c05eaa0ff94ebd8cc00"

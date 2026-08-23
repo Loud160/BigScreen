@@ -957,11 +957,17 @@ namespace BigScreen {
     {
         auto& playback = PlaybackSession::Instance();
 
-        // The Video Library menu owns the playback session while its own
-        // preview is running. This ticker still fires every frame from the
-        // SongPreviewPlayer hook, so without this guard its resume logic
-        // could start a menu preview over the library's active session.
-        if(playback.IsLibraryPreviewActive()) return;
+        // The Video Library owns playback for its entire active lifetime, not
+        // only while a LibraryPreview decoder is open. File replacement and
+        // selection changes deliberately create a Stop/Prepare gap; treating
+        // that gap as unowned can reopen the old map video just as it is being
+        // deleted or replaced.
+        if(playback.LibraryPreviewOwnershipActive())
+        {
+            resumeWhenSongAudioStarts_ = false;
+            resumeWaitReported_ = false;
+            return;
+        }
 
         if(resumeWhenSongAudioStarts_)
         {
@@ -1291,19 +1297,16 @@ namespace BigScreen {
 
     void SelectionVideoToggle::ReportDownloadFailure(
         const std::string& detail,
-        bool metadataCheck)
+        bool metadataCheck,
+        const std::string& errorCode)
     {
-        const std::string reason = detail.empty()
-            ? (metadataCheck
-                ? "Big Screen could not check the available YouTube video resolutions."
-                : "YouTube did not provide a usable video at the selected resolution.")
-            : detail;
+        const auto presentation = CoreLogic::DescribeDownloadFailure(
+            errorCode,
+            detail,
+            metadataCheck);
         ErrorManager::Instance().ReportUserVisible(
-            metadataCheck ? "Video check failed" : "Video download failed",
-            reason +
-            "\n\nOpen Big Screen from the Mods menu and select this song. "
-            "You can search YouTube for another video, paste a different link, "
-            "or assign a compatible local MP4 or WebM file.");
+            presentation.title,
+            presentation.message);
     }
 
     void SelectionVideoToggle::TickDownloadUi()
@@ -1415,7 +1418,8 @@ namespace BigScreen {
                 reportedDownloadFailure_ = failureKey;
                 ReportDownloadFailure(
                     snapshot.message,
-                    snapshot.metadataOnly);
+                    snapshot.metadataOnly,
+                    snapshot.errorCode);
             }
         }
         else if(forSelection && snapshot.state == DownloadState::Cancelled)

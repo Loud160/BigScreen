@@ -43,6 +43,27 @@ namespace {
         return false;
     }
 
+    bool WaitForFrameAt(
+        BigScreen::FrameDecoder& decoder,
+        double mediaSeconds,
+        BigScreen::VideoFrame& frame)
+    {
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(3);
+        while(std::chrono::steady_clock::now() < deadline)
+        {
+            if(decoder.TryTake(mediaSeconds, frame))
+                return true;
+            if(const auto error = decoder.TakeError())
+            {
+                std::cerr << "Decoder worker error: " << *error << '\n';
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+
     void Exercise(const std::filesystem::path& path, int expectedWidth, int expectedHeight)
     {
         BigScreen::FrameDecoder decoder;
@@ -201,6 +222,16 @@ namespace {
         }
         Expect(decoder.BufferAllocations() <= 3,
                "reusable RGBA pool should stop repeated capacity growth");
+        const auto preparation = decoder.PreparationDiagnostics();
+        Expect(preparation.sampleCount > 0,
+               "frame preparation diagnostics should count output pictures");
+        Expect(preparation.cpuNanoseconds >= preparation.peakCpuNanoseconds,
+               "session preparation CPU total should include its peak sample");
+        Expect(preparation.waitNanoseconds >= preparation.peakWaitNanoseconds,
+               "session worker-wait total should include its peak sample");
+        decoder.ResetPreparationDiagnostics();
+        Expect(decoder.PreparationDiagnostics().sampleCount == 0,
+               "a new measured session should clear preparation totals once");
         decoder.Close();
         Expect(!decoder.IsOpen(), "Close should stop the worker");
     }
@@ -208,7 +239,8 @@ namespace {
     void ExerciseGpuTransport(
         const std::filesystem::path& path,
         int expectedWidth,
-        int expectedHeight)
+        int expectedHeight,
+        BigScreen::GpuYuvUploadLayout uploadLayout)
     {
         BigScreen::FrameDecoder decoder;
         std::string error;
@@ -218,6 +250,8 @@ namespace {
                 BigScreen::UncappedOutputHeight,
                 false,
                 true,
+                uploadLayout,
+                64u * 1024u * 1024u,
                 nullptr,
                 {},
                 error),
@@ -228,7 +262,11 @@ namespace {
             return;
         }
 
-        decoder.Request(0.2);
+        // Supply the same media-time cadence PlaybackSession uses at a 60 FPS
+        // ceiling. The GPU path should publish the current picture promptly,
+        // then keep a bounded set of future source pictures ready without
+        // making any of them visible before their selected clock slot.
+        decoder.Request(0.2, 1.0 / 60.0);
         BigScreen::VideoFrame yuvFrame;
         const bool receivedYuv = WaitForFrame(decoder, yuvFrame);
         Expect(receivedYuv, "GPU transport should publish a decoded frame");
@@ -236,23 +274,137 @@ namespace {
         {
             const int chromaWidth = (expectedWidth + 1) / 2;
             const int chromaHeight = (expectedHeight + 1) / 2;
-            Expect(
-                yuvFrame.storage == BigScreen::VideoFrameStorage::Yuv420Planar,
-                "GPU transport should use normalized planar YUV420");
             Expect(yuvFrame.rgba.empty(),
                    "GPU transport should not allocate an RGBA picture");
             Expect(yuvFrame.sourceWidth == expectedWidth &&
                    yuvFrame.sourceHeight == expectedHeight,
                    "GPU plane dimensions should retain decoder orientation");
-            Expect(yuvFrame.y.size() == static_cast<std::size_t>(
-                       expectedWidth * expectedHeight),
-                   "Y plane byte count should be exact");
-            Expect(yuvFrame.u.size() == static_cast<std::size_t>(
-                       chromaWidth * chromaHeight) &&
-                   yuvFrame.v.size() == static_cast<std::size_t>(
-                       chromaWidth * chromaHeight),
-                   "U and V plane byte counts should be exact");
+            if(uploadLayout == BigScreen::GpuYuvUploadLayout::PackedAtlas)
+            {
+                const int atlasWidth = std::max(
+                    expectedWidth, chromaWidth * 2);
+                Expect(yuvFrame.storage ==
+                           BigScreen::VideoFrameStorage::Yuv420PackedAtlas,
+                       "packed GPU transport should use one YUV atlas");
+                Expect(yuvFrame.y.empty() && yuvFrame.u.empty() &&
+                           yuvFrame.v.empty(),
+                       "packed GPU transport should not retain plane buffers");
+                Expect(yuvFrame.packedYuv.size() ==
+                           static_cast<std::size_t>(atlasWidth) *
+                               (expectedHeight + chromaHeight),
+                       "packed YUV atlas byte count should be exact");
+            }
+            else
+            {
+                Expect(yuvFrame.storage ==
+                           BigScreen::VideoFrameStorage::Yuv420Planar,
+                       "GPU transport should use normalized planar YUV420");
+                Expect(yuvFrame.packedYuv.empty(),
+                       "3-plane GPU transport should not retain an atlas");
+                Expect(yuvFrame.y.size() == static_cast<std::size_t>(
+                           expectedWidth * expectedHeight),
+                       "Y plane byte count should be exact");
+                Expect(yuvFrame.u.size() == static_cast<std::size_t>(
+                           chromaWidth * chromaHeight) &&
+                       yuvFrame.v.size() == static_cast<std::size_t>(
+                           chromaWidth * chromaHeight),
+                       "U and V plane byte counts should be exact");
+            }
+            const double firstPresentationSeconds =
+                yuvFrame.presentationSeconds;
             decoder.Recycle(std::move(yuvFrame));
+
+            BigScreen::VideoFrame earlyFrame;
+            Expect(!decoder.TryTake(0.2, earlyFrame),
+                   "a prefetched GPU picture must not be returned early");
+
+            // No new Request is posted here. Receiving a later picture proves
+            // that the decoder filled future presentation slots rather than
+            // merely replacing the old one-frame mailbox on demand.
+            BigScreen::VideoFrame prefetchedFrame;
+            const bool receivedPrefetched =
+                WaitForFrameAt(decoder, 0.35, prefetchedFrame);
+            Expect(receivedPrefetched,
+                   "GPU transport should retain a future read-ahead picture");
+            if(receivedPrefetched)
+            {
+                Expect(prefetchedFrame.presentationSeconds >
+                           firstPresentationSeconds,
+                       "read-ahead should advance to a later source picture");
+                decoder.Recycle(std::move(prefetchedFrame));
+            }
+
+            const auto queueDiagnostics = decoder.ReadAheadDiagnostics();
+            Expect(queueDiagnostics.byteBudget == 64u * 1024u * 1024u,
+                   "GPU queue should use the supplied memory budget");
+            Expect(queueDiagnostics.frameCapacity > 5,
+                   "a small fixture should no longer be capped at five prefetched frames");
+            Expect(queueDiagnostics.peakQueuedFrames > 0,
+                   "GPU queue diagnostics should record its peak reserve");
+            Expect(decoder.BufferAllocations() <=
+                       queueDiagnostics.frameCapacity + 1,
+                   "planar Y/U/V growth should count once per reusable frame set");
+
+            // A 10 FPS fixture produces due slots 100 ms apart. Advancing
+            // from .35 to .50 makes two queued source pictures due at once;
+            // the bounded consumer should present the older one now and keep
+            // the newer one for the next Unity update rather than dropping it.
+            BigScreen::VideoFrame catchUpFrame;
+            Expect(WaitForFrameAt(decoder, 0.50, catchUpFrame),
+                   "GPU transport should present a bounded catch-up frame");
+            decoder.Recycle(std::move(catchUpFrame));
+            const auto catchUpDiagnostics = decoder.ReadAheadDiagnostics();
+            Expect(catchUpDiagnostics.catchUpPresentations > 0,
+                   "GPU queue diagnostics should count recovered late frames");
+
+            // A much larger clock jump cannot be recovered in one 90 Hz
+            // display update. Old pictures must still be discarded so the
+            // bounded catch-up policy never creates sustained A/V latency.
+            BigScreen::VideoFrame lateFrame;
+            Expect(WaitForFrameAt(decoder, 1.20, lateFrame),
+                   "GPU transport should recover from a large late backlog");
+            decoder.Recycle(std::move(lateFrame));
+            const auto lateDiagnostics = decoder.ReadAheadDiagnostics();
+            Expect(lateDiagnostics.forcedLateDrops > 0,
+                   "GPU queue diagnostics should count irrecoverably late drops");
+            Expect(lateDiagnostics.peakDueFrameBacklog >= 2,
+                   "GPU queue diagnostics should record due-frame backlog");
+
+            const auto restartGeneration = decoder.Restart(0.1);
+            BigScreen::VideoFrame restartedFrame;
+            Expect(WaitForFrameAt(decoder, 0.1, restartedFrame),
+                   "restart should refill after clearing the prior GPU queue");
+            if(restartedFrame.storage != BigScreen::VideoFrameStorage::Rgba32)
+            {
+                Expect(restartedFrame.generation == restartGeneration,
+                       "restart must never return a frame from the flushed queue");
+                decoder.Recycle(std::move(restartedFrame));
+            }
+
+            if(uploadLayout == BigScreen::GpuYuvUploadLayout::PackedAtlas)
+            {
+                // ScreenSurface can reject the packed shader or atlas while
+                // the decoder is already open. The live transition must flush
+                // packed pictures and publish a genuine three-plane frame so
+                // Unity never interprets an old atlas as separate Y/U/V data.
+                decoder.SetGpuYuvUploadLayout(
+                    BigScreen::GpuYuvUploadLayout::ThreePlane);
+                decoder.Request(0.7, 1.0 / 60.0);
+                BigScreen::VideoFrame planarFallbackFrame;
+                const bool receivedPlanarFallback =
+                    WaitForFrameAt(decoder, 0.7, planarFallbackFrame);
+                Expect(receivedPlanarFallback,
+                       "packed transport should switch live to three-plane output");
+                if(receivedPlanarFallback)
+                {
+                    Expect(planarFallbackFrame.storage ==
+                               BigScreen::VideoFrameStorage::Yuv420Planar,
+                           "packed fallback must publish a three-plane frame");
+                    Expect(planarFallbackFrame.packedYuv.empty(),
+                           "packed fallback must not retain an atlas buffer");
+                    decoder.Recycle(std::move(planarFallbackFrame));
+                }
+            }
         }
 
         // Unity can reject the conversion shader or RenderTexture after a
@@ -274,7 +426,12 @@ namespace {
                    "fallback RGBA byte count should be exact");
             decoder.Recycle(std::move(rgbaFrame));
         }
+        decoder.RequestStop();
+        Expect(decoder.ReadAheadDiagnostics().currentQueuedFrames == 0,
+               "early exit should synchronously empty the decoded-frame queue");
         decoder.Close();
+        Expect(decoder.ReadAheadDiagnostics().currentQueuedFrames == 0,
+               "close should leave no decoded frames queued");
     }
 }
 
@@ -287,7 +444,10 @@ int main(int argc, char** argv)
     }
     Exercise(argv[1], 96, 54);
     Exercise(argv[2], 54, 96);
-    ExerciseGpuTransport(argv[1], 96, 54);
+    ExerciseGpuTransport(
+        argv[1], 96, 54, BigScreen::GpuYuvUploadLayout::ThreePlane);
+    ExerciseGpuTransport(
+        argv[1], 96, 54, BigScreen::GpuYuvUploadLayout::PackedAtlas);
     if(failures == 0)
         std::cout << "FrameDecoder worker and reusable-buffer tests passed.\n";
     return failures == 0 ? 0 : 1;

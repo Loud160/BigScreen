@@ -115,6 +115,12 @@ namespace BigScreen {
             }
         }
 
+        bool IsGpuYuvFrame(VideoFrameStorage storage)
+        {
+            return storage == VideoFrameStorage::Yuv420Planar ||
+                   storage == VideoFrameStorage::Yuv420PackedAtlas;
+        }
+
         std::string UnsupportedPixelReason(
             AVPixelFormat format,
             AVColorTransferCharacteristic transfer,
@@ -255,6 +261,8 @@ namespace BigScreen {
         int maximumOutputHeight,
         bool preferHardwareDecoding,
         bool preferGpuConversion,
+        GpuYuvUploadLayout gpuYuvUploadLayout,
+        std::size_t readAheadByteBudget,
         void* javaVm,
         const FrameVisualEffects& visualEffects,
         std::string& error)
@@ -268,8 +276,32 @@ namespace BigScreen {
         // can read it after join. A new Open begins a distinct decoder
         // lifetime and therefore resets the counter here.
         workerCpuNanoseconds_ = 0;
-        peakDecodeMilliseconds_ = 0.0;
+        preparationSampleCount_ = 0;
+        preparationCpuNanoseconds_ = 0;
+        peakPreparationCpuNanoseconds_ = 0;
+        preparationWaitNanoseconds_ = 0;
+        peakPreparationWaitNanoseconds_ = 0;
         bufferAllocations_ = 0;
+        constexpr std::size_t MinimumReadAheadBytes = 32u * 1024u * 1024u;
+        constexpr std::size_t MaximumReadAheadBytes = 256u * 1024u * 1024u;
+        readAheadByteBudget_ = std::clamp(
+            readAheadByteBudget,
+            MinimumReadAheadBytes,
+            MaximumReadAheadBytes);
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            lastReadAheadFrameBytes_ = 0;
+            readAheadFrameCapacity_ = 0;
+            readAheadPeakQueuedFrames_ = 0;
+            readAheadLowReserveEvents_ = 0;
+            readAheadEmptyQueueEvents_ = 0;
+            readAheadCatchUpPresentations_ = 0;
+            readAheadForcedLateDrops_ = 0;
+            readAheadPeakDueFrameBacklog_ = 0;
+            readAheadPresentationStarted_ = false;
+            readAheadLowReserveActive_ = false;
+            readAheadEmptyActive_ = false;
+        }
         usingHardwareDecoder_ = false;
         hardwareFallbackReason_.clear();
         softwareFallbackAllowed_ = true;
@@ -283,9 +315,11 @@ namespace BigScreen {
             preferGpuConversion && maximumOutputHeight <= 0;
         gpuConversionEnabled_ = gpuConversionRequested_;
         gpuConversionRejected_ = false;
+        gpuYuvUploadLayout_ = gpuYuvUploadLayout;
         {
             std::scoped_lock lock(gpuConversionStatusMutex_);
             gpuConversionFallbackReason_.clear();
+            gpuYuvUploadFallbackReason_.clear();
         }
         {
             std::scoped_lock lock(visualEffectsMutex_);
@@ -604,9 +638,11 @@ namespace BigScreen {
         gpuConversionRequested_ = false;
         gpuConversionEnabled_ = false;
         gpuConversionRejected_ = false;
+        gpuYuvUploadLayout_ = GpuYuvUploadLayout::ThreePlane;
         {
             std::scoped_lock lock(gpuConversionStatusMutex_);
             gpuConversionFallbackReason_.clear();
+            gpuYuvUploadFallbackReason_.clear();
         }
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
@@ -617,20 +653,24 @@ namespace BigScreen {
         codecName_ = "unknown";
         softwareFallbackAllowed_ = true;
         softwareFallbackBlockedReason_.clear();
-        averageDecodeMilliseconds_ = 0.0;
-
         {
             std::scoped_lock requestLock(requestMutex_);
             requestedSeconds_ = 0.0;
+            requestedPresentationIntervalSeconds_ = 0.0;
             requestVersion_ = 0;
             presentationGeneration_ = 0;
             restartPending_ = false;
+            decodeEpoch_ = 0;
         }
         {
             std::scoped_lock outputLock(outputMutex_);
-            newestFrame_ = {};
+            // Completion, early exit, and map transitions all close the
+            // decoder. Release every queued frame here before the reusable
+            // pool is destroyed so no prefetched picture survives ownership.
+            FlushQueuedFramesLocked();
+            queuedFrames_.clear();
             recycledFrames_.clear();
-            frameWaiting_ = false;
+            allowEarlyOpeningFrame_ = true;
         }
     }
 
@@ -648,6 +688,15 @@ namespace BigScreen {
         {
             std::scoped_lock lock(requestMutex_);
             stopWorker_ = true;
+            ++decodeEpoch_;
+        }
+        {
+            // Stop is used by normal completion, restart scene teardown, and
+            // early exit. Empty the reserve immediately; an in-flight decode
+            // carries the prior epoch and Publish will reject it.
+            std::scoped_lock outputLock(outputMutex_);
+            FlushQueuedFramesLocked();
+            allowEarlyOpeningFrame_ = true;
         }
         requestChanged_.notify_all();
     }
@@ -662,15 +711,42 @@ namespace BigScreen {
         });
     }
 
-    void FrameDecoder::Request(double mediaSeconds)
+    void FrameDecoder::Request(
+        double mediaSeconds,
+        double presentationIntervalSeconds)
     {
         if(!open_)
             return;
 
+        bool invalidateQueue = false;
         {
             std::scoped_lock lock(requestMutex_);
-            requestedSeconds_ = std::max(0.0, mediaSeconds);
+            const double nextSeconds = std::max(0.0, mediaSeconds);
+            const double nextInterval = presentationIntervalSeconds > 0.0
+                ? presentationIntervalSeconds
+                : nominalFrameSeconds_;
+            const bool clockDiscontinuity = requestVersion_ > 0 &&
+                (nextSeconds + 0.01 < requestedSeconds_ ||
+                 nextSeconds - requestedSeconds_ > 0.75);
+            const bool cadenceChanged =
+                requestedPresentationIntervalSeconds_ > 0.0 &&
+                std::abs(nextInterval -
+                    requestedPresentationIntervalSeconds_) > 0.00001;
+            if(clockDiscontinuity || cadenceChanged)
+            {
+                restartPending_ = true;
+                ++decodeEpoch_;
+                invalidateQueue = true;
+            }
+            requestedSeconds_ = nextSeconds;
+            requestedPresentationIntervalSeconds_ = nextInterval;
             ++requestVersion_;
+        }
+        if(invalidateQueue)
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            FlushQueuedFramesLocked();
+            allowEarlyOpeningFrame_ = true;
         }
         requestChanged_.notify_one();
     }
@@ -680,24 +756,24 @@ namespace BigScreen {
         if(!open_)
             return 0;
 
-        // A frame published before the rewind must never satisfy the new
-        // preview's readiness gate. Return its RGBA storage to the existing
-        // pool instead of freeing a multi-megabyte allocation.
-        {
-            std::scoped_lock lock(outputMutex_);
-            if(frameWaiting_)
-                RecycleFrameLocked(std::move(newestFrame_));
-            newestFrame_ = {};
-            frameWaiting_ = false;
-        }
         std::uint64_t generation = 0;
         {
             std::scoped_lock lock(requestMutex_);
             requestedSeconds_ = std::max(0.0, mediaSeconds);
             restartPending_ = true;
             ++presentationGeneration_;
+            ++decodeEpoch_;
             ++requestVersion_;
             generation = presentationGeneration_;
+        }
+        // A frame published before the rewind must never satisfy the new
+        // preview's readiness gate. Return all prepared allocations to the
+        // bounded pool. An in-flight conversion carries the old epoch and is
+        // rejected if it reaches Publish after this flush.
+        {
+            std::scoped_lock lock(outputMutex_);
+            FlushQueuedFramesLocked();
+            allowEarlyOpeningFrame_ = true;
         }
         requestChanged_.notify_one();
         return generation;
@@ -706,8 +782,37 @@ namespace BigScreen {
     void FrameDecoder::UpdateVisualEffects(
         const FrameVisualEffects& visualEffects)
     {
-        std::scoped_lock lock(visualEffectsMutex_);
-        visualEffects_ = visualEffects;
+        {
+            std::scoped_lock lock(visualEffectsMutex_);
+            visualEffects_ = visualEffects;
+        }
+
+        if(gpuConversionEnabled_)
+        {
+            // GPU frames still contain unmodified YUV. Updating the small
+            // effect snapshot in place is exact and avoids throwing away a
+            // useful read-ahead reserve when a Cinema phase changes.
+            std::scoped_lock outputLock(outputMutex_);
+            for(auto& queued : queuedFrames_)
+                queued.frame.visualEffects = visualEffects;
+            return;
+        }
+
+        // CPU RGBA effects are baked into the pixels. Force a fresh frame at
+        // the current clock position instead of presenting up to one queue's
+        // worth of pictures with the old correction or vignette.
+        {
+            std::scoped_lock requestLock(requestMutex_);
+            restartPending_ = true;
+            ++decodeEpoch_;
+            ++requestVersion_;
+        }
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            FlushQueuedFramesLocked();
+            allowEarlyOpeningFrame_ = true;
+        }
+        requestChanged_.notify_one();
     }
 
     void FrameDecoder::SetGpuConversionEnabled(bool enabled)
@@ -718,43 +823,165 @@ namespace BigScreen {
         if(previous == next)
             return;
 
-        // A prewarmed gameplay decoder may already have published a frame
-        // before Unity creates its screen. Drop that one frame when the Unity
-        // resource setup rejects the GPU path, then wake the worker at the
-        // latest requested time so the replacement is guaranteed RGBA.
-        {
-            std::scoped_lock outputLock(outputMutex_);
-            if(frameWaiting_)
-            {
-                RecycleFrameLocked(std::move(newestFrame_));
-                newestFrame_ = {};
-                frameWaiting_ = false;
-            }
-        }
         {
             std::scoped_lock requestLock(requestMutex_);
+            restartPending_ = true;
+            ++decodeEpoch_;
             ++requestVersion_;
+        }
+        // A prewarmed gameplay decoder may already hold multiple future YUV
+        // pictures before Unity creates its screen. Drop the complete queue
+        // when Unity rejects the GPU path, then force the worker to rebuild at
+        // the latest timestamp as RGBA. The same rule applies when enabling
+        // the path so no CPU and GPU pictures can mix in one queue.
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            FlushQueuedFramesLocked();
+            for(auto& recycled : recycledFrames_)
+            {
+                if(next)
+                    std::vector<std::uint8_t>().swap(recycled.rgba);
+                else
+                {
+                    std::vector<std::uint8_t>().swap(recycled.y);
+                    std::vector<std::uint8_t>().swap(recycled.u);
+                    std::vector<std::uint8_t>().swap(recycled.v);
+                    std::vector<std::uint8_t>().swap(recycled.packedYuv);
+                }
+            }
+            allowEarlyOpeningFrame_ = true;
         }
         requestChanged_.notify_one();
     }
 
-    bool FrameDecoder::TryTake(VideoFrame& destination)
+    void FrameDecoder::SetGpuYuvUploadLayout(GpuYuvUploadLayout layout)
     {
-        std::scoped_lock lock(outputMutex_);
-        if(!frameWaiting_)
-            return false;
+        const auto previous = gpuYuvUploadLayout_.exchange(layout);
+        if(previous == layout || !gpuConversionEnabled_.load())
+            return;
 
-        destination = std::move(newestFrame_);
-        newestFrame_ = {};
-        frameWaiting_ = false;
-        return true;
+        {
+            std::scoped_lock requestLock(requestMutex_);
+            restartPending_ = true;
+            ++decodeEpoch_;
+            ++requestVersion_;
+        }
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            FlushQueuedFramesLocked();
+            for(auto& recycled : recycledFrames_)
+            {
+                if(layout == GpuYuvUploadLayout::PackedAtlas)
+                {
+                    std::vector<std::uint8_t>().swap(recycled.y);
+                    std::vector<std::uint8_t>().swap(recycled.u);
+                    std::vector<std::uint8_t>().swap(recycled.v);
+                }
+                else
+                {
+                    std::vector<std::uint8_t>().swap(recycled.packedYuv);
+                }
+            }
+            allowEarlyOpeningFrame_ = true;
+        }
+        requestChanged_.notify_one();
+    }
+
+    bool FrameDecoder::TryTake(
+        double mediaSeconds,
+        VideoFrame& destination)
+    {
+        bool tookFrame = false;
+        {
+            std::scoped_lock lock(outputMutex_);
+            if(queuedFrames_.empty())
+                return false;
+
+            constexpr double DueToleranceSeconds = 0.0005;
+            std::size_t selected = queuedFrames_.size();
+            for(std::size_t index = 0; index < queuedFrames_.size(); ++index)
+            {
+                if(queuedFrames_[index].dueMediaSeconds <=
+                   mediaSeconds + DueToleranceSeconds)
+                    selected = index;
+                else
+                    break;
+            }
+
+            // Preserve the existing positive-first-PTS startup contract. One
+            // opening picture may be shown before its timestamp so preview
+            // audio does not wait forever on files whose first PTS is above
+            // zero. Every later prefetched picture remains strictly due-time
+            // gated.
+            bool earlyOpeningFrame = false;
+            if(selected == queuedFrames_.size())
+            {
+                if(!allowEarlyOpeningFrame_)
+                    return false;
+                selected = 0;
+                earlyOpeningFrame = true;
+            }
+
+            const bool readAheadQueue = IsGpuYuvFrame(
+                queuedFrames_.front().frame.storage);
+            if(readAheadQueue && !earlyOpeningFrame)
+            {
+                const std::size_t dueCount = selected + 1;
+                readAheadPeakDueFrameBacklog_ = std::max(
+                    readAheadPeakDueFrameBacklog_, dueCount);
+                const auto decision =
+                    CoreLogic::SelectBoundedReadAheadFrame(
+                        dueCount,
+                        mediaSeconds,
+                        nominalFrameSeconds_,
+                        [this](std::size_t index) {
+                            return queuedFrames_[index].dueMediaSeconds;
+                        });
+                selected = decision.discardCount;
+                readAheadForcedLateDrops_ += decision.discardCount;
+                if(decision.catchUpPresentation)
+                    ++readAheadCatchUpPresentations_;
+            }
+
+            for(std::size_t index = 0; index < selected; ++index)
+            {
+                auto discarded = std::move(queuedFrames_.front().frame);
+                queuedFrames_.pop_front();
+                RecycleFrameLocked(std::move(discarded));
+            }
+            destination = std::move(queuedFrames_.front().frame);
+            queuedFrames_.pop_front();
+            allowEarlyOpeningFrame_ = false;
+            if(IsGpuYuvFrame(destination.storage))
+            {
+                readAheadPresentationStarted_ = true;
+                UpdateReadAheadHealthAfterConsumeLocked();
+            }
+            tookFrame = true;
+        }
+        if(tookFrame)
+            requestChanged_.notify_one();
+        return tookFrame;
     }
 
     void FrameDecoder::Recycle(VideoFrame&& frame)
     {
         if(frame.rgba.empty() && frame.y.empty() &&
-           frame.u.empty() && frame.v.empty())
+           frame.u.empty() && frame.v.empty() && frame.packedYuv.empty())
             return;
+        if(!gpuConversionEnabled_ &&
+           IsGpuYuvFrame(frame.storage))
+        {
+            // A Unity-side GPU failure hands the just-consumed YUV picture
+            // back after SetGpuConversionEnabled(false) has already released
+            // the queued reserve. Release this final set of plane capacities
+            // as well instead of retaining dead GPU-only memory in the RGBA
+            // fallback pool.
+            std::vector<std::uint8_t>().swap(frame.y);
+            std::vector<std::uint8_t>().swap(frame.u);
+            std::vector<std::uint8_t>().swap(frame.v);
+            std::vector<std::uint8_t>().swap(frame.packedYuv);
+        }
         std::scoped_lock lock(outputMutex_);
         RecycleFrameLocked(std::move(frame));
     }
@@ -765,6 +992,42 @@ namespace BigScreen {
         auto result = std::move(workerError_);
         workerError_.reset();
         return result;
+    }
+
+    DecoderReadAheadDiagnostics FrameDecoder::ReadAheadDiagnostics() const
+    {
+        std::scoped_lock lock(outputMutex_);
+        return {
+            static_cast<std::uint64_t>(readAheadByteBudget_),
+            static_cast<std::uint64_t>(readAheadFrameCapacity_),
+            static_cast<std::uint64_t>(queuedFrames_.size()),
+            static_cast<std::uint64_t>(readAheadPeakQueuedFrames_),
+            readAheadLowReserveEvents_,
+            readAheadEmptyQueueEvents_,
+            readAheadCatchUpPresentations_,
+            readAheadForcedLateDrops_,
+            static_cast<std::uint64_t>(readAheadPeakDueFrameBacklog_)};
+    }
+
+    FramePreparationDiagnostics FrameDecoder::PreparationDiagnostics() const
+    {
+        std::scoped_lock lock(preparationDiagnosticsMutex_);
+        return {
+            preparationSampleCount_,
+            preparationCpuNanoseconds_,
+            peakPreparationCpuNanoseconds_,
+            preparationWaitNanoseconds_,
+            peakPreparationWaitNanoseconds_};
+    }
+
+    void FrameDecoder::ResetPreparationDiagnostics()
+    {
+        std::scoped_lock lock(preparationDiagnosticsMutex_);
+        preparationSampleCount_ = 0;
+        preparationCpuNanoseconds_ = 0;
+        peakPreparationCpuNanoseconds_ = 0;
+        preparationWaitNanoseconds_ = 0;
+        peakPreparationWaitNanoseconds_ = 0;
     }
 
     const char* FrameDecoder::RuntimeVersion() const
@@ -831,6 +1094,7 @@ namespace BigScreen {
         std::uint64_t handledVersion = 0;
         double lastDecodedTime = -std::numeric_limits<double>::infinity();
         double lastDecodedDuration = nominalFrameSeconds_;
+        bool currentDecodedFramePublished = false;
         std::optional<double> firstAvailableFrameTime;
         std::optional<double> endOfStreamTime;
         bool decodedAnyFrame = false;
@@ -846,6 +1110,8 @@ namespace BigScreen {
             double target = 0.0;
             std::uint64_t targetVersion = 0;
             std::uint64_t targetGeneration = 0;
+            std::uint64_t targetDecodeEpoch = 0;
+            double presentationInterval = nominalFrameSeconds_;
             bool forceRestart = false;
             {
                 std::unique_lock lock(requestMutex_);
@@ -858,10 +1124,14 @@ namespace BigScreen {
                 target = requestedSeconds_;
                 targetVersion = requestVersion_;
                 targetGeneration = presentationGeneration_;
+                targetDecodeEpoch = decodeEpoch_.load();
+                presentationInterval =
+                    requestedPresentationIntervalSeconds_ > 0.0
+                        ? requestedPresentationIntervalSeconds_
+                        : nominalFrameSeconds_;
                 forceRestart = restartPending_;
                 restartPending_ = false;
             }
-
             if(forceRestart)
             {
                 // EOF is a codec state, not merely a timestamp. Always flush
@@ -880,20 +1150,9 @@ namespace BigScreen {
                 }
                 lastDecodedTime = -std::numeric_limits<double>::infinity();
                 lastDecodedDuration = nominalFrameSeconds_;
+                currentDecodedFramePublished = false;
                 firstAvailableFrameTime.reset();
                 endOfStreamTime.reset();
-            }
-
-            // A normal 30 fps video does not need a new decode for every 90 Hz
-            // Unity update. If the last decoded image still covers the target
-            // interval, mark the request handled and wait for song time to move.
-            if(std::isfinite(lastDecodedTime) &&
-               target >= lastDecodedTime &&
-               target < lastDecodedTime + lastDecodedDuration)
-            {
-                handledVersion = targetVersion;
-                updateCpuTotal();
-                continue;
             }
 
             // Once FFmpeg has drained the stream, later non-looping song time
@@ -922,11 +1181,24 @@ namespace BigScreen {
                 continue;
             }
 
+            const bool readAheadEnabled = gpuConversionEnabled_.load();
+            // This is a defensive seek allowance, not the queue target. The
+            // queue is bounded by the selected memory budget and a separate
+            // frame-count ceiling. Explicit restarts/scrubs increment the
+            // decode epoch and always flush/seek regardless of this value.
+            constexpr double MaximumExpectedReadAheadLeadSeconds = 2.0;
+
             // Restarts, replay scrubbing, loop wraparound, and large practice
             // jumps should seek to the preceding keyframe. Small forward steps
             // decode sequentially, which is substantially cheaper on Quest.
+            // A GPU worker is intentionally ahead of song time; that expected
+            // lead must not be mistaken for a rewind.
             if(!std::isfinite(lastDecodedTime) ||
-               target + nominalFrameSeconds_ < lastDecodedTime ||
+               target + nominalFrameSeconds_ +
+                       (readAheadEnabled
+                            ? MaximumExpectedReadAheadLeadSeconds
+                            : 0.0) <
+                   lastDecodedTime ||
                target - lastDecodedTime > 0.75)
             {
                 std::string seekError;
@@ -939,53 +1211,128 @@ namespace BigScreen {
                 }
                 lastDecodedTime = -std::numeric_limits<double>::infinity();
                 lastDecodedDuration = nominalFrameSeconds_;
+                currentDecodedFramePublished = false;
             }
 
-            // Measure all H.264 frames that must be decoded to reach this
-            // request, not merely the final frame that is converted to RGBA.
-            // Lower output-FPS limits still require intermediate reference
-            // frames, so excluding them substantially understated CPU work.
-            const auto requestWorkStarted = std::chrono::steady_clock::now();
+            // GPU read-ahead stores a separate due time for each prepared
+            // picture. Seed the next prediction from the newest queued slot;
+            // CPU RGBA intentionally retains the old one-frame mailbox and
+            // always targets only the newest request.
+            double nextDue = target;
+            if(readAheadEnabled)
+            {
+                std::scoped_lock outputLock(outputMutex_);
+                if(!queuedFrames_.empty())
+                    nextDue = std::max(
+                        target,
+                        queuedFrames_.back().dueMediaSeconds +
+                            presentationInterval);
+            }
+
+            // Measure all codec work required for one selected presentation
+            // picture, including intermediate H.264 reference frames. Reset
+            // after each prefetched output so the latency metric does not
+            // accidentally accumulate the complete queue fill into its later
+            // samples.
+            auto selectedFrameWorkStarted = std::chrono::steady_clock::now();
+            auto selectedFrameCpuStarted = CurrentThreadCpuNanoseconds();
             while(!stopWorker_)
             {
-                bool reachedEndOfStream = false;
-                if(!ReadDecodedFrame(reachedEndOfStream))
+                if(decodeEpoch_.load() != targetDecodeEpoch)
+                    break;
+
+                std::size_t queuedCount = 0;
+                std::size_t queueLimit = 1;
                 {
-                    if(reachedEndOfStream)
-                    {
-                        // A container can parse successfully while containing
-                        // no usable video pictures. Treat that as a media
-                        // failure rather than a normal EOF; otherwise preview
-                        // audio waits forever for firstFrameUploaded_. Do not
-                        // flag a valid file whose very first request was
-                        // intentionally beyond its known duration.
-                        const bool requestInsideKnownMedia =
-                            durationSeconds_ <= 0.0 ||
-                            target < durationSeconds_ + nominalFrameSeconds_;
-                        if(!decodedAnyFrame && requestInsideKnownMedia)
-                        {
-                            SetWorkerError(
-                                "FFmpeg reached the end of the video without decoding any usable frames.");
-                            handledVersion = targetVersion;
-                            break;
-                        }
-                        endOfStreamTime = std::isfinite(lastDecodedTime)
-                            ? lastDecodedTime + std::max(
-                                  lastDecodedDuration,
-                                  nominalFrameSeconds_ * 0.25)
-                            : std::max(0.0, target);
-                    }
+                    std::scoped_lock outputLock(outputMutex_);
+                    queuedCount = queuedFrames_.size();
+                    if(readAheadEnabled && !queuedFrames_.empty())
+                        queueLimit = ReadAheadQueueLimit(
+                            queuedFrames_.front().frame);
+                    else if(readAheadEnabled)
+                        queueLimit = lastReadAheadFrameBytes_ > 0
+                            ? ReadAheadQueueLimitForBytes(
+                                  lastReadAheadFrameBytes_)
+                            : 1;
+                }
+                if(readAheadEnabled && queuedCount >= queueLimit)
+                {
                     handledVersion = targetVersion;
                     break;
                 }
 
-                decodedAnyFrame = true;
-                lastDecodedTime = CurrentFrameTime();
-                lastDecodedDuration = CurrentFrameDuration();
-                if(!firstAvailableFrameTime)
-                    firstAvailableFrameTime = lastDecodedTime;
-                if(lastDecodedTime + lastDecodedDuration < target)
+                // A presentation ceiling can request the same source picture
+                // for multiple clock slots (for example, a 24 FPS source under
+                // a 60 FPS cap). Do not convert or queue duplicate copies.
+                if(currentDecodedFramePublished &&
+                   CoreLogic::PublishedFrameCoversPresentationSlot(
+                       nextDue,
+                       lastDecodedTime,
+                       lastDecodedDuration))
+                {
+                    nextDue += presentationInterval;
                     continue;
+                }
+
+                bool reachedEndOfStream = false;
+                while(CoreLogic::ShouldAdvanceDecodedFrame(
+                    nextDue,
+                    lastDecodedTime,
+                    lastDecodedDuration,
+                    currentDecodedFramePublished))
+                {
+                    if(!ReadDecodedFrame(reachedEndOfStream))
+                    {
+                        if(reachedEndOfStream)
+                        {
+                            // A container can parse successfully while
+                            // containing no usable video pictures. Treat that
+                            // as media failure rather than normal EOF.
+                            const bool requestInsideKnownMedia =
+                                durationSeconds_ <= 0.0 ||
+                                target < durationSeconds_ +
+                                    nominalFrameSeconds_;
+                            if(!decodedAnyFrame && requestInsideKnownMedia)
+                            {
+                                SetWorkerError(
+                                    "FFmpeg reached the end of the video without decoding any usable frames.");
+                            }
+                            endOfStreamTime = std::isfinite(lastDecodedTime)
+                                ? lastDecodedTime + std::max(
+                                      lastDecodedDuration,
+                                      nominalFrameSeconds_ * 0.25)
+                                : std::max(0.0, target);
+                        }
+                        handledVersion = targetVersion;
+                        break;
+                    }
+
+                    decodedAnyFrame = true;
+                    const double rawTimestamp = CurrentFrameTime();
+                    const double rawDuration = CurrentFrameDuration();
+                    const auto normalizedTiming =
+                        CoreLogic::NormalizeDecodedFrameTiming(
+                            rawTimestamp,
+                            rawDuration,
+                            nominalFrameSeconds_,
+                            lastDecodedTime,
+                            lastDecodedDuration,
+                            nextDue);
+                    lastDecodedTime = normalizedTiming.timestampSeconds;
+                    lastDecodedDuration = normalizedTiming.durationSeconds;
+                    currentDecodedFramePublished = false;
+                    if(!firstAvailableFrameTime)
+                        firstAvailableFrameTime = lastDecodedTime;
+
+                    // The earliest decoded PTS can be slightly above zero.
+                    // It is still the correct opening image for an earlier
+                    // request and retains the established startup behavior.
+                    if(firstAvailableFrameTime &&
+                       nextDue < *firstAvailableFrameTime)
+                        break;
+                }
+                if(reachedEndOfStream || !open_)
+                    break;
 
                 VideoFrame output = AcquireOutputFrame();
                 const auto framePixelReason = UnsupportedPixelReason(
@@ -1006,23 +1353,57 @@ namespace BigScreen {
                         conversionError);
                     break;
                 }
+                // ConvertCurrentFrame records the raw AVFrame timing for the
+                // ordinary software path. Publish the same normalized values
+                // used by the queue so a MediaCodec timestamp repair remains
+                // consistent across diagnostics and presentation.
+                output.presentationSeconds = lastDecodedTime;
+                output.durationSeconds = lastDecodedDuration;
                 output.generation = targetGeneration;
-                const auto elapsed = std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - requestWorkStarted).count();
-                const auto previous = averageDecodeMilliseconds_.load();
-                averageDecodeMilliseconds_ = previous <= 0.0
-                    ? elapsed : previous * 0.9 + elapsed * 0.1;
-                auto previousPeak = peakDecodeMilliseconds_.load();
-                while(elapsed > previousPeak &&
-                      !peakDecodeMilliseconds_.compare_exchange_weak(
-                          previousPeak, elapsed))
+                const auto selectedFrameWorkFinished =
+                    std::chrono::steady_clock::now();
+                const auto wallNanoseconds = static_cast<std::uint64_t>(
+                    std::max<std::int64_t>(
+                        0,
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            selectedFrameWorkFinished -
+                            selectedFrameWorkStarted).count()));
+                const auto cpuFinished = CurrentThreadCpuNanoseconds();
+                // CLOCK_THREAD_CPUTIME_ID is available on Android and Linux.
+                // Fall back to wall time only on a host that cannot provide
+                // it, preserving useful diagnostics instead of reporting 0.
+                const auto cpuNanoseconds =
+                    selectedFrameCpuStarted > 0 &&
+                    cpuFinished >= selectedFrameCpuStarted
+                        ? cpuFinished - selectedFrameCpuStarted
+                        : wallNanoseconds;
+                const auto waitNanoseconds = wallNanoseconds > cpuNanoseconds
+                    ? wallNanoseconds - cpuNanoseconds
+                    : 0;
                 {
-                    // compare_exchange refreshes previousPeak after another
-                    // write. Retry only while this sample is still larger.
+                    std::scoped_lock lock(preparationDiagnosticsMutex_);
+                    ++preparationSampleCount_;
+                    preparationCpuNanoseconds_ += cpuNanoseconds;
+                    peakPreparationCpuNanoseconds_ = std::max(
+                        peakPreparationCpuNanoseconds_, cpuNanoseconds);
+                    preparationWaitNanoseconds_ += waitNanoseconds;
+                    peakPreparationWaitNanoseconds_ = std::max(
+                        peakPreparationWaitNanoseconds_, waitNanoseconds);
                 }
-                Publish(std::move(output));
-                handledVersion = targetVersion;
-                break;
+                Publish(
+                    std::move(output),
+                    nextDue,
+                    targetDecodeEpoch);
+                currentDecodedFramePublished = true;
+                nextDue += presentationInterval;
+                selectedFrameWorkStarted = selectedFrameWorkFinished;
+                selectedFrameCpuStarted = CurrentThreadCpuNanoseconds();
+
+                if(!readAheadEnabled || !gpuConversionEnabled_.load())
+                {
+                    handledVersion = targetVersion;
+                    break;
+                }
             }
             updateCpuTotal();
         }
@@ -1200,7 +1581,13 @@ namespace BigScreen {
         std::int64_t timestamp = decoded_->best_effort_timestamp;
         if(timestamp == AV_NOPTS_VALUE)
             timestamp = decoded_->pts;
-        return timestamp == AV_NOPTS_VALUE ? 0.0 : timestamp * streamTimeBase_;
+        // Preserve the difference between a real zero timestamp and missing
+        // MediaCodec timing. The worker can safely synthesize the latter from
+        // the previous decoded picture and the stream cadence; collapsing both
+        // to zero made every later missing timestamp look like frame zero.
+        return timestamp == AV_NOPTS_VALUE
+            ? std::numeric_limits<double>::quiet_NaN()
+            : timestamp * streamTimeBase_;
     }
 
     double FrameDecoder::CurrentFrameDuration() const
@@ -1231,8 +1618,22 @@ namespace BigScreen {
            conversionWidth_ == decoded_->width &&
            conversionHeight_ == decoded_->height)
         {
-            if(CopyCurrentFrameAsYuv420(destination))
+            if(gpuYuvUploadLayout_.load() ==
+                   GpuYuvUploadLayout::PackedAtlas &&
+               CopyCurrentFrameAsPackedYuv420(destination))
                 return true;
+            if(CopyCurrentFrameAsYuv420(destination))
+            {
+                if(gpuYuvUploadLayout_.exchange(
+                       GpuYuvUploadLayout::ThreePlane) ==
+                   GpuYuvUploadLayout::PackedAtlas)
+                {
+                    std::scoped_lock lock(gpuConversionStatusMutex_);
+                    gpuYuvUploadFallbackReason_ =
+                        "the decoded frame could not be packed safely";
+                }
+                return true;
+            }
 
             // Keep this fallback permanent for the current open decoder. A
             // pixel format can change after MediaCodec startup or fallback;
@@ -1341,6 +1742,7 @@ namespace BigScreen {
         std::vector<std::uint8_t>().swap(destination.y);
         std::vector<std::uint8_t>().swap(destination.u);
         std::vector<std::uint8_t>().swap(destination.v);
+        std::vector<std::uint8_t>().swap(destination.packedYuv);
         destination.sourceWidth = 0;
         destination.sourceHeight = 0;
         destination.displayQuarterTurns = 0;
@@ -1437,23 +1839,20 @@ namespace BigScreen {
            (planar && !decoded_->data[2]))
             return false;
 
-        const auto resizeTracked = [this](
-            std::vector<std::uint8_t>& buffer,
-            std::size_t bytes)
-        {
-            if(buffer.capacity() < bytes)
-                ++bufferAllocations_;
-            buffer.resize(bytes);
-        };
-        resizeTracked(
-            destination.y,
-            static_cast<std::size_t>(width) * height);
-        resizeTracked(
-            destination.u,
-            static_cast<std::size_t>(chromaWidth) * chromaHeight);
-        resizeTracked(
-            destination.v,
-            static_cast<std::size_t>(chromaWidth) * chromaHeight);
+        const auto yBytes = static_cast<std::size_t>(width) * height;
+        const auto chromaBytes =
+            static_cast<std::size_t>(chromaWidth) * chromaHeight;
+        // Count one reusable frame-set allocation event, not three vector
+        // growth operations for Y/U/V. This makes the diagnostic comparable
+        // with RGBA and packed-atlas output and reflects what a user means by
+        // "frame-buffer allocations."
+        if(destination.y.capacity() < yBytes ||
+           destination.u.capacity() < chromaBytes ||
+           destination.v.capacity() < chromaBytes)
+            ++bufferAllocations_;
+        destination.y.resize(yBytes);
+        destination.u.resize(chromaBytes);
+        destination.v.resize(chromaBytes);
 
         for(int row = 0; row < height; ++row)
         {
@@ -1500,13 +1899,103 @@ namespace BigScreen {
             }
         }
 
-        destination.storage = VideoFrameStorage::Yuv420Planar;
-        // Plane output remains active until the decoder is closed or a
-        // permanent fallback is selected, so an old RGBA capacity can be
-        // released instead of doubling the reusable frame's resident memory.
+        FinalizeYuvFrame(destination, VideoFrameStorage::Yuv420Planar);
+        return true;
+    }
+
+    bool FrameDecoder::CopyCurrentFrameAsPackedYuv420(
+        VideoFrame& destination)
+    {
+        const auto format = static_cast<AVPixelFormat>(decoded_->format);
+        if(!GpuPlanePixelFormatSupported(format) ||
+           !GpuPlaneColorSpaceSupported(decoded_->colorspace))
+            return false;
+        const bool planar = format == AV_PIX_FMT_YUV420P ||
+            format == AV_PIX_FMT_YUVJ420P;
+        const int width = decoded_->width;
+        const int height = decoded_->height;
+        const int chromaWidth = (width + 1) / 2;
+        const int chromaHeight = (height + 1) / 2;
+        const int atlasWidth = std::max(width, chromaWidth * 2);
+        const int atlasHeight = height + chromaHeight;
+        if(width <= 0 || height <= 0 || atlasWidth <= 0 || atlasHeight <= 0 ||
+           !decoded_->data[0] || !decoded_->data[1] ||
+           (planar && !decoded_->data[2]))
+            return false;
+
+        const auto requiredBytes = static_cast<std::size_t>(atlasWidth) *
+            atlasHeight;
+        if(destination.packedYuv.capacity() < requiredBytes)
+            ++bufferAllocations_;
+        destination.packedYuv.resize(requiredBytes);
+        for(int row = 0; row < height; ++row)
+        {
+            std::copy_n(
+                decoded_->data[0] +
+                    static_cast<std::ptrdiff_t>(row) * decoded_->linesize[0],
+                width,
+                destination.packedYuv.data() +
+                    static_cast<std::size_t>(row) * atlasWidth);
+        }
+
+        auto* chromaBase = destination.packedYuv.data() +
+            static_cast<std::size_t>(height) * atlasWidth;
+        for(int row = 0; row < chromaHeight; ++row)
+        {
+            auto* outputU = chromaBase +
+                static_cast<std::size_t>(row) * atlasWidth;
+            auto* outputV = outputU + chromaWidth;
+            if(planar)
+            {
+                std::copy_n(
+                    decoded_->data[1] +
+                        static_cast<std::ptrdiff_t>(row) * decoded_->linesize[1],
+                    chromaWidth,
+                    outputU);
+                std::copy_n(
+                    decoded_->data[2] +
+                        static_cast<std::ptrdiff_t>(row) * decoded_->linesize[2],
+                    chromaWidth,
+                    outputV);
+            }
+            else
+            {
+                const auto* source = decoded_->data[1] +
+                    static_cast<std::ptrdiff_t>(row) * decoded_->linesize[1];
+                for(int column = 0; column < chromaWidth; ++column)
+                {
+                    outputU[column] = source[column * 2];
+                    outputV[column] = source[column * 2 + 1];
+                }
+            }
+        }
+
+        FinalizeYuvFrame(destination, VideoFrameStorage::Yuv420PackedAtlas);
+        return true;
+    }
+
+    void FrameDecoder::FinalizeYuvFrame(
+        VideoFrame& destination,
+        VideoFrameStorage storage)
+    {
+        const auto format = static_cast<AVPixelFormat>(decoded_->format);
+        destination.storage = storage;
+        // GPU output remains active until the decoder closes or permanently
+        // falls back. Retain only the allocation used by the selected upload
+        // layout so the read-ahead pool never doubles its resident memory.
         std::vector<std::uint8_t>().swap(destination.rgba);
-        destination.sourceWidth = width;
-        destination.sourceHeight = height;
+        if(storage == VideoFrameStorage::Yuv420PackedAtlas)
+        {
+            std::vector<std::uint8_t>().swap(destination.y);
+            std::vector<std::uint8_t>().swap(destination.u);
+            std::vector<std::uint8_t>().swap(destination.v);
+        }
+        else
+        {
+            std::vector<std::uint8_t>().swap(destination.packedYuv);
+        }
+        destination.sourceWidth = decoded_->width;
+        destination.sourceHeight = decoded_->height;
         destination.displayQuarterTurns = displayQuarterTurns_;
         destination.fullRange =
             format == AV_PIX_FMT_YUVJ420P ||
@@ -1534,7 +2023,6 @@ namespace BigScreen {
             std::scoped_lock lock(visualEffectsMutex_);
             destination.visualEffects = visualEffects_;
         }
-        return true;
     }
 
     void FrameDecoder::ApplyVisualEffects(VideoFrame& destination)
@@ -1771,16 +2259,67 @@ namespace BigScreen {
         }
     }
 
-    void FrameDecoder::Publish(VideoFrame&& frame)
+    void FrameDecoder::Publish(
+        VideoFrame&& frame,
+        double dueMediaSeconds,
+        std::uint64_t decodeEpoch)
     {
-        // A mailbox deliberately drops superseded frames. Blocking the decoder
-        // until Unity consumes every image would add latency and make Replay
-        // rendering slower without improving the final visible frame sequence.
+        if(IsGpuYuvFrame(frame.storage))
+        {
+            // GPU effects are metadata consumed by the Unity conversion pass.
+            // Refresh the snapshot immediately before publication so a Cinema
+            // phase change racing an in-flight conversion cannot enqueue the
+            // previous phase's values.
+            std::scoped_lock effectsLock(visualEffectsMutex_);
+            frame.visualEffects = visualEffects_;
+        }
+
         std::scoped_lock lock(outputMutex_);
-        if(frameWaiting_)
-            RecycleFrameLocked(std::move(newestFrame_));
-        newestFrame_ = std::move(frame);
-        frameWaiting_ = true;
+        if(decodeEpoch != decodeEpoch_.load())
+        {
+            RecycleFrameLocked(std::move(frame));
+            return;
+        }
+
+        const bool readAhead =
+            IsGpuYuvFrame(frame.storage) &&
+            gpuConversionEnabled_.load();
+        if(!readAhead)
+        {
+            // Preserve the proven CPU behavior: a single newest-frame mailbox
+            // replaces obsolete output instead of allowing latency to grow.
+            FlushQueuedFramesLocked();
+        }
+        else if(queuedFrames_.size() >= ReadAheadQueueLimit(frame))
+        {
+            // The worker normally checks capacity before decoding. Keep this
+            // final guard because the byte-based limit can shrink after a
+            // resolution/rotation transition.
+            RecycleFrameLocked(std::move(frame));
+            return;
+        }
+
+        queuedFrames_.push_back({
+            std::move(frame),
+            std::max(0.0, dueMediaSeconds),
+            decodeEpoch});
+        if(readAhead)
+        {
+            const auto& queuedFrame = queuedFrames_.back().frame;
+            lastReadAheadFrameBytes_ = queuedFrame.y.size() +
+                queuedFrame.u.size() + queuedFrame.v.size() +
+                queuedFrame.packedYuv.size();
+            readAheadFrameCapacity_ = ReadAheadQueueLimitForBytes(
+                lastReadAheadFrameBytes_);
+            readAheadPeakQueuedFrames_ = std::max(
+                readAheadPeakQueuedFrames_,
+                queuedFrames_.size());
+            const std::size_t lowThreshold = std::max<std::size_t>(
+                1, readAheadFrameCapacity_ / 4);
+            if(queuedFrames_.size() > lowThreshold)
+                readAheadLowReserveActive_ = false;
+            readAheadEmptyActive_ = false;
+        }
     }
 
     VideoFrame FrameDecoder::AcquireOutputFrame()
@@ -1797,10 +2336,14 @@ namespace BigScreen {
 
     void FrameDecoder::RecycleFrameLocked(VideoFrame&& frame)
     {
-        // One worker, one mailbox, and one main-thread upload need at most
-        // three reusable allocations. A strict cap prevents an old resolution
-        // from retaining arbitrary memory after rapid seeks or scene changes.
-        constexpr std::size_t MaximumReusableBuffers = 3;
+        // Retain enough frame sets to refill the configured read-ahead queue
+        // after a scrub/restart. Capping the pool at five caused a 256 MiB
+        // queue to free and reallocate dozens of multi-plane frames on every
+        // lifecycle flush. Queue plus pool never exceeds the same byte-derived
+        // frame capacity, so reuse does not double the configured memory cap.
+        std::size_t maximumReusableBuffers = 5;
+        if(IsGpuYuvFrame(frame.storage))
+            maximumReusableBuffers = ReadAheadQueueLimit(frame);
         frame.storage = VideoFrameStorage::Rgba32;
         frame.width = 0;
         frame.height = 0;
@@ -1810,8 +2353,68 @@ namespace BigScreen {
         frame.presentationSeconds = 0.0;
         frame.durationSeconds = 0.0;
         frame.generation = 0;
-        if(recycledFrames_.size() < MaximumReusableBuffers)
+        if(recycledFrames_.size() + queuedFrames_.size() <
+           maximumReusableBuffers)
             recycledFrames_.push_back(std::move(frame));
+    }
+
+    void FrameDecoder::FlushQueuedFramesLocked()
+    {
+        while(!queuedFrames_.empty())
+        {
+            auto discarded = std::move(queuedFrames_.front().frame);
+            queuedFrames_.pop_front();
+            RecycleFrameLocked(std::move(discarded));
+        }
+        // Intentional lifecycle flushes (restart, scrub, completion, early
+        // exit, and GPU fallback) are not decoder-starvation events. The next
+        // presentation pass begins with a clean transition state.
+        readAheadPresentationStarted_ = false;
+        readAheadLowReserveActive_ = false;
+        readAheadEmptyActive_ = false;
+    }
+
+    std::size_t FrameDecoder::ReadAheadQueueLimit(
+        const VideoFrame& frame) const
+    {
+        const std::size_t bytes = frame.y.size() + frame.u.size() +
+            frame.v.size() + frame.packedYuv.size();
+        return ReadAheadQueueLimitForBytes(bytes);
+    }
+
+    std::size_t FrameDecoder::ReadAheadQueueLimitForBytes(
+        std::size_t bytes) const
+    {
+        // The memory budget is the primary limit. A frame ceiling prevents a
+        // low-resolution/low-FPS source from preparing an excessive amount of
+        // media time even when the byte calculation would permit it.
+        constexpr std::size_t MaximumQueuedFrames = 120;
+        if(bytes == 0)
+            return 1;
+        return std::clamp<std::size_t>(
+            readAheadByteBudget_ / bytes,
+            1,
+            MaximumQueuedFrames);
+    }
+
+    void FrameDecoder::UpdateReadAheadHealthAfterConsumeLocked()
+    {
+        if(!readAheadPresentationStarted_ || readAheadFrameCapacity_ == 0)
+            return;
+
+        const std::size_t lowThreshold = std::max<std::size_t>(
+            1, readAheadFrameCapacity_ / 4);
+        if(queuedFrames_.size() <= lowThreshold &&
+           !readAheadLowReserveActive_)
+        {
+            ++readAheadLowReserveEvents_;
+            readAheadLowReserveActive_ = true;
+        }
+        if(queuedFrames_.empty() && !readAheadEmptyActive_)
+        {
+            ++readAheadEmptyQueueEvents_;
+            readAheadEmptyActive_ = true;
+        }
     }
 
 #ifdef BIGSCREEN_FFMPEG_BACKEND_FACTORY

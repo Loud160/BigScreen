@@ -11,7 +11,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -36,7 +38,13 @@ namespace BigScreen {
 
     enum class VideoFrameStorage : std::uint8_t {
         Rgba32,
-        Yuv420Planar
+        Yuv420Planar,
+        Yuv420PackedAtlas
+    };
+
+    enum class GpuYuvUploadLayout : std::uint8_t {
+        ThreePlane,
+        PackedAtlas
     };
 
     enum class VideoColorMatrix : std::uint8_t {
@@ -67,16 +75,18 @@ namespace BigScreen {
 
     /// An ABI-neutral decoded image ready for either the established RGBA
     /// Texture2D upload or the experimental GPU YUV conversion path. The YUV
-    /// representation is always tightly packed 8-bit 4:2:0 with independent
-    /// U/V planes, even when MediaCodec supplied NV12. Normalizing that small
-    /// amount of layout on the worker avoids exposing FFmpeg line strides or
-    /// pixel-format enums across the separately linked backend boundary.
+    /// representation is tightly packed 8-bit 4:2:0. The established layout
+    /// uses independent Y/U/V planes; the optional atlas places Y above
+    /// side-by-side U/V regions so Unity needs one upload rather than three.
+    /// Both are written by the decoder worker and expose no FFmpeg structures
+    /// across the separately linked backend boundary.
     struct VideoFrame {
         VideoFrameStorage storage = VideoFrameStorage::Rgba32;
         std::vector<std::uint8_t> rgba;
         std::vector<std::uint8_t> y;
         std::vector<std::uint8_t> u;
         std::vector<std::uint8_t> v;
+        std::vector<std::uint8_t> packedYuv;
         int width = 0;
         int height = 0;
         int sourceWidth = 0;
@@ -97,6 +107,36 @@ namespace BigScreen {
         std::uint64_t generation = 0;
     };
 
+    /// Snapshot of the experimental GPU YUV queue. Counts describe reserve
+    /// transitions rather than Unity presentation misses: they let the
+    /// append-only performance log show whether a larger memory budget kept
+    /// decoded pictures available during short decoder stalls.
+    struct DecoderReadAheadDiagnostics {
+        std::uint64_t byteBudget = 0;
+        std::uint64_t frameCapacity = 0;
+        std::uint64_t currentQueuedFrames = 0;
+        std::uint64_t peakQueuedFrames = 0;
+        std::uint64_t lowReserveEvents = 0;
+        std::uint64_t emptyQueueEvents = 0;
+        std::uint64_t catchUpPresentations = 0;
+        std::uint64_t forcedLateDrops = 0;
+        std::uint64_t peakDueFrameBacklog = 0;
+    };
+
+    /// Session totals for one prepared output picture. CPU time covers the
+    /// decoder worker's demux/decode/copy work. Wait time is wall time not
+    /// charged to that worker, including asynchronous MediaCodec waits and
+    /// thread descheduling. Keeping totals instead of an EMA lets the facade
+    /// merge a handled hardware-to-software fallback without distorting the
+    /// true session average or peak.
+    struct FramePreparationDiagnostics {
+        std::uint64_t sampleCount = 0;
+        std::uint64_t cpuNanoseconds = 0;
+        std::uint64_t peakCpuNanoseconds = 0;
+        std::uint64_t waitNanoseconds = 0;
+        std::uint64_t peakWaitNanoseconds = 0;
+    };
+
     /// ABI-neutral contract shared by the separately compiled FFmpeg 4.4 and
     /// FFmpeg 9 decoder implementations. No FFmpeg type crosses this boundary:
     /// each implementation is compiled with the exact headers matching its
@@ -109,6 +149,8 @@ namespace BigScreen {
             int maximumOutputHeight,
             bool preferHardwareDecoding,
             bool preferGpuConversion,
+            GpuYuvUploadLayout gpuYuvUploadLayout,
+            std::size_t readAheadByteBudget,
             void* javaVm,
             const FrameVisualEffects& visualEffects,
             std::string& error) = 0;
@@ -120,10 +162,12 @@ namespace BigScreen {
         /// belongs to Close() on either the caller or retirement worker.
         virtual bool WaitForWorkerStop(
             std::chrono::milliseconds timeout) = 0;
-        virtual void Request(double mediaSeconds) = 0;
+        virtual void Request(
+            double mediaSeconds,
+            double presentationIntervalSeconds) = 0;
         /// Starts a new presentation pass at the requested media position.
         /// Unlike an ordinary clock request, this clears any completed-frame
-        /// mailbox and forces the worker to flush/seek even when the new time
+        /// output and forces the worker to flush/seek even when the new time
         /// happens to fall inside the last decoded frame. Library preview
         /// looping uses this after EOF so stale completion state cannot be
         /// mistaken for a newly decoded opening picture.
@@ -139,9 +183,15 @@ namespace BigScreen {
         /// codec. Disabling also discards a queued YUV frame so a failed Unity
         /// GPU setup can request a fresh RGBA frame through the proven path.
         virtual void SetGpuConversionEnabled(bool enabled) = 0;
+        virtual void SetGpuYuvUploadLayout(
+            GpuYuvUploadLayout layout) = 0;
+        virtual GpuYuvUploadLayout ActiveGpuYuvUploadLayout() const = 0;
+        virtual std::string GpuYuvUploadFallbackReason() const = 0;
         virtual bool GpuConversionOutputEnabled() const = 0;
         virtual std::string GpuConversionFallbackReason() const = 0;
-        virtual bool TryTake(VideoFrame& destination) = 0;
+        virtual bool TryTake(
+            double mediaSeconds,
+            VideoFrame& destination) = 0;
         virtual void Recycle(VideoFrame&& frame) = 0;
         virtual std::optional<std::string> TakeError() = 0;
         virtual bool IsOpen() const = 0;
@@ -150,12 +200,12 @@ namespace BigScreen {
         virtual int SourceWidth() const = 0;
         virtual int SourceHeight() const = 0;
         virtual double SourceFramesPerSecond() const = 0;
-        virtual double AverageDecodeMilliseconds() const = 0;
-        virtual double PeakDecodeMilliseconds() const = 0;
-        virtual void ResetPeakDecodeMilliseconds() = 0;
+        virtual FramePreparationDiagnostics PreparationDiagnostics() const = 0;
+        virtual void ResetPreparationDiagnostics() = 0;
         virtual double WorkerCpuMilliseconds() const = 0;
         virtual double DurationSeconds() const = 0;
         virtual std::uint64_t BufferAllocations() const = 0;
+        virtual DecoderReadAheadDiagnostics ReadAheadDiagnostics() const = 0;
         virtual const char* RuntimeVersion() const = 0;
         virtual const char* CodecName() const = 0;
         /// Reports what actually decoded the current file. This deliberately
@@ -193,9 +243,10 @@ namespace BigScreen {
     ///
     /// Big Screen intentionally does not run its own playback clock. Beat Saber
     /// supplies a requested media timestamp every frame; Replay supplies the
-    /// same timestamps while rendering at a fixed simulation step. The worker
-    /// thread decodes toward the newest request and publishes a one-frame
-    /// mailbox for the Unity thread to consume without blocking gameplay.
+    /// same timestamps while rendering at a fixed simulation step. CPU RGBA
+    /// output retains a one-frame mailbox. The experimental GPU YUV path keeps
+    /// a short bounded queue whose pictures remain gated by the same external
+    /// clock, so neither path can run ahead visibly or block gameplay.
     class FrameDecoder final : public FrameDecoderBackend {
     public:
         FrameDecoder() = default;
@@ -212,6 +263,8 @@ namespace BigScreen {
             int maximumOutputHeight,
             bool preferHardwareDecoding,
             bool preferGpuConversion,
+            GpuYuvUploadLayout gpuYuvUploadLayout,
+            std::size_t readAheadByteBudget,
             void* javaVm,
             const FrameVisualEffects& visualEffects,
             std::string& error) override;
@@ -227,6 +280,8 @@ namespace BigScreen {
                 maximumOutputHeight,
                 false,
                 false,
+                GpuYuvUploadLayout::ThreePlane,
+                64u * 1024u * 1024u,
                 nullptr,
                 {},
                 error);
@@ -237,11 +292,22 @@ namespace BigScreen {
 
         /// Publishes the newest externally-clocked target. The worker may
         /// intentionally coalesce obsolete targets so playback stays current.
-        void Request(double mediaSeconds) override;
+        void Request(
+            double mediaSeconds,
+            double presentationIntervalSeconds) override;
         std::uint64_t Restart(double mediaSeconds) override;
         void UpdateVisualEffects(
             const FrameVisualEffects& visualEffects) override;
         void SetGpuConversionEnabled(bool enabled) override;
+        void SetGpuYuvUploadLayout(
+            GpuYuvUploadLayout layout) override;
+        GpuYuvUploadLayout ActiveGpuYuvUploadLayout() const override {
+            return gpuYuvUploadLayout_.load();
+        }
+        std::string GpuYuvUploadFallbackReason() const override {
+            std::scoped_lock lock(gpuConversionStatusMutex_);
+            return gpuYuvUploadFallbackReason_;
+        }
         bool GpuConversionOutputEnabled() const override {
             return gpuConversionEnabled_.load();
         }
@@ -249,7 +315,9 @@ namespace BigScreen {
             std::scoped_lock lock(gpuConversionStatusMutex_);
             return gpuConversionFallbackReason_;
         }
-        bool TryTake(VideoFrame& destination) override;
+        bool TryTake(
+            double mediaSeconds,
+            VideoFrame& destination) override;
         /// Returns consumed RGBA or plane allocations to the decoder. Keeping
         /// a small pool avoids allocating and freeing multi-megabyte frame
         /// buffers for every presented picture.
@@ -266,9 +334,8 @@ namespace BigScreen {
         double SourceFramesPerSecond() const override {
             return nominalFrameSeconds_ > 0.0 ? 1.0 / nominalFrameSeconds_ : 0.0;
         }
-        double AverageDecodeMilliseconds() const override { return averageDecodeMilliseconds_.load(); }
-        double PeakDecodeMilliseconds() const override { return peakDecodeMilliseconds_.load(); }
-        void ResetPeakDecodeMilliseconds() override { peakDecodeMilliseconds_ = 0.0; }
+        FramePreparationDiagnostics PreparationDiagnostics() const override;
+        void ResetPreparationDiagnostics() override;
         /// CPU time consumed by Big Screen's owned decoder worker since this
         /// decoder was opened. Unlike wall-clock decode latency, sleeping while
         /// waiting for a timestamp does not increase this value.
@@ -277,6 +344,7 @@ namespace BigScreen {
         }
         double DurationSeconds() const override { return durationSeconds_; }
         std::uint64_t BufferAllocations() const override { return bufferAllocations_.load(); }
+        DecoderReadAheadDiagnostics ReadAheadDiagnostics() const override;
         const char* RuntimeVersion() const override;
         const char* CodecName() const override { return codecName_.c_str(); }
         bool UsingHardwareDecoder() const override { return usingHardwareDecoder_; }
@@ -305,14 +373,25 @@ namespace BigScreen {
         double CurrentFrameDuration() const;
         bool ConvertCurrentFrame(VideoFrame& destination, std::string& error);
         bool CopyCurrentFrameAsYuv420(VideoFrame& destination);
+        bool CopyCurrentFrameAsPackedYuv420(VideoFrame& destination);
+        void FinalizeYuvFrame(
+            VideoFrame& destination,
+            VideoFrameStorage storage);
         void ApplyVisualEffects(VideoFrame& destination);
         void RebuildVisualEffectCache(
             const FrameVisualEffects& effects,
             int width,
             int height);
-        void Publish(VideoFrame&& frame);
+        void Publish(
+            VideoFrame&& frame,
+            double dueMediaSeconds,
+            std::uint64_t decodeEpoch);
         VideoFrame AcquireOutputFrame();
         void RecycleFrameLocked(VideoFrame&& frame);
+        void FlushQueuedFramesLocked();
+        std::size_t ReadAheadQueueLimit(const VideoFrame& frame) const;
+        std::size_t ReadAheadQueueLimitForBytes(std::size_t bytes) const;
+        void UpdateReadAheadHealthAfterConsumeLocked();
 
         AVFormatContext* format_ = nullptr;
         AVCodecContext* codec_ = nullptr;
@@ -337,8 +416,11 @@ namespace BigScreen {
         bool gpuConversionRequested_ = false;
         std::atomic<bool> gpuConversionEnabled_{false};
         std::atomic<bool> gpuConversionRejected_{false};
+        std::atomic<GpuYuvUploadLayout> gpuYuvUploadLayout_{
+            GpuYuvUploadLayout::ThreePlane};
         mutable std::mutex gpuConversionStatusMutex_;
         std::string gpuConversionFallbackReason_;
+        std::string gpuYuvUploadFallbackReason_;
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
@@ -359,30 +441,63 @@ namespace BigScreen {
         std::atomic<bool> workerExited_{true};
         std::mutex workerExitMutex_;
         std::condition_variable workerExitedChanged_;
-        std::atomic<double> averageDecodeMilliseconds_{0.0};
-        // Highest complete decode-and-convert request observed since this
-        // decoder was opened. Keeping it beside the moving average explains
-        // short spikes that may have already disappeared from the average.
-        std::atomic<double> peakDecodeMilliseconds_{0.0};
+        // True session totals for prepared output pictures. Unlike the old
+        // exponential wall-clock average, these counters cannot be dominated
+        // by one late MediaCodec wait at the end of a map.
+        mutable std::mutex preparationDiagnosticsMutex_;
+        std::uint64_t preparationSampleCount_ = 0;
+        std::uint64_t preparationCpuNanoseconds_ = 0;
+        std::uint64_t peakPreparationCpuNanoseconds_ = 0;
+        std::uint64_t preparationWaitNanoseconds_ = 0;
+        std::uint64_t peakPreparationWaitNanoseconds_ = 0;
         std::atomic<std::uint64_t> workerCpuNanoseconds_{0};
-        // Counts only vector capacity growth, not ordinary frame reuse. This is
-        // exposed in diagnostics so on-device tests can prove the RGBA pool is
-        // stable instead of silently allocating multi-megabyte buffers again.
+        // Counts reusable output frame sets whose backing storage grows, not
+        // ordinary reuse. Planar Y/U/V growth counts once for the set so this
+        // remains comparable with RGBA and packed-atlas output.
         std::atomic<std::uint64_t> bufferAllocations_{0};
-
+        std::size_t readAheadByteBudget_ = 64u * 1024u * 1024u;
         std::mutex requestMutex_;
         std::condition_variable requestChanged_;
         double requestedSeconds_ = 0.0;
+        // Media-time spacing between presentation slots. PlaybackSession
+        // derives this from playback speed and the active FPS ceiling so the
+        // read-ahead worker does not prepare pictures the limiter will skip.
+        double requestedPresentationIntervalSeconds_ = 0.0;
         std::uint64_t requestVersion_ = 0;
         std::uint64_t presentationGeneration_ = 0;
+        // Any seek, restart, output-format transition, or CPU-side effect
+        // replacement increments this epoch. A conversion already in flight
+        // may finish, but Publish rejects it instead of leaking stale output
+        // into the replacement queue.
+        std::atomic<std::uint64_t> decodeEpoch_{0};
         // Protected by requestMutex_. It remains set across ordinary Request
         // calls until the worker consumes it, so a fast Unity Tick cannot
         // overwrite the mandatory EOF rewind before the worker wakes.
         bool restartPending_ = false;
-        std::mutex outputMutex_;
-        VideoFrame newestFrame_;
+        mutable std::mutex outputMutex_;
+        struct QueuedFrame {
+            VideoFrame frame;
+            // The source PTS remains in frame.presentationSeconds. This
+            // separate due time preserves the active presentation cap: a
+            // prefetched source picture cannot be uploaded before the future
+            // song-clock slot for which it was selected.
+            double dueMediaSeconds = 0.0;
+            std::uint64_t decodeEpoch = 0;
+        };
+        std::deque<QueuedFrame> queuedFrames_;
         std::vector<VideoFrame> recycledFrames_;
-        bool frameWaiting_ = false;
+        bool allowEarlyOpeningFrame_ = true;
+        std::size_t lastReadAheadFrameBytes_ = 0;
+        std::size_t readAheadFrameCapacity_ = 0;
+        std::size_t readAheadPeakQueuedFrames_ = 0;
+        std::uint64_t readAheadLowReserveEvents_ = 0;
+        std::uint64_t readAheadEmptyQueueEvents_ = 0;
+        std::uint64_t readAheadCatchUpPresentations_ = 0;
+        std::uint64_t readAheadForcedLateDrops_ = 0;
+        std::size_t readAheadPeakDueFrameBacklog_ = 0;
+        bool readAheadPresentationStarted_ = false;
+        bool readAheadLowReserveActive_ = false;
+        bool readAheadEmptyActive_ = false;
 
         std::mutex errorMutex_;
         std::optional<std::string> workerError_;
@@ -440,15 +555,21 @@ namespace BigScreen {
             return Open(videoPath, maximumOutputHeight, false, {}, error);
         }
         void Close();
-        void Request(double mediaSeconds);
+        void Request(
+            double mediaSeconds,
+            double presentationIntervalSeconds = 0.0);
         /// Clears stale decoded output and forces the active backend to begin
         /// a fresh pass at mediaSeconds without replacing the Unity surface.
         std::uint64_t Restart(double mediaSeconds);
         void UpdateVisualEffects(const FrameVisualEffects& visualEffects);
         void SetGpuConversionEnabled(bool enabled);
+        void SetGpuYuvUploadLayout(GpuYuvUploadLayout layout);
+        GpuYuvUploadLayout ActiveGpuYuvUploadLayout() const;
+        std::string GpuYuvUploadFallbackReason() const;
         bool GpuConversionOutputEnabled() const;
         std::string GpuConversionFallbackReason() const;
         bool TryTake(VideoFrame& destination);
+        bool TryTake(double mediaSeconds, VideoFrame& destination);
         void Recycle(VideoFrame&& frame);
         std::optional<std::string> TakeError();
 
@@ -460,14 +581,20 @@ namespace BigScreen {
         double SourceFramesPerSecond() const;
         double AverageDecodeMilliseconds() const;
         double PeakDecodeMilliseconds() const;
+        double AverageWorkerWaitMilliseconds() const;
+        double PeakWorkerWaitMilliseconds() const;
+        /// Starts a new measurement interval after decoder prewarm. Unlike the
+        /// former live-panel peak reset, this is called once at session start;
+        /// the reported average and peak then cover the complete interval.
+        void ResetPreparationDiagnostics();
         /// Wall-clock time spent selecting and opening the active backend.
         /// Persisted only to performance-history.log; it is intentionally not
         /// part of the live panel because startup is a one-time event.
         double OpenMilliseconds() const { return openMilliseconds_; }
-        void ResetPeakDecodeMilliseconds();
         double WorkerCpuMilliseconds() const;
         double DurationSeconds() const;
         std::uint64_t BufferAllocations() const;
+        DecoderReadAheadDiagnostics ReadAheadDiagnostics() const;
         const char* RuntimeVersion() const;
         const char* CodecName() const;
         bool UsingHardwareDecoder() const;
@@ -486,15 +613,20 @@ namespace BigScreen {
         std::filesystem::path videoPath_;
         int maximumOutputHeight_ = 0;
         double lastRequestedSeconds_ = 0.0;
+        double lastPresentationIntervalSeconds_ = 0.0;
+        std::size_t readAheadByteBudget_ = 64u * 1024u * 1024u;
         bool useFfmpeg9_ = false;
         bool hardwareRequested_ = false;
         bool gpuConversionRequested_ = false;
+        GpuYuvUploadLayout gpuYuvUploadLayout_ =
+            GpuYuvUploadLayout::ThreePlane;
         bool hardwareFallbackAttempted_ = false;
         void* javaVm_ = nullptr;
         FrameVisualEffects visualEffects_{};
         double accumulatedWorkerCpuMilliseconds_ = 0.0;
         std::uint64_t accumulatedBufferAllocations_ = 0;
-        double retainedPeakDecodeMilliseconds_ = 0.0;
+        DecoderReadAheadDiagnostics retainedReadAheadDiagnostics_{};
+        FramePreparationDiagnostics retainedPreparationDiagnostics_{};
         double openMilliseconds_ = 0.0;
     };
 #endif

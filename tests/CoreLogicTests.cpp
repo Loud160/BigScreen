@@ -197,6 +197,49 @@ int main()
                VideoCodecKind::H264, false, false, false, true).empty(),
            "8-bit SDR 4:2:0 remains compatible");
 
+    const double frame24 = 1.0 / 24.0;
+    const auto validTiming = NormalizeDecodedFrameTiming(
+        4.125, frame24, frame24, 4.083333333, frame24, 4.125);
+    Expect(std::abs(validTiming.timestampSeconds - 4.125) < 0.000001 &&
+               std::abs(validTiming.durationSeconds - frame24) < 0.000001 &&
+               !validTiming.repairedTimestamp && !validTiming.repairedDuration,
+           "valid variable-frame timing remains unchanged");
+    const auto missingFirstTiming = NormalizeDecodedFrameTiming(
+        std::numeric_limits<double>::quiet_NaN(),
+        frame24,
+        frame24,
+        -std::numeric_limits<double>::infinity(),
+        frame24,
+        7.5);
+    Expect(std::abs(missingFirstTiming.timestampSeconds - 7.5) < 0.000001 &&
+               missingFirstTiming.repairedTimestamp,
+           "a missing first hardware timestamp anchors to the requested time");
+    const auto repeatedHardwareTiming = NormalizeDecodedFrameTiming(
+        0.0, frame24, frame24, 0.0, frame24, frame24);
+    Expect(std::abs(repeatedHardwareTiming.timestampSeconds - frame24) < 0.000001 &&
+               repeatedHardwareTiming.repairedTimestamp,
+           "a repeated MediaCodec timestamp advances by the prior frame duration");
+    const auto containerDurationTiming = NormalizeDecodedFrameTiming(
+        frame24, 255.0, frame24, 0.0, frame24, frame24);
+    Expect(std::abs(containerDurationTiming.durationSeconds - frame24) < 0.000001 &&
+               containerDurationTiming.repairedDuration,
+           "a container-sized AVFrame duration falls back to source cadence");
+    Expect(!ShouldAdvanceDecodedFrame(4.183333, 4.184000, 0.016, false),
+           "a rounded WebM PTS after the deadline is accepted instead of decoding past it");
+    Expect(ShouldAdvanceDecodedFrame(4.200000, 4.184000, 0.016, false),
+           "a deadline beyond the current picture advances to another frame");
+    Expect(ShouldAdvanceDecodedFrame(4.183333, 4.167000, 0.016, true),
+           "an already-published picture advances before filling the next queue slot");
+    Expect(!PublishedFrameCoversPresentationSlot(
+               4.200000, 4.184000, 0.016000),
+           "an exact rounded end boundary advances to the next 60 FPS picture");
+    Expect(!PublishedFrameCoversPresentationSlot(
+               4.199700, 4.184000, 0.016000),
+           "sub-millisecond timestamp noise cannot swallow a presentation slot");
+    Expect(PublishedFrameCoversPresentationSlot(
+               4.190000, 4.184000, 0.016000),
+           "a deadline materially inside the current picture reuses it");
+
     Expect(!ShouldSampleGameplayFrame(9.9, 120.0, false),
            "gameplay FPS excludes the first ten seconds");
     Expect(ShouldSampleGameplayFrame(10.0, 120.0, false),
@@ -221,6 +264,63 @@ int main()
            "slow playback reduces source-frame demand");
     Expect(ExpectedPresentedFrames(5.0, 30.0, 2.0, 60) == 300,
            "fast playback increases demand up to the output cap");
+    Expect(std::abs(PresentationMediaInterval(59.94, 1.0, 60) -
+                    1.0 / 59.94) < 0.0000001,
+           "a 60 FPS ceiling preserves a 59.94 FPS source cadence");
+    Expect(std::abs(PresentationMediaInterval(24.0, 1.0, 60) -
+                    1.0 / 24.0) < 0.0000001,
+           "a 24 FPS source queues one slot per distinct source picture");
+    Expect(std::abs(PresentationMediaInterval(60.0, 2.0, 60) -
+                    2.0 / 60.0) < 0.0000001,
+           "fast playback advances farther through media when output-capped");
+    Expect(std::abs(PresentationMediaInterval(60.0, 0.5, 60) -
+                    1.0 / 60.0) < 0.0000001,
+           "slow playback retains each distinct source picture");
+
+    const std::array<double, 1> oneDue{1.0};
+    const auto ordinaryReadAhead = SelectBoundedReadAheadFrame(
+        oneDue.size(),
+        1.001,
+        1.0 / 60.0,
+        [&oneDue](std::size_t index) { return oneDue[index]; });
+    Expect(ordinaryReadAhead.discardCount == 0 &&
+               !ordinaryReadAhead.catchUpPresentation,
+           "one due read-ahead picture is presented normally");
+
+    const std::array<double, 2> recoverableDue{1.0, 1.0 + 1.0 / 60.0};
+    const auto recoverableReadAhead = SelectBoundedReadAheadFrame(
+        recoverableDue.size(),
+        recoverableDue[1] + 0.0002,
+        1.0 / 60.0,
+        [&recoverableDue](std::size_t index) {
+            return recoverableDue[index];
+        });
+    Expect(recoverableReadAhead.discardCount == 0 &&
+               recoverableReadAhead.catchUpPresentation,
+           "a 90 Hz update may recover one slightly late 60 FPS picture");
+
+    const auto irrecoverablyLateReadAhead = SelectBoundedReadAheadFrame(
+        recoverableDue.size(),
+        recoverableDue[1] + 0.020,
+        1.0 / 60.0,
+        [&recoverableDue](std::size_t index) {
+            return recoverableDue[index];
+        });
+    Expect(irrecoverablyLateReadAhead.discardCount == 1 &&
+               !irrecoverablyLateReadAhead.catchUpPresentation,
+           "a picture more than one interval late is still discarded");
+
+    const std::array<double, 4> hitchedDue{
+        1.0, 1.0 + 1.0 / 60.0, 1.0 + 2.0 / 60.0, 1.05};
+    const auto boundedHitch = SelectBoundedReadAheadFrame(
+        hitchedDue.size(),
+        1.0502,
+        1.0 / 60.0,
+        [&hitchedDue](std::size_t index) { return hitchedDue[index]; });
+    Expect(boundedHitch.discardCount == 2 &&
+               boundedHitch.catchUpPresentation,
+           "a larger hitch discards old backlog but retains only one recovery frame");
+
     Expect(MissedFramePercent(150, 150) == 0.0,
            "presenting every expected frame reports no misses");
     Expect(MissedFramePercent(150, 165) == 0.0,
@@ -376,6 +476,28 @@ int main()
            "visible media time becomes ready after its first picture reaches Unity");
     Expect(SynchronizedPreviewReady(120.0, true, false),
            "configured post-roll advances without an impossible decoded picture");
+
+    const auto restrictedDownload = DescribeDownloadFailure(
+        "BS-DL-ACCESS-RESTRICTED",
+        "YouTube or the current network administrator restricted this video.",
+        true);
+    Expect(restrictedDownload.title == "Video access restricted" &&
+               restrictedDownload.message.find("different network") !=
+                   std::string::npos &&
+               restrictedDownload.message.find("BS-DL-ACCESS-RESTRICTED") !=
+                   std::string::npos,
+           "restricted-video dialogs explain the policy cause, next action, and support code");
+    const auto rateLimitedDownload = DescribeDownloadFailure(
+        "BS-DL-HTTP-429", {}, false);
+    Expect(rateLimitedDownload.title == "YouTube rate limit" &&
+               rateLimitedDownload.message.find("Wait a few minutes") !=
+                   std::string::npos,
+           "rate-limit dialogs provide a useful retry instruction");
+    const auto unknownProbe = DescribeDownloadFailure({}, {}, true);
+    Expect(unknownProbe.title == "Video check failed" &&
+               unknownProbe.message.find("BS-DL-PROBE-001") !=
+                   std::string::npos,
+           "unknown metadata failures retain a stable diagnostic code");
 
     CornerWarpSettings warp;
     warp.corners[0] = {-2.0f, -1.0f, 0.0f};

@@ -101,6 +101,7 @@ namespace BigScreen {
         const auto expectedFrames = CoreLogic::ReportablePresentationDeadlines(
             expectedPresentationDeadlines_,
             deliveredPresentedFrames_);
+        const auto readAhead = decoder_.ReadAheadDiagnostics();
         return {
             decoder_.Width(), decoder_.Height(),
             decoder_.SourceFramesPerSecond(), effectiveFpsLimit_,
@@ -109,8 +110,19 @@ namespace BigScreen {
             deliveredPresentedFrames_,
             presentationMisses_.MissedDeadlines(),
             decoder_.BufferAllocations(),
+            readAhead.byteBudget / (1024u * 1024u),
+            readAhead.frameCapacity,
+            readAhead.currentQueuedFrames,
+            readAhead.peakQueuedFrames,
+            readAhead.lowReserveEvents,
+            readAhead.emptyQueueEvents,
+            readAhead.catchUpPresentations,
+            readAhead.forcedLateDrops,
+            readAhead.peakDueFrameBacklog,
             decoder_.AverageDecodeMilliseconds(),
             decoder_.PeakDecodeMilliseconds(),
+            decoder_.AverageWorkerWaitMilliseconds(),
+            decoder_.PeakWorkerWaitMilliseconds(),
             decoder_.OpenMilliseconds(),
             activeDecoderCpu,
             averagePresentationMilliseconds_,
@@ -478,6 +490,15 @@ namespace BigScreen {
 
     void PlaybackSession::Start(PlaybackContext context)
     {
+        // The Video Library deliberately stops its decoder while moving between
+        // rows and while unlinking/replacing a file. Context alone is None in
+        // that gap, so it cannot protect the shared session. The explicit
+        // ownership flag closes the gap and prevents SongPreviewPlayer's ticker
+        // from reopening the preceding map's stale path as a MenuPreview.
+        if(context == PlaybackContext::MenuPreview &&
+           libraryPreviewOwnershipActive_)
+            return;
+
         if(!Settings::Instance().ModEnabled() ||
            !config_ ||
            started_ ||
@@ -550,16 +571,7 @@ namespace BigScreen {
             decoder_.Close();
             return;
         }
-        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
-        presentationMethod_ = surface_.GpuConversionActive()
-            ? "GPU YUV"
-            : "CPU RGBA";
-        if(gpuConversionRequested && !surface_.GpuConversionActive())
-        {
-            gpuConversionDisabledForSession_ = true;
-            PaperLogger.warn(
-                "Experimental GPU video conversion could not start; playback retained the CPU RGBA path");
-        }
+        SynchronizeGpuPresentationState(gpuConversionRequested);
 
         if(MapperScreenPresentationActive() &&
            !config_->additionalScreens.empty() &&
@@ -643,6 +655,7 @@ namespace BigScreen {
         // clock. Exclude that setup work from the map benchmark so video-on
         // and video-off runs cover the same measured interval.
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
+        decoder_.ResetPreparationDiagnostics();
         diagnosticsFrameCounter_ = 0;
         diagnosticsVisible_ = false;
         averagePresentationMilliseconds_ = 0.0;
@@ -679,7 +692,12 @@ namespace BigScreen {
             const int fpsLimit = std::max(
                 1,
                 effectiveFpsLimit_);
-            decoder_.Request(initialMediaTime);
+            decoder_.Request(
+                initialMediaTime,
+                CoreLogic::PresentationMediaInterval(
+                    decoder_.SourceFramesPerSecond(),
+                    config_->playbackRate,
+                    fpsLimit));
             ++requestedFrames_;
             lastPresentationSlot_ = static_cast<std::int64_t>(std::floor(
                 initialSongTime * fpsLimit + 0.000001));
@@ -697,6 +715,24 @@ namespace BigScreen {
         if(context == PlaybackContext::LibraryPreview &&
            Settings::Instance().PerformanceDiagnosticsEnabled())
             PerformancePanel::Instance().ShowWaitingMessage();
+    }
+
+    void PlaybackSession::SetLibraryPreviewOwnershipActive(bool active)
+    {
+        if(libraryPreviewOwnershipActive_ == active)
+            return;
+
+        libraryPreviewOwnershipActive_ = active;
+        if(active && IsMenuPreviewActive())
+        {
+            // Stop before the Video Library begins changing selection state.
+            // Stop synchronously closes the decoder and clears its read-ahead
+            // queue, while the ownership flag remains set across that cleanup.
+            Stop();
+        }
+        PaperLogger.debug(
+            "Video Library preview ownership changed to {}",
+            active ? "active" : "inactive");
     }
 
     void PlaybackSession::BeginLibraryPreviewMeasurement(double songTimeSeconds)
@@ -731,7 +767,7 @@ namespace BigScreen {
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
         ResetAutomaticPerformanceController(songTimeSeconds);
         diagnosticsFrameCounter_ = 0;
-        decoder_.ResetPeakDecodeMilliseconds();
+        decoder_.ResetPreparationDiagnostics();
         PaperLogger.info(
             "Started Video Library performance measurement after decoder prewarm");
     }
@@ -799,6 +835,8 @@ namespace BigScreen {
                     error);
             return false;
         }
+        decoder_.SetGpuYuvUploadLayout(
+            surface_.ActiveGpuYuvUploadLayout());
         decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
 
         // Keep the existing Unity screen and texture. Only the codec state is
@@ -824,6 +862,36 @@ namespace BigScreen {
                 !gpuConversionDisabledForSession_,
             VisualEffectsFor(*config_),
             error);
+    }
+
+    void PlaybackSession::SynchronizeGpuPresentationState(
+        bool gpuConversionRequested)
+    {
+        decoder_.SetGpuYuvUploadLayout(
+            surface_.ActiveGpuYuvUploadLayout());
+        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
+        presentationMethod_ = surface_.GpuConversionActive()
+            ? surface_.ActiveGpuYuvUploadLayout() ==
+                    GpuYuvUploadLayout::PackedAtlas
+                ? "GPU YUV Packed"
+                : "GPU YUV 3-Plane"
+            : "CPU RGBA";
+
+        if(auto fallback = surface_.TakeGpuYuvUploadFallback())
+        {
+            PaperLogger.warn(
+                "Consolidated YUV upload was unavailable; active presentation is GPU YUV 3-Plane: {}",
+                *fallback);
+            ErrorManager::Instance().RecordError(
+                "Falling back from consolidated YUV upload",
+                *fallback + "; GPU YUV 3-Plane remained active");
+        }
+        if(gpuConversionRequested && !surface_.GpuConversionActive())
+        {
+            gpuConversionDisabledForSession_ = true;
+            PaperLogger.warn(
+                "Experimental GPU video conversion could not start; playback retained the CPU RGBA path");
+        }
     }
 
     FrameVisualEffects PlaybackSession::VisualEffectsFor(
@@ -949,9 +1017,7 @@ namespace BigScreen {
                 phaseIndex + 1);
             return false;
         }
-        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
-        if(gpuConversionRequested && !surface_.GpuConversionActive())
-            gpuConversionDisabledForSession_ = true;
+        SynchronizeGpuPresentationState(gpuConversionRequested);
         if(!config_->additionalScreens.empty() &&
            !cinemaScreens_.Create(
                *config_, decoder_.Width(), decoder_.Height(), surface_.Texture()))
@@ -960,7 +1026,12 @@ namespace BigScreen {
                 "Cinema compatibility phase {} could not create its additional screens",
                 phaseIndex + 1);
         }
-        decoder_.Request(std::max(0.0, songTimeSeconds));
+        decoder_.Request(
+            std::max(0.0, songTimeSeconds),
+            CoreLogic::PresentationMediaInterval(
+                decoder_.SourceFramesPerSecond(),
+                config_->playbackRate,
+                std::max(1, effectiveFpsLimit_)));
         PaperLogger.info(
             "Cinema compatibility phase {}/{} applied from '{}'",
             phaseIndex + 1,
@@ -989,7 +1060,14 @@ namespace BigScreen {
         const double initialMediaTime = config_->MediaTimeForSong(
             0.0, decoder_.DurationSeconds());
         if(initialMediaTime >= 0.0)
-            decoder_.Request(initialMediaTime);
+        {
+            decoder_.Request(
+                initialMediaTime,
+                CoreLogic::PresentationMediaInterval(
+                    decoder_.SourceFramesPerSecond(),
+                    config_->playbackRate,
+                    std::max(1, effectiveFpsLimit_)));
+        }
         PaperLogger.info("Prewarmed gameplay video decoder before scene activation");
     }
 
@@ -1258,7 +1336,12 @@ namespace BigScreen {
            clockDiscontinuity ||
            presentationSlot != *lastPresentationSlot_)
         {
-            decoder_.Request(mediaTime);
+            decoder_.Request(
+                mediaTime,
+                CoreLogic::PresentationMediaInterval(
+                    decoder_.SourceFramesPerSecond(),
+                    config_->playbackRate,
+                    fpsLimit));
             ++requestedFrames_;
             lastPresentationSlot_ = presentationSlot;
         }
@@ -1333,9 +1416,8 @@ namespace BigScreen {
                 d.peakDecodeMilliseconds,
                 d.decodeMethod,
                 d.decoderRuntime,
-                d.codec});
-            if(completedDiagnosticsWindow)
-                decoder_.ResetPeakDecodeMilliseconds();
+                d.codec,
+                d.presentationMethod});
             diagnosticsVisible_ = true;
         }
         else if(diagnosticsContext &&
@@ -1399,7 +1481,7 @@ namespace BigScreen {
         }
 
         VideoFrame frame;
-        if(decoder_.TryTake(frame))
+        if(decoder_.TryTake(mediaTime, frame))
         {
             bool uploadFailed = false;
             const bool staleRestartFrame =
@@ -1436,11 +1518,30 @@ namespace BigScreen {
                         peakPresentationMilliseconds_,
                         presentationMilliseconds);
                     presentationMethod_ =
-                        frame.storage == VideoFrameStorage::Yuv420Planar
-                            ? "GPU YUV"
+                        frame.storage ==
+                                VideoFrameStorage::Yuv420PackedAtlas
+                            ? "GPU YUV Packed"
+                            : frame.storage == VideoFrameStorage::Yuv420Planar
+                                ? "GPU YUV 3-Plane"
                             : surface_.GpuConversionActive()
                                 ? "CPU RGBA fallback"
                                 : "CPU RGBA";
+                    if(auto fallback = surface_.TakeGpuYuvUploadFallback())
+                    {
+                        if(const auto decoderReason =
+                               decoder_.GpuYuvUploadFallbackReason();
+                           !decoderReason.empty())
+                            *fallback = decoderReason;
+                        decoder_.SetGpuYuvUploadLayout(
+                            surface_.ActiveGpuYuvUploadLayout());
+                        presentationMethod_ = "GPU YUV 3-Plane";
+                        PaperLogger.warn(
+                            "Consolidated YUV upload fell back during playback; active presentation is GPU YUV 3-Plane: {}",
+                            *fallback);
+                        ErrorManager::Instance().RecordError(
+                            "Falling back from consolidated YUV upload",
+                            *fallback + "; GPU YUV 3-Plane remained active");
+                    }
                     if(frame.storage == VideoFrameStorage::Rgba32 &&
                        surface_.GpuConversionActive() &&
                        !gpuConversionFallbackLogged_)
@@ -1500,25 +1601,52 @@ namespace BigScreen {
                 }
                 else
                 {
-                    if(frame.storage == VideoFrameStorage::Yuv420Planar &&
-                       surface_.GpuConversionActive())
+                    const bool gpuYuvFrame =
+                        frame.storage == VideoFrameStorage::Yuv420Planar ||
+                        frame.storage ==
+                            VideoFrameStorage::Yuv420PackedAtlas;
+                    if(gpuYuvFrame && surface_.GpuConversionActive())
                     {
-                        // Treat a Unity-side YUV upload/conversion failure as
-                        // a permanent presentation fallback for this playback
-                        // session. The decoder discards any queued YUV frame
-                        // and republishes the latest requested picture as
-                        // RGBA. ScreenSurface keeps the same RenderTexture so
-                        // Cinema/showcase clones retain a stable shared
-                        // texture identity while the CPU path blits into it.
-                        decoder_.SetGpuConversionEnabled(false);
-                        gpuConversionDisabledForSession_ = true;
-                        presentationMethod_ = "CPU RGBA fallback";
-                        gpuConversionFallbackLogged_ = true;
-                        PaperLogger.warn(
-                            "GPU video conversion failed while presenting a frame; permanently using CPU RGBA for this playback session");
-                        ErrorManager::Instance().RecordError(
-                            "Falling back from GPU video conversion",
-                            "Unity could not present the YUV conversion pass. Playback will continue through the CPU RGBA path.");
+                        if(auto fallback =
+                               surface_.TakeGpuYuvUploadFallback())
+                        {
+                            if(const auto decoderReason =
+                                   decoder_.GpuYuvUploadFallbackReason();
+                               !decoderReason.empty())
+                                *fallback = decoderReason;
+                            // The failed packed picture is discarded, then
+                            // the decoder queue is regenerated directly as
+                            // planar Y/U/V. The stable shared RGB texture and
+                            // all Showcase/Cinema consumers remain untouched.
+                            decoder_.SetGpuYuvUploadLayout(
+                                surface_.ActiveGpuYuvUploadLayout());
+                            presentationMethod_ = "GPU YUV 3-Plane";
+                            PaperLogger.warn(
+                                "Consolidated YUV upload fell back during playback; active presentation is GPU YUV 3-Plane: {}",
+                                *fallback);
+                            ErrorManager::Instance().RecordError(
+                                "Falling back from consolidated YUV upload",
+                                *fallback +
+                                    "; GPU YUV 3-Plane remained active");
+                        }
+                        else
+                        {
+                            // Treat a Unity-side YUV upload/conversion failure
+                            // as a permanent presentation fallback for this
+                            // playback session. The decoder discards any
+                            // queued YUV frame and republishes the latest
+                            // request as RGBA. ScreenSurface keeps the stable
+                            // shared RenderTexture for Cinema/Showcase clones.
+                            decoder_.SetGpuConversionEnabled(false);
+                            gpuConversionDisabledForSession_ = true;
+                            presentationMethod_ = "CPU RGBA fallback";
+                            gpuConversionFallbackLogged_ = true;
+                            PaperLogger.warn(
+                                "GPU video conversion failed while presenting a frame; permanently using CPU RGBA for this playback session");
+                            ErrorManager::Instance().RecordError(
+                                "Falling back from GPU video conversion",
+                                "Unity could not present the YUV conversion pass. Playback will continue through the CPU RGBA path.");
+                        }
                     }
                     else
                     {
@@ -1618,7 +1746,27 @@ namespace BigScreen {
             gameplaySession &&
             Settings::Instance().PerformanceDiagnosticsEnabled();
         if(started_ && !environmentOnlySession_)
+        {
             CaptureDiagnosticsSummary();
+            const auto readAhead = decoder_.ReadAheadDiagnostics();
+            if(readAhead.frameCapacity > 0)
+            {
+                // One safe-boundary line makes menu-preview testing useful
+                // even though only completed gameplay is appended to the
+                // dedicated performance-history file.
+                PaperLogger.info(
+                    "GPU read-ahead summary: {} MiB, capacity {}, peak {}, final {}, low events {}, empty events {}, catch-up presentations {}, forced late drops {}, peak due backlog {}",
+                    readAhead.byteBudget / (1024u * 1024u),
+                    readAhead.frameCapacity,
+                    readAhead.peakQueuedFrames,
+                    readAhead.currentQueuedFrames,
+                    readAhead.lowReserveEvents,
+                    readAhead.emptyQueueEvents,
+                    readAhead.catchUpPresentations,
+                    readAhead.forcedLateDrops,
+                    readAhead.peakDueFrameBacklog);
+            }
+        }
         if(recordGameplayPerformance)
         {
             // Append only after gameplay has ended or been exited. No file IO
@@ -1856,9 +2004,12 @@ namespace BigScreen {
              << "Missed Frames " << missedFrames << " ("
              << std::setprecision(2) << missedPercent << "%)  |  "
              << "Video Average " << std::setprecision(1)
-             << averageVideoFps << " FPS  |  Decode "
+             << averageVideoFps << " FPS  |  Preparation CPU "
              << std::setprecision(2) << diagnostics.averageDecodeMilliseconds
              << " ms average / " << diagnostics.peakDecodeMilliseconds
+             << " ms peak  |  Worker wait "
+             << diagnostics.averageWorkerWaitMilliseconds
+             << " ms average / " << diagnostics.peakWorkerWaitMilliseconds
              << " ms peak  |  Decoder startup "
              << diagnostics.decoderOpenMilliseconds
              << " ms  |  Presentation "
@@ -1867,9 +2018,26 @@ namespace BigScreen {
              << " ms average / "
              << diagnostics.peakPresentationMilliseconds
              << " ms peak  |  Frame-buffer allocations "
-              << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
+              << diagnostics.frameBufferAllocations << "  |  FFmpeg "
               << diagnostics.decoderRuntime << "  |  Decoder "
               << diagnostics.decodeMethod;
+        if(diagnostics.readAheadFrameCapacity > 0)
+        {
+            text << "  |  GPU read-ahead "
+                 << diagnostics.readAheadBudgetMiB << " MiB, "
+                 << diagnostics.readAheadFrameCapacity << " frame capacity, "
+                 << diagnostics.readAheadPeakFrames << " peak, "
+                 << diagnostics.readAheadCurrentFrames << " final reserve"
+                 << "  |  Queue low/empty events "
+                 << diagnostics.readAheadLowReserveEvents << '/'
+                 << diagnostics.readAheadEmptyQueueEvents
+                 << "  |  Catch-up presentations "
+                 << diagnostics.readAheadCatchUpPresentations
+                 << ", forced late drops "
+                 << diagnostics.readAheadForcedLateDrops
+                 << ", peak due backlog "
+                 << diagnostics.readAheadPeakDueFrameBacklog;
+        }
         if(diagnostics.automaticReductions > 0)
             text << "  |  Automatic reductions " << diagnostics.automaticReductions;
         const auto frameRate = CoreLogic::SummarizeFrameRate(
@@ -1947,7 +2115,8 @@ namespace BigScreen {
             diagnostics.peakDecodeMilliseconds,
             diagnostics.decodeMethod,
             diagnostics.decoderRuntime,
-            diagnostics.codec});
+            diagnostics.codec,
+            diagnostics.presentationMethod});
         diagnosticsVisible_ = true;
     }
 }

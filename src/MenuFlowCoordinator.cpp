@@ -36,6 +36,7 @@
 #include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
 #include "main.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <string>
@@ -57,6 +58,16 @@ namespace BigScreen {
         int stableMainMenuFrames = 0;
         UnityW<MenuFlowCoordinator> pendingFailedMenuExit = nullptr;
         int pendingFailedMenuExitFrames = 0;
+        std::vector<UnityW<BSML::ModalView>> frontmostMenuModals;
+
+        void RaiseModalRoot(BSML::ModalView* modal)
+        {
+            if(!UnityW<BSML::ModalView>::isAlive(modal))
+                return;
+            auto modalTransform = modal->get_transform();
+            if(UnityW<UnityEngine::Transform>::isAlive(modalTransform))
+                modalTransform->SetAsLastSibling();
+        }
 
         BSML::MenuButton* ResolveBigScreenMenuButton()
         {
@@ -200,7 +211,7 @@ namespace BigScreen {
 
     void ShowModalInFront(BSML::ModalView* modal) noexcept
     {
-        if(!modal)
+        if(!UnityW<BSML::ModalView>::isAlive(modal))
             return;
         try
         {
@@ -209,12 +220,23 @@ namespace BigScreen {
             // an invisible input blocker behind a side panel. Last-sibling
             // ordering guarantees the retained modal is rendered and receives
             // pointer input above the rest of its owning controller.
-            auto modalTransform = modal->get_transform();
-            if(modalTransform)
-                modalTransform->SetAsLastSibling();
+            // Keep a small ordered modal stack. Nested warnings are rare, but
+            // retaining every visible modal means dismissing the newest one
+            // cannot expose an older popup underneath an unrelated refreshed
+            // control. Showing an existing modal again moves it to the top.
+            frontmostMenuModals.erase(
+                std::remove_if(
+                    frontmostMenuModals.begin(),
+                    frontmostMenuModals.end(),
+                    [modal](UnityW<BSML::ModalView> candidate)
+                    {
+                        return candidate.ptr() == modal;
+                    }),
+                frontmostMenuModals.end());
+            frontmostMenuModals.emplace_back(modal);
+            RaiseModalRoot(modal);
             modal->Show();
-            if(modalTransform)
-                modalTransform->SetAsLastSibling();
+            RaiseModalRoot(modal);
         }
         catch(const std::exception& exception)
         {
@@ -227,6 +249,66 @@ namespace BigScreen {
             PaperLogger.error(
                 "Could not present a Big Screen dialog in front of its menu");
         }
+    }
+
+    void TickFrontmostMenuModal() noexcept
+    {
+        try
+        {
+            frontmostMenuModals.erase(
+                std::remove_if(
+                    frontmostMenuModals.begin(),
+                    frontmostMenuModals.end(),
+                    [](UnityW<BSML::ModalView> candidate)
+                    {
+                        auto* modal = candidate.ptr();
+                        if(!UnityW<BSML::ModalView>::isAlive(modal))
+                            return true;
+                        auto gameObject = modal->get_gameObject();
+                        return !UnityW<UnityEngine::GameObject>::isAlive(
+                                   gameObject) ||
+                               !gameObject->get_activeInHierarchy();
+                    }),
+                frontmostMenuModals.end());
+
+            // Raise in opening order so every retained popup remains above its
+            // panel and the newest visible popup remains above older popups.
+            // This runs after normal menu work, so no late status refresh can
+            // cover the dialog or intercept its OK/Cancel buttons.
+            for(auto& candidate : frontmostMenuModals)
+                RaiseModalRoot(candidate.ptr());
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not retain a Big Screen dialog in front of its menu: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not retain a Big Screen dialog in front of its menu");
+        }
+    }
+
+    void DismissTrackedMenuModals() noexcept
+    {
+        for(auto& candidate : frontmostMenuModals)
+        {
+            try
+            {
+                auto* modal = candidate.ptr();
+                if(UnityW<BSML::ModalView>::isAlive(modal))
+                    modal->Hide();
+            }
+            catch(...)
+            {
+                // Continue through the complete stack. A destroyed retained
+                // controller must not prevent other input blockers from being
+                // retired during menu shutdown.
+            }
+        }
+        frontmostMenuModals.clear();
     }
 
     bool IsBigScreenMenuTransitionPending() noexcept
@@ -879,6 +961,7 @@ namespace BigScreen {
     {
         DiagnosticSessionLogger::Instance().MenuEvent(
             "menu_deactivation_started", "MenuFlowCoordinator");
+        DismissTrackedMenuModals();
 
         // Clear the selected map and its operation notice before any unrelated
         // Unity teardown. PerformancePanel or ScreenPreview can encounter a

@@ -157,11 +157,11 @@ For comparison and performance tuning, the mod includes:
   steps, and anti-oscillation protection, without reopening the decoder
 - A default-off experimental GPU conversion path that uploads reusable 8-bit
   Y/U/V planes, performs conversion and mapper picture effects in one pass,
-  and permanently falls back to CPU RGBA if the active video or Unity runtime
-  cannot use it
+  keeps a configurable 32–256 MiB decoded-frame reserve, and offers a separate
+  experimental one-upload packed mode with visible 3-plane/CPU fallbacks
 - A movable live performance panel and results summary
 - Decoder latency, actual video resolution, delivered frames, video frame loss,
-  and Beat Saber gameplay FPS diagnostics
+  Beat Saber gameplay FPS, and GPU queue-health diagnostics
 - Repeatable CPU and battery benchmark CSV logging
 - Safe software fallback where the codec and resolution permit it
 
@@ -420,7 +420,8 @@ two visible-material paths.
 <details>
 <summary><strong>Standalone downloader runtime</strong></summary>
 
-The QMOD includes CPython 3.14.7 for Android ARM64, a pinned yt-dlp baseline,
+The QMOD includes CPython 3.14.7 for Android ARM64, pinned stable yt-dlp
+2026.08.19,
 yt-dlp-ejs 0.8.0, certifi, and QuickJS-NG 0.16.1 compiled into Big Screen.
 QuickJS supplies the JavaScript challenge engine needed by modern YouTube
 extraction without launching an Android executable from ModData. Termux, a
@@ -434,7 +435,9 @@ and yt-dlp-ejs, assembles the zip-import runtime, and compares the generated
 payload with the official release shipped by Big Screen.
 
 The Update tab separately displays the installed Big Screen version and active
-yt-dlp version and channel. Big Screen checks both the latest public stable mod
+yt-dlp version and channel. The nightly switch follows the package actually
+loaded and changes only after a staged replacement passes startup validation;
+it cannot silently disagree with the runtime. Big Screen checks both the latest public stable mod
 release and the appropriate yt-dlp channel once per Beat Saber session on
 background workers, without delaying the menu. Nightly yt-dlp users are told
 whether stable has caught up. An older stable release remains selectable for

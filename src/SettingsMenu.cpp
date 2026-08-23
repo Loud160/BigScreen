@@ -244,6 +244,8 @@ namespace BigScreen {
         cinemaBloomLevelSlider_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
         gpuVideoConversionToggle_ = nullptr;
+        consolidatedYuvUploadToggle_ = nullptr;
+        gpuReadAheadMemorySlider_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceWarningModal_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
@@ -752,7 +754,7 @@ namespace BigScreen {
             performanceParent,
             "GPU Video Conversion",
             settings.GpuVideoConversionEnabled(),
-            [](bool enabled)
+            [this](bool enabled)
             {
                 Settings::Instance().SetGpuVideoConversionEnabled(enabled);
                 // Plane transport and the shared presentation texture are
@@ -760,10 +762,49 @@ namespace BigScreen {
                 // active library preview through the established safe path;
                 // gameplay adopts the choice on the next map.
                 ApplyDisplaySettingsAndRefreshPreview();
+                RefreshEnabledState();
             });
         BSML::Lite::AddHoverHint(
             gpuVideoConversionToggle_,
             "Experimental: uploads decoded 8-bit SDR 4:2:0 video as Y, U, and V planes, then performs color conversion, container rotation, mapper color correction, and vignette in one GPU pass. This can reduce decoder-worker CPU time and memory traffic. Unsupported frames or failed Unity resources automatically return to the normal CPU RGBA path. Thumbnails are unchanged. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
+
+        consolidatedYuvUploadToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "Consolidated YUV Upload",
+            settings.ConsolidatedYuvUploadEnabled(),
+            [this](bool enabled)
+            {
+                Settings::Instance().SetConsolidatedYuvUploadEnabled(enabled);
+                // The decoder writes one packed allocation or three separate
+                // planes from the start of a session. Recreate only an active
+                // library preview so no old-layout frame can cross the switch.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            consolidatedYuvUploadToggle_,
+            "Experimental: combines Y, U, and V into one reusable texture upload instead of three uploads per frame. This may reduce Unity main-thread overhead at high frame rates. If the packed shader or texture cannot be used, Big Screen automatically continues with the proven 3-plane GPU method and records why. The performance panel reports which GPU YUV method is active. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
+
+        gpuReadAheadMemorySlider_ = BSML::Lite::CreateSliderSetting(
+            performanceParent,
+            "GPU Read-Ahead Memory",
+            16.0f,
+            static_cast<float>(settings.GpuReadAheadMemoryMiB()),
+            32.0f,
+            256.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetGpuReadAheadMemoryMiB(
+                    static_cast<int>(std::lround(value)));
+            });
+        gpuReadAheadMemorySlider_->isInt = true;
+        gpuReadAheadMemorySlider_->digits = 0;
+        gpuReadAheadMemorySlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            gpuReadAheadMemorySlider_,
+            "Experimental: limits how much memory the GPU YUV decoder may use for future decoded frames. Higher values can absorb longer decode stalls, especially at 1440p/60 FPS, but consume more Quest memory while a video is open. The budget is applied the next time a preview or map opens; it does not restart the current video.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -2196,7 +2237,7 @@ namespace BigScreen {
             false);
         auto* nightlyWarningText = BSML::Lite::CreateText(
             nightlyWarningModal_,
-            "Use nightly yt-dlp builds?\n\nNightly builds contain the newest changes, but they are more likely to include bugs than stable releases.",
+            "Check for a nightly yt-dlp build?\n\nNightly builds contain the newest changes, but they are more likely to include bugs than stable releases. The switch will change only after a verified nightly package is installed and activated on restart.",
             TMPro::FontStyles::Normal,
             {0.0f, 6.0f});
         nightlyWarningText->set_fontSize(2.9f);
@@ -2216,18 +2257,14 @@ namespace BigScreen {
             });
         BSML::Lite::CreateUIButton(
             nightlyWarningModal_->get_transform(),
-            "Use Nightly",
+            "Check Nightly",
             {43.0f, -22.5f},
             {24.0f, 8.0f},
             [this]()
             {
-                Settings::Instance().SetNightlyDownloaderUpdates(true);
-                suppressNightlyCallback_ = true;
-                SetToggleWithoutNotification(nightlyUpdatesToggle_, true);
-                suppressNightlyCallback_ = false;
                 if(nightlyWarningModal_)
                     nightlyWarningModal_->Hide();
-                RefreshUpdaterHint();
+                RequestYtDlpChannel(true);
             });
 
         // yt-dlp checks are initiated and managed from the left Update tab, so
@@ -2386,16 +2423,28 @@ namespace BigScreen {
 
         nightlyUpdatesToggle_ = BSML::Lite::CreateToggle(
             updateContainer,
-            "Use Nightly yt-dlp Updates",
-            settings.NightlyDownloaderUpdates(),
+            "Use Nightly yt-dlp",
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly",
             [this](bool enabled)
             {
                 if(suppressNightlyCallback_)
                     return;
+
+                const bool installedNightly =
+                    DownloadManager::Instance().CurrentYtDlpChannel() ==
+                    "nightly";
+                if(enabled == installedNightly)
+                {
+                    RefreshYtDlpChannelState();
+                    return;
+                }
                 if(!enabled)
                 {
-                    Settings::Instance().SetNightlyDownloaderUpdates(false);
-                    RefreshUpdaterHint();
+                    // A channel change is an authenticated package update, not
+                    // a boolean preference. Keep showing the loaded nightly
+                    // until stable has downloaded, passed startup validation,
+                    // and activated on the next Beat Saber launch.
+                    RequestYtDlpChannel(false);
                     return;
                 }
 
@@ -2410,7 +2459,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             nightlyUpdatesToggle_,
-            "Uses yt-dlp's frequently updated nightly channel. Nightly versions may contain new bugs; use this only when YouTube downloads fail with the stable version.");
+            "Shows the yt-dlp channel currently loaded by Big Screen. Changing it checks for the other channel; the switch changes only after that package passes validation and activates on restart.");
         updaterButton_ = BSML::Lite::CreateUIButton(
             updateContainer,
             "Check yt-dlp Update",
@@ -2420,7 +2469,8 @@ namespace BigScreen {
                 auto& downloader = DownloadManager::Instance();
                 std::string error;
                 if(!downloader.StartYtDlpReleaseCheck(
-                       Settings::Instance().NightlyDownloaderUpdates(), error) && updaterStatus_)
+                       downloader.CurrentYtDlpChannel() == "nightly",
+                       error) && updaterStatus_)
                     updaterStatus_->set_text(error);
                 RefreshDownloaderStatus();
             });
@@ -2705,6 +2755,12 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             gpuVideoConversionToggle_, settings.GpuVideoConversionEnabled());
         SetToggleWithoutNotification(
+            consolidatedYuvUploadToggle_,
+            settings.ConsolidatedYuvUploadEnabled());
+        if(gpuReadAheadMemorySlider_)
+            gpuReadAheadMemorySlider_->set_Value(
+                static_cast<float>(settings.GpuReadAheadMemoryMiB()));
+        SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
             powerBenchmarkToggle_, settings.PowerBenchmarkEnabled());
@@ -2747,7 +2803,7 @@ namespace BigScreen {
             settings.HideSpectrogramBars());
         SetToggleWithoutNotification(
             nightlyUpdatesToggle_,
-            settings.NightlyDownloaderUpdates());
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly");
 
         if(screenLayoutDropdown_)
         {
@@ -3013,6 +3069,12 @@ namespace BigScreen {
             hardwareDecodingToggle_->set_interactable(enabled);
         if(gpuVideoConversionToggle_)
             gpuVideoConversionToggle_->set_interactable(enabled);
+        if(consolidatedYuvUploadToggle_)
+            consolidatedYuvUploadToggle_->set_interactable(
+                enabled && settings.GpuVideoConversionEnabled());
+        if(gpuReadAheadMemorySlider_)
+            gpuReadAheadMemorySlider_->set_interactable(
+                enabled && settings.GpuVideoConversionEnabled());
         if(automaticPerformanceToggle_)
             automaticPerformanceToggle_->set_interactable(enabled);
         if(automaticPerformanceThresholdSlider_)
@@ -3325,9 +3387,58 @@ namespace BigScreen {
         if(!updaterHoverHint_)
             return;
         updaterHoverHint_->set_text(
-            Settings::Instance().NightlyDownloaderUpdates()
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly"
                 ? "Checks yt-dlp's nightly update channel. Nightly versions may contain bugs; use this only when stable downloads are failing."
                 : "Checks the official stable yt-dlp release channel. Stable releases are recommended for normal use.");
+    }
+
+    void SettingsMenu::RefreshYtDlpChannelState()
+    {
+        const bool installedNightly =
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly";
+
+        // The persisted field is retained for settings-file compatibility,
+        // but runtime activation is authoritative. Reconcile it so an older
+        // QMOD or failed/staged update can never leave the UI claiming stable
+        // while CPython actually imported a nightly package (or vice versa).
+        auto& settings = Settings::Instance();
+        if(settings.NightlyDownloaderUpdates() != installedNightly)
+            settings.SetNightlyDownloaderUpdates(installedNightly);
+
+        if(nightlyUpdatesToggle_)
+        {
+            suppressNightlyCallback_ = true;
+            SetToggleWithoutNotification(
+                nightlyUpdatesToggle_, installedNightly);
+            suppressNightlyCallback_ = false;
+        }
+        if(stableUpdaterButton_)
+            stableUpdaterButton_->get_gameObject()->SetActive(installedNightly);
+        RefreshUpdaterHint();
+    }
+
+    void SettingsMenu::RequestYtDlpChannel(bool nightly)
+    {
+        const bool installedNightly =
+            DownloadManager::Instance().CurrentYtDlpChannel() == "nightly";
+        RefreshYtDlpChannelState();
+        if(installedNightly == nightly)
+            return;
+
+        std::string error;
+        if(!DownloadManager::Instance().StartYtDlpReleaseCheck(
+               nightly, error) && updaterStatus_)
+        {
+            updaterStatus_->set_text(error);
+        }
+        else if(updaterStatus_)
+        {
+            updaterStatus_->set_text(
+                nightly
+                    ? "Checking the official nightly channel..."
+                    : "Checking the official stable channel...");
+        }
+        RefreshDownloaderStatus();
     }
 
     void SettingsMenu::ResetToDefaults()
@@ -3426,6 +3537,7 @@ namespace BigScreen {
                 Settings::Instance().ModEnabled());
         }
         auto& downloader = DownloadManager::Instance();
+        RefreshYtDlpChannelState();
         if(ytDlpVersionText_)
             ytDlpVersionText_->set_text(
                 "Current yt-dlp: " + downloader.CurrentYtDlpVersion() +
@@ -3457,12 +3569,10 @@ namespace BigScreen {
         if(installing && snapshot.state == DownloadState::Completed &&
            pendingYtDlpChannelSwitch_)
         {
-            Settings::Instance().SetNightlyDownloaderUpdates(
-                pendingYtDlpInstallNightly_);
-            suppressNightlyCallback_ = true;
-            SetToggleWithoutNotification(
-                nightlyUpdatesToggle_, pendingYtDlpInstallNightly_);
-            suppressNightlyCallback_ = false;
+            // The updater staged a candidate for the next process. Continue
+            // showing the channel loaded in this process; startup promotion
+            // and its import/smoke test are the only authority that may flip
+            // the channel control.
             pendingYtDlpChannelSwitch_ = false;
             RefreshUpdaterHint();
         }
@@ -3479,7 +3589,7 @@ namespace BigScreen {
             updaterButton_,
             ytDlpRelease.Active()
                 ? "Checking..."
-                : Settings::Instance().NightlyDownloaderUpdates()
+                : downloader.CurrentYtDlpChannel() == "nightly"
                     ? "Check Nightly Update"
                     : "Check Stable Update");
         updaterButton_->set_interactable(

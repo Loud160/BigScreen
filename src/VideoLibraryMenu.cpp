@@ -120,6 +120,10 @@ namespace BigScreen {
         // can place the handle in VR and work for songs of any duration.
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
+        // A quarter second is long enough to build a useful reserve at 60 FPS
+        // without making the menu transport feel delayed. This does not sleep
+        // or block Unity; Tick continues feeding the stationary decoder clock.
+        constexpr double PreviewDecoderPreRollSeconds = 0.25;
         constexpr std::string_view StorageMetricLineHeight = "70%";
         std::string StorageMetricText(
             std::string_view heading,
@@ -376,21 +380,11 @@ namespace BigScreen {
             const std::string code = transfer.errorCode.empty()
                 ? "BS-DL-FAILED-001"
                 : transfer.errorCode;
-            const std::string_view explanation =
-                code == "BS-DL-HTTP-400" ? "YouTube rejected the request." :
-                code == "BS-DL-HTTP-401" ? "This video requires sign-in." :
-                code == "BS-DL-HTTP-403" ? "YouTube refused the video stream." :
-                code == "BS-DL-HTTP-404" ? "The video was not found." :
-                code == "BS-DL-HTTP-410" ? "The video is no longer available." :
-                code == "BS-DL-HTTP-429" ? "YouTube is rate limiting requests." :
-                code == "BS-DL-HTTP-5XX" ? "YouTube reported a server error." :
-                code == "BS-DL-TLS-001" ? "The secure connection failed." :
-                code == "BS-DL-STORAGE-001" ? "The Quest does not have enough free storage." :
-                code == "BS-DL-FORMAT-001" ? "No compatible video format was found." :
-                code == "BS-DL-ACCESS-001" ? "This video is restricted." :
-                code == "BS-DL-PROBE-001" ? "The YouTube link could not be checked." :
-                "See the Big Screen error log for details.";
-            return code + ": " + std::string(explanation);
+            const auto presentation = CoreLogic::DescribeDownloadFailure(
+                code,
+                {},
+                transfer.metadataOnly);
+            return code + ": " + presentation.shortReason;
         }
 
         std::string ActiveTransferNotice(
@@ -2209,6 +2203,12 @@ namespace BigScreen {
         pendingDownloadRefreshLevelId_.clear();
         terminalDownloadProgressLevelId_.clear();
         StopPreviewAudio(true);
+        // Returning from the selected-map child page relinquishes the video,
+        // not only its audio. Stop closes the decoder and synchronously clears
+        // its read-ahead queue, so the next selected map cannot inherit an old
+        // frame reserve or keep the prior video's memory allocated.
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Stop();
         if(navigate_) navigate_(false);
         ScreenPreview::Instance().ActivateUserLayout();
         RebuildVisibleRows(true);
@@ -4179,6 +4179,7 @@ namespace BigScreen {
             // A second press while the decoder is preparing is a stop request,
             // just like pressing Pause after ordinary playback has begun.
             playWhenVideoReady_ = false;
+            ClearPreviewPreRoll();
             previewPaused_ = true;
             previewClockValid_ = false;
             DiagnosticSessionLogger::Instance().MenuEvent(
@@ -4202,6 +4203,7 @@ namespace BigScreen {
                 previewPlaying_ = false;
                 previewPaused_ = true;
                 playWhenAudioReady_ = false;
+                ClearPreviewPreRoll();
                 previewClockValid_ = false;
                 DiagnosticSessionLogger::Instance().MenuEvent(
                     "preview_paused", "VideoLibraryMenu", {
@@ -4226,6 +4228,10 @@ namespace BigScreen {
             completedPlaybackNeedsRestart = true;
         }
 
+        // Decoder work begins (or continues from selection-time prewarming)
+        // immediately, but the song clock cannot advance until this deadline.
+        // The same path is used for first Play and an explicit resume.
+        BeginPreviewPreRoll();
         RequestSelectedAudio();
         if(!IsAlive(previewAudioClip_) || !IsAlive(songPreviewPlayer_))
         {
@@ -4248,7 +4254,8 @@ namespace BigScreen {
                 StartSelectedPreview();
             if(playback.IsLibraryPreviewActive())
                 playback.Tick(previewSongTime_);
-            if(!playback.SynchronizedAudioReady(previewSongTime_))
+            if(!playback.SynchronizedAudioReady(previewSongTime_) ||
+               !PreviewPreRollComplete())
             {
                 playWhenVideoReady_ = true;
                 playWhenAudioReady_ = false;
@@ -4266,6 +4273,7 @@ namespace BigScreen {
             }
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
             songPreviewPlayer_->UnPauseCurrentChannel();
+            ClearPreviewPreRoll();
             ResetPreviewClock(previewSongTime_);
             previewPlaying_ = true;
             previewPaused_ = false;
@@ -4326,7 +4334,8 @@ namespace BigScreen {
             return;
         }
         playback.Tick(previewSongTime_);
-        if(!playback.SynchronizedAudioReady(previewSongTime_))
+        if(!playback.SynchronizedAudioReady(previewSongTime_) ||
+           !PreviewPreRollComplete())
         {
             previewPlaying_ = false;
             playWhenAudioReady_ = false;
@@ -4383,6 +4392,7 @@ namespace BigScreen {
         previewAudioSource_ = ActiveSongAudioSource(songPreviewPlayer_);
         if(IsAlive(previewAudioSource_))
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
+        ClearPreviewPreRoll();
         ResetPreviewClock(previewSongTime_);
         previewPlaying_ = true;
         previewPaused_ = false;
@@ -4411,6 +4421,9 @@ namespace BigScreen {
         previewPlaying_ = false;
         previewPaused_ = false;
         playWhenAudioReady_ = false;
+        // Treat every loop as a fresh start. Restart clears the old reserve;
+        // this timer lets the worker rebuild it before audio advances again.
+        BeginPreviewPreRoll();
         scrubberFollowResumeTime_ = 0.0f;
         RefreshPlaybackControls();
 
@@ -4439,6 +4452,7 @@ namespace BigScreen {
         auto clip = previewAudioClip_;
         playWhenAudioReady_ = false;
         playWhenVideoReady_ = false;
+        ClearPreviewPreRoll();
         previewMeasurementStarted_ = false;
         previewClockValid_ = false;
         previewPlaying_ = false;
@@ -4492,6 +4506,7 @@ namespace BigScreen {
         previewPaused_ = false;
         playWhenAudioReady_ = shouldResume;
         playWhenVideoReady_ = false;
+        ClearPreviewPreRoll();
         previewClockValid_ = false;
         terminalDownloadProgressLevelId_.clear();
         PublishPreviewNotice(shouldResume
@@ -4544,6 +4559,29 @@ namespace BigScreen {
         songPreviewPlayer_->PauseCurrentChannel();
         PaperLogger.info(
             "Restored Big Screen's paused audio-preview state after the audio channel resumed");
+    }
+
+    void VideoLibraryMenu::BeginPreviewPreRoll()
+    {
+        if(previewPreRollPending_)
+            return;
+        previewPreRollPending_ = true;
+        previewPreRollReadyRealtime_ =
+            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup()) +
+            PreviewDecoderPreRollSeconds;
+    }
+
+    void VideoLibraryMenu::ClearPreviewPreRoll()
+    {
+        previewPreRollPending_ = false;
+        previewPreRollReadyRealtime_ = 0.0;
+    }
+
+    bool VideoLibraryMenu::PreviewPreRollComplete() const
+    {
+        return !previewPreRollPending_ ||
+            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup()) >=
+                previewPreRollReadyRealtime_;
     }
 
     void VideoLibraryMenu::ResetPreviewClock(double songTimeSeconds)
@@ -4613,7 +4651,15 @@ namespace BigScreen {
         if(!playback.IsLibraryPreviewActive())
             StartSelectedPreview();
         else
+        {
+            // A scrub is an explicit seek, even when the user moves less than
+            // the ordinary clock-discontinuity threshold. Restart invalidates
+            // and empties every prefetched YUV frame before the new position
+            // is requested, preventing old queued pictures from flashing or
+            // delaying the selected timeline position.
+            playback.RestartLibraryPreview(previewSongTime_);
             playback.Tick(previewSongTime_);
+        }
         RefreshPlaybackControls();
     }
 
@@ -4807,9 +4853,9 @@ namespace BigScreen {
             if(playback.IsLibraryPreviewActive())
             {
                 playback.Tick(previewSongTime_);
-                if(playback.SynchronizedAudioReady(previewSongTime_))
+                if(playback.SynchronizedAudioReady(previewSongTime_) &&
+                   PreviewPreRollComplete())
                 {
-                    playWhenVideoReady_ = false;
                     StartPreviewAudio();
                 }
             }
@@ -4933,6 +4979,11 @@ namespace BigScreen {
     void VideoLibraryMenu::Refresh()
     {
         if(!browserController_ || !editorController_) return;
+        // Claim playback before any retained selection or download state is
+        // refreshed. SongPreviewPlayer continues ticking behind this flow;
+        // without an explicit owner it can restart the previous song-menu
+        // video during the Stop/Prepare gap while a file is replaced.
+        PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(true);
         active_ = true;
         RebuildCatalog();
         if(editorVisible_) RefreshDetails();
@@ -4997,6 +5048,11 @@ namespace BigScreen {
         {
             PaperLogger.error("Video decoder teardown failed during deactivation: {}", error.what());
         }
+        // Release ownership only after the decoder and prepared selection have
+        // been cleared. A new ordinary song-menu preview may start on the next
+        // SongPreviewPlayer tick, but it can no longer resurrect the file that
+        // this editor just removed or replaced.
+        PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(false);
     }
 
     void VideoLibraryMenu::StopActivePreview()

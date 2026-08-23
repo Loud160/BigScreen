@@ -71,6 +71,13 @@ namespace BigScreen {
         /// then replaces only the displayed number with the signed offset.
         void RefreshVideoOffsetValueTexts();
         void RefreshUpdaterHint();
+        /// Mirrors the channel that the embedded runtime actually loaded.
+        /// A staged replacement does not change this control until startup has
+        /// promoted and smoke-tested that package.
+        void RefreshYtDlpChannelState();
+        /// Starts the release check needed to change channels while keeping
+        /// the toggle on the currently loaded channel until activation.
+        void RequestYtDlpChannel(bool nightly);
         void RefreshDisabledModeView();
         void ShowSettingsTab(int index);
         void ResetToDefaults();
@@ -140,6 +147,8 @@ namespace BigScreen {
         BSML::SliderSetting* cinemaBloomLevelSlider_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
         BSML::ToggleSetting* gpuVideoConversionToggle_ = nullptr;
+        BSML::ToggleSetting* consolidatedYuvUploadToggle_ = nullptr;
+        BSML::SliderSetting* gpuReadAheadMemorySlider_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::ModalView* automaticPerformanceWarningModal_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;

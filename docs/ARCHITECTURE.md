@@ -39,12 +39,25 @@ its previous complete view instead of waiting on the filesystem mutex.
 Beat Saber's audio/song position is the only video clock. That preserves pause,
 practice speed, seeking, and Replay behavior. The decoder uses each frame's
 container duration when available, with nominal FPS only as a fallback, so VFR
-sources do not inherit a false constant cadence. It uses a one-frame mailbox,
-drops superseded frames instead of blocking the game thread, and recycles a
-bounded pool of frame vectors instead of allocating multi-megabyte buffers for
-every presented frame. Gameplay transitions pre-open and prime FFmpeg before
-the song clock begins; Unity geometry is still created only in the gameplay
-scene.
+sources do not inherit a false constant cadence. CPU RGBA output uses a
+one-frame mailbox and drops superseded frames instead of blocking the game
+thread. The experimental GPU YUV path instead fills a timestamped queue within
+a configurable 32–256 MiB on-demand memory budget (64 MiB by default), with an
+independent 120-frame safety ceiling. Unity still presents only the newest
+picture whose selected song-clock slot is due, except for a bounded recovery
+case: when exactly one older picture is no more than one presentation interval
+late, Unity presents it now and keeps the newer due picture for the following
+display update. Larger or older backlogs are discarded immediately, so this
+cannot accumulate A/V delay. Both paths recycle a bounded
+pool of frame vectors instead of allocating multi-megabyte buffers for every
+presented frame. Gameplay transitions pre-open FFmpeg and opportunistically
+fill the reserve before the song clock begins; they never block waiting for a
+full queue, and Unity geometry is still created only in the gameplay scene.
+Restart, scrub, map replacement, normal completion, and early exit increment
+the decode epoch and synchronously empty the queue so an in-flight conversion
+cannot republish stale output. Low/empty reserve transitions, bounded catch-up
+presentations, forced late drops, and peak due-frame backlog are counted in
+memory and appended only at the existing safe performance-log boundary.
 
 Playback has one FFmpeg-type-free facade and two separately linked decoder
 backends. One backend is compiled against the private 4.4.8 headers and
@@ -54,7 +67,8 @@ two releases expose incompatible public structures and ordinary unversioned
 references placed together in `libbigscreen.so` could all bind to the first
 loaded library. The facade chooses a backend only during `Open`, never while a
 worker owns codec state. `VideoFrame` contains standard C++ values only, so
-either its reusable RGBA allocation or normalized Y/U/V plane allocations move
+either its reusable RGBA allocation, normalized Y/U/V plane allocations, or
+one packed YUV-atlas allocation moves
 to Unity without an additional A/B abstraction copy. The Video Library's compatibility probe remains fixed to the conservative
 4.4 runtime and never hands FFmpeg structures to a playback backend.
 
@@ -68,14 +82,21 @@ VM in its own internal state. MediaCodec is
 opened without an Android output Surface: FFmpeg copies the decoder's NV12 or
 YUV420P output into a CPU-readable frame. The default path remains the existing
 stride-aware swscale/RGBA mailbox. The default-off **GPU Video Conversion**
-experiment instead packs 8-bit SDR 4:2:0 into reusable Y/U/V planes, uploads
-those planes, and performs YUV conversion, container rotation, mapper color
+experiment instead keeps 8-bit SDR 4:2:0 in reusable YUV allocations and places
+eligible future pictures in the bounded timestamp queue. The default GPU
+layout uploads separate Y/U/V planes. A second default-off consolidated mode
+writes luma above side-by-side chroma regions in one R8 atlas, reducing three
+Unity uploads and `Apply()` calls to one without repacking on UnityMain.
+Presentation performs YUV conversion, container rotation, mapper color
 correction, and vignette once into one shared RGBA RenderTexture. It is not
-zero-copy decoding; it reduces transported/uploaded bytes and removes the CPU
-full-frame conversion/rotation work. Thumbnails retain the bounded RGBA path.
-Unexpected pixel layouts or failed Unity resources permanently return that
-playback session to RGBA while preserving the shared presentation texture and
-screen choreography. A hardware worker failure is consumed by the facade, which
+zero-copy decoding; it reduces transported/uploaded bytes, removes the CPU
+full-frame conversion/rotation work, and gives brief worker stalls a prepared
+reserve. Thumbnails retain the bounded RGBA path.
+If the packed shader, atlas allocation, or atlas layout cannot be used, that
+playback session first returns to the established three-plane GPU path. An
+unsupported YUV pixel layout or a separate failure of the three-plane Unity
+resources returns the session to RGBA while preserving the shared presentation
+texture and screen choreography. A hardware worker failure is consumed by the facade, which
 reopens the same runtime and file at the latest requested timestamp with
 software decoding when policy permits before the session decides playback has
 failed. Unsupported 10-bit, HDR, and alpha video is rejected explicitly.
@@ -155,6 +176,15 @@ only during gameplay teardown. Unsupported Quest fuel-gauge properties remain
 empty optionals all the way to disk, preventing unavailable readings from being
 mistaken for zero consumption.
 
+Frame-preparation timing uses cumulative session counters, not an exponential
+moving average. Each prepared picture records decoder-worker thread CPU time
+separately from elapsed wall time not charged to that thread. The live panel
+and results card show the true preparation-CPU average and session peak; the
+append-only performance log additionally records average/peak worker wait,
+which can include asynchronous MediaCodec waits and thread descheduling. The
+measurement interval is reset once after preview/gameplay prewarm and is not
+periodically reset by live-panel refreshes.
+
 The screen is ordinary environment-layer geometry. A frame/background mesh and
 a separately clipped video-content mesh share one root transform. That split
 allows rotation, zoom, pan, perspective tilt, stretching, and black or fully
@@ -163,17 +193,26 @@ picture opacity are independent: the background renderer can be removed while
 the decoded picture stays opaque, or the picture can blend over either kind of
 background. Normal playback preserves the selected file's native dimensions;
 only explicitly bounded utility previews may request a smaller decoder output.
-Decoded RGBA frames enter the one-frame mailbox at that selected size. Queue and
-depth behavior depends on the active video material. Both selectable paths are
-included in the current on-device regression matrix; see `KNOWN_ISSUES.md`.
+Decoded RGBA frames enter the one-frame mailbox at that selected size. GPU YUV
+frames may enter the bounded read-ahead queue; its due-time metadata is separate
+from source PTS so the FPS ceiling does not prepare or expose skipped pictures.
+The reusable pool may retain enough YUV frame sets to refill the configured
+queue after a scrub or restart, but queue plus pool is bounded by the same
+byte-derived frame capacity. Planar Y/U/V growth is counted as one frame-set
+allocation rather than three independent plane allocations. Queue and depth behavior depends on the active video material. Both selectable
+paths are included in the current on-device regression matrix; see
+`KNOWN_ISSUES.md`.
 
 Video Library looping is an explicit decoder transition, not an ordinary clock
-seek. `Restart` clears the one-frame mailbox, invalidates the previous pass's
+seek. `Restart` clears all prepared decoder output, invalidates the previous pass's
 first-frame readiness, flushes the codec, and seeks before any last-frame or EOF
-fast path can accept the request. The song-preview channel remains stopped until
-a picture from that new pass reaches Unity. A Quest MediaCodec backend that
-does not produce a frame after the bounded restart interval is reopened once
-without recreating the Unity screen; there is no repeated reopen loop.
+fast path can accept the request. Initial Play and each loop hold the external song
+clock stationary for a non-blocking 250 ms decoder pre-roll; Unity keeps ticking
+the worker during that interval. The song-preview channel remains stopped until
+both that deadline and a picture from the new pass have reached Unity. A Quest
+MediaCodec backend that does not produce a frame after the bounded restart
+interval is reopened once without recreating the Unity screen; there is no
+repeated reopen loop.
 
 The embedded video shader has process lifetime rather than scene lifetime. Its
 `AssetBundle` and `Shader` wrappers are retained through `SafePtrUnity` handles,

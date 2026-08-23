@@ -597,4 +597,25 @@ for raw_error, expected in http_cases.items():
     assert expected.lower() in download_message.lower(), (raw_error, download_message)
     assert expected.lower() in probe_message.lower(), (raw_error, probe_message)
 
+# YouTube prefixes policy failures with the generic words "Video unavailable".
+# The specific restriction must win or the headset tells the player that the
+# video disappeared when the real cause is an account/network policy.
+workspace_restriction = (
+    "ERROR: [youtube] abc: Video unavailable. This video is restricted. "
+    "Please check the Google Workspace administrator and/or the network "
+    "administrator restrictions."
+)
+assert "administrator" in download["classify"](workspace_restriction)[1].lower()
+assert "administrator" in probe["classify"](workspace_restriction).lower()
+assert download["diagnostic_code"](workspace_restriction) == \
+    "BS-DL-ACCESS-RESTRICTED"
+assert probe["diagnostic_code"](workspace_restriction) == \
+    "BS-DL-ACCESS-RESTRICTED"
+
+generic_unavailable = "ERROR: [youtube] abc: Video unavailable"
+assert download["diagnostic_code"](generic_unavailable) == \
+    "BS-DL-VIDEO-UNAVAILABLE"
+assert probe["diagnostic_code"](generic_unavailable) == \
+    "BS-DL-VIDEO-UNAVAILABLE"
+
 print("Embedded downloader scripts and HTTP explanations passed.")

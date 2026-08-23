@@ -137,7 +137,7 @@ source path is also tracked in this repository:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-downloader-from-source.ps1
 ```
 
-The script downloads the pinned yt-dlp nightly 2026.08.18.122307 and
+The script downloads the pinned stable yt-dlp 2026.08.19 and
 yt-dlp-ejs 0.8.0 source
 archives, verifies their hashes, invokes yt-dlp-ejs's own `hatch_build.py` and
 committed lockfile, checks the resulting solver hashes, and packages yt-dlp's
@@ -214,9 +214,13 @@ active Video Library preview is recreated at its retained song position, while
 gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback
 interval. The performance overlay and results summary identify the runtime
-that actually opened the runtime/backend and report presented-frame loss, decode
-delay, automatic reductions, presentation method/time, and reusable frame-buffer allocation count. FFmpeg 9.0.1 is the
-current default; FFmpeg 4.4.8 remains available for compatibility comparisons.
+that actually opened the backend and report presented-frame loss, true
+session-average/peak frame-preparation CPU time, automatic reductions,
+presentation method/time, and reusable frame-buffer allocation count. The
+append-only performance log separately records worker wait time so asynchronous
+MediaCodec waits and thread descheduling are not misreported as decode cost.
+FFmpeg 9.0.1 is the current default; FFmpeg 4.4.8 remains available for
+compatibility comparisons.
 
 ## Host tests
 

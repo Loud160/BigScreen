@@ -1,6 +1,9 @@
 # GPU Video 60 FPS Optimization Plan
 
-Status: planning only; none of the changes proposed below are implemented.
+Status: bounded read-ahead, bounded late-frame catch-up, and a default-off
+packed-atlas upload comparison are implemented on the
+`codex/major-feature-development` branch; Quest performance validation remains
+in progress.
 
 Last reviewed: August 23, 2026
 
@@ -40,11 +43,10 @@ delay until Unity's next update, the three plane texture uploads, each
 
 At 60 FPS, a new source-picture deadline occurs every 16.67 ms. Beat Saber on
 the tested Quest 2 normally runs near 72 Hz, with game updates approximately
-13.89 ms apart. The current reactive one-frame mailbox therefore has little
-timing margin: a picture requested after a song-clock slot changes commonly
-cannot be uploaded until the following Unity update. An isolated game-frame,
-MediaCodec, upload, or GPU scheduling delay can miss a video deadline even
-when average decode time is far below 16.67 ms.
+13.89 ms apart. The original reactive one-frame mailbox therefore had little
+timing margin: a picture requested after a song-clock slot changed commonly
+could not be uploaded until the following Unity update. The new experiment is
+intended to test whether removing that reactive wait reduces missed deadlines.
 
 ## Measurement before further changes
 
@@ -71,39 +73,55 @@ candidate. The source's declared frame rate and actual PTS/duration cadence
 must also be checked before treating a variable-frame-rate or duplicated-frame
 file as a 60-unique-picture-per-second test.
 
-## Recommended first change: bounded timestamped read-ahead
+## Implemented first experiment: bounded timestamped read-ahead
 
-Replace the single reactive output mailbox with a small timestamp-ordered YUV
-queue. After startup or a seek, the decoder should continue decoding
-sequentially until either a frame-count cap or a short media-time horizon is
-filled. A starting experiment of three to five pictures, bounded to roughly
-50–100 ms, is appropriate for 60 FPS testing; measurements should determine
-the final values.
+The GPU path now replaces the single reactive output mailbox with a
+timestamp-ordered YUV queue. After startup or a seek, the decoder continues
+decoding sequentially until its memory budget or internal frame ceiling is
+filled. The user-facing budget ranges from 32–256 MiB in 16 MiB steps and
+defaults to 64 MiB; a separate 120-frame ceiling limits very small pictures.
 
 The song/audio clock remains authoritative. Read-ahead must never advance what
-the user sees: Unity selects the newest queued picture whose presentation time
-is due and retains the prior picture when no replacement is ready. This gives
-brief decoder or Unity hitches buffered pictures to consume without adding
-intentional audiovisual latency.
+the user sees. Unity normally selects the newest queued picture whose
+presentation time is due and retains the prior picture when no replacement is
+ready. A later refinement uses spare display updates to recover one slightly
+late picture: if an older and newer picture are both due and the older one is
+no more than one presentation interval late, it presents the older one now and
+keeps the newer one for the following update. Anything older, or any larger
+backlog, is discarded so audiovisual delay cannot accumulate.
 
-Required safeguards:
+Implemented safeguards:
 
 - retain generation IDs and discard every older-generation picture;
 - flush the queue on seek, scrub, restart, loop, map change, decoder reopen,
   and material/presentation failure;
 - stop filling while paused and resume from the correct media time;
-- bound both frame count and media-time horizon;
+- bound both total YUV bytes and frame count;
 - keep the worker nonblocking during Unity teardown;
 - recycle plane buffers rather than allocating per picture;
-- preserve the newest-frame/coalescing behavior for large clock jumps;
-- expose queue depth, underruns, discarded pictures, and memory in diagnostics;
+- preserve newest-frame/coalescing behavior for large clock jumps while
+  allowing one bounded catch-up presentation for a small scheduling slip;
 - keep the existing CPU RGBA fallback behavior deterministic.
 
-One tightly packed 1080p YUV420 picture is approximately 3.11 MB. Retaining
-three to five additional pictures costs roughly 9.3–15.6 MB before container
-overhead, which is material but much safer than an equivalent RGBA queue of
-approximately 24.9–41.5 MB. Queue limits must be reevaluated for 1440p and
-portrait sources rather than assuming 1080p memory use.
+The implementation uses the selected on-demand YUV memory budget and a
+120-frame ceiling. It receives the active media-time
+presentation interval from PlaybackSession, so lower FPS ceilings and changed
+playback rates do not cause unused source pictures to be converted merely to
+fill the reserve. A queue epoch rejects conversions that finish after a seek,
+restart, cadence change, effect replacement, or GPU/CPU transition.
+
+The completed-gameplay performance log records the budget, calculated frame
+capacity, peak/final reserve, transitions into low/empty reserve states,
+bounded catch-up presentations, forced late drops, and peak due-frame backlog.
+The same summary is written when a menu preview ends. These fields distinguish
+producer starvation from Unity scheduling lateness without expanding the live
+performance panel.
+
+One tightly packed 1080p YUV420 picture is approximately 3.11 MB. The 64 MiB
+default therefore fits about 21 pictures; 1440p fits about 11–12 depending on
+the exact coded dimensions. The worker and Unity upload picture add overhead
+beyond queued bytes, so Quest memory behavior must be measured at the upper
+budgets rather than treating the slider value as total process cost.
 
 Expected value: high. This directly removes the dependency on completing a
 decode request between two narrowly spaced Unity presentation opportunities.
@@ -145,7 +163,7 @@ Risk: low to moderate after texture-format support is proven. A UV-order or
 stride mistake produces immediately visible color corruption, so failure must
 fall back to the existing planar or CPU RGBA path rather than guessing.
 
-## Alternative upload optimization: one packed YUV atlas
+## Implemented A/B experiment: one packed YUV atlas
 
 Pack Y, U, and V into one R8 texture with a width of the luma plane and a total
 height of approximately 1.5 times the luma height. U and V can occupy separate
@@ -170,6 +188,14 @@ Risks and requirements:
 Expected value: moderate when Unity call overhead dominates.
 
 Risk: moderate because sampling mistakes can create seams or chroma bleeding.
+
+The implementation is independently selectable beneath GPU Video Conversion.
+The worker writes one reusable atlas directly; Unity performs one upload and
+one conversion blit into the same shared RGB RenderTexture. Half-texel region
+mapping prevents bilinear samples from crossing atlas boundaries, and padded
+atlas width supports odd coded dimensions. Failure switches first to the
+existing three-plane GPU path. The performance panel and log identify the
+active layout so an A/B run cannot silently measure the fallback.
 
 ## Optional upload stabilization: double-buffer plane textures
 
@@ -215,7 +241,8 @@ picture.
 ## Recommended implementation order
 
 1. Capture repeatable off/on baselines including presentation timing.
-2. Add the bounded timestamped read-ahead queue and its diagnostics.
+2. Add the bounded timestamped read-ahead queue and performance-log queue
+   diagnostics (implemented experimentally).
 3. Retest ordinary preview, gameplay, Replay, restart, looping, scrubbing,
    Chroma/Cinema placement, and the full Showcase.
 4. Preserve NV12 as two planes if hardware-decoder presentation remains a

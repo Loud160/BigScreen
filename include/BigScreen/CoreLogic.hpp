@@ -1148,6 +1148,120 @@ namespace BigScreen::CoreLogic {
         std::size_t size_ = 0;
     };
 
+    struct DecodedFrameTiming {
+        double timestampSeconds = 0.0;
+        double durationSeconds = 0.0;
+        bool repairedTimestamp = false;
+        bool repairedDuration = false;
+    };
+
+    /// Returns whether the worker must decode past its current picture before
+    /// satisfying a presentation slot. A picture whose timestamp is slightly
+    /// after the slot is already the nearest available future picture; decoding
+    /// farther forward can never find an earlier timestamp. This distinction is
+    /// critical for millisecond WebM time bases, whose rounded 60 FPS PTS values
+    /// can leave a small gap around an exact 1/60-second presentation deadline.
+    inline bool ShouldAdvanceDecodedFrame(
+        double deadlineSeconds,
+        double frameTimestampSeconds,
+        double frameDurationSeconds,
+        bool currentFrameAlreadyPublished)
+    {
+        if(!std::isfinite(frameTimestampSeconds))
+            return true;
+        if(currentFrameAlreadyPublished)
+            return true;
+        return deadlineSeconds >= frameTimestampSeconds +
+            std::max(0.0, frameDurationSeconds);
+    }
+
+    /// Returns true when an already-queued picture genuinely covers another
+    /// presentation slot. Container timestamps and durations are commonly
+    /// quantized to milliseconds, so a slot at the mathematical end boundary
+    /// must advance to the next picture instead of being swallowed by floating
+    /// point noise. Without this tolerance, 60 FPS WebM playback can skip one
+    /// output slot whenever a rounded 16 ms duration meets a fractional
+    /// 1/60-second deadline.
+    inline bool PublishedFrameCoversPresentationSlot(
+        double deadlineSeconds,
+        double frameTimestampSeconds,
+        double frameDurationSeconds)
+    {
+        constexpr double EndBoundaryToleranceSeconds = 0.0005;
+        if(!std::isfinite(frameTimestampSeconds) ||
+           !std::isfinite(frameDurationSeconds) ||
+           frameDurationSeconds <= 0.0)
+            return false;
+        return deadlineSeconds + EndBoundaryToleranceSeconds <
+            frameTimestampSeconds + frameDurationSeconds;
+    }
+
+    /// Normalizes timing returned by a codec before the presentation worker
+    /// uses it to decide whether another picture must be decoded. Android
+    /// MediaCodec can return AVFrames with a missing or repeated timestamp, or
+    /// with a duration copied from container-level metadata rather than one
+    /// picture. Trusting either value can make one decoded image appear to
+    /// cover the rest of the video and permanently starve the read-ahead queue.
+    ///
+    /// Valid variable-frame-rate timing remains authoritative. Only missing,
+    /// non-advancing timestamps and implausible single-frame durations fall
+    /// back to the stream's known nominal cadence.
+    inline DecodedFrameTiming NormalizeDecodedFrameTiming(
+        double rawTimestampSeconds,
+        double rawDurationSeconds,
+        double nominalDurationSeconds,
+        double previousTimestampSeconds,
+        double previousDurationSeconds,
+        double requestedTimestampSeconds)
+    {
+        const double nominal =
+            std::isfinite(nominalDurationSeconds) &&
+            nominalDurationSeconds > 0.0
+                ? nominalDurationSeconds
+                : 1.0 / 30.0;
+        const double maximumPlausibleDuration = std::max(0.25, nominal * 8.0);
+
+        DecodedFrameTiming result;
+        if(std::isfinite(rawDurationSeconds) && rawDurationSeconds > 0.0 &&
+           rawDurationSeconds <= maximumPlausibleDuration)
+        {
+            result.durationSeconds = rawDurationSeconds;
+        }
+        else
+        {
+            result.durationSeconds = nominal;
+            result.repairedDuration = true;
+        }
+
+        result.timestampSeconds = rawTimestampSeconds;
+        const bool hasPrevious = std::isfinite(previousTimestampSeconds);
+        if(hasPrevious)
+        {
+            const double previousDuration =
+                std::isfinite(previousDurationSeconds) &&
+                previousDurationSeconds > 0.0 &&
+                previousDurationSeconds <= maximumPlausibleDuration
+                    ? previousDurationSeconds
+                    : nominal;
+            const double minimumAdvance = std::max(0.000001, nominal * 0.05);
+            if(!std::isfinite(result.timestampSeconds) ||
+               result.timestampSeconds <=
+                   previousTimestampSeconds + minimumAdvance)
+            {
+                result.timestampSeconds =
+                    previousTimestampSeconds + previousDuration;
+                result.repairedTimestamp = true;
+            }
+        }
+        else if(!std::isfinite(result.timestampSeconds))
+        {
+            result.timestampSeconds = std::max(0.0, requestedTimestampSeconds);
+            result.repairedTimestamp = true;
+        }
+
+        return result;
+    }
+
     /// Estimates how many distinct source images should have been displayed
     /// during an interval. Output requests above the media's effective cadence
     /// are intentional frame reuse, not decoder misses. playbackRate converts
@@ -1164,6 +1278,81 @@ namespace BigScreen::CoreLogic {
         return std::min(
             effectiveSourceRate,
             static_cast<double>(outputFramesPerSecond));
+    }
+
+    /// Returns the media-clock distance between distinct pictures that the
+    /// presentation path should request. The output FPS setting is a ceiling,
+    /// not a target: a 59.94 FPS source under a 60 FPS ceiling must retain its
+    /// native 1001/60000 cadence instead of accumulating an early deadline on
+    /// every frame. Faster playback may make the ceiling authoritative, while
+    /// slower playback still requests each distinct source picture once.
+    inline double PresentationMediaInterval(
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int outputFramesPerSecond)
+    {
+        const double expectedRate = ExpectedPresentationRate(
+            sourceFramesPerSecond,
+            playbackRate,
+            outputFramesPerSecond);
+        if(expectedRate <= 0.0 || !std::isfinite(expectedRate) ||
+           playbackRate <= 0.0 || !std::isfinite(playbackRate))
+        {
+            return 1.0 / std::max(1, outputFramesPerSecond);
+        }
+        return std::max(0.000001, playbackRate / expectedRate);
+    }
+
+    struct ReadAheadConsumeDecision {
+        std::size_t discardCount = 0;
+        bool catchUpPresentation = false;
+    };
+
+    /// Chooses a bounded read-ahead frame when multiple queued pictures have
+    /// become due between Unity updates. At most one slightly late picture is
+    /// retained for presentation now; the newer due picture can then be shown
+    /// on the next display update. Anything older is irrecoverably late and is
+    /// discarded so this recovery policy can never accumulate A/V latency.
+    ///
+    /// dueTimeAt must return the media-clock due time for indices in the
+    /// already-sorted due prefix [0, dueCount). Keeping this as a callback
+    /// avoids copying timestamps out of FrameDecoder's deque every frame.
+    template<class DueTimeAt>
+    inline ReadAheadConsumeDecision SelectBoundedReadAheadFrame(
+        std::size_t dueCount,
+        double mediaSeconds,
+        double fallbackPresentationIntervalSeconds,
+        DueTimeAt&& dueTimeAt)
+    {
+        ReadAheadConsumeDecision decision;
+        if(dueCount == 0)
+            return decision;
+
+        // Retain no more than the two newest due pictures. This bounds the
+        // possible recovery to one following display update even after a
+        // larger hitch.
+        decision.discardCount = dueCount > 2 ? dueCount - 2 : 0;
+        if(dueCount - decision.discardCount < 2)
+            return decision;
+
+        const double olderDue = dueTimeAt(decision.discardCount);
+        const double newerDue = dueTimeAt(decision.discardCount + 1);
+        const double measuredInterval = newerDue - olderDue;
+        const double interval =
+            std::isfinite(measuredInterval) && measuredInterval > 0.000001
+                ? measuredInterval
+                : std::max(0.000001, fallbackPresentationIntervalSeconds);
+        constexpr double DueToleranceSeconds = 0.0005;
+        if(mediaSeconds - olderDue <= interval + DueToleranceSeconds)
+        {
+            decision.catchUpPresentation = true;
+            return decision;
+        }
+
+        // Even the newer of the two recovery candidates is now required to
+        // keep presentation within one frame interval of the song clock.
+        ++decision.discardCount;
+        return decision;
     }
 
     inline std::uint64_t ExpectedPresentedFrames(
@@ -1381,6 +1570,145 @@ namespace BigScreen::CoreLogic {
     {
         return !resourceAlive &&
                (!loadAttempted || everLoadedSuccessfully);
+    }
+
+    struct DownloadFailurePresentation {
+        std::string title;
+        std::string shortReason;
+        std::string message;
+    };
+
+    /// Converts a stable downloader support code plus its already-sanitized
+    /// explanation into a short modal that tells a non-technical player what
+    /// failed and what they can do next. The raw yt-dlp diagnostic remains in
+    /// error-history.log; it must never be copied wholesale into the headset
+    /// dialog because those messages can be long, inconsistent, or technical.
+    inline DownloadFailurePresentation DescribeDownloadFailure(
+        std::string_view errorCode,
+        std::string_view detail,
+        bool metadataCheck)
+    {
+        const std::string code = errorCode.empty()
+            ? (metadataCheck ? "BS-DL-PROBE-001" : "BS-DL-FAILED-001")
+            : std::string(errorCode);
+        DownloadFailurePresentation result{
+            metadataCheck ? "Video check failed" : "Video download failed",
+            metadataCheck
+                ? "The YouTube link could not be checked."
+                : "The video could not be downloaded.",
+            {}};
+        std::string action =
+            "Choose another public YouTube video, or assign a compatible local MP4 or WebM file.";
+
+        if(code == "BS-DL-ACCESS-RESTRICTED")
+        {
+            result.title = "Video access restricted";
+            result.shortReason =
+                "YouTube or the current network restricted this video.";
+            action = "Try a different public video or a different network.";
+        }
+        else if(code == "BS-DL-ACCESS-PRIVATE")
+        {
+            result.title = "Private video unavailable";
+            result.shortReason = "This YouTube video is private.";
+            action = "Choose a public video that does not require sign-in.";
+        }
+        else if(code == "BS-DL-ACCESS-AGE")
+        {
+            result.title = "Age-restricted video";
+            result.shortReason = "YouTube requires a signed-in adult account.";
+            action = "Choose a public video that does not require sign-in.";
+        }
+        else if(code == "BS-DL-ACCESS-MEMBERS")
+        {
+            result.title = "Members-only video";
+            result.shortReason = "This video requires channel membership.";
+            action = "Choose a public video that does not require sign-in.";
+        }
+        else if(code == "BS-DL-ACCESS-SIGNIN" ||
+                code == "BS-DL-ACCESS-PREMIUM" ||
+                code == "BS-DL-HTTP-401")
+        {
+            result.title = "YouTube sign-in required";
+            result.shortReason = "This video requires a YouTube account.";
+            action = "Choose a public video that does not require sign-in.";
+        }
+        else if(code == "BS-DL-ACCESS-REGION")
+        {
+            result.title = "Video unavailable in this region";
+            result.shortReason = "YouTube region-restricted this video.";
+            action = "Choose a video available in the Quest's current region.";
+        }
+        else if(code == "BS-DL-COPYRIGHT-001")
+        {
+            result.title = "Video blocked by copyright";
+            result.shortReason = "YouTube blocked access because of copyright restrictions.";
+            action = "Choose another public video.";
+        }
+        else if(code == "BS-DL-VIDEO-REMOVED" ||
+                code == "BS-DL-HTTP-404" ||
+                code == "BS-DL-HTTP-410")
+        {
+            result.title = "Video removed";
+            result.shortReason = "The YouTube video is no longer available.";
+            action = "Choose another public video.";
+        }
+        else if(code == "BS-DL-VIDEO-UNAVAILABLE")
+        {
+            result.title = "Video unavailable";
+            result.shortReason = "YouTube did not make this video available.";
+            action = "Choose another public video.";
+        }
+        else if(code == "BS-DL-HTTP-403")
+        {
+            result.title = "YouTube refused the video";
+            result.shortReason = "YouTube refused access to the video stream.";
+            action = "Try again, then check yt-dlp for updates if other videos also fail.";
+        }
+        else if(code == "BS-DL-HTTP-429")
+        {
+            result.title = "YouTube rate limit";
+            result.shortReason = "YouTube is temporarily limiting this headset.";
+            action = "Wait a few minutes before trying again.";
+        }
+        else if(code == "BS-DL-HTTP-5XX")
+        {
+            result.title = "YouTube server error";
+            result.shortReason = "YouTube could not complete the request.";
+            action = "This is usually temporary. Wait and try again.";
+        }
+        else if(code == "BS-DL-NETWORK-001" || code == "BS-DL-TLS-001")
+        {
+            result.title = "Network check failed";
+            result.shortReason = "The Quest could not securely reach YouTube.";
+            action = "Check the Quest Wi-Fi connection and try again.";
+        }
+        else if(code == "BS-DL-STORAGE-001")
+        {
+            result.title = "Not enough Quest storage";
+            result.shortReason = "The Quest does not have enough free storage.";
+            action = "Free some storage, then try the download again.";
+        }
+        else if(code == "BS-DL-FORMAT-001")
+        {
+            result.title = "Video format unavailable";
+            result.shortReason = "YouTube offered no compatible video at this resolution.";
+            action = "Try another resolution or another video.";
+        }
+        else if(code == "BS-DL-EXTRACTOR-001")
+        {
+            result.title = "Downloader update may be needed";
+            result.shortReason = "YouTube changed how this video's information is delivered.";
+            action = "Open Big Screen's Update tab and check yt-dlp for updates.";
+        }
+
+        const std::string explanation = detail.empty()
+            ? result.shortReason
+            : std::string(detail);
+        result.message = explanation + "\n\n" + action;
+        if(explanation.find(code) == std::string::npos)
+            result.message += "\n\nError code: " + code;
+        return result;
     }
 
     /// Converts yt-dlp byte counters into a UI-safe progress fraction. The

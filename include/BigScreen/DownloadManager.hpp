@@ -25,10 +25,12 @@
 #include "BigScreen/VideoLibrary.hpp"
 
 namespace BigScreen {
-    // This pinned nightly contains yt-dlp's upstream fix for the August 2026
-    // Android-VR HTTP 403 regression. Return to a stable baseline after the
-    // next stable yt-dlp release incorporates that fix.
-    inline constexpr std::string_view BundledYtDlpVersion = "2026.08.18.122307";
+    // Stable 2026.08.19 contains the YouTube fixes that temporarily required
+    // Big Screen to ship nightly 2026.08.18.122307. Keep the baseline channel
+    // beside the version so every rollback and UI fallback reports the same
+    // immutable package identity instead of duplicating a channel literal.
+    inline constexpr std::string_view BundledYtDlpVersion = "2026.08.19";
+    inline constexpr std::string_view BundledYtDlpChannel = "stable";
     enum class DownloadState {
         Idle,
         Probing,
@@ -189,8 +191,9 @@ namespace BigScreen {
         /// Saber process. It only schedules background work and never waits on
         /// GitHub or Python from the menu activation callback.
         void StartAutomaticYtDlpReleaseCheck();
-        /// Manual checks use the selected channel. Stable-to-nightly remains an
-        /// explicit user action; automatic checks follow the installed channel.
+        /// Manual checks use the requested channel. Stable-to-nightly remains
+        /// an explicit user action; automatic checks and displayed state follow
+        /// the package the embedded runtime actually loaded.
         bool StartYtDlpReleaseCheck(bool nightly, std::string& error);
         /// Starts the public GitHub release check at most once per Beat Saber
         /// process. Reopening Big Screen does not generate another request.
@@ -320,7 +323,8 @@ namespace BigScreen {
         std::string initializationErrorCode_ = "BS-DL-INIT-000";
         mutable std::mutex versionMutex_;
         std::string currentUpdateVersion_ = std::string(BundledYtDlpVersion);
-        std::string currentUpdateChannel_ = "nightly";
+        std::string currentUpdateChannel_ =
+            std::string(BundledYtDlpChannel);
         std::optional<std::string> updateNotice_;
         // Set when C++ itself publishes a terminal failure. A filesystem
         // permission/handle error can prevent deletion or truncation of the

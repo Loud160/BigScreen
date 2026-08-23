@@ -16,4 +16,16 @@ namespace BigScreen {
     /// predictable; the final sibling ordering keeps both the dialog and its
     /// input blocker in front of that panel.
     void ShowModalInFront(BSML::ModalView* modal) noexcept;
+
+    /// Reasserts the most recently shown, still-visible Big Screen modal at
+    /// the front of its owning controller. Retained menu panels can append
+    /// children during later refreshes, so one-time sibling ordering at Show()
+    /// is not sufficient to guarantee that the dialog and its input blocker
+    /// remain reachable.
+    void TickFrontmostMenuModal() noexcept;
+
+    /// Hides every retained popup before Big Screen releases its flow
+    /// coordinator. This prevents a modal blocker from being reactivated with
+    /// a stale controller the next time the menu opens.
+    void DismissTrackedMenuModals() noexcept;
 }

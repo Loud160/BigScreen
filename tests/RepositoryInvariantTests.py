@@ -40,6 +40,9 @@ ndk_install = (root / "scripts/install-pinned-ndk.sh").read_text(
 ffmpeg_elf_audit = (root / "scripts/validate-ffmpeg-elf.ps1").read_text(
     encoding="utf-8")
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
+downloader_source_build = (
+    root / "scripts/build-downloader-from-source.ps1"
+).read_text(encoding="utf-8")
 quickjs_fetch = (root / "scripts/fetch-quickjs-ng.ps1").read_text(
     encoding="utf-8")
 rapidjson_fetch = (root / "scripts/fetch-rapidjson.ps1").read_text(
@@ -71,6 +74,9 @@ error_manager_source = (root / "src/ErrorManager.cpp").read_text(
     encoding="utf-8")
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
 settings_source = (root / "src/Settings.cpp").read_text(encoding="utf-8")
+settings_menu_header = (
+    root / "include/BigScreen/SettingsMenu.hpp"
+).read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
 menu_modal_header = (
     root / "include/BigScreen/MenuModal.hpp"
@@ -119,6 +125,9 @@ video_shader_source = (
 ).read_text(encoding="utf-8")
 yuv_conversion_shader_source = (
     root / "tools/video-shader/Assets/BigScreenYuvConversion.shader"
+).read_text(encoding="utf-8")
+packed_yuv_conversion_shader_source = (
+    root / "tools/video-shader/Assets/BigScreenPackedYuvConversion.shader"
 ).read_text(encoding="utf-8")
 video_shader_builder = (
     root / "tools/video-shader/Assets/Editor/BuildBigScreenVideoShader.cs"
@@ -388,7 +397,7 @@ for launcher_disclosure in (
     "FFmpeg 4.4.8 and 9.0.1",
     "CPython 3.14.7",
     "QuickJS-NG 0.16.1",
-    "yt-dlp nightly 2026.08.18.122307",
+    "stable yt-dlp 2026.08.19",
     "certifi 2026.7.22",
 ):
     assert launcher_disclosure in build_launcher
@@ -532,7 +541,7 @@ for documented_dependency in (
     "FFmpeg default runtime | 9.0.1",
     "CPython Android runtime | 3.14.7",
     "QuickJS-NG amalgamation | 0.16.1",
-    "yt-dlp | nightly 2026.08.18.122307",
+    "yt-dlp | stable 2026.08.19",
     "certifi | 2026.7.22",
 ):
     assert documented_dependency in dependency_guide
@@ -1002,7 +1011,14 @@ assert open_body.index("stopWorker_ = false;") < open_body.index(
     "int result = avformat_open_input")
 close_body = frame_decoder_source.split("void FrameDecoder::Close()", 1)[1].split(
     "void FrameDecoder::Request", 1)[0]
-for retained_counter in ("peakDecodeMilliseconds_ = 0.0", "bufferAllocations_ = 0"):
+for retained_counter in (
+    "preparationSampleCount_ = 0",
+    "preparationCpuNanoseconds_ = 0",
+    "peakPreparationCpuNanoseconds_ = 0",
+    "preparationWaitNanoseconds_ = 0",
+    "peakPreparationWaitNanoseconds_ = 0",
+    "bufferAllocations_ = 0",
+):
     assert retained_counter in open_body
     assert retained_counter not in close_body
 assert "av_strerror" in frame_decoder_source
@@ -1051,7 +1067,8 @@ assert close_and_retain.index("backend_->Close();") < close_and_retain.index(
 assert close_and_retain.index(
     "accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();"
 ) < close_and_retain.index("backend_.reset();")
-assert "retainedPeakDecodeMilliseconds_" in close_and_retain
+assert "retainedPreparationDiagnostics_" in close_and_retain
+assert "backend_->PreparationDiagnostics()" in close_and_retain
 assert "accumulatedBufferAllocations_ += backend_->BufferAllocations();" in close_and_retain
 assert 'if(!backend_)\n            return "none";' in frame_decoder_facade
 
@@ -1088,14 +1105,26 @@ assert "Menu video did not resume" in resume_preview
 # sibling position before and after Show(), keeping both the visible dialog and
 # its blocker above that panel without reparenting it onto another screen.
 assert "ShowModalInFront" in menu_modal_header
+assert "void TickFrontmostMenuModal() noexcept;" in menu_modal_header
+assert "void DismissTrackedMenuModals() noexcept;" in menu_modal_header
 assert "ActiveCenterModalHost" not in menu_flow_source
 menu_popup_presenter = menu_flow_source.split(
     "void ShowModalInFront(BSML::ModalView* modal) noexcept", 1
-)[1].split("bool IsBigScreenMenuTransitionPending()", 1)[0]
-assert menu_popup_presenter.count("modalTransform->SetAsLastSibling();") == 2
+)[1].split("void TickFrontmostMenuModal() noexcept", 1)[0]
+assert menu_popup_presenter.count("RaiseModalRoot(modal);") == 2
 assert "SetParent(" not in menu_popup_presenter
-assert menu_popup_presenter.index("SetAsLastSibling();") < \
+assert menu_popup_presenter.index("RaiseModalRoot(modal);") < \
     menu_popup_presenter.index("modal->Show();")
+modal_front_tick = menu_flow_source.split(
+    "void TickFrontmostMenuModal() noexcept", 1
+)[1].split("bool IsBigScreenMenuTransitionPending()", 1)[0]
+assert "get_activeInHierarchy()" in modal_front_tick
+assert "RaiseModalRoot(candidate.ptr());" in modal_front_tick
+assert main_source.count("TickFrontmostMenuModal();") == 2
+assert "std::vector<UnityW<BSML::ModalView>> frontmostMenuModals" in (
+    menu_flow_source
+)
+assert "DismissTrackedMenuModals();" in menu_flow_source
 assert "CreateModal(\n            viewController" in settings_menu_source
 assert "CreateModal(\n            editorController" in library_menu_source
 assert "modalHostViewController" not in settings_menu_source
@@ -1153,6 +1182,20 @@ assert "StartAutomaticModReleaseCheck();" in settings_menu_source
 assert "StartAutomaticYtDlpReleaseCheck();" in settings_menu_source
 assert "StartScheduledUpdaterCheck" not in main_source
 assert "automaticYtDlpReleaseCheckStarted_" in download_manager_header
+assert 'BundledYtDlpVersion = "2026.08.19"' in download_manager_header
+assert 'BundledYtDlpChannel = "stable"' in download_manager_header
+assert 'std::string(BundledYtDlpChannel)' in download_manager_header
+assert download_manager_source.count("BundledYtDlpChannel") >= 5
+assert '$ytDlpVersion = "2026.08.19"' in runtime_fetch
+assert '$ytDlpRepository = "yt-dlp/yt-dlp"' in runtime_fetch
+assert '1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6' in (
+    runtime_fetch
+)
+assert '$ytDlpVersion = "2026.08.19"' in downloader_source_build
+assert '$ytDlpRepository = "yt-dlp/yt-dlp"' in downloader_source_build
+assert '072aad4f2a7604e92155f61a275a4752dc64046c8f6d90df3710525d94cd37c1' in (
+    downloader_source_build
+)
 assert "yt-dlp/yt-dlp-nightly-builds" in download_manager_source
 assert "stable_has_caught_up" in download_manager_source
 assert "stableCaughtUp" in download_manager_header
@@ -1160,6 +1203,18 @@ assert "Stable yt-dlp is older" in download_manager_source
 assert "Switching now will install an older yt-dlp release" in download_manager_source
 assert "current_channel == 'nightly'" in download_manager_source
 assert '"Check Stable Release"' in settings_menu_source
+assert '"Use Nightly yt-dlp"' in settings_menu_source
+assert "void SettingsMenu::RefreshYtDlpChannelState()" in settings_menu_source
+assert "void SettingsMenu::RequestYtDlpChannel(bool nightly)" in (
+    settings_menu_source
+)
+assert settings_menu_source.count(
+    'CurrentYtDlpChannel() == "nightly"'
+) >= 6
+assert "settings.NightlyDownloaderUpdates(),\n            [this](bool enabled)" not in (
+    settings_menu_source
+)
+assert "A staged replacement does not change this control" in settings_menu_header
 assert '"Several YouTube downloads failed"' in download_manager_source
 assert "consecutiveYoutubeDownloadFailures_ < 3" in download_manager_source
 assert "youtubeFailureGuidancePending_" in download_manager_source
@@ -1709,6 +1764,37 @@ assert "SetGpuConversionEnabled" in frame_decoder_header
 assert "permanently using CPU RGBA for this playback session" in playback_source
 assert "GPU Video Conversion" in settings_menu_source
 assert "gpuVideoConversionEnabled_ = false" in settings_header
+assert "Consolidated YUV Upload" in settings_menu_source
+assert "consolidatedYuvUploadEnabled_ = false" in settings_header
+assert '"consolidatedYuvUploadEnabled"' in settings_source
+assert "VideoFrameStorage::Yuv420PackedAtlas" in frame_decoder_source
+assert "CopyCurrentFrameAsPackedYuv420" in frame_decoder_source
+assert "GPU YUV Packed" in playback_source
+assert "GPU YUV 3-Plane" in playback_source
+assert "GPU Read-Ahead Memory" in settings_menu_source
+assert "int gpuReadAheadMemoryMiB_ = 64;" in settings_header
+assert '"gpuReadAheadMemoryMiB"' in settings_source
+assert "MaximumQueuedFrames = 120" in frame_decoder_source
+assert "SelectBoundedReadAheadFrame" in core_logic
+assert "readAheadCatchUpPresentations_" in frame_decoder_header
+assert "readAheadForcedLateDrops_" in frame_decoder_header
+assert "readAheadPeakDueFrameBacklog_" in frame_decoder_header
+assert "decision.catchUpPresentation" in frame_decoder_source
+assert "readAheadForcedLateDrops_ += decision.discardCount" in frame_decoder_source
+assert "catch-up presentations" in playback_source
+assert "forced late drops" in playback_source
+assert "peak due backlog" in playback_source
+assert "playback.RestartLibraryPreview(previewSongTime_);" in library_menu_source
+show_browser_body = library_menu_source.split(
+    "void VideoLibraryMenu::ShowBrowser()", 1
+)[1].split("void VideoLibraryMenu::ShowEditor()", 1)[0]
+assert "PlaybackSession::Instance().Stop();" in show_browser_body
+assert "constexpr double PreviewDecoderPreRollSeconds = 0.25;" in (
+    library_menu_source
+)
+assert "BeginPreviewPreRoll();" in library_menu_source
+assert "ClearPreviewPreRoll();" in library_menu_source
+assert "PreviewPreRollComplete()" in library_menu_source
 assert '"_QuarterTurns"' in screen_surface_source
 assert 'Shader "BigScreen/YuvConversion"' in yuv_conversion_shader_source
 assert "SourceUv" in yuv_conversion_shader_source
@@ -1717,6 +1803,13 @@ assert "SrgbToLinearExact" in yuv_conversion_shader_source
 assert "rgb = SrgbToLinearExact(rgb);" in yuv_conversion_shader_source
 assert "YuvConversionShaderAsset" in video_shader_builder
 assert "bigscreen-yuv-conversion-shader" in video_shader_builder
+assert 'Shader "BigScreen/PackedYuvConversion"' in (
+    packed_yuv_conversion_shader_source
+)
+assert "RegionUv" in packed_yuv_conversion_shader_source
+assert "_PackedLayout" in packed_yuv_conversion_shader_source
+assert "PackedYuvConversionShaderAsset" in video_shader_builder
+assert "bigscreen-packed-yuv-conversion-shader" in video_shader_builder
 assert "decoder_.Open(videoPath_, 720, error)" in thumbnail_picker_source
 
 # Error timestamps are generated from thread-safe platform APIs because worker
@@ -1837,19 +1930,40 @@ assert "output.generation = targetGeneration;" in frame_decoder_source
 preview_loop = library_menu_source.split(
     "void VideoLibraryMenu::LoopPreviewPlayback()", 1
 )[1].split("void VideoLibraryMenu::StopPreviewAudio", 1)[0]
+assert preview_loop.index("BeginPreviewPreRoll();") < \
+    preview_loop.index("playback.RestartLibraryPreview(previewSongTime_)")
 assert preview_loop.index("playback.RestartLibraryPreview(previewSongTime_)") < \
     preview_loop.index("StartPreviewAudio();")
+stop_preview_audio = library_menu_source.split(
+    "void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)", 1
+)[1].split("void VideoLibraryMenu::RecoverInvalidPreviewAudio", 1)[0]
+assert "ClearPreviewPreRoll();" in stop_preview_audio
 assert "AdvanceSmoothedPreviewClock" in library_menu_source
 assert "playbackControlsTickCounter_ >= 6" in library_menu_source
 assert "downloadActive || periodicDownloadWasActive_" in library_menu_source
-assert "IsLibraryPreviewActive()) return;" in selection_toggle_source
+assert "if(playback.LibraryPreviewOwnershipActive())" in selection_toggle_source
+assert "void SetLibraryPreviewOwnershipActive(bool active);" in playback_header
+assert "libraryPreviewOwnershipActive_" in playback_header
+assert "context == PlaybackContext::MenuPreview &&" in playback_source
+assert "libraryPreviewOwnershipActive_" in playback_source
+library_refresh = library_menu_source.split(
+    "void VideoLibraryMenu::Refresh()", 1
+)[1].split("void VideoLibraryMenu::RefreshDisplaySettings()", 1)[0]
+library_deactivate = library_menu_source.split(
+    "void VideoLibraryMenu::Deactivate()", 1
+)[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
+assert "SetLibraryPreviewOwnershipActive(true);" in library_refresh
+assert "SetLibraryPreviewOwnershipActive(false);" in library_deactivate
 preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
 )[1].split("void VideoLibraryMenu::LoopPreviewPlayback()", 1)[0]
 assert "playback.Tick(previewSongTime_)" in preview_audio_start
-assert "if(!playback.SynchronizedAudioReady(previewSongTime_))" in preview_audio_start
+assert "!playback.SynchronizedAudioReady(previewSongTime_) ||" in (
+    preview_audio_start
+)
+assert "!PreviewPreRollComplete()" in preview_audio_start
 assert "CrossfadeTo(" in preview_audio_start
-assert preview_audio_start.index("if(!playback.SynchronizedAudioReady(previewSongTime_))") < \
+assert preview_audio_start.index("!playback.SynchronizedAudioReady(previewSongTime_)") < \
     preview_audio_start.index("CrossfadeTo(")
 assert preview_audio_start.index("BeginLibraryPreviewMeasurement") < \
     preview_audio_start.index("CrossfadeTo(")
@@ -2153,7 +2267,14 @@ assert "Missed Frames \" << missedFrames" in playback_source
 assert "presentationMisses_.MissedDeadlines()" in playback_source
 assert "std::setprecision(2) << missedPercent" in playback_source
 assert "PeakDecodeMilliseconds" in frame_decoder_header
-assert "ResetPeakDecodeMilliseconds" in playback_source
+assert "FramePreparationDiagnostics" in frame_decoder_header
+assert "CurrentThreadCpuNanoseconds" in frame_decoder_source
+assert "std::scoped_lock lock(preparationDiagnosticsMutex_)" in frame_decoder_source
+assert "preparationCpuNanoseconds_ += cpuNanoseconds" in frame_decoder_source
+assert "preparationWaitNanoseconds_ += waitNanoseconds" in frame_decoder_source
+assert "ResetPeakDecodeMilliseconds" not in playback_source
+assert playback_source.count("decoder_.ResetPreparationDiagnostics();") == 2
+assert "Worker wait " in playback_source
 assert "AutomaticPerformanceHistory automaticPerformanceHistory_" in playback_header
 assert "ApplyAutomaticPerformanceRecovery()" in playback_source
 assert "automaticPerformanceHistory_.RecordReduction" in playback_source
@@ -2164,6 +2285,10 @@ assert 'row(rightRows_[1], "Video"' in performance_panel_source
 assert 'row(rightRows_[2], "Frames Skipped"' in performance_panel_source
 assert '"Output"' not in performance_panel_source
 assert "video_width,video_height,source_fps,fps_limit" in power_benchmark_source
+assert "preparation_cpu_average_ms,preparation_cpu_peak_ms" in power_benchmark_source
+assert "worker_wait_average_ms,worker_wait_peak_ms" in power_benchmark_source
+assert "decode_average_ms,decode_peak_ms" not in power_benchmark_source
+assert "frame_buffer_allocations" in power_benchmark_source
 assert "source_width,source_height,output_width,output_height" not in power_benchmark_source
 # Rows are individual TMP elements fed through one shared label/value
 # template; the labels themselves are plain strings passed to that template.
@@ -2174,7 +2299,8 @@ assert '"Video FPS Average"' in performance_panel_source
 assert '"Frame Rate Loss"' in performance_panel_source
 assert "self->____levelBar->get_transform()" in main_source
 assert "UnityEngine::Vector2{0.0f, -36.0f}" not in main_source
-assert '"Decode Peak"' in performance_panel_source
+assert '"Prep CPU Peak"' in performance_panel_source
+assert '"Prep CPU Average"' in performance_panel_source
 assert "SetGameplayLastNoteTime" in playback_header
 assert "ShouldSampleGameplayFrame" in playback_source
 assert "songTimeSeconds >= 10.0" in core_logic

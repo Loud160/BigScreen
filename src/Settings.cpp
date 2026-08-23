@@ -94,6 +94,19 @@ namespace BigScreen {
             return value == 15 || value == 30 || value == 60 ? value : 30;
         }
 
+        int NormalizeGpuReadAheadMemoryMiB(int value)
+        {
+            constexpr int MinimumMiB = 32;
+            constexpr int MaximumMiB = 256;
+            constexpr int StepMiB = 16;
+            const int clamped = std::clamp(value, MinimumMiB, MaximumMiB);
+            const int stepped = MinimumMiB +
+                static_cast<int>(std::lround(
+                    static_cast<double>(clamped - MinimumMiB) / StepMiB)) *
+                    StepMiB;
+            return std::clamp(stepped, MinimumMiB, MaximumMiB);
+        }
+
         void SetLoggedBoolean(const char* name, bool& target, bool value)
         {
             const bool previous = target;
@@ -362,6 +375,10 @@ namespace BigScreen {
             document, "hardwareDecodingEnabled", true);
         gpuVideoConversionEnabled_ = ReadBool(
             document, "gpuVideoConversionEnabled", false);
+        consolidatedYuvUploadEnabled_ = ReadBool(
+            document, "consolidatedYuvUploadEnabled", false);
+        gpuReadAheadMemoryMiB_ = NormalizeGpuReadAheadMemoryMiB(
+            ReadInt(document, "gpuReadAheadMemoryMiB", 64));
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
@@ -811,6 +828,22 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetConsolidatedYuvUploadEnabled(bool value)
+    {
+        SetLoggedBoolean(
+            "Consolidated YUV Upload", consolidatedYuvUploadEnabled_, value);
+        Save();
+    }
+
+    void Settings::SetGpuReadAheadMemoryMiB(int value)
+    {
+        SetLoggedDiscrete(
+            "GPU Read-Ahead Memory",
+            gpuReadAheadMemoryMiB_,
+            NormalizeGpuReadAheadMemoryMiB(value));
+        Save();
+    }
+
     void Settings::SetNativeBloomLevel(float value)
     {
         SetLoggedSlider(
@@ -1126,6 +1159,14 @@ namespace BigScreen {
             document,
             "gpuVideoConversionEnabled",
             gpuVideoConversionEnabled_);
+        Replace(
+            document,
+            "consolidatedYuvUploadEnabled",
+            consolidatedYuvUploadEnabled_);
+        Replace(
+            document,
+            "gpuReadAheadMemoryMiB",
+            gpuReadAheadMemoryMiB_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
         document.RemoveMember("automaticPerformanceResponseSeconds");

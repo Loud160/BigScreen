@@ -2,10 +2,13 @@
 
 ## Status
 
-This is a future design, not an implemented playback feature. Implement and
-measure it only after native-resolution playback and FPS-only Automatic
-Performance have been tested on Quest 2 and Quest 3. Keeping those experiments
-separate makes their latency, memory, and frame-loss effects attributable.
+The first bounded implementation now exists on the experimental GPU YUV path
+of `codex/major-feature-development`. It is not enabled independently: GPU Video
+Conversion remains the default-off switch for both YUV transport and read-ahead.
+CPU RGBA and thumbnail decoding retain their one-frame behavior. Quest 2/3
+measurement is still required before this can be considered for default-on use.
+Queue-capacity and low/empty-transition diagnostics now exist in the append-only
+performance log.
 
 ## Goal
 
@@ -29,12 +32,11 @@ take over.
 - Beat Saber, Replay, practice mode, Fit to Song, offsets, looping, and menu
   preview supply the authoritative media time. The decoder does not own a
   free-running playback clock.
-- The worker follows the newest timestamp request, decodes intermediate
+- The CPU worker follows the newest timestamp request, decodes intermediate
   reference pictures sequentially, converts the selected picture to RGBA, and
   publishes one newest-frame mailbox.
-- The mailbox deliberately replaces an obsolete unconsumed picture. This keeps
-  current playback responsive after a clock jump and prevents a slow consumer
-  from accumulating latency.
+- That CPU mailbox deliberately replaces an obsolete unconsumed picture. The
+  GPU path now uses the bounded queue described below.
 - The presentation FPS preference is a ceiling. A 60 FPS source under a 30 FPS
   limit must not convert or enqueue all 60 source pictures.
 - MediaCodec buffers are released promptly after conversion. Holding Android
@@ -45,36 +47,44 @@ Simply allowing the existing worker to run to end-of-stream would not create a
 usable buffer. Its single mailbox would repeatedly overwrite pictures before
 their presentation times and eventually contain only a much later frame.
 
-## Proposed architecture
+## Implemented experimental architecture
 
-Replace the one-frame output mailbox with a small, timestamp-ordered queue of
-fully converted `VideoFrame` objects. Keep the existing external-clock model.
+The GPU path replaces the one-frame output mailbox with a small,
+timestamp-ordered queue of fully copied `VideoFrame` YUV objects while keeping
+the existing external-clock model. The CPU path was deliberately not expanded
+to RGBA read-ahead because its memory cost is much higher.
 
 1. Open and prewarm exactly as today.
 2. The worker decodes sequentially and enqueues only pictures eligible under
    the effective presentation FPS limit and playback rate.
-3. Each queued entry retains presentation time, duration, dimensions, and its
-   owned reusable RGBA buffer.
-4. The Unity thread asks for the newest queued picture whose interval is due at
-   the current authoritative media time. A future picture must remain queued;
-   it must never be uploaded early.
-5. After consumption, return its RGBA allocation to the bounded reuse pool and
+3. Each queued entry retains presentation time, duration, dimensions, its
+   selected future due time, and owned reusable planar YUV buffers.
+4. The Unity thread normally asks for the newest queued picture whose interval
+   is due at the current authoritative media time. When exactly one older due
+   picture is no more than one presentation interval late, it may present that
+   picture now and retain the newer due picture for the following display
+   update. This is a one-frame recovery window, not permission to build lag:
+   larger or older backlogs are discarded. A future picture must remain
+   queued; it must never be uploaded early.
+5. After consumption, return its plane allocation to the bounded reuse pool and
    wake the producer to refill the reserve.
-6. Once the time target or memory budget is reached, the worker sleeps instead
-   of decoding farther ahead.
+6. Once the memory budget or independent frame safety ceiling is reached, the
+   worker sleeps instead of decoding farther ahead.
 7. On a backward seek, large forward jump, Replay discontinuity, loop wrap,
    selected-video change, playback-rate change, decoder fallback, or shutdown,
    invalidate the complete queue under one synchronization contract and refill
    from the new authoritative position.
 
-The queue should be bounded by both media-time lead and owned memory rather than
-exposing a user-facing frame-count setting. A starting experiment could target
-roughly 100 milliseconds of ready video with a hard 32-48 MiB RGBA budget and a
-small absolute entry limit. These are test values, not final constants.
+The implemented queue is bounded by a user-selectable 32–256 MiB YUV memory
+budget in 16 MiB steps (64 MiB by default) and an internal 120-frame safety
+ceiling. Frames are allocated only as the worker fills the reserve; the full
+budget is not reserved in advance. There is deliberately no user-facing raw
+frame-count setting because resolution determines each picture's memory cost.
 
 ## Memory concerns
 
-Ready-to-upload RGBA is intentionally expensive:
+Ready-to-upload RGBA is intentionally expensive, which is why the CPU path was
+not given the same queue:
 
 | Frame size | Approximate RGBA bytes per frame | Three frames |
 |---|---:|---:|
@@ -82,8 +92,16 @@ Ready-to-upload RGBA is intentionally expensive:
 | 1920x1080 | 7.9 MiB | 23.7 MiB |
 | 2560x1440 | 14.1 MiB | 42.2 MiB |
 
-The budget must include queued frames, the worker's conversion destination,
-the main-thread upload frame, rotation scratch storage, and Unity's texture.
+The implemented tightly packed 8-bit 4:2:0 representation is smaller:
+
+| Frame size | Approximate YUV bytes per frame | Approximate frames in 64 MiB |
+|---|---:|---:|
+| 1280x720 | 1.32 MiB | 48 |
+| 1920x1080 | 2.97 MiB | 21 |
+| 2560x1440 | 5.27 MiB | 12 |
+
+The total process cost must still include queued frames, the worker's copy
+destination, the main-thread upload frame, and Unity's textures.
 Do not count only the `deque` entries. A queue that is safe at 720p can cause
 memory pressure or process termination at 1440p.
 
@@ -92,11 +110,12 @@ Hardware output buffers are a limited codec resource, and retaining them can
 block further decode. Converting promptly into Big Screen-owned memory and
 releasing the hardware frame is the safer first implementation.
 
-The reusable buffer pool and queue must share one total allocation policy.
-Increasing queue capacity while leaving an independent pool cap can retain both
-sets and silently double the intended memory budget. Resolution changes are no
-longer part of normal playback, but closing or replacing a video must still
-release oversized retained allocations.
+The reusable pool is capped by the same byte-derived frame capacity as the
+queue, and queue plus pool cannot exceed that capacity. A flushed queue is
+consumed from that pool before vectors grow again. Switching between GPU YUV and CPU RGBA explicitly
+releases the inactive representation's retained vector capacities so a fallback
+does not keep a complete YUV reserve beside newly allocated RGBA pictures.
+Closing or replacing a video releases the pool completely.
 
 ## CPU, battery, and latency concerns
 
@@ -114,9 +133,11 @@ release oversized retained allocations.
 - Buffering cannot repair sustained overload. Automatic Performance must still
   reduce the FPS limit when the queue repeatedly drains or visible frame loss
   crosses the configured threshold.
-- Do not hide real A/V latency by presenting a frame late. When the queue is
-  behind the song clock, discard obsolete queued pictures and present the best
-  due picture, preserving synchronization over completeness.
+- Do not hide real A/V latency by presenting an unbounded chain of late frames.
+  One picture within one presentation interval may be recovered when the next
+  display update can consume the newer due picture. When the queue is farther
+  behind, discard obsolete queued pictures and present the best remaining due
+  picture, preserving synchronization over completeness.
 
 ## Synchronization and correctness hazards
 
@@ -161,12 +182,22 @@ visible-loss threshold remain appropriate triggers. When FPS changes, discard
 only future entries that are no longer eligible, preserve due frames when safe,
 and refill under the new cadence without reopening FFmpeg.
 
-## Diagnostics required before enabling by default
+## Diagnostics before enabling by default
 
-Add low-overhead counters that are sampled in memory and logged only at existing
-safe boundaries:
+The first low-overhead fields are sampled in memory and logged only at the
+existing completed-gameplay boundary:
 
-- current and minimum queue depth;
+- selected byte budget and calculated frame capacity;
+- current/final and peak queue depth;
+- transitions into the lowest quarter of the reserve;
+- transitions to an empty reserve.
+- bounded one-frame catch-up presentations;
+- forced drops of irrecoverably late pictures;
+- peak number of pictures simultaneously due at a Unity update.
+
+Possible later measurements, if the first counters do not explain results:
+
+- minimum queue depth;
 - current buffered media milliseconds;
 - queue underrun count;
 - obsolete frames discarded because the song clock passed them;
@@ -176,9 +207,8 @@ safe boundaries:
 - number of visible misses avoided while the reserve was non-empty, if this can
   be computed without guessing.
 
-The live panel should not be expanded until the measurements prove useful. The
-append-only performance log is the better first location. Any CSV schema change
-must use the existing legacy-file preservation behavior.
+The live panel is intentionally unchanged. The append-only performance log is
+the first location, and these additions do not change a CSV schema.
 
 ## Test plan
 
@@ -198,7 +228,8 @@ Host tests should cover:
 Quest testing should compare identical maps with buffering off/on and record:
 
 - visible frame loss and queue underruns;
-- average/peak decode-and-convert latency;
+- true session-average/peak frame-preparation thread CPU time;
+- average/peak worker wait time, reported separately from processing cost;
 - Quest gameplay FPS;
 - decoder and whole-process CPU time;
 - battery current/charge consumption;

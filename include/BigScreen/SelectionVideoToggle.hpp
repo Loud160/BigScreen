@@ -121,7 +121,8 @@ namespace BigScreen {
         void StartResolutionDownload(int height);
         void ReportDownloadFailure(
             const std::string& detail,
-            bool metadataCheck = false);
+            bool metadataCheck = false,
+            const std::string& errorCode = {});
         void CreateTopControls(
             UnityEngine::Component* anchor,
             bool requireTopScreen);

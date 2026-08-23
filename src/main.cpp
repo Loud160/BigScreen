@@ -18,6 +18,7 @@
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ExperimentalFeatures.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/MenuModal.hpp"
 // BLOOM EXPERIMENT DISABLED (2026-08-18): the implementation and hook remain
 // behind one named build gate so they can be revisited without reconstructing
 // the experiment. Video playback currently ignores mapper-driven bloom.
@@ -646,7 +647,7 @@ namespace {
                 "<color=#AEBAC8>Frames Skipped</color> <b>{}</b>   "
                 "<color=#AEBAC8>Frame Rate Loss</color> <b>{:.2f}%</b>\n"
                 "<color=#AEBAC8>Video FPS Average</color> <b>{:.1f}</b>\n"
-                "<color=#AEBAC8>Decode</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
+                "<color=#AEBAC8>Prep CPU</color> <b>{:.2f} avg / {:.2f} peak ms</b>",
                 data.video.decodeMethod == "hardware" ? "HARDWARE" : "SOFTWARE",
                 data.video.codec.empty() ? "UNKNOWN" : data.video.codec,
                 data.video.decoderRuntime,
@@ -1733,6 +1734,8 @@ namespace {
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
         BigScreen::ErrorManager::Instance().TickMainThread();
+        if(BigScreen::IsBigScreenMenuActive())
+            BigScreen::TickFrontmostMenuModal();
         if(!BigScreen::Settings::Instance().ModEnabled() ||
            BigScreen::ErrorManager::Instance().MenuRecoveryActive())
             return;
@@ -1766,6 +1769,10 @@ namespace {
                 BigScreen::ThumbnailPickerMenu::Instance().Tick();
                 BigScreen::ScreenPreview::Instance().TickUndockedEditor();
                 BigScreen::PerformancePanel::Instance().TickInteraction();
+                // Some retained panels refresh or add child objects during
+                // their Tick calls. Reassert the active modal after all of
+                // that work as the final menu-layer operation for this frame.
+                BigScreen::TickFrontmostMenuModal();
             }
         });
         static int downloaderUiFrame = 0;
@@ -1975,6 +1982,22 @@ MOD_EXTERN_FUNC void late_load() noexcept
             BigScreen::ErrorManager::Instance().RecordError(
                 "Initializing downloader",
                 downloaderError);
+        }
+        else
+        {
+            // The package that passed activation and the embedded smoke test
+            // is authoritative. Older builds stored a separate update-channel
+            // preference, allowing a nightly runtime to appear with an Off
+            // switch. Reconcile that legacy field before any menu is created.
+            const bool nightly =
+                BigScreen::DownloadManager::Instance()
+                    .CurrentYtDlpChannel() == "nightly";
+            if(BigScreen::Settings::Instance().NightlyDownloaderUpdates() !=
+               nightly)
+            {
+                BigScreen::Settings::Instance()
+                    .SetNightlyDownloaderUpdates(nightly);
+            }
         }
         // Release checks begin only after the player enters Big Screen. The
         // settings UI schedules them on dedicated background workers once per

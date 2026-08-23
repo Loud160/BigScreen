@@ -39,9 +39,22 @@ namespace BigScreen {
         /// Cumulative output deadlines missed during this playback session.
         /// Unlike expected-presented backlog, this value is monotonic.
         std::uint64_t missedFrames = 0;
-        std::uint64_t rgbaBufferAllocations = 0;
+        /// Number of reusable output frame sets whose backing storage grew.
+        /// A planar Y/U/V set counts once, matching RGBA and packed output.
+        std::uint64_t frameBufferAllocations = 0;
+        std::uint64_t readAheadBudgetMiB = 0;
+        std::uint64_t readAheadFrameCapacity = 0;
+        std::uint64_t readAheadCurrentFrames = 0;
+        std::uint64_t readAheadPeakFrames = 0;
+        std::uint64_t readAheadLowReserveEvents = 0;
+        std::uint64_t readAheadEmptyQueueEvents = 0;
+        std::uint64_t readAheadCatchUpPresentations = 0;
+        std::uint64_t readAheadForcedLateDrops = 0;
+        std::uint64_t readAheadPeakDueFrameBacklog = 0;
         double averageDecodeMilliseconds = 0.0;
         double peakDecodeMilliseconds = 0.0;
+        double averageWorkerWaitMilliseconds = 0.0;
+        double peakWorkerWaitMilliseconds = 0.0;
         double decoderOpenMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
         double averagePresentationMilliseconds = 0.0;
@@ -145,6 +158,14 @@ namespace BigScreen {
         bool MapperEnvironmentPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }
+        /// Reserves the shared SongPreviewPlayer/decoder path for Big Screen's
+        /// Video Library while its menu is active. This remains true across the
+        /// brief Stop/Prepare gap between rows, so Beat Saber's ordinary song
+        /// preview callback cannot restart a stale or just-deleted file.
+        void SetLibraryPreviewOwnershipActive(bool active);
+        bool LibraryPreviewOwnershipActive() const {
+            return libraryPreviewOwnershipActive_;
+        }
         /// True after a decoded image from the active session has reached the
         /// Unity texture. Menu audio uses this as the same pre-start readiness
         /// boundary that gameplay receives from its scene-transition prewarm.
@@ -194,6 +215,7 @@ namespace BigScreen {
         static FrameVisualEffects VisualEffectsFor(
             const MapVideoConfig& config);
         bool OpenDecoder(std::string& error);
+        void SynchronizeGpuPresentationState(bool gpuConversionRequested);
         bool LoadCinemaCompatibilityCycle();
         bool ApplyCinemaCompatibilityCyclePhase(
             std::size_t phaseIndex,
@@ -332,6 +354,7 @@ namespace BigScreen {
         std::optional<PlaybackResultsData> lastResultsData_;
         std::optional<double> gameplayLastNoteTime_;
         bool gameplayFrameSamplingFinished_ = false;
+        bool libraryPreviewOwnershipActive_ = false;
         PlaybackContext context_ = PlaybackContext::None;
     };
 }

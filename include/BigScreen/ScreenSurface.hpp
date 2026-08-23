@@ -7,9 +7,13 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
+#include <cstdint>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "BigScreen/CoreLogic.hpp"
+#include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/MapVideoConfig.hpp"
 #include "UnityEngine/Vector2.hpp"
 #include "UnityEngine/Vector3.hpp"
@@ -29,8 +33,6 @@ namespace UnityEngine {
 namespace TMPro { class TextMeshPro; }
 
 namespace BigScreen {
-    struct VideoFrame;
-
     /// Owns the small set of Unity objects used to display decoded video.
     ///
     /// Every method on this class must be called from Unity's main thread.
@@ -117,6 +119,13 @@ namespace BigScreen {
         bool IsCreated() const { return gameObject_ != nullptr; }
         UnityEngine::Texture* Texture() const { return texture_; }
         bool GpuConversionActive() const { return gpuConversionActive_; }
+        GpuYuvUploadLayout ActiveGpuYuvUploadLayout() const {
+            return gpuYuvUploadLayout_;
+        }
+        /// Returns and clears a packed-to-three-plane fallback reason. The
+        /// playback owner then changes decoder output layout without dropping
+        /// all the way to CPU RGBA.
+        std::optional<std::string> TakeGpuYuvUploadFallback();
 
     private:
         bool CreateInternal(
@@ -136,8 +145,12 @@ namespace BigScreen {
             UnityEngine::Texture* sharedTexture = nullptr,
             bool preferGpuConversion = false);
         bool CreateGpuConversionResources(int width, int height);
+        bool CreateGpuConversionMaterial(GpuYuvUploadLayout layout);
+        bool FallbackToThreePlaneYuv(std::string reason);
         bool UploadRgba(const VideoFrame& frame);
         bool UploadYuv420(const VideoFrame& frame);
+        bool UploadPackedYuv420(const VideoFrame& frame);
+        void ConfigureGpuConversionMaterial(const VideoFrame& frame);
         bool CreateBackgroundMaterial(bool letterboxTransparent);
         /// UI/Default cannot use independent RGB/alpha blend equations. This
         /// invisible pass follows the video mesh and clears only framebuffer
@@ -197,6 +210,7 @@ namespace BigScreen {
         UnityEngine::Texture2D* yTexture_ = nullptr;
         UnityEngine::Texture2D* uTexture_ = nullptr;
         UnityEngine::Texture2D* vTexture_ = nullptr;
+        UnityEngine::Texture2D* packedYuvTexture_ = nullptr;
         UnityEngine::RenderTexture* gpuTexture_ = nullptr;
         UnityEngine::Material* gpuConversionMaterial_ = nullptr;
         UnityEngine::GameObject* crackObject_ = nullptr;
@@ -214,6 +228,9 @@ namespace BigScreen {
         bool ownsTexture_ = false;
         bool gpuConversionRequested_ = false;
         bool gpuConversionActive_ = false;
+        GpuYuvUploadLayout gpuYuvUploadLayout_ =
+            GpuYuvUploadLayout::ThreePlane;
+        std::optional<std::string> gpuYuvUploadFallback_;
         bool letterboxTransparent_ = false;
         bool opaqueScreenBody_ = false;
         bool textureHasAuthoredAlpha_ = false;

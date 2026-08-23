@@ -151,6 +151,12 @@ namespace BigScreen {
         /// lifecycle race as a fatal failure of the entire mod menu.
         void RecoverInvalidPreviewAudio(const char* context);
         void EnforcePausedPreviewAudio();
+        /// Arms a non-blocking decoder-only head start. The video worker keeps
+        /// filling its bounded read-ahead queue while the song clock remains
+        /// stationary, and Tick releases audio after the short deadline.
+        void BeginPreviewPreRoll();
+        void ClearPreviewPreRoll();
+        bool PreviewPreRollComplete() const;
         void ResetPreviewClock(double songTimeSeconds);
         double AdvancePreviewClock(double rawAudioSongTimeSeconds);
         void RefreshPlaybackControls();
@@ -295,6 +301,11 @@ namespace BigScreen {
         // that is already advancing and the diagnostics correctly report the
         // resulting media-timestamp gaps as skipped frames.
         bool playWhenVideoReady_ = false;
+        // Initial Play and every automatic loop wait briefly before releasing
+        // audio. This is deliberately menu-preview state rather than decoder
+        // state: gameplay already prewarms during its scene transition.
+        bool previewPreRollPending_ = false;
+        double previewPreRollReadyRealtime_ = 0.0;
         bool previewMeasurementStarted_ = false;
         bool previewClockValid_ = false;
         double smoothedPreviewSongTime_ = 0.0;

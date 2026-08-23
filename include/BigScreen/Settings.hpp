@@ -137,6 +137,12 @@ namespace BigScreen {
         bool GpuVideoConversionEnabled() const {
             return gpuVideoConversionEnabled_;
         }
+        bool ConsolidatedYuvUploadEnabled() const {
+            return consolidatedYuvUploadEnabled_;
+        }
+        int GpuReadAheadMemoryMiB() const {
+            return gpuReadAheadMemoryMiB_;
+        }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
         float AutomaticPerformanceAttackSeconds() const {
@@ -216,6 +222,8 @@ namespace BigScreen {
         void SetCinemaBloomLevel(float value);
         void SetHardwareDecodingEnabled(bool value);
         void SetGpuVideoConversionEnabled(bool value);
+        void SetConsolidatedYuvUploadEnabled(bool value);
+        void SetGpuReadAheadMemoryMiB(int value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
         void SetAutomaticPerformanceAttackSeconds(float value);
@@ -305,6 +313,13 @@ namespace BigScreen {
         // complete. Failure at any decoder or Unity resource boundary returns
         // the current session to the established CPU RGBA conversion path.
         bool gpuVideoConversionEnabled_ = false;
+        // Experimental packed-atlas transport. The established three-plane
+        // upload remains the default and the automatic fallback.
+        bool consolidatedYuvUploadEnabled_ = false;
+        // Bounds only the experimental GPU YUV read-ahead queue. The decoder
+        // allocates frames on demand and still applies its independent frame
+        // count ceiling, so this is a budget rather than a reserved block.
+        int gpuReadAheadMemoryMiB_ = 64;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceAttackSeconds_ = 5.0f;

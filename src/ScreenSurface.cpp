@@ -14,6 +14,7 @@
 #include <array>
 #include <exception>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "BigScreen/ExperimentalFeatures.hpp"
@@ -92,6 +93,7 @@ namespace BigScreen {
             SafePtrUnity<UnityEngine::AssetBundle> bundle;
             SafePtrUnity<UnityEngine::Shader> shader;
             SafePtrUnity<UnityEngine::Shader> yuvConversionShader;
+            SafePtrUnity<UnityEngine::Shader> packedYuvConversionShader;
             bool loadAttempted = false;
             // This is deliberately historical, not the outcome of the most
             // recent recovery attempt. A packaged shader that worked earlier
@@ -142,6 +144,25 @@ namespace BigScreen {
             {
                 loaded = bundle->LoadAsset<UnityEngine::Shader*>(
                     "assets/bigscreenyuvconversion.shader");
+                shader = loaded;
+            }
+            return UnityW<UnityEngine::Shader>::isAlive(shader)
+                ? shader
+                : nullptr;
+        }
+
+        UnityEngine::Shader* LoadPackedYuvConversionShaderAsset(
+            UnityEngine::AssetBundle* bundle)
+        {
+            if(!UnityW<UnityEngine::AssetBundle>::isAlive(bundle))
+                return nullptr;
+            auto loaded = bundle->LoadAsset<UnityEngine::Shader*>(
+                "bigscreen-packed-yuv-conversion-shader");
+            auto* shader = loaded;
+            if(!UnityW<UnityEngine::Shader>::isAlive(shader))
+            {
+                loaded = bundle->LoadAsset<UnityEngine::Shader*>(
+                    "assets/bigscreenpackedyuvconversion.shader");
                 shader = loaded;
             }
             return UnityW<UnityEngine::Shader>::isAlive(shader)
@@ -266,6 +287,7 @@ namespace BigScreen {
                 resources.bundle.clear();
                 resources.shader.clear();
                 resources.yuvConversionShader.clear();
+                resources.packedYuvConversionShader.clear();
             }
 
             UnityEngine::AssetBundle* bundle = nullptr;
@@ -341,6 +363,7 @@ namespace BigScreen {
                 resources.bundle.clear();
                 resources.shader.clear();
                 resources.yuvConversionShader.clear();
+                resources.packedYuvConversionShader.clear();
                 PaperLogger.error(
                     "Could not load Big Screen's embedded video shader: {}",
                     exception.what());
@@ -355,6 +378,7 @@ namespace BigScreen {
                 resources.bundle.clear();
                 resources.shader.clear();
                 resources.yuvConversionShader.clear();
+                resources.packedYuvConversionShader.clear();
                 PaperLogger.error(
                     "Could not load Big Screen's embedded video shader");
                 return nullptr;
@@ -577,6 +601,52 @@ namespace BigScreen {
             {
                 PaperLogger.warn(
                     "Could not load the GPU YUV conversion shader");
+                return nullptr;
+            }
+        }
+
+        UnityEngine::Shader* FindPackedYuvConversionShader()
+        {
+            auto& resources = CachedVideoShaderResources();
+            if(resources.packedYuvConversionShader)
+                return resources.packedYuvConversionShader.ptr();
+            if(!FindVideoShader() || !resources.bundle)
+                return nullptr;
+
+            try
+            {
+                auto* shader = LoadPackedYuvConversionShaderAsset(
+                    resources.bundle.ptr());
+                if(!shader)
+                {
+                    PaperLogger.warn(
+                        "The embedded shader bundle does not contain the "
+                        "experimental packed YUV conversion shader");
+                    return nullptr;
+                }
+                const auto existingFlags = static_cast<std::int32_t>(
+                    shader->get_hideFlags());
+                const auto retainFlag = static_cast<std::int32_t>(
+                    UnityEngine::HideFlags::DontUnloadUnusedAsset);
+                shader->set_hideFlags(UnityEngine::HideFlags{
+                    existingFlags | retainFlag});
+                resources.packedYuvConversionShader = shader;
+                PaperLogger.info(
+                    "Loaded Big Screen's experimental packed GPU YUV conversion shader ({})",
+                    shader->get_name());
+                return shader;
+            }
+            catch(const std::exception& exception)
+            {
+                PaperLogger.warn(
+                    "Could not load the packed GPU YUV conversion shader: {}",
+                    exception.what());
+                return nullptr;
+            }
+            catch(...)
+            {
+                PaperLogger.warn(
+                    "Could not load the packed GPU YUV conversion shader");
                 return nullptr;
             }
         }
@@ -1841,25 +1911,15 @@ namespace BigScreen {
 
     bool ScreenSurface::CreateGpuConversionResources(int width, int height)
     {
-        auto* shader = FindYuvConversionShader();
-        if(!shader)
-        {
-            PaperLogger.warn(
-                "GPU video conversion was requested, but its shader was unavailable; using CPU RGBA conversion");
-            return false;
-        }
-
-        gpuConversionMaterial_ = UnityEngine::Material::New_ctor(shader);
         gpuTexture_ = UnityEngine::RenderTexture::New_ctor(
             width,
             height,
             0,
             UnityEngine::RenderTextureFormat::ARGB32);
-        if(!gpuConversionMaterial_ || !gpuTexture_ || !gpuTexture_->Create())
+        if(!gpuTexture_ || !gpuTexture_->Create())
         {
             PaperLogger.warn(
                 "Unity could not create the GPU video conversion resources; using CPU RGBA conversion");
-            DestroyIfAlive(gpuConversionMaterial_);
             if(UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_))
             {
                 if(gpuTexture_->IsCreated())
@@ -1870,12 +1930,73 @@ namespace BigScreen {
         }
         gpuTexture_->set_filterMode(UnityEngine::FilterMode::Bilinear);
         gpuTexture_->set_wrapMode(UnityEngine::TextureWrapMode::Clamp);
+
+        const auto requestedLayout =
+            Settings::Instance().ConsolidatedYuvUploadEnabled()
+                ? GpuYuvUploadLayout::PackedAtlas
+                : GpuYuvUploadLayout::ThreePlane;
+        gpuYuvUploadLayout_ = requestedLayout;
+        if(!CreateGpuConversionMaterial(requestedLayout))
+        {
+            if(requestedLayout != GpuYuvUploadLayout::PackedAtlas ||
+               !FallbackToThreePlaneYuv(
+                   "the packed YUV conversion shader was unavailable"))
+            {
+                PaperLogger.warn(
+                    "GPU video conversion was requested, but its shader was unavailable; using CPU RGBA conversion");
+                if(gpuTexture_->IsCreated())
+                    gpuTexture_->Release();
+                DestroyIfAlive(gpuTexture_);
+                return false;
+            }
+        }
         texture_ = gpuTexture_;
         PaperLogger.info(
-            "Experimental GPU video conversion prepared at {}x{}",
+            "Experimental GPU video conversion prepared at {}x{} using {}",
             width,
-            height);
+            height,
+            gpuYuvUploadLayout_ == GpuYuvUploadLayout::PackedAtlas
+                ? "one packed YUV upload"
+                : "three YUV plane uploads");
         return true;
+    }
+
+    bool ScreenSurface::CreateGpuConversionMaterial(
+        GpuYuvUploadLayout layout)
+    {
+        auto* shader = layout == GpuYuvUploadLayout::PackedAtlas
+            ? FindPackedYuvConversionShader()
+            : FindYuvConversionShader();
+        if(!shader)
+            return false;
+        auto* material = UnityEngine::Material::New_ctor(shader);
+        if(!material)
+            return false;
+        DestroyIfAlive(gpuConversionMaterial_);
+        gpuConversionMaterial_ = material;
+        gpuYuvUploadLayout_ = layout;
+        return true;
+    }
+
+    bool ScreenSurface::FallbackToThreePlaneYuv(std::string reason)
+    {
+        if(gpuYuvUploadLayout_ != GpuYuvUploadLayout::PackedAtlas)
+            return false;
+        DestroyIfAlive(packedYuvTexture_);
+        if(!CreateGpuConversionMaterial(GpuYuvUploadLayout::ThreePlane))
+            return false;
+        gpuYuvUploadFallback_ = std::move(reason);
+        PaperLogger.warn(
+            "Packed GPU YUV upload fell back to the 3-plane method: {}",
+            *gpuYuvUploadFallback_);
+        return true;
+    }
+
+    std::optional<std::string> ScreenSurface::TakeGpuYuvUploadFallback()
+    {
+        auto result = std::move(gpuYuvUploadFallback_);
+        gpuYuvUploadFallback_.reset();
+        return result;
     }
 
     bool ScreenSurface::Upload(const VideoFrame& frame)
@@ -1911,9 +2032,11 @@ namespace BigScreen {
             material_->set_mainTexture(texture_);
         }
 
-        return frame.storage == VideoFrameStorage::Yuv420Planar
-            ? UploadYuv420(frame)
-            : UploadRgba(frame);
+        if(frame.storage == VideoFrameStorage::Yuv420PackedAtlas)
+            return UploadPackedYuv420(frame);
+        if(frame.storage == VideoFrameStorage::Yuv420Planar)
+            return UploadYuv420(frame);
+        return UploadRgba(frame);
     }
 
     bool ScreenSurface::UploadRgba(const VideoFrame& frame)
@@ -1951,6 +2074,10 @@ namespace BigScreen {
 
     bool ScreenSurface::UploadYuv420(const VideoFrame& frame)
     {
+        if(gpuYuvUploadLayout_ == GpuYuvUploadLayout::PackedAtlas &&
+           !FallbackToThreePlaneYuv(
+               "the decoder selected the compatible planar layout"))
+            return false;
         if(!gpuConversionActive_ ||
            !UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_) ||
            !UnityW<UnityEngine::Material>::isAlive(gpuConversionMaterial_) ||
@@ -2004,7 +2131,85 @@ namespace BigScreen {
         uploadPlane(yTexture_, frame.y);
         uploadPlane(uTexture_, frame.u);
         uploadPlane(vTexture_, frame.v);
+        gpuConversionMaterial_->SetTexture("_PlaneU", uTexture_);
+        gpuConversionMaterial_->SetTexture("_PlaneV", vTexture_);
+        ConfigureGpuConversionMaterial(frame);
+        UnityEngine::Graphics::Blit(
+            yTexture_, gpuTexture_, gpuConversionMaterial_);
+        return true;
+    }
 
+    bool ScreenSurface::UploadPackedYuv420(const VideoFrame& frame)
+    {
+        if(!gpuConversionActive_ ||
+           !UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_) ||
+           !UnityW<UnityEngine::Material>::isAlive(gpuConversionMaterial_) ||
+           gpuYuvUploadLayout_ != GpuYuvUploadLayout::PackedAtlas ||
+           frame.sourceWidth <= 0 || frame.sourceHeight <= 0)
+            return false;
+
+        const int chromaWidth = (frame.sourceWidth + 1) / 2;
+        const int chromaHeight = (frame.sourceHeight + 1) / 2;
+        const int atlasWidth = std::max(frame.sourceWidth, chromaWidth * 2);
+        const int atlasHeight = frame.sourceHeight + chromaHeight;
+        const auto expectedBytes = static_cast<std::size_t>(atlasWidth) *
+            atlasHeight;
+        if(frame.packedYuv.size() != expectedBytes)
+        {
+            FallbackToThreePlaneYuv(
+                "the decoder returned an invalid packed-atlas size");
+            return false;
+        }
+
+        if(!UnityW<UnityEngine::Texture2D>::isAlive(packedYuvTexture_) ||
+           packedYuvTexture_->get_width() != atlasWidth ||
+           packedYuvTexture_->get_height() != atlasHeight)
+        {
+            DestroyIfAlive(packedYuvTexture_);
+            packedYuvTexture_ = UnityEngine::Texture2D::New_ctor(
+                atlasWidth,
+                atlasHeight,
+                UnityEngine::TextureFormat::R8,
+                false,
+                true);
+            if(!packedYuvTexture_)
+            {
+                FallbackToThreePlaneYuv(
+                    "Unity could not allocate the packed YUV texture");
+                return false;
+            }
+            packedYuvTexture_->set_filterMode(
+                UnityEngine::FilterMode::Bilinear);
+            packedYuvTexture_->set_wrapMode(
+                UnityEngine::TextureWrapMode::Clamp);
+        }
+
+        packedYuvTexture_->LoadRawTextureData(
+            System::IntPtr(
+                const_cast<std::uint8_t*>(frame.packedYuv.data())),
+            static_cast<std::int32_t>(frame.packedYuv.size()));
+        packedYuvTexture_->Apply(false, false);
+        gpuConversionMaterial_->SetVector(
+            "_PackedLayout",
+            {static_cast<float>(atlasWidth),
+             static_cast<float>(atlasHeight),
+             static_cast<float>(frame.sourceWidth),
+             static_cast<float>(frame.sourceHeight)});
+        gpuConversionMaterial_->SetVector(
+            "_PackedChromaSize",
+            {static_cast<float>(chromaWidth),
+             static_cast<float>(chromaHeight),
+             0.0f,
+             0.0f});
+        ConfigureGpuConversionMaterial(frame);
+        UnityEngine::Graphics::Blit(
+            packedYuvTexture_, gpuTexture_, gpuConversionMaterial_);
+        return true;
+    }
+
+    void ScreenSurface::ConfigureGpuConversionMaterial(
+        const VideoFrame& frame)
+    {
         float kr = 0.299f;
         float kb = 0.114f;
         switch(frame.colorMatrix)
@@ -2018,8 +2223,6 @@ namespace BigScreen {
         const float kg = 1.0f - kr - kb;
         const float yScale = frame.fullRange ? 1.0f : 255.0f / 219.0f;
         const float cScale = frame.fullRange ? 1.0f : 255.0f / 224.0f;
-        gpuConversionMaterial_->SetTexture("_PlaneU", uTexture_);
-        gpuConversionMaterial_->SetTexture("_PlaneV", vTexture_);
         gpuConversionMaterial_->SetVector(
             "_YuvOffset",
             {frame.fullRange ? 0.0f : -16.0f / 255.0f,
@@ -2115,10 +2318,6 @@ namespace BigScreen {
             "_VignetteRadius", effects.vignetteRadius);
         gpuConversionMaterial_->SetFloat(
             "_VignetteSoftness", effects.vignetteSoftness);
-
-        UnityEngine::Graphics::Blit(
-            yTexture_, gpuTexture_, gpuConversionMaterial_);
-        return true;
     }
 
     void ScreenSurface::ShowLeadIn(bool black)
@@ -2939,6 +3138,7 @@ namespace BigScreen {
             DestroyIfAlive(yTexture_);
             DestroyIfAlive(uTexture_);
             DestroyIfAlive(vTexture_);
+            DestroyIfAlive(packedYuvTexture_);
             DestroyIfAlive(gpuConversionMaterial_);
             if(UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_))
             {
@@ -2953,6 +3153,7 @@ namespace BigScreen {
             yTexture_ = nullptr;
             uTexture_ = nullptr;
             vTexture_ = nullptr;
+            packedYuvTexture_ = nullptr;
             gpuConversionMaterial_ = nullptr;
             gpuTexture_ = nullptr;
         }
@@ -2967,6 +3168,8 @@ namespace BigScreen {
         ownsTexture_ = false;
         gpuConversionRequested_ = false;
         gpuConversionActive_ = false;
+        gpuYuvUploadLayout_ = GpuYuvUploadLayout::ThreePlane;
+        gpuYuvUploadFallback_.reset();
         screenWidth_ = 0.0f;
         screenHeight_ = 0.0f;
         letterboxTransparent_ = false;

@@ -18,13 +18,12 @@ $ErrorActionPreference = "Stop"
 # reproducible and cannot silently package a partial or substituted download.
 $pythonVersion = "3.14.7"
 $pythonSha256 = "6d50cc3aa66e414a439594089bcdfb5f1264358155c70c1f00471c24cfb477fb"
-# Temporary August 2026 recovery baseline: this nightly contains the upstream
-# extractor changes used with Big Screen's explicit `-android_vr` client
-# exclusion. Do not return this pin to stable 2026.07.04; doing so restores the
-# partial-download HTTP 403 failure on Quest.
-$ytDlpVersion = "2026.08.18.122307"
-$ytDlpSha256 = "7c2e017b19c249447445e776913d54bcea81b85b21b51d50ff36b7b8cae956e1"
-$ytDlpRepository = "yt-dlp/yt-dlp-nightly-builds"
+# Stable 2026.08.19 contains the YouTube extractor fixes that temporarily
+# required nightly 2026.08.18.122307. New QMODs therefore return to the normal
+# stable baseline while retaining the explicit `-android_vr` client exclusion.
+$ytDlpVersion = "2026.08.19"
+$ytDlpSha256 = "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6"
+$ytDlpRepository = "yt-dlp/yt-dlp"
 $ytDlpEjsVersion = "0.8.0"
 $certifiVersion = "2026.7.22"
 $certifiSha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
@@ -110,7 +109,7 @@ if (-not $pythonExtractionComplete) {
 }
 
 if ($Force -or -not (Test-Path -LiteralPath $ytDlpPackage)) {
-    Write-Output "Downloading pinned yt-dlp nightly $ytDlpVersion with bundled yt-dlp-ejs $ytDlpEjsVersion from the official GitHub release."
+    Write-Output "Downloading pinned stable yt-dlp $ytDlpVersion with bundled yt-dlp-ejs $ytDlpEjsVersion from the official GitHub release."
     Write-Output "The package will be verified against its pinned SHA-256 before use."
     Invoke-WebRequest `
         -Uri "https://github.com/$ytDlpRepository/releases/download/$ytDlpVersion/yt-dlp" `

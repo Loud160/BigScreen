@@ -112,9 +112,8 @@ namespace BigScreen {
             bool needsHeader = !std::filesystem::exists(path, error) ||
                 std::filesystem::file_size(path, error) == 0;
 
-            // The decode_method column changes the CSV schema. Preserve any
-            // measurements written by older development builds instead of
-            // appending wider rows beneath their shorter header. This runs
+            // Preserve measurements written by an older CSV schema instead
+            // of appending wider or redefined rows beneath its header. This runs
             // only during gameplay teardown, under the benchmark's existing
             // no-I/O-during-gameplay contract.
             if(!needsHeader)
@@ -496,7 +495,7 @@ namespace BigScreen {
         std::filesystem::create_directories(LogDirectory);
         AppendHeaderIfEmpty(
             SamplesPath,
-            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decode_method,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,decode_average_ms,decode_peak_ms,automatic_reductions");
+            "session_id,timestamp_utc,elapsed_s,song_time_s,video_active,showcase_active,decode_method,codec,process_cpu_ms,decoder_cpu_ms,charge_uah,current_now_ua,current_average_ua,energy_nwh,capacity_percent,battery_status,is_charging,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,preparation_cpu_average_ms,preparation_cpu_peak_ms,worker_wait_average_ms,worker_wait_peak_ms,automatic_reductions");
         {
             std::ofstream output(SamplesPath, std::ios::app);
             if(!output)
@@ -534,6 +533,8 @@ namespace BigScreen {
                     << sample.diagnostics.presentedFrames << ','
                     << sample.diagnostics.averageDecodeMilliseconds << ','
                     << sample.diagnostics.peakDecodeMilliseconds << ','
+                    << sample.diagnostics.averageWorkerWaitMilliseconds << ','
+                    << sample.diagnostics.peakWorkerWaitMilliseconds << ','
                     << sample.diagnostics.automaticReductions << '\n';
             }
         }
@@ -585,7 +586,7 @@ namespace BigScreen {
             : last.diagnostics;
         AppendHeaderIfEmpty(
             SummaryPath,
-            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decode_method,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,decode_average_ms,decode_peak_ms,rgba_allocations,automatic_reductions");
+            "session_id,started_utc,level_id,song_name,song_artist,characteristic,difficulty,video_active,showcase_active,decode_method,codec,duration_s,process_cpu_ms,process_cpu_percent_one_core,process_equivalent_cores,decoder_cpu_ms,decoder_cpu_percent_one_core,charge_start_uah,charge_end_uah,charge_consumed_uah,estimated_drain_mah_per_hour,current_now_min_ua,current_now_average_ua,current_now_max_ua,current_average_property_ua,capacity_start_percent,capacity_end_percent,charging_start,charging_end,video_width,video_height,source_fps,fps_limit,expected_frames,presented_frames,missed_frames,missed_percent,gameplay_fps_min,gameplay_fps_average,gameplay_fps_max,preparation_cpu_average_ms,preparation_cpu_peak_ms,worker_wait_average_ms,worker_wait_peak_ms,frame_buffer_allocations,automatic_reductions");
         std::ofstream summary(SummaryPath, std::ios::app);
         if(!summary)
             throw std::runtime_error("Could not append the power summary log");
@@ -634,7 +635,9 @@ namespace BigScreen {
             << (results ? results->maximumGameplayFps : 0.0) << ','
             << finalDiagnostics.averageDecodeMilliseconds << ','
             << finalDiagnostics.peakDecodeMilliseconds << ','
-            << finalDiagnostics.rgbaBufferAllocations << ','
+            << finalDiagnostics.averageWorkerWaitMilliseconds << ','
+            << finalDiagnostics.peakWorkerWaitMilliseconds << ','
+            << finalDiagnostics.frameBufferAllocations << ','
             << finalDiagnostics.automaticReductions << '\n';
     }
 

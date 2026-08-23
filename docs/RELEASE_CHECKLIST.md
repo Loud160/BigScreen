@@ -94,7 +94,8 @@
 - [ ] Quest 2 repeated-map A/B runs compare decoder CPU, presentation time,
       whole-process CPU, video loss, gameplay FPS, heat, and battery with GPU
       Video Conversion off/on. Quest 3 and Quest 3S follow after Quest 2 passes.
-- [ ] Controlled software/hardware A/B runs compare decode average/peak,
+- [ ] Controlled software/hardware A/B runs compare preparation CPU average/peak,
+      separately logged worker wait average/peak,
       decoder CPU, whole-process CPU, video loss, Quest FPS, and battery use.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.
 - [ ] A deliberately missing `library.json` with a valid backup recovers; a

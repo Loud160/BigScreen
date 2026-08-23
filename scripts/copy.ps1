@@ -88,6 +88,8 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 $shaderAsset = Join-Path $PSScriptRoot "../assets/bigscreen_video_shader"
 $shaderInputs = @(
     (Join-Path $PSScriptRoot "../tools/video-shader/Assets/BigScreenVideo.shader"),
+    (Join-Path $PSScriptRoot "../tools/video-shader/Assets/BigScreenYuvConversion.shader"),
+    (Join-Path $PSScriptRoot "../tools/video-shader/Assets/BigScreenPackedYuvConversion.shader"),
     (Join-Path $PSScriptRoot "../tools/video-shader/Assets/Editor/BuildBigScreenVideoShader.cs"),
     (Join-Path $PSScriptRoot "../tools/video-shader/Packages/manifest.json"),
     (Join-Path $PSScriptRoot "../tools/video-shader/ProjectSettings/ProjectVersion.txt")

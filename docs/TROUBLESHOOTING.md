@@ -83,6 +83,19 @@ three minutes, the mod turns its own Enabled switch off, queues one explanatory
 dialog, and leaves Beat Saber/map playback running. Re-enable it from General
 after reviewing the log.
 
+YouTube dialogs identify common causes such as private, removed,
+age-restricted, members-only, region-blocked, administrator-restricted,
+rate-limited, network, storage, format, and downloader-compatibility failures.
+The short support code in the dialog matches the detailed entry in
+`error-history.log`; the raw yt-dlp output is kept in the log instead of being
+placed in an oversized headset popup.
+
+Inside Big Screen, a popup remains attached to the left, right, or center panel
+whose action opened it. Its visible surface and input blocker are moved back to
+the front after later menu refreshes, so another control cannot cover its
+buttons while the dialog is open. All tracked popups are dismissed when Big
+Screen closes so a stale invisible blocker cannot return on the next visit.
+
 Outside Big Screen's own menu, error dialogs wait for the currently visible Beat
 Saber flow to finish transitioning, then open in front of that flow. If the user
 changes screens while a dialog is open, the message is requeued for the next

@@ -36,6 +36,7 @@ namespace BigScreen {
         std::string decodeMethod;
         std::string decoderRuntime;
         std::string codec;
+        std::string presentationMethod;
     };
 
     /// Owns the movable performance-information panel shown in Big Screen's

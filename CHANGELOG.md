@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Replaced the decoder's exponential wall-clock "average" and periodically
+  reset peak with true session-average/peak frame-preparation CPU statistics.
+  Asynchronous MediaCodec waits and decoder-thread descheduling are now logged
+  separately as worker wait time. Planar YUV allocation accounting now counts
+  one frame set rather than three planes, and the reusable pool retains the
+  configured read-ahead capacity across lifecycle flushes without exceeding
+  the same memory budget.
+- Returned the embedded downloader baseline from temporary nightly
+  2026.08.18.122307 to stable 2026.08.19. The Update-tab nightly switch now
+  reports the package that the embedded Python runtime actually loaded instead
+  of an independent saved preference. A downloaded channel replacement remains
+  staged until restart, activation, import, and smoke testing succeed, so the
+  switch cannot claim that stable or nightly is active prematurely.
+
 ## 0.7.0-alpha.11 — Preview, remux, and menu recovery hardening
 
 - Rebuilt completed Video Library preview looping around an explicit decoder

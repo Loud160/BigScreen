@@ -38,6 +38,22 @@ namespace BigScreen {
             return backend ? getter(*backend) : fallback;
         }
 
+        FramePreparationDiagnostics CombinePreparationDiagnostics(
+            FramePreparationDiagnostics accumulated,
+            const FramePreparationDiagnostics& additional)
+        {
+            accumulated.sampleCount += additional.sampleCount;
+            accumulated.cpuNanoseconds += additional.cpuNanoseconds;
+            accumulated.peakCpuNanoseconds = std::max(
+                accumulated.peakCpuNanoseconds,
+                additional.peakCpuNanoseconds);
+            accumulated.waitNanoseconds += additional.waitNanoseconds;
+            accumulated.peakWaitNanoseconds = std::max(
+                accumulated.peakWaitNanoseconds,
+                additional.peakWaitNanoseconds);
+            return accumulated;
+        }
+
         void* ResolveJavaVm(std::string& error)
         {
             if(!modloader_jvm)
@@ -135,13 +151,21 @@ namespace BigScreen {
         maximumOutputHeight_ = maximumOutputHeight;
         visualEffects_ = visualEffects;
         lastRequestedSeconds_ = 0.0;
+        lastPresentationIntervalSeconds_ = 0.0;
         useFfmpeg9_ = Settings::Instance().UseFfmpeg9();
         hardwareRequested_ = Settings::Instance().HardwareDecodingEnabled();
         gpuConversionRequested_ = preferGpuConversion;
+        gpuYuvUploadLayout_ =
+            Settings::Instance().ConsolidatedYuvUploadEnabled()
+                ? GpuYuvUploadLayout::PackedAtlas
+                : GpuYuvUploadLayout::ThreePlane;
+        readAheadByteBudget_ = static_cast<std::size_t>(
+            Settings::Instance().GpuReadAheadMemoryMiB()) * 1024u * 1024u;
         hardwareFallbackAttempted_ = false;
         accumulatedWorkerCpuMilliseconds_ = 0.0;
         accumulatedBufferAllocations_ = 0;
-        retainedPeakDecodeMilliseconds_ = 0.0;
+        retainedReadAheadDiagnostics_ = {};
+        retainedPreparationDiagnostics_ = {};
 
         std::string javaVmError;
         javaVm_ = hardwareRequested_ ? ResolveJavaVm(javaVmError) : nullptr;
@@ -173,6 +197,8 @@ namespace BigScreen {
                maximumOutputHeight,
                attemptHardware,
                gpuConversionRequested_,
+               gpuYuvUploadLayout_,
+               readAheadByteBudget_,
                javaVm_,
                visualEffects_,
                error))
@@ -215,12 +241,19 @@ namespace BigScreen {
         CloseAndRetainBackendMetrics();
     }
 
-    void FrameDecoder::Request(double mediaSeconds)
+    void FrameDecoder::Request(
+        double mediaSeconds,
+        double presentationIntervalSeconds)
     {
         if(backend_)
         {
             lastRequestedSeconds_ = std::max(0.0, mediaSeconds);
-            backend_->Request(mediaSeconds);
+            if(presentationIntervalSeconds > 0.0)
+                lastPresentationIntervalSeconds_ =
+                    presentationIntervalSeconds;
+            backend_->Request(
+                mediaSeconds,
+                lastPresentationIntervalSeconds_);
         }
     }
 
@@ -249,6 +282,24 @@ namespace BigScreen {
             backend_->SetGpuConversionEnabled(enabled);
     }
 
+    void FrameDecoder::SetGpuYuvUploadLayout(GpuYuvUploadLayout layout)
+    {
+        gpuYuvUploadLayout_ = layout;
+        if(backend_)
+            backend_->SetGpuYuvUploadLayout(layout);
+    }
+
+    GpuYuvUploadLayout FrameDecoder::ActiveGpuYuvUploadLayout() const
+    {
+        return backend_ ? backend_->ActiveGpuYuvUploadLayout()
+                        : gpuYuvUploadLayout_;
+    }
+
+    std::string FrameDecoder::GpuYuvUploadFallbackReason() const
+    {
+        return backend_ ? backend_->GpuYuvUploadFallbackReason() : "";
+    }
+
     bool FrameDecoder::GpuConversionOutputEnabled() const
     {
         return backend_ && backend_->GpuConversionOutputEnabled();
@@ -261,7 +312,14 @@ namespace BigScreen {
 
     bool FrameDecoder::TryTake(VideoFrame& destination)
     {
-        return backend_ && backend_->TryTake(destination);
+        return TryTake(lastRequestedSeconds_, destination);
+    }
+
+    bool FrameDecoder::TryTake(
+        double mediaSeconds,
+        VideoFrame& destination)
+    {
+        return backend_ && backend_->TryTake(mediaSeconds, destination);
     }
 
     void FrameDecoder::Recycle(VideoFrame&& frame)
@@ -340,25 +398,53 @@ namespace BigScreen {
 
     double FrameDecoder::AverageDecodeMilliseconds() const
     {
-        return ReadBackend<double>(backend_, 0.0, [](const auto& value) {
-            return value.AverageDecodeMilliseconds();
-        });
+        auto diagnostics = retainedPreparationDiagnostics_;
+        if(backend_)
+            diagnostics = CombinePreparationDiagnostics(
+                diagnostics, backend_->PreparationDiagnostics());
+        return diagnostics.sampleCount > 0
+            ? static_cast<double>(diagnostics.cpuNanoseconds) /
+                static_cast<double>(diagnostics.sampleCount) / 1'000'000.0
+            : 0.0;
     }
 
     double FrameDecoder::PeakDecodeMilliseconds() const
     {
-        return std::max(
-            retainedPeakDecodeMilliseconds_,
-            ReadBackend<double>(backend_, 0.0, [](const auto& value) {
-                return value.PeakDecodeMilliseconds();
-            }));
+        auto diagnostics = retainedPreparationDiagnostics_;
+        if(backend_)
+            diagnostics = CombinePreparationDiagnostics(
+                diagnostics, backend_->PreparationDiagnostics());
+        return static_cast<double>(diagnostics.peakCpuNanoseconds) /
+            1'000'000.0;
     }
 
-    void FrameDecoder::ResetPeakDecodeMilliseconds()
+    double FrameDecoder::AverageWorkerWaitMilliseconds() const
     {
-        retainedPeakDecodeMilliseconds_ = 0.0;
+        auto diagnostics = retainedPreparationDiagnostics_;
         if(backend_)
-            backend_->ResetPeakDecodeMilliseconds();
+            diagnostics = CombinePreparationDiagnostics(
+                diagnostics, backend_->PreparationDiagnostics());
+        return diagnostics.sampleCount > 0
+            ? static_cast<double>(diagnostics.waitNanoseconds) /
+                static_cast<double>(diagnostics.sampleCount) / 1'000'000.0
+            : 0.0;
+    }
+
+    double FrameDecoder::PeakWorkerWaitMilliseconds() const
+    {
+        auto diagnostics = retainedPreparationDiagnostics_;
+        if(backend_)
+            diagnostics = CombinePreparationDiagnostics(
+                diagnostics, backend_->PreparationDiagnostics());
+        return static_cast<double>(diagnostics.peakWaitNanoseconds) /
+            1'000'000.0;
+    }
+
+    void FrameDecoder::ResetPreparationDiagnostics()
+    {
+        retainedPreparationDiagnostics_ = {};
+        if(backend_)
+            backend_->ResetPreparationDiagnostics();
     }
 
     double FrameDecoder::WorkerCpuMilliseconds() const
@@ -382,6 +468,30 @@ namespace BigScreen {
             ReadBackend<std::uint64_t>(backend_, 0, [](const auto& value) {
                 return value.BufferAllocations();
             });
+    }
+
+    DecoderReadAheadDiagnostics FrameDecoder::ReadAheadDiagnostics() const
+    {
+        DecoderReadAheadDiagnostics result = retainedReadAheadDiagnostics_;
+        if(!backend_)
+            return result;
+
+        const auto active = backend_->ReadAheadDiagnostics();
+        result.byteBudget = active.byteBudget > 0
+            ? active.byteBudget
+            : result.byteBudget;
+        result.frameCapacity = std::max(
+            result.frameCapacity, active.frameCapacity);
+        result.currentQueuedFrames = active.currentQueuedFrames;
+        result.peakQueuedFrames = std::max(
+            result.peakQueuedFrames, active.peakQueuedFrames);
+        result.lowReserveEvents += active.lowReserveEvents;
+        result.emptyQueueEvents += active.emptyQueueEvents;
+        result.catchUpPresentations += active.catchUpPresentations;
+        result.forcedLateDrops += active.forcedLateDrops;
+        result.peakDueFrameBacklog = std::max(
+            result.peakDueFrameBacklog, active.peakDueFrameBacklog);
+        return result;
     }
 
     const char* FrameDecoder::RuntimeVersion() const
@@ -423,11 +533,33 @@ namespace BigScreen {
             backend_->WaitForWorkerStop(std::chrono::milliseconds(4));
         if(stoppedWithinUiBudget)
             backend_->Close();
-        retainedPeakDecodeMilliseconds_ = std::max(
-            retainedPeakDecodeMilliseconds_,
-            backend_->PeakDecodeMilliseconds());
+        retainedPreparationDiagnostics_ = CombinePreparationDiagnostics(
+            retainedPreparationDiagnostics_,
+            backend_->PreparationDiagnostics());
         accumulatedWorkerCpuMilliseconds_ += backend_->WorkerCpuMilliseconds();
         accumulatedBufferAllocations_ += backend_->BufferAllocations();
+        const auto readAhead = backend_->ReadAheadDiagnostics();
+        retainedReadAheadDiagnostics_.byteBudget = readAhead.byteBudget > 0
+            ? readAhead.byteBudget
+            : retainedReadAheadDiagnostics_.byteBudget;
+        retainedReadAheadDiagnostics_.frameCapacity = std::max(
+            retainedReadAheadDiagnostics_.frameCapacity,
+            readAhead.frameCapacity);
+        retainedReadAheadDiagnostics_.currentQueuedFrames = 0;
+        retainedReadAheadDiagnostics_.peakQueuedFrames = std::max(
+            retainedReadAheadDiagnostics_.peakQueuedFrames,
+            readAhead.peakQueuedFrames);
+        retainedReadAheadDiagnostics_.lowReserveEvents +=
+            readAhead.lowReserveEvents;
+        retainedReadAheadDiagnostics_.emptyQueueEvents +=
+            readAhead.emptyQueueEvents;
+        retainedReadAheadDiagnostics_.catchUpPresentations +=
+            readAhead.catchUpPresentations;
+        retainedReadAheadDiagnostics_.forcedLateDrops +=
+            readAhead.forcedLateDrops;
+        retainedReadAheadDiagnostics_.peakDueFrameBacklog = std::max(
+            retainedReadAheadDiagnostics_.peakDueFrameBacklog,
+            readAhead.peakDueFrameBacklog);
         if(stoppedWithinUiBudget)
         {
             backend_.reset();
@@ -473,12 +605,16 @@ namespace BigScreen {
                maximumOutputHeight_,
                false,
                gpuConversionRequested_,
+               gpuYuvUploadLayout_,
+               readAheadByteBudget_,
                nullptr,
                visualEffects_,
                recoveryError))
             return false;
 
-        backend_->Request(lastRequestedSeconds_);
+        backend_->Request(
+            lastRequestedSeconds_,
+            lastPresentationIntervalSeconds_);
         PaperLogger.info(
             "Recovered video playback with the software decoder at {:.3f}s",
             lastRequestedSeconds_);
