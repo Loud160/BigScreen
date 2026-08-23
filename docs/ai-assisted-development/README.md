@@ -32,6 +32,9 @@ this archive were changed, deferred, rejected, or superseded after testing.
   research into a shared core and separate platform hosts.
 - [GPU video-pipeline feasibility](planning/GPU_VIDEO_PIPELINE_FEASIBILITY.md) —
   research into YUV upload, SurfaceTexture, and AHardwareBuffer/Vulkan paths.
+- [GPU video 60 FPS optimization plan](planning/GPU_VIDEO_60FPS_OPTIMIZATION_PLAN.md) —
+  Quest 2 checkpoint measurements and the recommended read-ahead, NV12, upload,
+  and presentation-profiling sequence for improving 60 FPS delivery.
 - [Deferred menu environment preview](planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md) —
   failed approaches, crash evidence, and requirements for a future safe design.
 

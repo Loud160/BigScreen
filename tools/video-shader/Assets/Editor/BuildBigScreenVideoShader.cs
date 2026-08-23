@@ -21,7 +21,11 @@ internal static class BuildBigScreenVideoShader
     private const string OutputVariable = "BIGSCREEN_VIDEO_SHADER_OUTPUT";
     private const string BundleName = "bigscreen_video_shader";
     private const string ShaderAsset = "Assets/BigScreenVideo.shader";
+    private const string YuvConversionShaderAsset =
+        "Assets/BigScreenYuvConversion.shader";
     private const string AddressableName = "bigscreen-video-shader";
+    private const string YuvConversionAddressableName =
+        "bigscreen-yuv-conversion-shader";
     private const string OculusSettingsKey = "Unity.XR.Oculus.Settings";
 
     /// Shader variant compilation for AssetBundles follows the BUILDING
@@ -127,8 +131,11 @@ internal static class BuildBigScreenVideoShader
         var build = new AssetBundleBuild
         {
             assetBundleName = BundleName,
-            assetNames = new[] { ShaderAsset },
-            addressableNames = new[] { AddressableName }
+            assetNames = new[] { ShaderAsset, YuvConversionShaderAsset },
+            addressableNames = new[] {
+                AddressableName,
+                YuvConversionAddressableName
+            }
         };
 
         AssetBundleManifest manifest = BuildPipeline.BuildAssetBundles(

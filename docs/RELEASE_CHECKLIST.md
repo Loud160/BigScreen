@@ -27,7 +27,7 @@
       [code-review resolution](ai-assisted-development/reviews/CODE_REVIEW_RESOLUTION.md)
       still reflects the current implementation;
       deferred items have either been completed or deliberately carried forward.
-- [ ] Linux decoder tests generate landscape/portrait H.264 fixtures and pass; RGBA allocation growth remains bounded.
+- [ ] Linux decoder tests generate landscape/portrait H.264 fixtures and pass; RGBA/YUV frame-buffer allocation growth remains bounded.
 - [ ] QuickJS output, exception, timeout, recursion, source-limit, and output-limit tests pass in a Release build; the pinned source hash was reviewed.
 - [ ] `build-downloader-from-source.ps1` rebuilds yt-dlp/yt-dlp-ejs and its full payload matches the pinned official release.
 - [ ] Clean ARM64 Quest build passes with no unresolved symbols.
@@ -84,6 +84,16 @@
       and full-song synchronization remain correct.
 - [ ] A MediaCodec failure logs its reason, reports Software after automatic
       fallback, and never interrupts Beat Saber gameplay.
+- [ ] GPU Video Conversion defaults off. With it on, YUV420P and MediaCodec
+      NV12 preserve color/range, container rotation, vignette transparency,
+      mapper correction, flat/curved/additional screens, Showcase deformation,
+      crack/shatter snapshots, pause, seek, practice speed, Replay, and loops.
+- [ ] A missing conversion shader/RenderTexture and an unsupported decoded
+      pixel layout each fall back once to CPU RGBA, log the reason, retain a
+      playable map, and do not leave a stale prewarmed YUV frame queued.
+- [ ] Quest 2 repeated-map A/B runs compare decoder CPU, presentation time,
+      whole-process CPU, video loss, gameplay FPS, heat, and battery with GPU
+      Video Conversion off/on. Quest 3 and Quest 3S follow after Quest 2 passes.
 - [ ] Controlled software/hardware A/B runs compare decode average/peak,
       decoder CPU, whole-process CPU, video loss, Quest FPS, and battery use.
 - [ ] Library backup restoration/reconstruction and confirmed storage cleanup work.

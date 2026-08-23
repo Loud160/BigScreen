@@ -87,6 +87,34 @@ namespace BigScreen {
                    transfer == AVCOL_TRC_ARIB_STD_B67;
         }
 
+        bool GpuPlanePixelFormatSupported(AVPixelFormat format)
+        {
+            return format == AV_PIX_FMT_YUV420P ||
+                   format == AV_PIX_FMT_YUVJ420P ||
+                   format == AV_PIX_FMT_NV12;
+        }
+
+        bool GpuPlaneColorSpaceSupported(AVColorSpace colorSpace)
+        {
+            // BT.2020 constant-luminance and newer chroma-derived matrices
+            // need nonlinear or primaries-dependent conversion. Do not color
+            // them approximately: the existing swscale path is the correct
+            // automatic fallback for matrices outside this exact set.
+            switch(colorSpace)
+            {
+                case AVCOL_SPC_UNSPECIFIED:
+                case AVCOL_SPC_BT709:
+                case AVCOL_SPC_FCC:
+                case AVCOL_SPC_BT470BG:
+                case AVCOL_SPC_SMPTE170M:
+                case AVCOL_SPC_SMPTE240M:
+                case AVCOL_SPC_BT2020_NCL:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         std::string UnsupportedPixelReason(
             AVPixelFormat format,
             AVColorTransferCharacteristic transfer,
@@ -226,6 +254,7 @@ namespace BigScreen {
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
         bool preferHardwareDecoding,
+        bool preferGpuConversion,
         void* javaVm,
         const FrameVisualEffects& visualEffects,
         std::string& error)
@@ -247,6 +276,17 @@ namespace BigScreen {
         softwareFallbackBlockedReason_.clear();
         codecName_ = "unknown";
         displayQuarterTurns_ = 0;
+        // Utility previews that intentionally downscale (currently the
+        // thumbnail picker) retain the established swscale/RGBA path. Normal
+        // playback is uncapped and may opt into plane output.
+        gpuConversionRequested_ =
+            preferGpuConversion && maximumOutputHeight <= 0;
+        gpuConversionEnabled_ = gpuConversionRequested_;
+        gpuConversionRejected_ = false;
+        {
+            std::scoped_lock lock(gpuConversionStatusMutex_);
+            gpuConversionFallbackReason_.clear();
+        }
         {
             std::scoped_lock lock(visualEffectsMutex_);
             visualEffects_ = visualEffects;
@@ -561,6 +601,13 @@ namespace BigScreen {
         conversionHeight_ = 0;
         displayQuarterTurns_ = 0;
         rotationScratch_.clear();
+        gpuConversionRequested_ = false;
+        gpuConversionEnabled_ = false;
+        gpuConversionRejected_ = false;
+        {
+            std::scoped_lock lock(gpuConversionStatusMutex_);
+            gpuConversionFallbackReason_.clear();
+        }
         streamTimeBase_ = 0.0;
         nominalFrameSeconds_ = 1.0 / 30.0;
         durationSeconds_ = 0.0;
@@ -582,7 +629,7 @@ namespace BigScreen {
         {
             std::scoped_lock outputLock(outputMutex_);
             newestFrame_ = {};
-            recycledBuffers_.clear();
+            recycledFrames_.clear();
             frameWaiting_ = false;
         }
     }
@@ -638,8 +685,8 @@ namespace BigScreen {
         // pool instead of freeing a multi-megabyte allocation.
         {
             std::scoped_lock lock(outputMutex_);
-            if(frameWaiting_ && !newestFrame_.rgba.empty())
-                RecycleBufferLocked(std::move(newestFrame_.rgba));
+            if(frameWaiting_)
+                RecycleFrameLocked(std::move(newestFrame_));
             newestFrame_ = {};
             frameWaiting_ = false;
         }
@@ -663,6 +710,34 @@ namespace BigScreen {
         visualEffects_ = visualEffects;
     }
 
+    void FrameDecoder::SetGpuConversionEnabled(bool enabled)
+    {
+        const bool next = enabled && gpuConversionRequested_ &&
+            !gpuConversionRejected_.load();
+        const bool previous = gpuConversionEnabled_.exchange(next);
+        if(previous == next)
+            return;
+
+        // A prewarmed gameplay decoder may already have published a frame
+        // before Unity creates its screen. Drop that one frame when the Unity
+        // resource setup rejects the GPU path, then wake the worker at the
+        // latest requested time so the replacement is guaranteed RGBA.
+        {
+            std::scoped_lock outputLock(outputMutex_);
+            if(frameWaiting_)
+            {
+                RecycleFrameLocked(std::move(newestFrame_));
+                newestFrame_ = {};
+                frameWaiting_ = false;
+            }
+        }
+        {
+            std::scoped_lock requestLock(requestMutex_);
+            ++requestVersion_;
+        }
+        requestChanged_.notify_one();
+    }
+
     bool FrameDecoder::TryTake(VideoFrame& destination)
     {
         std::scoped_lock lock(outputMutex_);
@@ -677,10 +752,11 @@ namespace BigScreen {
 
     void FrameDecoder::Recycle(VideoFrame&& frame)
     {
-        if(frame.rgba.empty())
+        if(frame.rgba.empty() && frame.y.empty() &&
+           frame.u.empty() && frame.v.empty())
             return;
         std::scoped_lock lock(outputMutex_);
-        RecycleBufferLocked(std::move(frame.rgba));
+        RecycleFrameLocked(std::move(frame));
     }
 
     std::optional<std::string> FrameDecoder::TakeError()
@@ -1146,6 +1222,51 @@ namespace BigScreen {
         VideoFrame& destination,
         std::string& error)
     {
+        destination.width = width_;
+        destination.height = height_;
+        destination.presentationSeconds = CurrentFrameTime();
+        destination.durationSeconds = CurrentFrameDuration();
+
+        if(gpuConversionEnabled_.load() &&
+           conversionWidth_ == decoded_->width &&
+           conversionHeight_ == decoded_->height)
+        {
+            if(CopyCurrentFrameAsYuv420(destination))
+                return true;
+
+            // Keep this fallback permanent for the current open decoder. A
+            // pixel format can change after MediaCodec startup or fallback;
+            // repeatedly attempting an unsupported layout would only add
+            // worker overhead and alternate presentation backends mid-map.
+            gpuConversionEnabled_ = false;
+            gpuConversionRejected_ = true;
+            std::scoped_lock lock(gpuConversionStatusMutex_);
+            const auto pixelFormat = static_cast<AVPixelFormat>(
+                decoded_->format);
+            if(!GpuPlanePixelFormatSupported(pixelFormat))
+            {
+                const char* pixelName = av_get_pix_fmt_name(pixelFormat);
+                gpuConversionFallbackReason_ =
+                    "decoded frames used " +
+                    std::string(pixelName
+                        ? pixelName
+                        : "an unknown pixel format") +
+                    " instead of supported 8-bit YUV420P/NV12";
+            }
+            else if(!GpuPlaneColorSpaceSupported(decoded_->colorspace))
+            {
+                gpuConversionFallbackReason_ =
+                    "decoded frames used an unsupported color matrix (" +
+                    std::to_string(static_cast<int>(decoded_->colorspace)) +
+                    ")";
+            }
+            else
+            {
+                gpuConversionFallbackReason_ =
+                    "the decoded frame exposed invalid YUV plane data or strides";
+            }
+        }
+
         const bool converterInputChanged =
             converterSourceWidth_ != decoded_->width ||
             converterSourceHeight_ != decoded_->height ||
@@ -1212,10 +1333,18 @@ namespace BigScreen {
             converterColorRange_ = decoded_->color_range;
         }
 
-        destination.width = width_;
-        destination.height = height_;
-        destination.presentationSeconds = CurrentFrameTime();
-        destination.durationSeconds = CurrentFrameDuration();
+        destination.storage = VideoFrameStorage::Rgba32;
+        // GPU conversion is a one-way fallback decision for an open decoder.
+        // Release plane capacity when the CPU path takes over so a failed GPU
+        // attempt does not retain both YUV and RGBA frame pools for the rest
+        // of a map.
+        std::vector<std::uint8_t>().swap(destination.y);
+        std::vector<std::uint8_t>().swap(destination.u);
+        std::vector<std::uint8_t>().swap(destination.v);
+        destination.sourceWidth = 0;
+        destination.sourceHeight = 0;
+        destination.displayQuarterTurns = 0;
+        destination.visualEffects = {};
         const auto requiredBytes = static_cast<std::size_t>(width_) * height_ * 4;
         if(destination.rgba.capacity() < requiredBytes)
             ++bufferAllocations_;
@@ -1287,6 +1416,124 @@ namespace BigScreen {
             }
         }
         ApplyVisualEffects(destination);
+        return true;
+    }
+
+    bool FrameDecoder::CopyCurrentFrameAsYuv420(VideoFrame& destination)
+    {
+        const auto format = static_cast<AVPixelFormat>(decoded_->format);
+        if(!GpuPlanePixelFormatSupported(format) ||
+           !GpuPlaneColorSpaceSupported(decoded_->colorspace))
+            return false;
+        const bool planar = format == AV_PIX_FMT_YUV420P ||
+            format == AV_PIX_FMT_YUVJ420P;
+
+        const int width = decoded_->width;
+        const int height = decoded_->height;
+        const int chromaWidth = (width + 1) / 2;
+        const int chromaHeight = (height + 1) / 2;
+        if(width <= 0 || height <= 0 ||
+           !decoded_->data[0] || !decoded_->data[1] ||
+           (planar && !decoded_->data[2]))
+            return false;
+
+        const auto resizeTracked = [this](
+            std::vector<std::uint8_t>& buffer,
+            std::size_t bytes)
+        {
+            if(buffer.capacity() < bytes)
+                ++bufferAllocations_;
+            buffer.resize(bytes);
+        };
+        resizeTracked(
+            destination.y,
+            static_cast<std::size_t>(width) * height);
+        resizeTracked(
+            destination.u,
+            static_cast<std::size_t>(chromaWidth) * chromaHeight);
+        resizeTracked(
+            destination.v,
+            static_cast<std::size_t>(chromaWidth) * chromaHeight);
+
+        for(int row = 0; row < height; ++row)
+        {
+            std::copy_n(
+                decoded_->data[0] +
+                    static_cast<std::ptrdiff_t>(row) * decoded_->linesize[0],
+                width,
+                destination.y.data() +
+                    static_cast<std::size_t>(row) * width);
+        }
+        if(planar)
+        {
+            for(int row = 0; row < chromaHeight; ++row)
+            {
+                std::copy_n(
+                    decoded_->data[1] +
+                        static_cast<std::ptrdiff_t>(row) * decoded_->linesize[1],
+                    chromaWidth,
+                    destination.u.data() +
+                        static_cast<std::size_t>(row) * chromaWidth);
+                std::copy_n(
+                    decoded_->data[2] +
+                        static_cast<std::ptrdiff_t>(row) * decoded_->linesize[2],
+                    chromaWidth,
+                    destination.v.data() +
+                        static_cast<std::size_t>(row) * chromaWidth);
+            }
+        }
+        else
+        {
+            for(int row = 0; row < chromaHeight; ++row)
+            {
+                const auto* source = decoded_->data[1] +
+                    static_cast<std::ptrdiff_t>(row) * decoded_->linesize[1];
+                auto* outputU = destination.u.data() +
+                    static_cast<std::size_t>(row) * chromaWidth;
+                auto* outputV = destination.v.data() +
+                    static_cast<std::size_t>(row) * chromaWidth;
+                for(int column = 0; column < chromaWidth; ++column)
+                {
+                    outputU[column] = source[column * 2];
+                    outputV[column] = source[column * 2 + 1];
+                }
+            }
+        }
+
+        destination.storage = VideoFrameStorage::Yuv420Planar;
+        // Plane output remains active until the decoder is closed or a
+        // permanent fallback is selected, so an old RGBA capacity can be
+        // released instead of doubling the reusable frame's resident memory.
+        std::vector<std::uint8_t>().swap(destination.rgba);
+        destination.sourceWidth = width;
+        destination.sourceHeight = height;
+        destination.displayQuarterTurns = displayQuarterTurns_;
+        destination.fullRange =
+            format == AV_PIX_FMT_YUVJ420P ||
+            decoded_->color_range == AVCOL_RANGE_JPEG;
+        switch(decoded_->colorspace)
+        {
+            case AVCOL_SPC_BT709:
+                destination.colorMatrix = VideoColorMatrix::Bt709;
+                break;
+            case AVCOL_SPC_FCC:
+                destination.colorMatrix = VideoColorMatrix::Fcc;
+                break;
+            case AVCOL_SPC_SMPTE240M:
+                destination.colorMatrix = VideoColorMatrix::Smpte240;
+                break;
+            case AVCOL_SPC_BT2020_NCL:
+            case AVCOL_SPC_BT2020_CL:
+                destination.colorMatrix = VideoColorMatrix::Bt2020;
+                break;
+            default:
+                destination.colorMatrix = VideoColorMatrix::Bt601;
+                break;
+        }
+        {
+            std::scoped_lock lock(visualEffectsMutex_);
+            destination.visualEffects = visualEffects_;
+        }
         return true;
     }
 
@@ -1530,8 +1777,8 @@ namespace BigScreen {
         // until Unity consumes every image would add latency and make Replay
         // rendering slower without improving the final visible frame sequence.
         std::scoped_lock lock(outputMutex_);
-        if(frameWaiting_ && !newestFrame_.rgba.empty())
-            RecycleBufferLocked(std::move(newestFrame_.rgba));
+        if(frameWaiting_)
+            RecycleFrameLocked(std::move(newestFrame_));
         newestFrame_ = std::move(frame);
         frameWaiting_ = true;
     }
@@ -1540,22 +1787,31 @@ namespace BigScreen {
     {
         std::scoped_lock lock(outputMutex_);
         VideoFrame frame;
-        if(!recycledBuffers_.empty())
+        if(!recycledFrames_.empty())
         {
-            frame.rgba = std::move(recycledBuffers_.back());
-            recycledBuffers_.pop_back();
+            frame = std::move(recycledFrames_.back());
+            recycledFrames_.pop_back();
         }
         return frame;
     }
 
-    void FrameDecoder::RecycleBufferLocked(std::vector<std::uint8_t>&& buffer)
+    void FrameDecoder::RecycleFrameLocked(VideoFrame&& frame)
     {
         // One worker, one mailbox, and one main-thread upload need at most
         // three reusable allocations. A strict cap prevents an old resolution
         // from retaining arbitrary memory after rapid seeks or scene changes.
         constexpr std::size_t MaximumReusableBuffers = 3;
-        if(recycledBuffers_.size() < MaximumReusableBuffers)
-            recycledBuffers_.push_back(std::move(buffer));
+        frame.storage = VideoFrameStorage::Rgba32;
+        frame.width = 0;
+        frame.height = 0;
+        frame.sourceWidth = 0;
+        frame.sourceHeight = 0;
+        frame.displayQuarterTurns = 0;
+        frame.presentationSeconds = 0.0;
+        frame.durationSeconds = 0.0;
+        frame.generation = 0;
+        if(recycledFrames_.size() < MaximumReusableBuffers)
+            recycledFrames_.push_back(std::move(frame));
     }
 
 #ifdef BIGSCREEN_FFMPEG_BACKEND_FACTORY

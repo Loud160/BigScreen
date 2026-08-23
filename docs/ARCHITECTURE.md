@@ -41,7 +41,7 @@ practice speed, seeking, and Replay behavior. The decoder uses each frame's
 container duration when available, with nominal FPS only as a fallback, so VFR
 sources do not inherit a false constant cadence. It uses a one-frame mailbox,
 drops superseded frames instead of blocking the game thread, and recycles a
-bounded pool of RGBA vectors instead of allocating a multi-megabyte buffer for
+bounded pool of frame vectors instead of allocating multi-megabyte buffers for
 every presented frame. Gameplay transitions pre-open and prime FFmpeg before
 the song clock begins; Unity geometry is still created only in the gameplay
 scene.
@@ -53,9 +53,9 @@ headers and `BIGSCREEN9_LIB*` symbols. The separation is required because the
 two releases expose incompatible public structures and ordinary unversioned
 references placed together in `libbigscreen.so` could all bind to the first
 loaded library. The facade chooses a backend only during `Open`, never while a
-worker owns codec state. `VideoFrame` contains standard C++ values only, so its
-reusable RGBA allocation moves to Unity without an additional A/B abstraction
-copy. The Video Library's compatibility probe remains fixed to the conservative
+worker owns codec state. `VideoFrame` contains standard C++ values only, so
+either its reusable RGBA allocation or normalized Y/U/V plane allocations move
+to Unity without an additional A/B abstraction copy. The Video Library's compatibility probe remains fixed to the conservative
 4.4 runtime and never hands FFmpeg structures to a playback backend.
 
 Each private backend contains LGPL software decoders for H.264, VP8, and VP9,
@@ -66,10 +66,16 @@ Java VM captured by Scotland2 during Android preload and passes it across the
 FFmpeg-type-free boundary so each isolated libavcodec instance registers the
 VM in its own internal state. MediaCodec is
 opened without an Android output Surface: FFmpeg copies the decoder's NV12 or
-YUV420P output into a CPU-readable frame, then the existing stride-aware
-swscale/RGBA mailbox path continues unchanged. This is not zero-copy, but it
-keeps curved screens, transparency, showcase panels, and every shader-facing
-feature identical. A hardware worker failure is consumed by the facade, which
+YUV420P output into a CPU-readable frame. The default path remains the existing
+stride-aware swscale/RGBA mailbox. The default-off **GPU Video Conversion**
+experiment instead packs 8-bit SDR 4:2:0 into reusable Y/U/V planes, uploads
+those planes, and performs YUV conversion, container rotation, mapper color
+correction, and vignette once into one shared RGBA RenderTexture. It is not
+zero-copy decoding; it reduces transported/uploaded bytes and removes the CPU
+full-frame conversion/rotation work. Thumbnails retain the bounded RGBA path.
+Unexpected pixel layouts or failed Unity resources permanently return that
+playback session to RGBA while preserving the shared presentation texture and
+screen choreography. A hardware worker failure is consumed by the facade, which
 reopens the same runtime and file at the latest requested timestamp with
 software decoding when policy permits before the session decides playback has
 failed. Unsupported 10-bit, HDR, and alpha video is rejected explicitly.
@@ -187,10 +193,12 @@ Unity. Mapper screen ownership and Chroma environment ownership are independent:
 Respect Mapper Settings selects Cinema geometry/effects/environment entries,
 while Allow Chroma Override yields the broader scene only after map-wide Chroma
 detection. Additional Cinema screens are lightweight `ScreenSurface` instances
-that share the primary `Texture2D`; they add geometry/material work but never a
-second decoder or RGBA upload. Color correction and vignette run in the decoder
-worker after swscale and container rotation, with default-valued metadata taking
-the no-processing fast path. The worker factors color correction into cached
+that share the primary presentation `Texture`; they add geometry/material work
+but never a second decoder or frame upload. On the default path, color
+correction and vignette run in the decoder worker after swscale and container
+rotation. On the experimental GPU path, the same operations run in the one YUV
+conversion pass. Default-valued metadata takes the no-processing fast path. The
+CPU worker factors color correction into cached
 byte-contribution and gamma lookup tables and builds each resolution-specific
 vignette mask only when its settings change; later frames do not repeat the
 original full-picture `pow`, ellipse-distance, or smooth-step calculations.

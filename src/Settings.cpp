@@ -360,6 +360,8 @@ namespace BigScreen {
             ReadFloat(document, "cinemaBloomLevel", 1.0f), 0.0f, 2.0f);
         hardwareDecodingEnabled_ = ReadBool(
             document, "hardwareDecodingEnabled", true);
+        gpuVideoConversionEnabled_ = ReadBool(
+            document, "gpuVideoConversionEnabled", false);
         automaticPerformanceEnabled_ = ReadBool(
             document, "automaticPerformanceEnabled", false);
         automaticPerformanceThreshold_ = std::clamp(
@@ -802,6 +804,13 @@ namespace BigScreen {
         Save();
     }
 
+    void Settings::SetGpuVideoConversionEnabled(bool value)
+    {
+        SetLoggedBoolean(
+            "GPU Video Conversion", gpuVideoConversionEnabled_, value);
+        Save();
+    }
+
     void Settings::SetNativeBloomLevel(float value)
     {
         SetLoggedSlider(
@@ -1113,6 +1122,10 @@ namespace BigScreen {
         Replace(document, "nativeBloomLevel", nativeBloomLevel_);
         Replace(document, "cinemaBloomLevel", cinemaBloomLevel_);
         Replace(document, "hardwareDecodingEnabled", hardwareDecodingEnabled_);
+        Replace(
+            document,
+            "gpuVideoConversionEnabled",
+            gpuVideoConversionEnabled_);
         Replace(document, "automaticPerformanceEnabled", automaticPerformanceEnabled_);
         Replace(document, "automaticPerformanceThreshold", automaticPerformanceThreshold_);
         document.RemoveMember("automaticPerformanceResponseSeconds");

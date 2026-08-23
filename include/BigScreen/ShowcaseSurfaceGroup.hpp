@@ -13,7 +13,7 @@
 #include "BigScreen/ScreenSurface.hpp"
 #include "BigScreen/UpDownShowcaseTimeline.hpp"
 
-namespace UnityEngine { class Texture2D; }
+namespace UnityEngine { class Texture; }
 
 namespace BigScreen {
     /// A fixed, preallocated pool of showcase panels. Every panel has its own
@@ -25,7 +25,7 @@ namespace BigScreen {
             const MapVideoConfig& anchorConfig,
             int videoWidth,
             int videoHeight,
-            UnityEngine::Texture2D* sharedTexture);
+            UnityEngine::Texture* sharedTexture);
         bool Apply(double songTimeSeconds);
         void SetMediaReady(bool ready);
         void SetVisible(bool visible);

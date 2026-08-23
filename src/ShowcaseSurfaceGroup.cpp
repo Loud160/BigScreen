@@ -120,7 +120,7 @@ namespace BigScreen {
         const MapVideoConfig& anchorConfig,
         int videoWidth,
         int videoHeight,
-        UnityEngine::Texture2D* sharedTexture)
+        UnityEngine::Texture* sharedTexture)
     {
         try
         {

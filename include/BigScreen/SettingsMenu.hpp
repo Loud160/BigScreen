@@ -139,6 +139,7 @@ namespace BigScreen {
         BSML::SliderSetting* nativeBloomLevelSlider_ = nullptr;
         BSML::SliderSetting* cinemaBloomLevelSlider_ = nullptr;
         BSML::ToggleSetting* hardwareDecodingToggle_ = nullptr;
+        BSML::ToggleSetting* gpuVideoConversionToggle_ = nullptr;
         BSML::ToggleSetting* automaticPerformanceToggle_ = nullptr;
         BSML::ModalView* automaticPerformanceWarningModal_ = nullptr;
         BSML::SliderSetting* automaticPerformanceThresholdSlider_ = nullptr;

@@ -19,7 +19,7 @@ namespace BigScreen {
         const MapVideoConfig& primary,
         int videoWidth,
         int videoHeight,
-        UnityEngine::Texture2D* sharedTexture)
+        UnityEngine::Texture* sharedTexture)
     {
         try
         {

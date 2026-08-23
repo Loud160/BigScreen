@@ -113,10 +113,13 @@ namespace BigScreen {
             decoder_.PeakDecodeMilliseconds(),
             decoder_.OpenMilliseconds(),
             activeDecoderCpu,
+            averagePresentationMilliseconds_,
+            peakPresentationMilliseconds_,
             automaticReductions_,
             decoder_.DecodeMethodName(),
             decoder_.RuntimeVersion(),
-            decoder_.CodecName()};
+            decoder_.CodecName(),
+            presentationMethod_};
     }
 
     void PlaybackSession::Prepare(GlobalNamespace::BeatmapLevel* level)
@@ -139,6 +142,7 @@ namespace BigScreen {
         chromaMapDetected_ = false;
         menuPreviewStartSongTime_ = 0.0;
         environmentOnlySession_ = false;
+        gpuConversionDisabledForSession_ = false;
 
         // Hooks remain installed for the lifetime of the process, but the
         // master switch makes every entry point inert. Keeping this guard here
@@ -531,13 +535,30 @@ namespace BigScreen {
         gameplayPrewarmFailed_ = false;
         gameplayPrewarmError_.clear();
 
-        if(!surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
+        const bool gpuConversionRequested =
+            Settings::Instance().GpuVideoConversionEnabled() &&
+            !gpuConversionDisabledForSession_;
+        if(!surface_.Create(
+               *config_,
+               decoder_.Width(),
+               decoder_.Height(),
+               gpuConversionRequested))
         {
             PaperLogger.error("Could not create the Unity video screen");
             ErrorManager::Instance().ReportInternal(
                 "creating video screen", "Unity could not create the screen surface");
             decoder_.Close();
             return;
+        }
+        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
+        presentationMethod_ = surface_.GpuConversionActive()
+            ? "GPU YUV"
+            : "CPU RGBA";
+        if(gpuConversionRequested && !surface_.GpuConversionActive())
+        {
+            gpuConversionDisabledForSession_ = true;
+            PaperLogger.warn(
+                "Experimental GPU video conversion could not start; playback retained the CPU RGBA path");
         }
 
         if(MapperScreenPresentationActive() &&
@@ -624,6 +645,9 @@ namespace BigScreen {
         decoderCpuBaselineMilliseconds_ = decoder_.WorkerCpuMilliseconds();
         diagnosticsFrameCounter_ = 0;
         diagnosticsVisible_ = false;
+        averagePresentationMilliseconds_ = 0.0;
+        peakPresentationMilliseconds_ = 0.0;
+        gpuConversionFallbackLogged_ = false;
         mapperEnvironmentApplyCountdown_ =
             context == PlaybackContext::Gameplay &&
             MapperEnvironmentPresentationActive()
@@ -775,6 +799,7 @@ namespace BigScreen {
                     error);
             return false;
         }
+        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
 
         // Keep the existing Unity screen and texture. Only the codec state is
         // replaced, which avoids material churn during a normal preview loop
@@ -795,6 +820,8 @@ namespace BigScreen {
         return decoder_.Open(
             config_->videoPath,
             UncappedOutputHeight,
+            Settings::Instance().GpuVideoConversionEnabled() &&
+                !gpuConversionDisabledForSession_,
             VisualEffectsFor(*config_),
             error);
     }
@@ -908,13 +935,23 @@ namespace BigScreen {
 
         cinemaCompatibilityCycleScreenHidden_ = false;
         surface_.Destroy();
-        if(!surface_.Create(*config_, decoder_.Width(), decoder_.Height()))
+        const bool gpuConversionRequested =
+            Settings::Instance().GpuVideoConversionEnabled() &&
+            !gpuConversionDisabledForSession_;
+        if(!surface_.Create(
+               *config_,
+               decoder_.Width(),
+               decoder_.Height(),
+               gpuConversionRequested))
         {
             PaperLogger.error(
                 "Cinema compatibility phase {} could not rebuild the primary screen",
                 phaseIndex + 1);
             return false;
         }
+        decoder_.SetGpuConversionEnabled(surface_.GpuConversionActive());
+        if(gpuConversionRequested && !surface_.GpuConversionActive())
+            gpuConversionDisabledForSession_ = true;
         if(!config_->additionalScreens.empty() &&
            !cinemaScreens_.Create(
                *config_, decoder_.Width(), decoder_.Height(), surface_.Texture()))
@@ -1379,63 +1416,126 @@ namespace BigScreen {
                     frame.generation,
                     libraryPreviewRestartGeneration_);
             }
-            else if(surface_.Upload(frame))
+            else
             {
-                // Count every distinct picture that actually reached Unity.
-                // The song-clock deadline accumulators above provide the
-                // independent expectation; media timestamp gaps are
-                // deliberately irrelevant because a cap may intentionally
-                // skip source pictures.
-                ++deliveredPresentedFrames_;
-                ++windowDeliveredPresentedFrames_;
-                ++diagnosticsWindowDeliveredPresentedFrames_;
-                firstFrameUploaded_ = true;
-                if(libraryPreviewRestartPending_)
+                const auto presentationStarted =
+                    std::chrono::steady_clock::now();
+                const bool uploaded = surface_.Upload(frame);
+                const double presentationMilliseconds =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() -
+                        presentationStarted).count();
+                if(uploaded)
                 {
-                    libraryPreviewRestartPending_ = false;
-                    PaperLogger.info(
-                        "Video Library restart frame reached the Unity texture");
-                }
-                if(showcase_.IsCreated() && showcase_.TimelineActive())
-                {
-                    showcase_.SetMediaReady(true);
-                    // Apply once more after the first upload so the panels
-                    // become visible in this same Unity frame instead of one
-                    // update late.
-                    if(!showcase_.Apply(songTimeSeconds))
+                    averagePresentationMilliseconds_ =
+                        averagePresentationMilliseconds_ <= 0.0
+                            ? presentationMilliseconds
+                            : averagePresentationMilliseconds_ * 0.9 +
+                                presentationMilliseconds * 0.1;
+                    peakPresentationMilliseconds_ = std::max(
+                        peakPresentationMilliseconds_,
+                        presentationMilliseconds);
+                    presentationMethod_ =
+                        frame.storage == VideoFrameStorage::Yuv420Planar
+                            ? "GPU YUV"
+                            : surface_.GpuConversionActive()
+                                ? "CPU RGBA fallback"
+                                : "CPU RGBA";
+                    if(frame.storage == VideoFrameStorage::Rgba32 &&
+                       surface_.GpuConversionActive() &&
+                       !gpuConversionFallbackLogged_)
                     {
-                        showcase_.Destroy();
-                        surface_.SetVisible(true);
-                        cinemaScreens_.SetVisible(true);
-                        PaperLogger.error(
-                            "Up & Down showcase activation failed after first frame; restored ordinary playback");
+                        gpuConversionDisabledForSession_ = true;
+                        gpuConversionFallbackLogged_ = true;
+                        auto reason = decoder_.GpuConversionFallbackReason();
+                        if(reason.empty())
+                            reason = "the decoded frame layout required the CPU RGBA path";
+                        PaperLogger.warn(
+                            "GPU video conversion fell back for this playback session: {}",
+                            reason);
+                        ErrorManager::Instance().RecordError(
+                            "Falling back from GPU video conversion",
+                            reason);
+                    }
+                    // Count every distinct picture that actually reached
+                    // Unity. Song-clock deadline accumulators provide the
+                    // independent expectation; media timestamp gaps are
+                    // deliberately irrelevant because a cap may intentionally
+                    // skip source pictures.
+                    ++deliveredPresentedFrames_;
+                    ++windowDeliveredPresentedFrames_;
+                    ++diagnosticsWindowDeliveredPresentedFrames_;
+                    firstFrameUploaded_ = true;
+                    if(libraryPreviewRestartPending_)
+                    {
+                        libraryPreviewRestartPending_ = false;
+                        PaperLogger.info(
+                            "Video Library restart frame reached the Unity texture");
+                    }
+                    if(showcase_.IsCreated() && showcase_.TimelineActive())
+                    {
+                        showcase_.SetMediaReady(true);
+                        // Apply once more after the first upload so the panels
+                        // become visible in this same Unity frame instead of
+                        // one update late.
+                        if(!showcase_.Apply(songTimeSeconds))
+                        {
+                            showcase_.Destroy();
+                            surface_.SetVisible(true);
+                            cinemaScreens_.SetVisible(true);
+                            PaperLogger.error(
+                                "Up & Down showcase activation failed after first frame; restored ordinary playback");
+                        }
+                        else
+                        {
+                            surface_.SetVisible(false);
+                            cinemaScreens_.SetVisible(false);
+                        }
                     }
                     else
                     {
-                        surface_.SetVisible(false);
-                        cinemaScreens_.SetVisible(false);
+                        surface_.SetVisible(true);
+                        cinemaScreens_.SetVisible(true);
                     }
                 }
                 else
                 {
-                    surface_.SetVisible(true);
-                    cinemaScreens_.SetVisible(true);
+                    if(frame.storage == VideoFrameStorage::Yuv420Planar &&
+                       surface_.GpuConversionActive())
+                    {
+                        // Treat a Unity-side YUV upload/conversion failure as
+                        // a permanent presentation fallback for this playback
+                        // session. The decoder discards any queued YUV frame
+                        // and republishes the latest requested picture as
+                        // RGBA. ScreenSurface keeps the same RenderTexture so
+                        // Cinema/showcase clones retain a stable shared
+                        // texture identity while the CPU path blits into it.
+                        decoder_.SetGpuConversionEnabled(false);
+                        gpuConversionDisabledForSession_ = true;
+                        presentationMethod_ = "CPU RGBA fallback";
+                        gpuConversionFallbackLogged_ = true;
+                        PaperLogger.warn(
+                            "GPU video conversion failed while presenting a frame; permanently using CPU RGBA for this playback session");
+                        ErrorManager::Instance().RecordError(
+                            "Falling back from GPU video conversion",
+                            "Unity could not present the YUV conversion pass. Playback will continue through the CPU RGBA path.");
+                    }
+                    else
+                    {
+                        // An upload failure means the Unity surface was
+                        // destroyed by a scene transition/restart or no longer
+                        // matches the decoder. Stop consuming frames
+                        // immediately. Repeatedly invoking a stale texture is
+                        // unsafe on IL2CPP.
+                        playbackFailed_ = true;
+                        uploadFailed = true;
+                        PaperLogger.error(
+                            "Video frame upload stopped because the Unity screen is no longer valid");
+                        ErrorManager::Instance().ReportInternal(
+                            "uploading a decoded video frame",
+                            "The gameplay screen was no longer available. The map will continue without video.");
+                    }
                 }
-            }
-            else
-            {
-                // An upload failure means the Unity surface was destroyed by
-                // a scene transition/restart or no longer matches the decoder.
-                // Stop consuming frames immediately. Repeatedly invoking a
-                // stale Texture2D is unsafe on IL2CPP and can crash the entire
-                // Beat Saber process instead of throwing a managed exception.
-                playbackFailed_ = true;
-                uploadFailed = true;
-                PaperLogger.error(
-                    "Video frame upload stopped because the Unity screen is no longer valid");
-                ErrorManager::Instance().ReportInternal(
-                    "uploading a decoded video frame",
-                    "The gameplay screen was no longer available. The map will continue without video.");
             }
             decoder_.Recycle(std::move(frame));
             if(uploadFailed)
@@ -1761,7 +1861,12 @@ namespace BigScreen {
              << " ms average / " << diagnostics.peakDecodeMilliseconds
              << " ms peak  |  Decoder startup "
              << diagnostics.decoderOpenMilliseconds
-             << " ms  |  RGBA allocations "
+             << " ms  |  Presentation "
+             << diagnostics.presentationMethod << ' '
+             << diagnostics.averagePresentationMilliseconds
+             << " ms average / "
+             << diagnostics.peakPresentationMilliseconds
+             << " ms peak  |  Frame-buffer allocations "
               << diagnostics.rgbaBufferAllocations << "  |  FFmpeg "
               << diagnostics.decoderRuntime << "  |  Decoder "
               << diagnostics.decodeMethod;

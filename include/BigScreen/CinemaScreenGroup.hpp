@@ -13,7 +13,7 @@
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
 
-namespace UnityEngine { class Texture2D; }
+namespace UnityEngine { class Texture; }
 
 namespace BigScreen {
     /// Owns mapper-authored Cinema additional screens. Every panel shares the
@@ -25,7 +25,7 @@ namespace BigScreen {
             const MapVideoConfig& primary,
             int videoWidth,
             int videoHeight,
-            UnityEngine::Texture2D* sharedTexture);
+            UnityEngine::Texture* sharedTexture);
         void Destroy();
         void SetVisible(bool visible);
         void ShowLeadIn(bool black);

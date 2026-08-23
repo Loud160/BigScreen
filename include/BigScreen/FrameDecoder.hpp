@@ -34,26 +34,23 @@ namespace BigScreen {
     inline constexpr int UncappedOutputHeight = 0;
 
 
-    /// A decoded image ready for Unity's RGBA32 Texture2D upload path.
-    struct VideoFrame {
-        std::vector<std::uint8_t> rgba;
-        int width = 0;
-        int height = 0;
-        double presentationSeconds = 0.0;
-        // The container-provided duration is used when available so variable-
-        // frame-rate video does not inherit one guessed duration for every
-        // frame. nominalFrameSeconds_ remains the fallback for incomplete MP4
-        // timing data.
-        double durationSeconds = 0.0;
-        // Incremented by an explicit Restart. PlaybackSession rejects output
-        // from an older generation so a frame that finished decoding while
-        // the loop request was being posted cannot satisfy new-loop readiness.
-        std::uint64_t generation = 0;
+    enum class VideoFrameStorage : std::uint8_t {
+        Rgba32,
+        Yuv420Planar
+    };
+
+    enum class VideoColorMatrix : std::uint8_t {
+        Bt601,
+        Bt709,
+        Fcc,
+        Smpte240,
+        Bt2020
     };
 
     /// ABI-neutral Cinema picture processing passed into either FFmpeg
-    /// backend. The worker applies it after RGBA conversion, keeping millions
-    /// of per-pixel operations away from Unity's gameplay thread.
+    /// backend. The CPU path applies it after RGBA conversion; the GPU path
+    /// carries the same snapshot with each frame and evaluates it during the
+    /// single YUV-to-RGBA conversion pass.
     struct FrameVisualEffects {
         bool enabled = false;
         float brightness = 1.0f;
@@ -68,6 +65,38 @@ namespace BigScreen {
         float vignetteSoftness = 0.005f;
     };
 
+    /// An ABI-neutral decoded image ready for either the established RGBA
+    /// Texture2D upload or the experimental GPU YUV conversion path. The YUV
+    /// representation is always tightly packed 8-bit 4:2:0 with independent
+    /// U/V planes, even when MediaCodec supplied NV12. Normalizing that small
+    /// amount of layout on the worker avoids exposing FFmpeg line strides or
+    /// pixel-format enums across the separately linked backend boundary.
+    struct VideoFrame {
+        VideoFrameStorage storage = VideoFrameStorage::Rgba32;
+        std::vector<std::uint8_t> rgba;
+        std::vector<std::uint8_t> y;
+        std::vector<std::uint8_t> u;
+        std::vector<std::uint8_t> v;
+        int width = 0;
+        int height = 0;
+        int sourceWidth = 0;
+        int sourceHeight = 0;
+        int displayQuarterTurns = 0;
+        VideoColorMatrix colorMatrix = VideoColorMatrix::Bt601;
+        bool fullRange = false;
+        FrameVisualEffects visualEffects{};
+        double presentationSeconds = 0.0;
+        // The container-provided duration is used when available so variable-
+        // frame-rate video does not inherit one guessed duration for every
+        // frame. nominalFrameSeconds_ remains the fallback for incomplete MP4
+        // timing data.
+        double durationSeconds = 0.0;
+        // Incremented by an explicit Restart. PlaybackSession rejects output
+        // from an older generation so a frame that finished decoding while
+        // the loop request was being posted cannot satisfy new-loop readiness.
+        std::uint64_t generation = 0;
+    };
+
     /// ABI-neutral contract shared by the separately compiled FFmpeg 4.4 and
     /// FFmpeg 9 decoder implementations. No FFmpeg type crosses this boundary:
     /// each implementation is compiled with the exact headers matching its
@@ -79,6 +108,7 @@ namespace BigScreen {
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
             bool preferHardwareDecoding,
+            bool preferGpuConversion,
             void* javaVm,
             const FrameVisualEffects& visualEffects,
             std::string& error) = 0;
@@ -105,6 +135,12 @@ namespace BigScreen {
         /// warm.
         virtual void UpdateVisualEffects(
             const FrameVisualEffects& visualEffects) = 0;
+        /// Enables or disables future YUV-plane output without reopening the
+        /// codec. Disabling also discards a queued YUV frame so a failed Unity
+        /// GPU setup can request a fresh RGBA frame through the proven path.
+        virtual void SetGpuConversionEnabled(bool enabled) = 0;
+        virtual bool GpuConversionOutputEnabled() const = 0;
+        virtual std::string GpuConversionFallbackReason() const = 0;
         virtual bool TryTake(VideoFrame& destination) = 0;
         virtual void Recycle(VideoFrame&& frame) = 0;
         virtual std::optional<std::string> TakeError() = 0;
@@ -175,6 +211,7 @@ namespace BigScreen {
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
             bool preferHardwareDecoding,
+            bool preferGpuConversion,
             void* javaVm,
             const FrameVisualEffects& visualEffects,
             std::string& error) override;
@@ -188,6 +225,7 @@ namespace BigScreen {
             return Open(
                 videoPath,
                 maximumOutputHeight,
+                false,
                 false,
                 nullptr,
                 {},
@@ -203,10 +241,18 @@ namespace BigScreen {
         std::uint64_t Restart(double mediaSeconds) override;
         void UpdateVisualEffects(
             const FrameVisualEffects& visualEffects) override;
+        void SetGpuConversionEnabled(bool enabled) override;
+        bool GpuConversionOutputEnabled() const override {
+            return gpuConversionEnabled_.load();
+        }
+        std::string GpuConversionFallbackReason() const override {
+            std::scoped_lock lock(gpuConversionStatusMutex_);
+            return gpuConversionFallbackReason_;
+        }
         bool TryTake(VideoFrame& destination) override;
-        /// Returns a consumed RGBA allocation to the decoder. Keeping a small
-        /// pool avoids allocating and freeing a multi-megabyte 1080p vector for
-        /// every presented frame.
+        /// Returns consumed RGBA or plane allocations to the decoder. Keeping
+        /// a small pool avoids allocating and freeing multi-megabyte frame
+        /// buffers for every presented picture.
         void Recycle(VideoFrame&& frame) override;
         /// Moves the first decoder-worker failure to the main thread. The
         /// caller can stop only the video and defer UI until gameplay ends.
@@ -258,6 +304,7 @@ namespace BigScreen {
         double CurrentFrameTime() const;
         double CurrentFrameDuration() const;
         bool ConvertCurrentFrame(VideoFrame& destination, std::string& error);
+        bool CopyCurrentFrameAsYuv420(VideoFrame& destination);
         void ApplyVisualEffects(VideoFrame& destination);
         void RebuildVisualEffectCache(
             const FrameVisualEffects& effects,
@@ -265,7 +312,7 @@ namespace BigScreen {
             int height);
         void Publish(VideoFrame&& frame);
         VideoFrame AcquireOutputFrame();
-        void RecycleBufferLocked(std::vector<std::uint8_t>&& buffer);
+        void RecycleFrameLocked(VideoFrame&& frame);
 
         AVFormatContext* format_ = nullptr;
         AVCodecContext* codec_ = nullptr;
@@ -287,6 +334,11 @@ namespace BigScreen {
         int conversionHeight_ = 0;
         int displayQuarterTurns_ = 0;
         std::vector<std::uint8_t> rotationScratch_;
+        bool gpuConversionRequested_ = false;
+        std::atomic<bool> gpuConversionEnabled_{false};
+        std::atomic<bool> gpuConversionRejected_{false};
+        mutable std::mutex gpuConversionStatusMutex_;
+        std::string gpuConversionFallbackReason_;
         double streamTimeBase_ = 0.0;
         double nominalFrameSeconds_ = 1.0 / 30.0;
         double durationSeconds_ = 0.0;
@@ -329,7 +381,7 @@ namespace BigScreen {
         bool restartPending_ = false;
         std::mutex outputMutex_;
         VideoFrame newestFrame_;
-        std::vector<std::vector<std::uint8_t>> recycledBuffers_;
+        std::vector<VideoFrame> recycledFrames_;
         bool frameWaiting_ = false;
 
         std::mutex errorMutex_;
@@ -377,6 +429,7 @@ namespace BigScreen {
         bool Open(
             const std::filesystem::path& videoPath,
             int maximumOutputHeight,
+            bool preferGpuConversion,
             const FrameVisualEffects& visualEffects,
             std::string& error);
         bool Open(
@@ -384,7 +437,7 @@ namespace BigScreen {
             int maximumOutputHeight,
             std::string& error)
         {
-            return Open(videoPath, maximumOutputHeight, {}, error);
+            return Open(videoPath, maximumOutputHeight, false, {}, error);
         }
         void Close();
         void Request(double mediaSeconds);
@@ -392,6 +445,9 @@ namespace BigScreen {
         /// a fresh pass at mediaSeconds without replacing the Unity surface.
         std::uint64_t Restart(double mediaSeconds);
         void UpdateVisualEffects(const FrameVisualEffects& visualEffects);
+        void SetGpuConversionEnabled(bool enabled);
+        bool GpuConversionOutputEnabled() const;
+        std::string GpuConversionFallbackReason() const;
         bool TryTake(VideoFrame& destination);
         void Recycle(VideoFrame&& frame);
         std::optional<std::string> TakeError();
@@ -432,6 +488,7 @@ namespace BigScreen {
         double lastRequestedSeconds_ = 0.0;
         bool useFfmpeg9_ = false;
         bool hardwareRequested_ = false;
+        bool gpuConversionRequested_ = false;
         bool hardwareFallbackAttempted_ = false;
         void* javaVm_ = nullptr;
         FrameVisualEffects visualEffects_{};

@@ -85,8 +85,10 @@ bloom-heavy map lighting cannot wash the picture into a solid white rectangle.
 Unknown fields are ignored rather than treated as fatal configuration errors.
 
 Color correction and vignette run on the decoder worker after FFmpeg color
-conversion and container orientation. Vignette pixels outside the authored
-shape have both RGB and alpha cleared, and the independent rectangular backing
+conversion and container orientation on the default CPU path. The optional GPU
+conversion experiment evaluates the same operations after YUV conversion and
+container orientation in its single offscreen pass. Vignette pixels outside
+the authored shape clear alpha while retaining their hidden RGB values, and the independent rectangular backing
 is removed so an ellipse or rounded rectangle does not retain a black box.
 An all-default correction object uses the normal fast path. Additional screens
 reuse the one uploaded video texture. Opaque-body behavior and authored alpha

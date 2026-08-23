@@ -243,6 +243,7 @@ namespace BigScreen {
         nativeBloomLevelSlider_ = nullptr;
         cinemaBloomLevelSlider_ = nullptr;
         hardwareDecodingToggle_ = nullptr;
+        gpuVideoConversionToggle_ = nullptr;
         automaticPerformanceToggle_ = nullptr;
         automaticPerformanceWarningModal_ = nullptr;
         automaticPerformanceThresholdSlider_ = nullptr;
@@ -746,6 +747,23 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             hardwareDecodingToggle_,
             "Uses the Quest's dedicated MediaCodec decoders by default to reduce CPU work and decode latency. H.264, VP8, and VP9 at 1080p or lower can fall back to software. H.265 and video above 1080p require hardware and stop video safely if it fails. Turn this off to force supported videos through software decoding. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
+
+        gpuVideoConversionToggle_ = BSML::Lite::CreateToggle(
+            performanceParent,
+            "GPU Video Conversion",
+            settings.GpuVideoConversionEnabled(),
+            [](bool enabled)
+            {
+                Settings::Instance().SetGpuVideoConversionEnabled(enabled);
+                // Plane transport and the shared presentation texture are
+                // selected when decoder/screen ownership begins. Recreate an
+                // active library preview through the established safe path;
+                // gameplay adopts the choice on the next map.
+                ApplyDisplaySettingsAndRefreshPreview();
+            });
+        BSML::Lite::AddHoverHint(
+            gpuVideoConversionToggle_,
+            "Experimental: uploads decoded 8-bit SDR 4:2:0 video as Y, U, and V planes, then performs color conversion, container rotation, mapper color correction, and vignette in one GPU pass. This can reduce decoder-worker CPU time and memory traffic. Unsupported frames or failed Unity resources automatically return to the normal CPU RGBA path. Thumbnails are unchanged. An active Video Library preview restarts immediately; gameplay uses the setting on the next map.");
 
         automaticPerformanceToggle_ = BSML::Lite::CreateToggle(
             performanceParent,
@@ -2685,6 +2703,8 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             hardwareDecodingToggle_, settings.HardwareDecodingEnabled());
         SetToggleWithoutNotification(
+            gpuVideoConversionToggle_, settings.GpuVideoConversionEnabled());
+        SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
             powerBenchmarkToggle_, settings.PowerBenchmarkEnabled());
@@ -2991,6 +3011,8 @@ namespace BigScreen {
             cinemaBloomLevelSlider_->set_interactable(enabled);
         if(hardwareDecodingToggle_)
             hardwareDecodingToggle_->set_interactable(enabled);
+        if(gpuVideoConversionToggle_)
+            gpuVideoConversionToggle_->set_interactable(enabled);
         if(automaticPerformanceToggle_)
             automaticPerformanceToggle_->set_interactable(enabled);
         if(automaticPerformanceThresholdSlider_)

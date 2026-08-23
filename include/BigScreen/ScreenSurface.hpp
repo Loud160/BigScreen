@@ -20,6 +20,8 @@ namespace UnityEngine {
     class GameObject;
     class Material;
     class Mesh;
+    class RenderTexture;
+    class Texture;
     class Texture2D;
     struct Quaternion;
     struct Vector3;
@@ -32,8 +34,9 @@ namespace BigScreen {
     /// Owns the small set of Unity objects used to display decoded video.
     ///
     /// Every method on this class must be called from Unity's main thread.
-    /// FFmpeg never sees these objects; its worker hands ordinary RGBA bytes to
-    /// PlaybackSession, which then uploads them during Beat Saber's Update.
+    /// FFmpeg never sees these objects; its worker hands ABI-neutral frame
+    /// buffers to PlaybackSession, which uploads either RGBA or Y/U/V planes
+    /// during Beat Saber's Update.
     class ScreenSurface final {
     public:
         ScreenSurface() = default;
@@ -48,15 +51,19 @@ namespace BigScreen {
         /// after every install instead of waiting for a screen to exist.
         static void LogVideoShaderTierOnce() noexcept;
 
-        bool Create(const MapVideoConfig& config, int videoWidth, int videoHeight);
+        bool Create(
+            const MapVideoConfig& config,
+            int videoWidth,
+            int videoHeight,
+            bool preferGpuConversion = false);
         /// Creates another independently transformable panel backed by an
-        /// existing owner's Texture2D. The clone owns its meshes/materials but
-        /// never uploads or destroys the shared texture.
+        /// existing owner's presentation texture. The clone owns its
+        /// meshes/materials but never uploads or destroys the shared texture.
         bool CreateShared(
             const MapVideoConfig& config,
             int videoWidth,
             int videoHeight,
-            UnityEngine::Texture2D* sharedTexture,
+            UnityEngine::Texture* sharedTexture,
             const char* rootName);
         /// Rebuilds only geometry and placement while preserving the decoder's
         /// current texture, material, visibility, and most recently presented
@@ -108,23 +115,29 @@ namespace BigScreen {
             double realTimeSeconds);
 
         bool IsCreated() const { return gameObject_ != nullptr; }
-        UnityEngine::Texture2D* Texture() const { return texture_; }
+        UnityEngine::Texture* Texture() const { return texture_; }
+        bool GpuConversionActive() const { return gpuConversionActive_; }
 
     private:
         bool CreateInternal(
             const MapVideoConfig& config,
             int videoWidth,
             int videoHeight,
-            UnityEngine::Texture2D* sharedTexture,
+            UnityEngine::Texture* sharedTexture,
             const char* rootName,
-            bool prepareDeformation);
+            bool prepareDeformation,
+            bool preferGpuConversion);
         bool CreateMesh(const MapVideoConfig& config, float aspectRatio);
         bool CreateVideoMesh(const MapVideoConfig& config, float sourceAspectRatio);
         bool CreateMaterialAndTexture(
             int width,
             int height,
             const MapVideoConfig& config,
-            UnityEngine::Texture2D* sharedTexture = nullptr);
+            UnityEngine::Texture* sharedTexture = nullptr,
+            bool preferGpuConversion = false);
+        bool CreateGpuConversionResources(int width, int height);
+        bool UploadRgba(const VideoFrame& frame);
+        bool UploadYuv420(const VideoFrame& frame);
         bool CreateBackgroundMaterial(bool letterboxTransparent);
         /// UI/Default cannot use independent RGB/alpha blend equations. This
         /// invisible pass follows the video mesh and clears only framebuffer
@@ -179,7 +192,13 @@ namespace BigScreen {
         UnityEngine::Material* backgroundMaterial_ = nullptr;
         UnityEngine::GameObject* alphaGuardObject_ = nullptr;
         UnityEngine::Material* alphaGuardMaterial_ = nullptr;
-        UnityEngine::Texture2D* texture_ = nullptr;
+        UnityEngine::Texture* texture_ = nullptr;
+        UnityEngine::Texture2D* rgbaTexture_ = nullptr;
+        UnityEngine::Texture2D* yTexture_ = nullptr;
+        UnityEngine::Texture2D* uTexture_ = nullptr;
+        UnityEngine::Texture2D* vTexture_ = nullptr;
+        UnityEngine::RenderTexture* gpuTexture_ = nullptr;
+        UnityEngine::Material* gpuConversionMaterial_ = nullptr;
         UnityEngine::GameObject* crackObject_ = nullptr;
         UnityEngine::Mesh* crackMesh_ = nullptr;
         UnityEngine::Material* crackMaterial_ = nullptr;
@@ -193,6 +212,8 @@ namespace BigScreen {
         int textureWidth_ = 0;
         int textureHeight_ = 0;
         bool ownsTexture_ = false;
+        bool gpuConversionRequested_ = false;
+        bool gpuConversionActive_ = false;
         bool letterboxTransparent_ = false;
         bool opaqueScreenBody_ = false;
         bool textureHasAuthoredAlpha_ = false;

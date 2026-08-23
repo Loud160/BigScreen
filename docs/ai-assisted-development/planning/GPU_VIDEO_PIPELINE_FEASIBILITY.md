@@ -1,8 +1,9 @@
 # GPU Video Pipeline Feasibility Study
 
-Status: research only; no implementation is currently planned by this document.
+Status: Option 1 is being implemented experimentally on branch
+`codex/major-feature-development`; Options 2 and 3 remain research only.
 
-Last reviewed: August 18, 2026
+Last reviewed: August 22, 2026
 
 ## Purpose
 
@@ -17,12 +18,17 @@ The goals are to reduce decoder-worker CPU use, memory traffic, texture-upload
 cost, heat, and battery use without sacrificing synchronization, software
 fallback, or any of the advanced effects demonstrated by the Showcase map.
 
-This is a feasibility study, not an instruction to replace the current stable
-pipeline. Any future implementation must retain the current RGBA backend as a
-compatibility and recovery path until its replacement has passed extensive
-Quest 2 and Quest 3 testing.
+This remains the design record rather than a claim that the experimental path
+is release-ready. Option 1 is default-off, retains the current RGBA backend as
+its permanent per-session recovery path, leaves thumbnails on RGBA, and is
+limited to 8-bit SDR 4:2:0. Quest 2 is the first acceptance target; Quest 3/3S
+testing follows after that path is stable.
 
-## Current Big Screen pipeline
+The first Quest 2 measurements and the recommended work for improving 60 FPS
+delivery are recorded separately in the
+[GPU video 60 FPS optimization plan](GPU_VIDEO_60FPS_OPTIMIZATION_PLAN.md).
+
+## Established default Big Screen pipeline
 
 Big Screen currently keeps MediaCodec independent from Unity's graphics
 backend. MediaCodec is deliberately opened without an output Surface, so both

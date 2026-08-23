@@ -186,7 +186,7 @@ continues to compile with its strict `-Wall`, `-Wextra`, and `-Wpedantic`
 policy. The staged configuration records the flag, and `scripts/build.ps1`
 automatically rebuilds older cached runtimes that do not contain it.
 
-The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA buffers without an extra frame copy.
+The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA or Y/U/V frame buffers without an extra frame copy.
 
 For LGPL corresponding-source redistribution, both unmodified archives
 identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and
@@ -206,13 +206,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-c
 
 Install that single QMOD, then use **Misc > Performance > Use FFmpeg 9** to
 switch between the bundled runtimes and **Hardware Video Decoding** to switch
-between supported software decoders and MediaCodec. Both switches default on. An
+between supported software decoders and MediaCodec. Both switches default on.
+The separate **GPU Video Conversion** experiment defaults off and compares the
+normal swscale/RGBA upload with reusable 8-bit Y/U/V plane uploads plus one GPU
+conversion pass. An
 active Video Library preview is recreated at its retained song position, while
 gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback
 interval. The performance overlay and results summary identify the runtime
 that actually opened the runtime/backend and report presented-frame loss, decode
-delay, automatic reductions, and RGBA allocation count. FFmpeg 9.0.1 is the
+delay, automatic reductions, presentation method/time, and reusable frame-buffer allocation count. FFmpeg 9.0.1 is the
 current default; FFmpeg 4.4.8 remains available for compatibility comparisons.
 
 ## Host tests
@@ -226,7 +229,8 @@ expectations, quality fallback, error-circuit timing, URL allowlisting, Cinema
 metadata parsing, Chroma detection, embedded Python downloader behavior, and
 cross-file toolchain/licensing/settings invariants. Linux CI additionally
 generates landscape and portrait H.264 fixtures and exercises the real FFmpeg
-worker, timestamps, scaling, shutdown, and reusable RGBA buffers. Host tests do
+worker, timestamps, scaling, shutdown, reusable RGBA/YUV plane buffers, normalized YUV420
+plane transport, and live fallback from YUV transport to RGBA. Host tests do
 not replace an ARM64 Quest build or VR regression testing.
 
 ## QMOD contents

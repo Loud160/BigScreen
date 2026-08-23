@@ -158,9 +158,10 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # The ordinary Unity unlit shader writes opaque video alpha into Beat Saber's
 # main render target. Beat Saber's post-processing interprets that alpha as an
 # emission weight, which turns the complete screen white whenever the game's
-# bloom is enabled. Embed Big Screen's tiny Android video-material bundle into
-# libbigscreen.so so every installation has the corrected shader without a
-# second runtime file that can be omitted or left stale.
+# bloom is enabled. Embed Big Screen's Android shader bundle (the visible video
+# material plus the experimental YUV conversion pass) into libbigscreen.so so
+# every installation has both shaders without a second runtime file that can be
+# omitted or left stale.
 set(BIGSCREEN_VIDEO_SHADER_ASSET
         ${CMAKE_CURRENT_SOURCE_DIR}/assets/bigscreen_video_shader)
 if(NOT EXISTS ${BIGSCREEN_VIDEO_SHADER_ASSET})
@@ -179,7 +180,7 @@ add_custom_command(
                 --set-section-flags binary=alloc,load,readonly,data,contents
         DEPENDS ${BIGSCREEN_VIDEO_SHADER_ASSET}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets
-        COMMENT "Embed Big Screen's Android video shader")
+        COMMENT "Embed Big Screen's Android video shader bundle")
 set_source_files_properties(${BIGSCREEN_VIDEO_SHADER_OBJECT} PROPERTIES
         GENERATED TRUE
         EXTERNAL_OBJECT TRUE)

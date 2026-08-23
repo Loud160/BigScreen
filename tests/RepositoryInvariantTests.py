@@ -117,6 +117,12 @@ screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
 video_shader_source = (
     root / "tools/video-shader/Assets/BigScreenVideo.shader"
 ).read_text(encoding="utf-8")
+yuv_conversion_shader_source = (
+    root / "tools/video-shader/Assets/BigScreenYuvConversion.shader"
+).read_text(encoding="utf-8")
+video_shader_builder = (
+    root / "tools/video-shader/Assets/Editor/BuildBigScreenVideoShader.cs"
+).read_text(encoding="utf-8")
 video_shader_build = (root / "scripts/build-video-shader.ps1").read_text(
     encoding="utf-8")
 menu_flow_source = (root / "src/MenuFlowCoordinator.cpp").read_text(
@@ -1686,11 +1692,32 @@ assert "ClearPreparedPreviewForLevel" in library_menu_source
 upload_surface = screen_surface_source.split(
     "bool ScreenSurface::Upload(const VideoFrame& frame)", 1
 )[1].split("void ScreenSurface::ShowLeadIn", 1)[0]
-assert "UnityW<UnityEngine::Texture2D>::isAlive(texture_)" in upload_surface
+assert "UnityW<UnityEngine::Texture>::isAlive(texture_)" in upload_surface
 assert "UnityW<UnityEngine::Material>::isAlive(material_)" in upload_surface
-assert "DestroyIfAlive(texture_)" in screen_surface_source
+assert "DestroyIfAlive(gpuTexture_)" in screen_surface_source
+assert "DestroyIfAlive(rgbaTexture_)" in screen_surface_source
 assert "Video frame upload stopped because the Unity screen is no longer valid" in \
     playback_source
+
+# The experimental GPU path keeps FFmpeg types behind the existing backend
+# ABI, normalizes NV12/YUV420P to reusable 8-bit planes, performs rotation and
+# picture effects in one offscreen pass, and never changes thumbnail decoding.
+assert "VideoFrameStorage::Yuv420Planar" in frame_decoder_source
+assert "CopyCurrentFrameAsYuv420" in frame_decoder_source
+assert "AV_PIX_FMT_NV12" in frame_decoder_source
+assert "SetGpuConversionEnabled" in frame_decoder_header
+assert "permanently using CPU RGBA for this playback session" in playback_source
+assert "GPU Video Conversion" in settings_menu_source
+assert "gpuVideoConversionEnabled_ = false" in settings_header
+assert '"_QuarterTurns"' in screen_surface_source
+assert 'Shader "BigScreen/YuvConversion"' in yuv_conversion_shader_source
+assert "SourceUv" in yuv_conversion_shader_source
+assert "VignetteMask" in yuv_conversion_shader_source
+assert "SrgbToLinearExact" in yuv_conversion_shader_source
+assert "rgb = SrgbToLinearExact(rgb);" in yuv_conversion_shader_source
+assert "YuvConversionShaderAsset" in video_shader_builder
+assert "bigscreen-yuv-conversion-shader" in video_shader_builder
+assert "decoder_.Open(videoPath_, 720, error)" in thumbnail_picker_source
 
 # Error timestamps are generated from thread-safe platform APIs because worker
 # failures can reach the logger concurrently with game-thread failures.

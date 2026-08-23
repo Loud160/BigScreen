@@ -112,6 +112,7 @@ namespace BigScreen {
     bool FrameDecoder::Open(
         const std::filesystem::path& videoPath,
         int maximumOutputHeight,
+        bool preferGpuConversion,
         const FrameVisualEffects& visualEffects,
         std::string& error)
     {
@@ -136,6 +137,7 @@ namespace BigScreen {
         lastRequestedSeconds_ = 0.0;
         useFfmpeg9_ = Settings::Instance().UseFfmpeg9();
         hardwareRequested_ = Settings::Instance().HardwareDecodingEnabled();
+        gpuConversionRequested_ = preferGpuConversion;
         hardwareFallbackAttempted_ = false;
         accumulatedWorkerCpuMilliseconds_ = 0.0;
         accumulatedBufferAllocations_ = 0;
@@ -170,6 +172,7 @@ namespace BigScreen {
                videoPath,
                maximumOutputHeight,
                attemptHardware,
+               gpuConversionRequested_,
                javaVm_,
                visualEffects_,
                error))
@@ -237,6 +240,23 @@ namespace BigScreen {
         visualEffects_ = visualEffects;
         if(backend_)
             backend_->UpdateVisualEffects(visualEffects);
+    }
+
+    void FrameDecoder::SetGpuConversionEnabled(bool enabled)
+    {
+        gpuConversionRequested_ = enabled;
+        if(backend_)
+            backend_->SetGpuConversionEnabled(enabled);
+    }
+
+    bool FrameDecoder::GpuConversionOutputEnabled() const
+    {
+        return backend_ && backend_->GpuConversionOutputEnabled();
+    }
+
+    std::string FrameDecoder::GpuConversionFallbackReason() const
+    {
+        return backend_ ? backend_->GpuConversionFallbackReason() : "";
     }
 
     bool FrameDecoder::TryTake(VideoFrame& destination)
@@ -424,6 +444,14 @@ namespace BigScreen {
         std::string& recoveryError)
     {
         hardwareFallbackAttempted_ = true;
+        // A backend can permanently reject GPU plane transport after seeing
+        // the decoded pixel layout or color matrix. Preserve that one-way
+        // session decision if an unrelated MediaCodec failure later reopens
+        // the file with software decoding; recovery must not silently
+        // re-enable a presentation path that already fell back.
+        if(gpuConversionRequested_ && backend_ &&
+           !backend_->GpuConversionOutputEnabled())
+            gpuConversionRequested_ = false;
         CloseAndRetainBackendMetrics();
 
         PaperLogger.warn(
@@ -444,6 +472,7 @@ namespace BigScreen {
                videoPath_,
                maximumOutputHeight_,
                false,
+               gpuConversionRequested_,
                nullptr,
                visualEffects_,
                recoveryError))

@@ -204,6 +204,78 @@ namespace {
         decoder.Close();
         Expect(!decoder.IsOpen(), "Close should stop the worker");
     }
+
+    void ExerciseGpuTransport(
+        const std::filesystem::path& path,
+        int expectedWidth,
+        int expectedHeight)
+    {
+        BigScreen::FrameDecoder decoder;
+        std::string error;
+        Expect(
+            decoder.Open(
+                path,
+                BigScreen::UncappedOutputHeight,
+                false,
+                true,
+                nullptr,
+                {},
+                error),
+            "uncapped fixture should open with GPU plane transport requested");
+        if(!decoder.IsOpen())
+        {
+            std::cerr << error << '\n';
+            return;
+        }
+
+        decoder.Request(0.2);
+        BigScreen::VideoFrame yuvFrame;
+        const bool receivedYuv = WaitForFrame(decoder, yuvFrame);
+        Expect(receivedYuv, "GPU transport should publish a decoded frame");
+        if(receivedYuv)
+        {
+            const int chromaWidth = (expectedWidth + 1) / 2;
+            const int chromaHeight = (expectedHeight + 1) / 2;
+            Expect(
+                yuvFrame.storage == BigScreen::VideoFrameStorage::Yuv420Planar,
+                "GPU transport should use normalized planar YUV420");
+            Expect(yuvFrame.rgba.empty(),
+                   "GPU transport should not allocate an RGBA picture");
+            Expect(yuvFrame.sourceWidth == expectedWidth &&
+                   yuvFrame.sourceHeight == expectedHeight,
+                   "GPU plane dimensions should retain decoder orientation");
+            Expect(yuvFrame.y.size() == static_cast<std::size_t>(
+                       expectedWidth * expectedHeight),
+                   "Y plane byte count should be exact");
+            Expect(yuvFrame.u.size() == static_cast<std::size_t>(
+                       chromaWidth * chromaHeight) &&
+                   yuvFrame.v.size() == static_cast<std::size_t>(
+                       chromaWidth * chromaHeight),
+                   "U and V plane byte counts should be exact");
+            decoder.Recycle(std::move(yuvFrame));
+        }
+
+        // Unity can reject the conversion shader or RenderTexture after a
+        // gameplay prewarm already queued YUV. Disabling the transport must
+        // discard that mailbox and make the next output ordinary RGBA without
+        // reopening FFmpeg.
+        decoder.SetGpuConversionEnabled(false);
+        decoder.Request(0.8);
+        BigScreen::VideoFrame rgbaFrame;
+        const bool receivedRgba = WaitForFrame(decoder, rgbaFrame);
+        Expect(receivedRgba,
+               "GPU resource fallback should publish a replacement frame");
+        if(receivedRgba)
+        {
+            Expect(rgbaFrame.storage == BigScreen::VideoFrameStorage::Rgba32,
+                   "disabled GPU transport should return to RGBA");
+            Expect(rgbaFrame.rgba.size() == static_cast<std::size_t>(
+                       expectedWidth * expectedHeight * 4),
+                   "fallback RGBA byte count should be exact");
+            decoder.Recycle(std::move(rgbaFrame));
+        }
+        decoder.Close();
+    }
 }
 
 int main(int argc, char** argv)
@@ -215,6 +287,7 @@ int main(int argc, char** argv)
     }
     Exercise(argv[1], 96, 54);
     Exercise(argv[2], 54, 96);
+    ExerciseGpuTransport(argv[1], 96, 54);
     if(failures == 0)
         std::cout << "FrameDecoder worker and reusable-buffer tests passed.\n";
     return failures == 0 ? 0 : 1;

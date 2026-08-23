@@ -155,6 +155,10 @@ For comparison and performance tuning, the mod includes:
   selectable in-game for A/B testing
 - Automatic Performance with separate attack/release timing, configurable FPS
   steps, and anti-oscillation protection, without reopening the decoder
+- A default-off experimental GPU conversion path that uploads reusable 8-bit
+  Y/U/V planes, performs conversion and mapper picture effects in one pass,
+  and permanently falls back to CPU RGBA if the active video or Unity runtime
+  cannot use it
 - A movable live performance panel and results summary
 - Decoder latency, actual video resolution, delivered frames, video frame loss,
   and Beat Saber gameplay FPS diagnostics
@@ -363,11 +367,15 @@ thumbnail retrieval, update checks, or the user-requested showcase assets. See
 
 Big Screen dynamically loads two private LGPL FFmpeg runtimes behind one stable
 decoder facade. Software or MediaCodec decoding produces CPU-readable frames,
-which pass through the same crop, color-range, reusable RGBA conversion, and
-Unity texture-upload path. This preserves curved screens, free placement,
-transparency, deformations, and showcase effects regardless of the selected
-decoder backend. Playback workers own codec state; Unity and Beat Saber objects
-remain on the game thread.
+which use the established reusable CPU RGBA conversion and Unity texture-upload
+path by default. A default-off experimental option instead transports supported
+8-bit YUV420P/NV12 planes and performs YUV conversion, container rotation, color
+correction, and vignette in one GPU pass. Both paths produce one ordinary shared
+presentation texture, preserving curved screens, free placement, transparency,
+deformations, and showcase effects regardless of decoder backend. Unsupported
+layouts or failed GPU resources fall back for the rest of that playback session.
+Playback workers own codec state; Unity and Beat Saber objects remain on the
+game thread. Thumbnail generation remains on its existing CPU RGBA path.
 
 The FFmpeg builds are decoder-only, use unique SONAMEs and symbol namespaces,
 and are validated to exclude GPL, version-3, and nonfree components. Both build

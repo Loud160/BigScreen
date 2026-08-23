@@ -134,6 +134,9 @@ namespace BigScreen {
         float NativeBloomLevel() const { return nativeBloomLevel_; }
         float CinemaBloomLevel() const { return cinemaBloomLevel_; }
         bool HardwareDecodingEnabled() const { return hardwareDecodingEnabled_; }
+        bool GpuVideoConversionEnabled() const {
+            return gpuVideoConversionEnabled_;
+        }
         bool AutomaticPerformanceEnabled() const { return automaticPerformanceEnabled_; }
         int AutomaticPerformanceThreshold() const { return automaticPerformanceThreshold_; }
         float AutomaticPerformanceAttackSeconds() const {
@@ -212,6 +215,7 @@ namespace BigScreen {
         void SetNativeBloomLevel(float value);
         void SetCinemaBloomLevel(float value);
         void SetHardwareDecodingEnabled(bool value);
+        void SetGpuVideoConversionEnabled(bool value);
         void SetAutomaticPerformanceEnabled(bool value);
         void SetAutomaticPerformanceThreshold(int value);
         void SetAutomaticPerformanceAttackSeconds(float value);
@@ -297,6 +301,10 @@ namespace BigScreen {
         // Formats that permit software decoding still fall back safely when
         // MediaCodec cannot open the file.
         bool hardwareDecodingEnabled_ = true;
+        // Experimental and default-off until Quest 2 acceptance testing is
+        // complete. Failure at any decoder or Unity resource boundary returns
+        // the current session to the established CPU RGBA conversion path.
+        bool gpuVideoConversionEnabled_ = false;
         bool automaticPerformanceEnabled_ = false;
         int automaticPerformanceThreshold_ = 5;
         float automaticPerformanceAttackSeconds_ = 5.0f;

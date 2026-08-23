@@ -44,12 +44,15 @@ namespace BigScreen {
         double peakDecodeMilliseconds = 0.0;
         double decoderOpenMilliseconds = 0.0;
         double decoderCpuMilliseconds = 0.0;
+        double averagePresentationMilliseconds = 0.0;
+        double peakPresentationMilliseconds = 0.0;
         int automaticReductions = 0;
         /// Hardware/software decode method. The separately selectable FFmpeg
         /// 4.4/9 implementation is reported by decoderRuntime.
         std::string decodeMethod;
         std::string decoderRuntime;
         std::string codec;
+        std::string presentationMethod;
     };
 
     /// Immutable snapshot used by the results-screen presentation. Keeping the
@@ -316,6 +319,11 @@ namespace BigScreen {
         bool automaticPerformanceRecoveryPinned_ = false;
         int diagnosticsFrameCounter_ = 0;
         bool diagnosticsVisible_ = false;
+        double averagePresentationMilliseconds_ = 0.0;
+        double peakPresentationMilliseconds_ = 0.0;
+        std::string presentationMethod_ = "CPU RGBA";
+        bool gpuConversionFallbackLogged_ = false;
+        bool gpuConversionDisabledForSession_ = false;
         // Quest Chroma applies difficulty environment data from an end-of-frame
         // coroutine. Delay Cinema's separate environment array a few gameplay
         // updates so it remains the final mapper-authored scene pass.
