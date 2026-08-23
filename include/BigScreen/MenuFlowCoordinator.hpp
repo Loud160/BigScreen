@@ -11,6 +11,8 @@
 #include "HMUI/ViewController.hpp"
 #include "custom-types/shared/macros.hpp"
 
+#include <string_view>
+
 namespace BigScreen {
     /// Applies or restores optional clutter suppression while Big Screen's
     /// flow coordinator is visible. There is intentionally no ClockMod link;
@@ -33,6 +35,18 @@ namespace BigScreen {
     /// Saber's Solo flow. Beat Saber owns all navigation again after gameplay;
     /// Big Screen never tries to reconstruct or reopen its retained hierarchy.
     bool ExitBigScreenMenuForShowcase() noexcept;
+    /// Presents the shared Big Screen flow from Beat Saber's normal main-menu
+    /// entry. Keeping one retained coordinator for every entry path prevents
+    /// two copies of the singleton-backed menu UI from owning the same state.
+    bool OpenBigScreenMenu() noexcept;
+    /// Presents Big Screen above the active Solo song-selection hierarchy and
+    /// opens the selected map directly in the video editor. Dismissing Big
+    /// Screen reveals the unchanged Solo selection underneath it.
+    bool OpenBigScreenVideoEditor(std::string_view levelId) noexcept;
+    /// Allows actions that require Beat Saber's main menu (currently the
+    /// managed showcase launcher) to explain why they cannot start from the
+    /// nested Solo shortcut without losing the player's current selection.
+    bool BigScreenMenuOpenedFromSongSelection() noexcept;
 }
 
 /// Places Big Screen's settings and navigation on Beat Saber's left panel and

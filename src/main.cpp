@@ -1814,6 +1814,7 @@ namespace {
                 activeClip != defaultClip;
             BigScreen::ErrorManager::Instance().Guard("synchronizing song-menu preview", [&]() {
                 BigScreen::SelectionVideoToggle::Instance().TickSongPreview(
+                    self,
                     audioSource->get_time(),
                     selectedSongAudioIsAudible);
             });

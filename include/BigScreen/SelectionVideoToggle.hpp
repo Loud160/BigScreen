@@ -24,6 +24,7 @@ namespace BSML {
 namespace GlobalNamespace {
     class BeatmapLevel;
     class MissionLevelDetailViewController;
+    class SongPreviewPlayer;
     class StandardLevelDetailView;
 }
 
@@ -32,12 +33,14 @@ namespace TMPro {
 }
 
 namespace UnityEngine {
+    class AudioClip;
     class Component;
     class GameObject;
 }
 
 namespace UnityEngine::UI {
     class Button;
+    class LayoutElement;
 }
 
 namespace BigScreen {
@@ -84,7 +87,10 @@ namespace BigScreen {
         /// Synchronizes an active menu video to Beat Saber's audible selected-
         /// song preview. A return from gameplay is held here until the song
         /// clip, rather than the default menu clip, is actually playing.
-        void TickSongPreview(double songTimeSeconds, bool selectedSongAudioIsAudible);
+        void TickSongPreview(
+            GlobalNamespace::SongPreviewPlayer* songPreviewPlayer,
+            double songTimeSeconds,
+            bool selectedSongAudioIsAudible);
 
         /// Mirrors a changed global state into this control and immediately
         /// applies it to the currently selected video map, if there is one.
@@ -103,6 +109,11 @@ namespace BigScreen {
         /// Both controls edit the same saved setting; this method only redraws
         /// the second UI surface and never writes another preference value.
         void ScreenLayoutPreferenceChanged();
+
+        /// Rebuilds the selected song's prepared preview after the full Big
+        /// Screen flow closes back onto Solo. The underlying selection remains
+        /// owned by Beat Saber; only Big Screen's decoder state was released.
+        void BigScreenMenuClosedToSongSelection();
 
         bool IsEnabledForSelectedLevel() const;
 
@@ -132,6 +143,12 @@ namespace BigScreen {
         /// Runs again when song selection is shown because the hierarchy's
         /// final transforms are not guaranteed during construction.
         void PositionControlsRow();
+        /// Captures Beat Saber's already-loaded preview clip immediately
+        /// before the nested Big Screen flow replaces it. The same native
+        /// preview player can then restart that clip when the user returns to
+        /// the still-selected song without reselecting it or duplicating Beat
+        /// Saber's asynchronous preview-media loader.
+        void CaptureSelectedSongPreviewForReturn();
         void RefreshUi();
 
         // Slim self-raycasting canvas hosting the three global controls above
@@ -156,6 +173,8 @@ namespace BigScreen {
         UnityW<UnityEngine::GameObject> downloadRow_ = nullptr;
         UnityW<UnityEngine::UI::Button> downloadButton_ = nullptr;
         UnityW<TMPro::TextMeshProUGUI> downloadStatus_ = nullptr;
+        UnityW<UnityEngine::UI::LayoutElement> downloadButtonLayout_ = nullptr;
+        UnityW<UnityEngine::UI::LayoutElement> downloadStatusLayout_ = nullptr;
         UnityW<BSML::ModalView> resolutionModal_ = nullptr;
         UnityW<TMPro::TextMeshProUGUI> resolutionModalText_ = nullptr;
         std::vector<UnityW<UnityEngine::UI::Button>> resolutionButtons_;
@@ -175,6 +194,10 @@ namespace BigScreen {
         bool inMapEnabled_ = true;
         bool resumeWhenSongAudioStarts_ = false;
         bool resumeWaitReported_ = false;
+        UnityW<GlobalNamespace::SongPreviewPlayer> songPreviewPlayer_ = nullptr;
+        UnityW<UnityEngine::AudioClip> returnPreviewAudioClip_ = nullptr;
+        float returnPreviewMusicVolume_ = 1.0f;
+        bool restartSelectedSongAudio_ = false;
         float nextDownloadUiRefreshTime_ = 0.0f;
         // Only cancel a downloader task when this song-selection surface was
         // the owner that started it. Downloads begun in Big Screen's library

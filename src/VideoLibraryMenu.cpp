@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -1930,13 +1931,13 @@ namespace BigScreen {
                 detailFreeStorage_, playbackTimeText_})
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
-        RebuildCatalog();
         editorVisible_ = false;
         Refresh();
     }
 
     void VideoLibraryMenu::RebuildCatalog()
     {
+        const auto rebuildStarted = std::chrono::steady_clock::now();
         catalog_.clear();
         std::unordered_set<std::string> ids;
         auto add = [&](GlobalNamespace::BeatmapLevel* level, SongLibraryGroup group) {
@@ -2008,8 +2009,11 @@ namespace BigScreen {
         for(const auto& item : catalog_)
             ++groupCounts[static_cast<int>(item.group)];
         PaperLogger.info(
-            "Video library catalog: {} total ({} custom, {} WIP, {} OST, {} DLC)",
+            "Video library catalog rebuilt in {} ms: {} total ({} custom, {} WIP, {} OST, {} DLC)",
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - rebuildStarted).count(),
             catalog_.size(), groupCounts[0], groupCounts[1], groupCounts[2], groupCounts[3]);
+        catalogRefreshRequested_ = false;
         RebuildVisibleRows();
     }
 
@@ -2117,6 +2121,42 @@ namespace BigScreen {
     void VideoLibraryMenu::SelectRow(int row)
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
+        SelectLevel(visible_[row]->level, true);
+    }
+
+    bool VideoLibraryMenu::OpenEditorForLevelId(
+        std::string_view levelId,
+        bool navigateToEditor)
+    {
+        if(levelId.empty())
+            return false;
+
+        const auto item = std::find_if(
+            catalog_.begin(),
+            catalog_.end(),
+            [levelId](const SongLibraryItem& candidate)
+            {
+                return candidate.level && candidate.level->levelID &&
+                    std::string(candidate.level->levelID) == levelId;
+            });
+        if(item == catalog_.end())
+        {
+            PaperLogger.warn(
+                "Could not deep-link Big Screen's video editor: level '{}' was not in the installed-song catalog",
+                std::string(levelId));
+            return false;
+        }
+
+        SelectLevel(item->level, navigateToEditor);
+        return true;
+    }
+
+    void VideoLibraryMenu::SelectLevel(
+        GlobalNamespace::BeatmapLevel* level,
+        bool navigateToEditor)
+    {
+        if(!level)
+            return;
         // Selection is a hard notice-lifecycle boundary even if a caller
         // reaches this method without first navigating through ShowBrowser.
         // Remove the preceding map's renderer and invalidate every token before
@@ -2133,7 +2173,7 @@ namespace BigScreen {
         StopPreviewAudio(true);
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
-        selected_ = visible_[row]->level;
+        selected_ = level;
         DiagnosticSessionLogger::Instance().MenuEvent(
             "song_selected", "VideoLibraryMenu", {
                 {"levelId", selected_ && selected_->levelID
@@ -2141,8 +2181,7 @@ namespace BigScreen {
                 {"songName", selected_ && selected_->songName
                     ? std::string(selected_->songName) : "Unknown Song"}});
         PaperLogger.debug(
-            "Opening video editor row {} for '{}' ({})",
-            row,
+            "Opening video editor for '{}' ({})",
             selected_ && selected_->songName
                 ? std::string(selected_->songName) : std::string("Unknown Song"),
             selected_ && selected_->levelID
@@ -2181,7 +2220,10 @@ namespace BigScreen {
         SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
         suppressTimingCallbacks_ = false;
         RefreshLocalVideoStatus();
-        ShowEditor();
+        if(navigateToEditor)
+            ShowEditor();
+        else
+            editorVisible_ = true;
         OpenEditorNotice();
         RequestSelectedAudio();
         // A mapper URL has already been supplied on the user's behalf. Probe
@@ -4985,7 +5027,12 @@ namespace BigScreen {
         // video during the Stop/Prepare gap while a file is replaced.
         PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(true);
         active_ = true;
-        RebuildCatalog();
+        // Beat Saber and SongCore retain their level objects for the menu
+        // session. Rebuilding this catalog used to parse/probe roughly 580 maps
+        // twice on first activation and twice again on every later visit. Keep
+        // the completed model until a known SongCore refresh invalidates it.
+        if(catalogRefreshRequested_)
+            RebuildCatalog();
         if(editorVisible_) RefreshDetails();
         if(!Settings::Instance().ModEnabled())
         {
@@ -5033,10 +5080,9 @@ namespace BigScreen {
         {
             PaperLogger.error("Preview audio teardown failed during deactivation: {}", error.what());
         }
-        const auto download = DownloadManager::Instance().Snapshot();
-        if(download.Active() && !ownedDownloadLevelId_.empty() &&
-           download.levelId == ownedDownloadLevelId_)
-            DownloadManager::Instance().Cancel();
+        // Downloads are owned by the process-wide manager, not this retained
+        // view. Let a transfer finish after the player closes Big Screen; the
+        // worker publishes its result without touching Unity UI objects.
         try
         {
             if(PlaybackSession::Instance().IsLibraryPreviewActive())
@@ -5053,6 +5099,11 @@ namespace BigScreen {
         // SongPreviewPlayer tick, but it can no longer resurrect the file that
         // this editor just removed or replaced.
         PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(false);
+    }
+
+    void VideoLibraryMenu::RequestCatalogRefresh()
+    {
+        catalogRefreshRequested_ = true;
     }
 
     void VideoLibraryMenu::StopActivePreview()

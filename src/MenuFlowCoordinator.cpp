@@ -15,6 +15,7 @@
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/ScreenPreview.hpp"
+#include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/ShowcaseMenu.hpp"
@@ -24,6 +25,7 @@
 #include "GlobalNamespace/MainFlowCoordinator.hpp"
 #include "GlobalNamespace/MainMenuViewController.hpp"
 #include "GlobalNamespace/OVRManager.hpp"
+#include "GlobalNamespace/SoloFreePlayFlowCoordinator.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Object.hpp"
 #include "UnityEngine/Time.hpp"
@@ -38,8 +40,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 DEFINE_TYPE(BigScreen, MenuFlowCoordinator);
@@ -51,11 +55,23 @@ namespace BigScreen {
         bool savedDynamicFoveation = false;
         bool distractionFreeMenuActive = false;
         std::vector<UnityW<UnityEngine::GameObject>> hiddenMenuObjects;
+        // Finding every Transform in a heavily modded menu can stall Unity's
+        // main thread. These exact-name targets are stable for the lifetime of
+        // the menu scene, so retain weak Unity handles and rescan only after a
+        // scene rebuild invalidates one of them.
+        std::vector<UnityW<UnityEngine::GameObject>> knownDistractionObjects;
+        // Main-menu and Solo shortcuts share one retained flow. Every menu
+        // page is backed by process-lifetime native singletons, so creating a
+        // second coordinator would let two Unity hierarchies point at and
+        // tear down the same controls.
+        UnityW<MenuFlowCoordinator> retainedMenuFlow = nullptr;
         UnityW<MenuFlowCoordinator> activeMenuFlow = nullptr;
+        bool activeLaunchFromSongSelection = false;
+        std::string pendingVideoEditorLevelId;
         BSML::MenuButton* bigScreenMenuButton = nullptr;
         bool menuReentryBlocked = false;
         float menuReentryNotBefore = 0.0f;
-        int stableMainMenuFrames = 0;
+        int stableEntryHierarchyFrames = 0;
         UnityW<MenuFlowCoordinator> pendingFailedMenuExit = nullptr;
         int pendingFailedMenuExitFrames = 0;
         std::vector<UnityW<BSML::ModalView>> frontmostMenuModals;
@@ -104,9 +120,9 @@ namespace BigScreen {
             // while MainMenuViewController is inactive asks Unity to start a
             // coroutine on an inactive object and leaves the complete menu
             // hierarchy unresponsive. Disable only Big Screen's entry until
-            // the parent and its main view have both remained stable.
+            // a supported parent hierarchy has remained stable.
             menuReentryBlocked = true;
-            stableMainMenuFrames = 0;
+            stableEntryHierarchyFrames = 0;
             menuReentryNotBefore =
                 UnityEngine::Time::get_realtimeSinceStartup() + 1.25f;
             SetBigScreenMenuButtonInteractable(false);
@@ -202,11 +218,165 @@ namespace BigScreen {
                 RestoreMenuFoveation();
             }
         }
+
+        MenuFlowCoordinator* ResolveMenuFlow()
+        {
+            if(!UnityW<MenuFlowCoordinator>::isAlive(retainedMenuFlow))
+                retainedMenuFlow =
+                    BSML::Helpers::CreateFlowCoordinator<MenuFlowCoordinator*>();
+            return retainedMenuFlow.ptr();
+        }
+
+        bool IsInSoloHierarchy(
+            HMUI::FlowCoordinator* child,
+            GlobalNamespace::SoloFreePlayFlowCoordinator* solo)
+        {
+            for(int depth = 0; child && depth < 16; ++depth)
+            {
+                if(child == solo)
+                    return true;
+                child = child->__cordl_internal_get__parentFlowCoordinator().ptr();
+            }
+            return false;
+        }
+
+        void LogMenuLifecycleDuration(
+            const char* phase,
+            std::chrono::steady_clock::time_point started,
+            bool firstActivation = false)
+        {
+            const auto elapsed = std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started).count();
+            PaperLogger.info(
+                "Big Screen menu {} completed in {} ms{}",
+                phase,
+                elapsed,
+                firstActivation ? " (first activation)" : "");
+        }
+
+        bool PresentSharedMenu(
+            std::string_view editorLevelId,
+            bool requireSoloSelection)
+        {
+            if(activeMenuFlow || menuReentryBlocked || pendingFailedMenuExit)
+                return false;
+
+            auto* mainFlow = BSML::Helpers::GetMainFlowCoordinator();
+            auto* parent = mainFlow
+                ? mainFlow->YoungestChildFlowCoordinatorOrSelf().ptr()
+                : nullptr;
+            auto* solo = mainFlow
+                ? mainFlow->__cordl_internal_get__soloFreePlayFlowCoordinator().ptr()
+                : nullptr;
+            if(!mainFlow || !parent || parent->get_isInTransition() ||
+               !parent->get_isActivated())
+                return false;
+            if(requireSoloSelection &&
+               (!solo || !IsInSoloHierarchy(parent, solo)))
+                return false;
+
+            auto* coordinator = ResolveMenuFlow();
+            if(!coordinator || coordinator == parent)
+                return false;
+
+            pendingVideoEditorLevelId = std::string(editorLevelId);
+            activeLaunchFromSongSelection = requireSoloSelection;
+            try
+            {
+                parent->PresentFlowCoordinator(
+                    coordinator,
+                    nullptr,
+                    HMUI::ViewController::AnimationDirection::Horizontal,
+                    false,
+                    false);
+                return true;
+            }
+            catch(...)
+            {
+                pendingVideoEditorLevelId.clear();
+                activeLaunchFromSongSelection = false;
+                throw;
+            }
+        }
+
+        void FinishMenuLaunch(bool returnToSongSelection) noexcept
+        {
+            activeLaunchFromSongSelection = false;
+            pendingVideoEditorLevelId.clear();
+            if(!returnToSongSelection)
+                return;
+            try
+            {
+                SelectionVideoToggle::Instance()
+                    .BigScreenMenuClosedToSongSelection();
+                PaperLogger.info(
+                    "Returned from Big Screen to the retained Solo song selection");
+            }
+            catch(const std::exception& exception)
+            {
+                PaperLogger.warn(
+                    "Could not prepare the retained Solo video preview after closing Big Screen: {}",
+                    exception.what());
+            }
+            catch(...)
+            {
+                PaperLogger.warn(
+                    "Could not prepare the retained Solo video preview after closing Big Screen");
+            }
+        }
     }
 
     bool IsBigScreenMenuActive()
     {
         return activeMenuFlow;
+    }
+
+    bool OpenBigScreenMenu() noexcept
+    {
+        try
+        {
+            return PresentSharedMenu({}, false);
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not open Big Screen from the main menu: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not open Big Screen from the main menu");
+        }
+        return false;
+    }
+
+    bool OpenBigScreenVideoEditor(std::string_view levelId) noexcept
+    {
+        if(levelId.empty())
+            return false;
+        try
+        {
+            return PresentSharedMenu(levelId, true);
+        }
+        catch(const std::exception& exception)
+        {
+            PaperLogger.error(
+                "Could not open Big Screen's Solo video shortcut: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            PaperLogger.error(
+                "Could not open Big Screen's Solo video shortcut");
+        }
+        return false;
+    }
+
+    bool BigScreenMenuOpenedFromSongSelection() noexcept
+    {
+        return activeLaunchFromSongSelection && activeMenuFlow;
     }
 
     void ShowModalInFront(BSML::ModalView* modal) noexcept
@@ -238,6 +408,7 @@ namespace BigScreen {
             modal->Show();
             RaiseModalRoot(modal);
         }
+
         catch(const std::exception& exception)
         {
             PaperLogger.error(
@@ -318,13 +489,14 @@ namespace BigScreen {
 
     void TickMenuReentryGuard() noexcept
     {
-        if(!menuReentryBlocked)
+        if(!menuReentryBlocked && !pendingFailedMenuExit)
             return;
         try
         {
             // Reassert this in case BSML rebuilt its button view during the
             // parent transition after the guard first disabled the model.
-            SetBigScreenMenuButtonInteractable(false);
+            if(menuReentryBlocked)
+                SetBigScreenMenuButtonInteractable(false);
 
             // ErrorManager can request recovery from inside DidActivate. HMUI
             // is still mutating its controller hierarchy during that callback,
@@ -364,38 +536,64 @@ namespace BigScreen {
                    menuReentryNotBefore)
                 return;
 
-            auto* parent = BSML::Helpers::GetMainFlowCoordinator();
-            auto* mainMenu = parent
-                ? parent->__cordl_internal_get__mainMenuViewController().ptr()
+            auto* mainFlow = BSML::Helpers::GetMainFlowCoordinator();
+            auto* mainMenu = mainFlow
+                ? mainFlow->__cordl_internal_get__mainMenuViewController().ptr()
                 : nullptr;
-            const bool stable = parent && mainMenu &&
-                parent->get_isActivated() && !parent->get_isInTransition() &&
+            const bool stableMainMenu = mainFlow && mainMenu &&
+                mainFlow->get_isActivated() &&
+                !mainFlow->get_isInTransition() &&
                 mainMenu->get_isActivated() &&
                 !mainMenu->get_isInTransition() &&
                 mainMenu->get_gameObject() &&
                 mainMenu->get_gameObject()->get_activeInHierarchy();
-            stableMainMenuFrames = stable ? stableMainMenuFrames + 1 : 0;
-            if(stableMainMenuFrames < 12)
+
+            // A normal close can be followed immediately by entering Solo.
+            // The old guard recognized only MainMenuViewController, so once
+            // Solo deactivated that view the guard could never clear and the
+            // Configure Video shortcut remained blocked indefinitely. Solo's
+            // retained hierarchy is an equally safe parent after the same
+            // cooldown and multi-frame stability requirement.
+            auto* solo = mainFlow
+                ? mainFlow->__cordl_internal_get__soloFreePlayFlowCoordinator().ptr()
+                : nullptr;
+            auto* youngest = mainFlow
+                ? mainFlow->YoungestChildFlowCoordinatorOrSelf().ptr()
+                : nullptr;
+            const bool stableSolo = mainFlow && solo && youngest &&
+                mainFlow->get_isActivated() &&
+                !mainFlow->get_isInTransition() &&
+                solo->get_isActivated() && !solo->get_isInTransition() &&
+                youngest->get_isActivated() &&
+                !youngest->get_isInTransition() &&
+                IsInSoloHierarchy(youngest, solo);
+
+            const bool stableEntryHierarchy = stableMainMenu || stableSolo;
+            stableEntryHierarchyFrames = stableEntryHierarchy
+                ? stableEntryHierarchyFrames + 1
+                : 0;
+            if(stableEntryHierarchyFrames < 12)
                 return;
 
             menuReentryBlocked = false;
-            stableMainMenuFrames = 0;
+            stableEntryHierarchyFrames = 0;
             SetBigScreenMenuButtonInteractable(true);
             PaperLogger.info(
-                "Big Screen menu entry re-enabled after the main menu stabilized");
+                "Big Screen menu entry re-enabled after the {} hierarchy stabilized",
+                stableSolo ? "Solo" : "main-menu");
         }
         catch(const std::exception& exception)
         {
             // The guard is safety UI, not gameplay functionality. Keep the
             // entry disabled and retry on a later stable menu frame.
-            stableMainMenuFrames = 0;
+            stableEntryHierarchyFrames = 0;
             PaperLogger.warn(
                 "Could not verify Big Screen menu re-entry yet: {}",
                 exception.what());
         }
         catch(...)
         {
-            stableMainMenuFrames = 0;
+            stableEntryHierarchyFrames = 0;
         }
     }
 
@@ -417,7 +615,8 @@ namespace BigScreen {
             ThumbnailPickerMenu::Instance().Hide();
             LocalVideoBrowserMenu::Instance().CancelScan();
             ShowcaseMenu::Instance().DismissTransientUi();
-            BeginMenuReentryGuard();
+            if(!activeLaunchFromSongSelection)
+                BeginMenuReentryGuard();
             pendingFailedMenuExit = coordinator;
             pendingFailedMenuExitFrames = 0;
             PaperLogger.warn(
@@ -577,19 +776,39 @@ namespace BigScreen {
 
         distractionFreeMenuActive = true;
         hiddenMenuObjects.clear();
-        for(auto* transform : UnityEngine::Object::FindObjectsOfType<
-                UnityEngine::Transform*>(true))
+        const bool cachedSceneInvalid = std::any_of(
+            knownDistractionObjects.begin(),
+            knownDistractionObjects.end(),
+            [](UnityW<UnityEngine::GameObject> object)
+            {
+                return !UnityW<UnityEngine::GameObject>::isAlive(
+                    object.unsafePtr());
+            });
+        if(knownDistractionObjects.empty() || cachedSceneInvalid)
         {
-            if(!transform)
-                continue;
-            auto object = transform->get_gameObject();
-            if(!object || !object->get_activeInHierarchy())
-                continue;
+            knownDistractionObjects.clear();
+            for(auto* transform : UnityEngine::Object::FindObjectsOfType<
+                    UnityEngine::Transform*>(true))
+            {
+                if(!transform)
+                    continue;
+                auto object = transform->get_gameObject();
+                if(!object ||
+                   !IsDistractionObjectName(
+                       NormalizeObjectName(object->get_name())))
+                    continue;
+                knownDistractionObjects.emplace_back(object);
+            }
+            PaperLogger.info(
+                "Cached {} distraction-free menu object(s) for this scene",
+                knownDistractionObjects.size());
+        }
 
-            const auto normalized = NormalizeObjectName(object->get_name());
-            if(!IsDistractionObjectName(normalized))
+        for(auto object : knownDistractionObjects)
+        {
+            if(!UnityW<UnityEngine::GameObject>::isAlive(object.unsafePtr()) ||
+               !object->get_activeInHierarchy())
                 continue;
-
             hiddenMenuObjects.emplace_back(object);
             object->SetActive(false);
             PaperLogger.info(
@@ -606,6 +825,9 @@ namespace BigScreen {
         bool addedToHierarchy,
         bool screenSystemEnabling)
     {
+        const auto activationStarted = std::chrono::steady_clock::now();
+        const std::string requestedEditorLevelId =
+            std::exchange(pendingVideoEditorLevelId, {});
         try
         {
         activeMenuFlow = this;
@@ -829,6 +1051,13 @@ namespace BigScreen {
                         thumbnailPath);
                 });
 
+            const bool openedRequestedEditor =
+                !requestedEditorLevelId.empty() &&
+                Settings::Instance().ModEnabled() &&
+                VideoLibraryMenu::Instance().OpenEditorForLevelId(
+                    requestedEditorLevelId,
+                    false);
+
             // Main, left, right, bottom, and top are supplied in that order.
             // Keeping main empty leaves the user's forward view clear while
             // the complete settings list remains available on the left.
@@ -836,7 +1065,9 @@ namespace BigScreen {
                 centerViewController,
                 settingsViewController,
                 Settings::Instance().ModEnabled()
-                    ? libraryBrowserViewController
+                    ? (openedRequestedEditor
+                        ? libraryEditorViewController
+                        : libraryBrowserViewController)
                     : nullptr,
                 nullptr,
                 nullptr);
@@ -848,13 +1079,14 @@ namespace BigScreen {
             // exception. ApplyModEnabledUi is reserved for later live changes.
             ScreenPreview::Instance().ActivateCurrentState();
             PerformancePanel::Instance().ActivateMenu();
+            LogMenuLifecycleDuration(
+                "activation", activationStarted, firstActivation);
             return;
         }
 
         // BSML retains flow coordinators between visits, while the world-space
         // preview is deliberately recreated for each visit.
         SettingsMenu::Instance().RefreshControls();
-        VideoLibraryMenu::Instance().Refresh();
         // HMUI retains the main-view stack, including a picker/browser that
         // was active when the complete flow was dismissed. Restore only when
         // our explicit navigation state says a transient page was retained.
@@ -893,8 +1125,18 @@ namespace BigScreen {
             restoreCenterOnActivation = false;
         }
         ApplyModEnabledUi(Settings::Instance().ModEnabled());
+        if(!requestedEditorLevelId.empty() &&
+           Settings::Instance().ModEnabled() &&
+           !VideoLibraryMenu::Instance().OpenEditorForLevelId(
+               requestedEditorLevelId))
+        {
+            PaperLogger.warn(
+                "Big Screen opened from Solo, but the requested video editor could not be selected");
+        }
         ScreenPreview::Instance().ActivateCurrentState();
         PerformancePanel::Instance().ActivateMenu();
+        LogMenuLifecycleDuration(
+            "activation", activationStarted, firstActivation);
         }
         catch(const std::exception& exception)
         {
@@ -959,6 +1201,9 @@ namespace BigScreen {
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        const auto deactivationStarted = std::chrono::steady_clock::now();
+        const bool returnToSongSelection =
+            activeMenuFlow.ptr() == this && activeLaunchFromSongSelection;
         DiagnosticSessionLogger::Instance().MenuEvent(
             "menu_deactivation_started", "MenuFlowCoordinator");
         DismissTrackedMenuModals();
@@ -989,7 +1234,8 @@ namespace BigScreen {
 
         try
         {
-        BeginMenuReentryGuard();
+        if(!returnToSongSelection)
+            BeginMenuReentryGuard();
         if(activeMenuFlow.ptr() == this)
             activeMenuFlow = nullptr;
         PerformancePanel::Instance().SuspendMenu();
@@ -1011,6 +1257,8 @@ namespace BigScreen {
         (void)removedFromHierarchy;
         (void)screenSystemDisabling;
         DiagnosticSessionLogger::Instance().EndMenuSession("menu_closed");
+        FinishMenuLaunch(returnToSongSelection);
+        LogMenuLifecycleDuration("deactivation", deactivationStarted);
         }
         catch(const std::exception& exception)
         {
@@ -1026,8 +1274,10 @@ namespace BigScreen {
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;
+            FinishMenuLaunch(returnToSongSelection);
             DiagnosticSessionLogger::Instance().EndMenuSession(
                 "menu_teardown_error");
+            LogMenuLifecycleDuration("failed deactivation", deactivationStarted);
         }
         catch(...)
         {
@@ -1039,8 +1289,10 @@ namespace BigScreen {
             RestoreDistractionFreeMenu();
             RestoreMenuFoveation();
             activeMenuFlow = nullptr;
+            FinishMenuLaunch(returnToSongSelection);
             DiagnosticSessionLogger::Instance().EndMenuSession(
                 "menu_teardown_error");
+            LogMenuLifecycleDuration("failed deactivation", deactivationStarted);
         }
     }
 
@@ -1069,7 +1321,8 @@ namespace BigScreen {
             // center stack is still valid. Waiting until the next activation
             // is unsafe because Beat Saber can clear that list after dismissal.
             PrepareForDismissal();
-            BeginMenuReentryGuard();
+            if(!activeLaunchFromSongSelection)
+                BeginMenuReentryGuard();
             parent->DismissFlowCoordinator(
                 this,
                 HMUI::ViewController::AnimationDirection::Horizontal,

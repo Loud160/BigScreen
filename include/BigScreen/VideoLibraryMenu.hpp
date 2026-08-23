@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "BigScreen/VideoEditorNoticeModel.hpp"
@@ -64,10 +65,21 @@ namespace BigScreen {
         /// replaces the menu hierarchy.
         void ForgetUi();
         void Refresh();
+        /// Invalidates the retained song catalog after an explicit SongCore
+        /// refresh. Ordinary menu re-entry reuses the proven catalog instead
+        /// of re-reading every map and rebuilding every row on Unity's thread.
+        void RequestCatalogRefresh();
         void Tick(GlobalNamespace::SongPreviewPlayer* songPreviewPlayer);
         void Deactivate();
         void StopActivePreview();
         void RefreshDisplaySettings();
+        /// Opens the editor for an installed level by stable level ID. The
+        /// optional navigation step is suppressed during a flow's first
+        /// activation so HMUI can receive the editor as its initial right-side
+        /// controller instead of replacing an uninitialized controller stack.
+        bool OpenEditorForLevelId(
+            std::string_view levelId,
+            bool navigateToEditor = true);
         /// Synchronizes the existing child editor after the center-screen file
         /// browser has committed a new user-owned video assignment.
         void LocalVideoAssignmentChanged(const std::string& fileName);
@@ -83,6 +95,9 @@ namespace BigScreen {
         void RebuildCatalog();
         void RebuildVisibleRows(bool preserveScrollPosition = false);
         void SelectRow(int row);
+        void SelectLevel(
+            GlobalNamespace::BeatmapLevel* level,
+            bool navigateToEditor);
         void ShowBrowser();
         void ShowEditor();
         void ChangeFilter(int direction);
@@ -321,6 +336,7 @@ namespace BigScreen {
         int thumbnailTickCounter_ = 0;
         int playbackControlsTickCounter_ = 0;
         bool periodicDownloadWasActive_ = false;
+        bool catalogRefreshRequested_ = true;
         int pendingDownloadHeight_ = 0;
     };
 }

@@ -16,7 +16,6 @@
 #include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/PlaybackSession.hpp"
-#include "BigScreen/SelectionVideoToggle.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
 #include "bsml/shared/BSML/FloatingScreen/FloatingScreen.hpp"
@@ -91,61 +90,72 @@ namespace BigScreen {
             return std::format("{:.2f}:1", ratio);
         }
 
-        VideoFrame MakePlacementPattern()
+        const VideoFrame& PlacementPattern()
         {
-            VideoFrame frame;
-            frame.width = PreviewTextureWidth;
-            frame.height = PreviewTextureHeight;
-            frame.rgba.resize(
-                static_cast<std::size_t>(PreviewTextureWidth) *
-                PreviewTextureHeight *
-                4);
-
-            for(int y = 0; y < PreviewTextureHeight; ++y)
+            // The placement guide is immutable. Building its 512x288 RGBA
+            // grid on every retained menu activation needlessly allocates and
+            // rewrites more than half a megabyte on Beat Saber's main thread.
+            static const VideoFrame pattern = []
             {
-                for(int x = 0; x < PreviewTextureWidth; ++x)
-                {
-                    const float u = x / static_cast<float>(PreviewTextureWidth - 1);
-                    const float v = y / static_cast<float>(PreviewTextureHeight - 1);
-                    const bool border =
-                        x < 5 || x >= PreviewTextureWidth - 5 ||
-                        y < 5 || y >= PreviewTextureHeight - 5;
-                    const bool centerLine =
-                        std::abs(x - PreviewTextureWidth / 2) <= 1 ||
-                        std::abs(y - PreviewTextureHeight / 2) <= 1;
-                    const bool grid = x % 64 <= 1 || y % 48 <= 1;
-                    const auto offset =
-                        (static_cast<std::size_t>(y) * PreviewTextureWidth + x) * 4;
+                VideoFrame frame;
+                frame.width = PreviewTextureWidth;
+                frame.height = PreviewTextureHeight;
+                frame.rgba.resize(
+                    static_cast<std::size_t>(PreviewTextureWidth) *
+                    PreviewTextureHeight *
+                    4);
 
-                    // A high-contrast border makes the real physical extent
-                    // obvious at a distance. The center cross and grid make
-                    // curvature and orientation visible without pretending a
-                    // small UI thumbnail represents the gameplay screen.
-                    frame.rgba[offset + 0] = static_cast<std::uint8_t>(18 + 35 * u);
-                    frame.rgba[offset + 1] = static_cast<std::uint8_t>(30 + 45 * v);
-                    frame.rgba[offset + 2] = static_cast<std::uint8_t>(60 + 70 * u);
-                    if(grid)
+                for(int y = 0; y < PreviewTextureHeight; ++y)
+                {
+                    for(int x = 0; x < PreviewTextureWidth; ++x)
                     {
-                        frame.rgba[offset + 0] = 35;
-                        frame.rgba[offset + 1] = 105;
-                        frame.rgba[offset + 2] = 155;
+                        const float u = x / static_cast<float>(PreviewTextureWidth - 1);
+                        const float v = y / static_cast<float>(PreviewTextureHeight - 1);
+                        const bool border =
+                            x < 5 || x >= PreviewTextureWidth - 5 ||
+                            y < 5 || y >= PreviewTextureHeight - 5;
+                        const bool centerLine =
+                            std::abs(x - PreviewTextureWidth / 2) <= 1 ||
+                            std::abs(y - PreviewTextureHeight / 2) <= 1;
+                        const bool grid = x % 64 <= 1 || y % 48 <= 1;
+                        const auto offset =
+                            (static_cast<std::size_t>(y) * PreviewTextureWidth + x) * 4;
+
+                        // A high-contrast border makes the real physical
+                        // extent obvious at a distance. The center cross and
+                        // grid make curvature and orientation visible without
+                        // pretending a small UI thumbnail represents the
+                        // gameplay screen.
+                        frame.rgba[offset + 0] =
+                            static_cast<std::uint8_t>(18 + 35 * u);
+                        frame.rgba[offset + 1] =
+                            static_cast<std::uint8_t>(30 + 45 * v);
+                        frame.rgba[offset + 2] =
+                            static_cast<std::uint8_t>(60 + 70 * u);
+                        if(grid)
+                        {
+                            frame.rgba[offset + 0] = 35;
+                            frame.rgba[offset + 1] = 105;
+                            frame.rgba[offset + 2] = 155;
+                        }
+                        if(centerLine)
+                        {
+                            frame.rgba[offset + 0] = 245;
+                            frame.rgba[offset + 1] = 245;
+                            frame.rgba[offset + 2] = 250;
+                        }
+                        if(border)
+                        {
+                            frame.rgba[offset + 0] = 0;
+                            frame.rgba[offset + 1] = 220;
+                            frame.rgba[offset + 2] = 255;
+                        }
+                        frame.rgba[offset + 3] = 255;
                     }
-                    if(centerLine)
-                    {
-                        frame.rgba[offset + 0] = 245;
-                        frame.rgba[offset + 1] = 245;
-                        frame.rgba[offset + 2] = 250;
-                    }
-                    if(border)
-                    {
-                        frame.rgba[offset + 0] = 0;
-                        frame.rgba[offset + 1] = 220;
-                        frame.rgba[offset + 2] = 255;
-                    }
-                    frame.rgba[offset + 3] = 255;
                 }
-            }
-            return frame;
+                return frame;
+            }();
+            return pattern;
         }
     }
 
@@ -235,10 +245,11 @@ namespace BigScreen {
         surface_.Destroy();
         baseConfig_.reset();
 
-        // Restore normal song-selection preview behavior when leaving Big
-        // Screen's settings flow. This is a no-op when the master switch,
-        // selected song, or song previews are disabled.
-        SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
+        // Do not restart an old song-selection decoder from this generic
+        // surface teardown. Suspend also runs when the library starts its own
+        // preview and when the full menu closes to the stock main menu. The
+        // Solo Configure Video return path explicitly restores its selected
+        // song through MenuFlowCoordinator after dismissal has completed.
     }
 
     void ScreenPreview::CaptureBasePlacement()
@@ -308,7 +319,7 @@ namespace BigScreen {
             config.stretchVideoToFit = settings.StretchVideoToFit();
         }
 
-        const auto pattern = MakePlacementPattern();
+        const auto& pattern = PlacementPattern();
         if(!surface_.Create(config, pattern.width, pattern.height))
             return false;
         if(!surface_.Upload(pattern))

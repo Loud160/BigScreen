@@ -117,26 +117,18 @@ namespace BigScreen {
         }
 
         template<class T>
-        int DisableEnabledLights(
+        void CacheEnvironmentLights(
             UnityEngine::Transform* environmentRoot,
-            std::vector<UnityW<UnityEngine::Behaviour>>& captured)
+            std::vector<UnityW<UnityEngine::Behaviour>>& known)
         {
-            int disabled = 0;
             for(auto* component : UnityEngine::Object::FindObjectsOfType<T*>(true))
             {
-                if(!component || !component->get_enabled() ||
-                   !component->get_gameObject() ||
-                   !component->get_gameObject()->get_activeInHierarchy() ||
+                if(!component || !component->get_gameObject() ||
                    !IsOwnedByEnvironment(
-                       component->get_transform(), environmentRoot))
-                {
+                        component->get_transform(), environmentRoot))
                     continue;
-                }
-                captured.emplace_back(component);
-                component->set_enabled(false);
-                ++disabled;
+                known.emplace_back(component);
             }
-            return disabled;
         }
     }
 
@@ -160,46 +152,88 @@ namespace BigScreen {
 
     void MenuEnvironmentVisibility::HideVisualComponents()
     {
-        auto root = ResolveMenuEnvironmentRoot();
+        auto root = UnityW<UnityEngine::Transform>::isAlive(
+                environmentRoot_.unsafePtr())
+            ? environmentRoot_
+            : ResolveMenuEnvironmentRoot();
         if(!root)
         {
             PaperLogger.warn(
                 "Show Menu Environment is off, but no compatible menu-environment hierarchy was found");
             return;
         }
+        environmentRoot_ = root;
+
+        const bool cachedSceneInvalid = std::any_of(
+                knownRenderers_.begin(), knownRenderers_.end(),
+                [](UnityW<UnityEngine::Renderer> renderer)
+                {
+                    return !UnityW<UnityEngine::Renderer>::isAlive(
+                        renderer.unsafePtr());
+                }) ||
+            std::any_of(
+                knownLights_.begin(), knownLights_.end(),
+                [](UnityW<UnityEngine::Behaviour> light)
+                {
+                    return !UnityW<UnityEngine::Behaviour>::isAlive(
+                        light.unsafePtr());
+                });
+        if(knownRenderers_.empty() || cachedSceneInvalid)
+        {
+            knownRenderers_.clear();
+            knownLights_.clear();
+            for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
+                    UnityEngine::Renderer*>(true))
+            {
+                if(!renderer || !renderer->get_gameObject() ||
+                   !IsOwnedByEnvironment(renderer->get_transform(), root) ||
+                   HasBigScreenAncestor(renderer->get_transform()) ||
+                   HasPointerOrControllerAncestor(renderer->get_transform()))
+                    continue;
+                knownRenderers_.emplace_back(renderer);
+            }
+            CacheEnvironmentLights<UnityEngine::Light>(root, knownLights_);
+            CacheEnvironmentLights<GlobalNamespace::BloomPrePassLight>(
+                root, knownLights_);
+            CacheEnvironmentLights<GlobalNamespace::LineLight>(
+                root, knownLights_);
+            CacheEnvironmentLights<GlobalNamespace::PointLight>(
+                root, knownLights_);
+            CacheEnvironmentLights<GlobalNamespace::DirectionalLight>(
+                root, knownLights_);
+            CacheEnvironmentLights<GlobalNamespace::LightWithIdMonoBehaviour>(
+                root, knownLights_);
+            PaperLogger.info(
+                "Cached {} menu-environment renderers and {} lighting components for this scene",
+                knownRenderers_.size(),
+                knownLights_.size());
+        }
 
         hidden_ = true;
         int renderersDisabled = 0;
-        for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
-                UnityEngine::Renderer*>(true))
+        for(auto renderer : knownRenderers_)
         {
-            if(!renderer || !renderer->get_enabled() ||
+            if(!UnityW<UnityEngine::Renderer>::isAlive(renderer.unsafePtr()) ||
+               !renderer->get_enabled() ||
                !renderer->get_gameObject() ||
-               !renderer->get_gameObject()->get_activeInHierarchy() ||
-               !IsOwnedByEnvironment(renderer->get_transform(), root) ||
-               HasBigScreenAncestor(renderer->get_transform()) ||
-               HasPointerOrControllerAncestor(renderer->get_transform()))
-            {
+               !renderer->get_gameObject()->get_activeInHierarchy())
                 continue;
-            }
             hiddenRenderers_.emplace_back(renderer);
             renderer->set_enabled(false);
             ++renderersDisabled;
         }
 
         int lightsDisabled = 0;
-        lightsDisabled += DisableEnabledLights<UnityEngine::Light>(
-            root, hiddenLights_);
-        lightsDisabled += DisableEnabledLights<GlobalNamespace::BloomPrePassLight>(
-            root, hiddenLights_);
-        lightsDisabled += DisableEnabledLights<GlobalNamespace::LineLight>(
-            root, hiddenLights_);
-        lightsDisabled += DisableEnabledLights<GlobalNamespace::PointLight>(
-            root, hiddenLights_);
-        lightsDisabled += DisableEnabledLights<GlobalNamespace::DirectionalLight>(
-            root, hiddenLights_);
-        lightsDisabled += DisableEnabledLights<
-            GlobalNamespace::LightWithIdMonoBehaviour>(root, hiddenLights_);
+        for(auto light : knownLights_)
+        {
+            if(!UnityW<UnityEngine::Behaviour>::isAlive(light.unsafePtr()) ||
+               !light->get_enabled() || !light->get_gameObject() ||
+               !light->get_gameObject()->get_activeInHierarchy())
+                continue;
+            hiddenLights_.emplace_back(light);
+            light->set_enabled(false);
+            ++lightsDisabled;
+        }
 
         PaperLogger.info(
             "Show Menu Environment off: disabled {} environment renderers and {} lighting components",

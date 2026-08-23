@@ -19,6 +19,7 @@
 #include "BigScreen/DownloadManager.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/MenuFlowCoordinator.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/SettingsMenu.hpp"
@@ -29,6 +30,7 @@
 #include "GlobalNamespace/PlayerData.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerSensitivityFlag.hpp"
+#include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "GlobalNamespace/StandardLevelDetailView.hpp"
 #include "HMUI/CurvedCanvasSettings.hpp"
 #include "HMUI/ImageView.hpp"
@@ -37,6 +39,7 @@
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "TMPro/TextOverflowModes.hpp"
+#include "UnityEngine/AudioClip.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Component.hpp"
 #include "UnityEngine/Color.hpp"
@@ -549,18 +552,22 @@ namespace BigScreen {
             UnityEngine::Vector2{33.0f, 7.0f});
         if(downloadStatus_)
         {
-            // Cinema styles this label italic, font size 3, left-aligned.
+            // Keep every state centered within the portion of the row left of
+            // its action button. This remains correct when the Cancel state
+            // reallocates extra width to long byte/progress messages.
             downloadStatus_->set_fontStyle(TMPro::FontStyles::Italic);
             downloadStatus_->set_alignment(
-                TMPro::TextAlignmentOptions::MidlineLeft);
+                TMPro::TextAlignmentOptions::Center);
             downloadStatus_->set_enableWordWrapping(false);
             downloadStatus_->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+            downloadStatusLayout_ = downloadStatus_->get_gameObject()
+                ->GetComponent<UnityEngine::UI::LayoutElement*>();
         }
         downloadButton_ = BSML::Lite::CreateUIButton(
             rowParent,
             "Download Video",
             UnityEngine::Vector2{0.0f, 0.0f},
-            UnityEngine::Vector2{30.0f, 8.0f},
+            UnityEngine::Vector2{30.0f, 7.0f},
             [this]() { DownloadButtonPressed(); });
         if(downloadButton_)
         {
@@ -570,6 +577,11 @@ namespace BigScreen {
                 buttonText->set_fontSize(3.0f);
                 buttonText->set_color(UnityEngine::Color::get_white());
             }
+            BSML::Lite::AddHoverHint(
+                downloadButton_,
+                "Download an available video, or open Big Screen to configure a video that is ready.");
+            downloadButtonLayout_ = downloadButton_->get_gameObject()
+                ->GetComponent<UnityEngine::UI::LayoutElement*>();
         }
         rowObject->SetActive(false);
 
@@ -687,6 +699,8 @@ namespace BigScreen {
         downloadRow_ = nullptr;
         downloadButton_ = nullptr;
         downloadStatus_ = nullptr;
+        downloadButtonLayout_ = nullptr;
+        downloadStatusLayout_ = nullptr;
         resolutionModal_ = nullptr;
         resolutionModalText_ = nullptr;
         resolutionButtons_.clear();
@@ -696,6 +710,10 @@ namespace BigScreen {
         selectedLevelId_.clear();
         selectedDescriptor_ = {};
         selectedLevelHasVideo_ = false;
+        songPreviewPlayer_ = nullptr;
+        returnPreviewAudioClip_ = nullptr;
+        returnPreviewMusicVolume_ = 1.0f;
+        restartSelectedSongAudio_ = false;
         ownedDownloadLevelId_.clear();
         probedDownloadUrl_.clear();
         pendingDownloadHeight_ = 0;
@@ -834,12 +852,11 @@ namespace BigScreen {
         pendingDownloadHeight_ = 0;
         if(resolutionModal_)
             resolutionModal_->Hide();
-        // yt-dlp retains its .part file. Returning to this song offers Resume
-        // instead of wasting storage or network data.
-        const auto download = DownloadManager::Instance().Snapshot();
-        if(!ownedDownloadLevelId_.empty() && download.Active() &&
-           download.levelId == ownedDownloadLevelId_)
-            DownloadManager::Instance().Cancel();
+        // The downloader is process-owned rather than view-owned. Keep an
+        // active transfer running when the player changes songs, enters a map,
+        // or leaves Solo; its worker never touches Unity objects and publishes
+        // the completed assignment through VideoLibrary. Cancelling here made
+        // slow connections hold the player on one song for several minutes.
         auto& playback = PlaybackSession::Instance();
         if(!playback.IsMenuPreviewActive())
             return;
@@ -875,6 +892,9 @@ namespace BigScreen {
             resolutionModal_->Hide();
         selectedLevelId_ = levelId;
         selectedLevel_ = level;
+        returnPreviewAudioClip_ = nullptr;
+        returnPreviewMusicVolume_ = 1.0f;
+        restartSelectedSongAudio_ = false;
         selectedDescriptor_ = level
             ? VideoLibrary::Instance().Describe(level)
             : VideoDescriptor{};
@@ -917,6 +937,9 @@ namespace BigScreen {
             selectedLevel_ = nullptr;
             selectedDescriptor_ = {};
             selectedLevelHasVideo_ = false;
+            returnPreviewAudioClip_ = nullptr;
+            returnPreviewMusicVolume_ = 1.0f;
+            restartSelectedSongAudio_ = false;
             inMapEnabled_ = Settings::Instance().VideoEnabled();
             playback.Prepare(nullptr);
         }
@@ -951,10 +974,38 @@ namespace BigScreen {
         RefreshUi();
     }
 
+    void SelectionVideoToggle::BigScreenMenuClosedToSongSelection()
+    {
+        if(!selectedLevel_ || selectedLevelId_.empty() ||
+           !Settings::Instance().ModEnabled())
+            return;
+
+        // VideoLibraryMenu deliberately releases its decoder and read-ahead
+        // queue when the full flow closes. Re-prepare the still-selected Solo
+        // map so Beat Saber's next SongSelectionShown/audio tick can resume the
+        // preview without requiring the player to select a different song.
+        selectedDescriptor_ = VideoLibrary::Instance().Describe(selectedLevel_);
+        PlaybackSession::Instance().Prepare(selectedLevel_);
+        selectedLevelHasVideo_ =
+            PlaybackSession::Instance().HasPreparedVideo();
+        resumeWhenSongAudioStarts_ =
+            selectedLevelHasVideo_ && inMapEnabled_ && IsMenuPreviewEnabled();
+        restartSelectedSongAudio_ =
+            resumeWhenSongAudioStarts_ &&
+            UnityW<GlobalNamespace::SongPreviewPlayer>::isAlive(
+                songPreviewPlayer_.unsafePtr()) &&
+            UnityW<UnityEngine::AudioClip>::isAlive(
+                returnPreviewAudioClip_.unsafePtr());
+        resumeWaitReported_ = false;
+        RefreshUi();
+    }
+
     void SelectionVideoToggle::TickSongPreview(
+        GlobalNamespace::SongPreviewPlayer* songPreviewPlayer,
         double songTimeSeconds,
         bool selectedSongAudioIsAudible)
     {
+        songPreviewPlayer_ = songPreviewPlayer;
         auto& playback = PlaybackSession::Instance();
 
         // The Video Library owns playback for its entire active lifetime, not
@@ -967,6 +1018,31 @@ namespace BigScreen {
             resumeWhenSongAudioStarts_ = false;
             resumeWaitReported_ = false;
             return;
+        }
+
+        if(restartSelectedSongAudio_)
+        {
+            // Opening Video Library temporarily gives it ownership of the
+            // shared SongPreviewPlayer and its own full-song clip. Closing the
+            // nested flow returns that player to menu music, but Beat Saber
+            // does not reselect an unchanged song. Explicitly replay the stock
+            // clip captured before entry so the normal audio and Big Screen's
+            // prepared video restart together.
+            restartSelectedSongAudio_ = false;
+            auto clip = returnPreviewAudioClip_;
+            returnPreviewAudioClip_ = nullptr;
+            if(songPreviewPlayer && selectedLevel_ &&
+               UnityW<UnityEngine::AudioClip>::isAlive(clip.unsafePtr()))
+            {
+                songPreviewPlayer->CrossfadeTo(
+                    clip.ptr(),
+                    returnPreviewMusicVolume_,
+                    std::max(0.0f, selectedLevel_->previewStartTime),
+                    std::max(0.0f, selectedLevel_->previewDuration),
+                    nullptr);
+                PaperLogger.info(
+                    "Restarted Beat Saber's retained selected-song preview after closing Big Screen");
+            }
         }
 
         if(resumeWhenSongAudioStarts_)
@@ -1028,16 +1104,72 @@ namespace BigScreen {
         const auto snapshot = downloader.Snapshot();
         if(snapshot.Active())
         {
-            if((!ownedDownloadLevelId_.empty() &&
-                snapshot.levelId == ownedDownloadLevelId_) ||
-               (snapshot.metadataOnly &&
-                snapshot.levelId == selectedLevelId_))
+            if(snapshot.levelId == selectedLevelId_)
+            {
                 downloader.Cancel();
+                return;
+            }
+
+            // DownloadManager intentionally owns one embedded Python/yt-dlp
+            // operation and one status/cancellation mailbox. Never let a song
+            // selected later cancel the transfer that belongs to another map.
+            // A sequential multi-download queue can build on this boundary,
+            // but concurrent jobs cannot safely share the present mailboxes.
+            ErrorManager::Instance().ReportUserVisible(
+                "Another video is downloading",
+                "Big Screen will keep the current download running while you browse or play another map. Wait for it to finish, or return to that map and select Cancel before starting another download.");
             return;
         }
         if(!selectedLevel_) return;
 
+        const bool selectedTransferNeedsAttention =
+            snapshot.levelId == selectedLevelId_ &&
+            (snapshot.state == DownloadState::Failed ||
+             snapshot.state == DownloadState::Cancelled);
+        if(selectedDescriptor_.CanPlay() && !selectedTransferNeedsAttention)
+        {
+            CaptureSelectedSongPreviewForReturn();
+            if(!OpenBigScreenVideoEditor(selectedLevelId_))
+            {
+                returnPreviewAudioClip_ = nullptr;
+                ErrorManager::Instance().ReportUserVisible(
+                    "Could not open Big Screen",
+                    "The video editor could not be opened from this Solo song selection. Please try again after the current menu transition finishes.");
+            }
+            return;
+        }
+
         OpenResolutionDialog();
+    }
+
+    void SelectionVideoToggle::CaptureSelectedSongPreviewForReturn()
+    {
+        returnPreviewAudioClip_ = nullptr;
+        returnPreviewMusicVolume_ = 1.0f;
+        restartSelectedSongAudio_ = false;
+        auto* player = songPreviewPlayer_.ptr();
+        if(!UnityW<GlobalNamespace::SongPreviewPlayer>::isAlive(player))
+            return;
+
+        const auto clip = player->get_activeAudioClip();
+        const auto defaultClip = player->__cordl_internal_get__defaultAudioClip();
+        if(!clip || clip == defaultClip)
+            return;
+        returnPreviewAudioClip_ = clip;
+
+        const int activeChannel = player->__cordl_internal_get__activeChannel();
+        const auto controllers =
+            player->__cordl_internal_get__audioSourceControllers();
+        if(controllers && activeChannel >= 0 &&
+           static_cast<std::size_t>(activeChannel) < controllers.size())
+        {
+            if(auto* controller = controllers[activeChannel])
+            {
+                const float volume = controller->get_maxVolume();
+                if(std::isfinite(volume) && volume > 0.0f)
+                    returnPreviewMusicVolume_ = volume;
+            }
+        }
     }
 
     void SelectionVideoToggle::OpenResolutionDialog()
@@ -1353,14 +1485,31 @@ namespace BigScreen {
         // progress is presented inside the label text itself.
         if(downloadRow_)
             downloadRow_->SetActive(show);
-        downloadButton_->get_gameObject()->SetActive(show && !descriptor.CanPlay());
+        // Reuse Cinema's existing action slot instead of widening the compact
+        // song-detail row. Once a playable file exists, this same button is the
+        // direct Configure Video shortcut into Big Screen's editor.
+        downloadButton_->get_gameObject()->SetActive(show);
         downloadStatus_->get_gameObject()->SetActive(show);
         if(!show) return;
 
+        const auto setCompactCancelLayout = [this](bool compact)
+        {
+            // The row is 70 units wide. While Cancel is visible, trade twelve
+            // unused button units for the long byte/progress message instead
+            // of merely changing the caption inside the old 30-unit button.
+            if(downloadStatusLayout_)
+                downloadStatusLayout_->set_preferredWidth(
+                    compact ? 45.0f : 33.0f);
+            if(downloadButtonLayout_)
+                downloadButtonLayout_->set_preferredWidth(
+                    compact ? 18.0f : 30.0f);
+        };
+
         if(forSelection && snapshot.Active())
         {
+            setCompactCancelLayout(true);
             BSML::Lite::SetButtonText(
-                downloadButton_.ptr(), "Cancel Download");
+                downloadButton_.ptr(), "Cancel");
             downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
             if(snapshot.state == DownloadState::Preparing)
             {
@@ -1404,6 +1553,7 @@ namespace BigScreen {
         }
         else if(forSelection && snapshot.state == DownloadState::Failed)
         {
+            setCompactCancelLayout(false);
             BSML::Lite::SetButtonText(
                 downloadButton_.ptr(),
                 snapshot.metadataOnly ? "Retry Check" : "Retry Download");
@@ -1424,6 +1574,7 @@ namespace BigScreen {
         }
         else if(forSelection && snapshot.state == DownloadState::Cancelled)
         {
+            setCompactCancelLayout(false);
             BSML::Lite::SetButtonText(
                 downloadButton_.ptr(), "Resume Download");
             downloadStatus_->set_text("Download paused");
@@ -1431,6 +1582,9 @@ namespace BigScreen {
         }
         else if(descriptor.CanPlay())
         {
+            setCompactCancelLayout(false);
+            BSML::Lite::SetButtonText(
+                downloadButton_.ptr(), "Configure Video");
             downloadStatus_->set_text("Video ready!");
             downloadStatus_->set_color({0.20f, 0.90f, 0.42f, 1.0f});
             if(!selectedLevelHasVideo_)
@@ -1443,6 +1597,7 @@ namespace BigScreen {
         }
         else
         {
+            setCompactCancelLayout(false);
             BSML::Lite::SetButtonText(
                 downloadButton_.ptr(), "Download Video");
             downloadStatus_->set_text("Video available");

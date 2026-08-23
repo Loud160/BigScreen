@@ -339,6 +339,11 @@ namespace BigScreen {
                         "SongCore loaded songs but did not recognize the exact showcase revision. See Big Screen's error log for details.");
                     return;
                 }
+                // SongCore may have replaced its level objects while loading
+                // the newly installed map. Rebuild the retained Video Library
+                // model on its next activation instead of holding stale level
+                // pointers or paying that scan on every ordinary menu visit.
+                VideoLibraryMenu::Instance().RequestCatalogRefresh();
                 SetState(
                     ShowcaseLaunchState::Idle,
                     "Showcase map ready");
@@ -443,6 +448,18 @@ namespace BigScreen {
 
     void ShowcaseLauncher::BeginMenuDismissal()
     {
+        // The Solo shortcut intentionally nests Big Screen above the player's
+        // current song selection. The managed showcase requires the actual
+        // main menu as its handoff point, so do not silently discard that Solo
+        // hierarchy. Ask the player to launch it from Big Screen's normal main-
+        // menu entry instead.
+        if(BigScreenMenuOpenedFromSongSelection())
+        {
+            Fail(
+                "Open Showcase from the main menu",
+                "Close Big Screen, return to Beat Saber's main menu, and open Big Screen there before starting the Showcase.");
+            return;
+        }
         VideoLibraryMenu::Instance().StopActivePreview();
         ShowcaseMenu::Instance().DismissTransientUi();
         if(!ExitBigScreenMenuForShowcase())

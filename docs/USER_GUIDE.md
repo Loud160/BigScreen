@@ -6,6 +6,14 @@ Open **Mods > Big Screen > Video Library**. The browser counts songs once, not o
 
 Selecting a song opens its editor. **Back to Song List** returns to the same filter, jump position, order, and song identity.
 
+On Beat Saber's Solo song-selection screen, a map with a ready video shows
+**Configure Video** beside **Video Ready!**. The shortcut opens the full Big
+Screen menu directly on that map's editor, where timing and screen settings can
+be adjusted without first returning to the main menu. Closing Big Screen
+returns to the same selected song and restarts its normal synchronized audio
+and video preview. The Showcase must still be started from Big Screen's normal
+main-menu entry because its launcher intentionally replaces the Solo flow.
+
 The editor's **Refresh** button reloads that song's map-folder Cinema JSON and
 rebuilds the one-per-session Cinema playlist index. Use it after copying an
 edited metadata or playlist file back to the Quest. Big Screen does not poll
@@ -17,7 +25,13 @@ those files during preview or gameplay.
 
 After the URL probe succeeds, the per-song editor shows one compact button for every compatible source tier the video actually provides: **480p**, **720p**, **1080p**, and/or **1440p**. The choices stay in one row beside the full-size video thumbnail. A source with none of those tiers instead offers its single best lower resolution, such as 360p. The selected tier is the native resolution Big Screen will play, so choose the balance of clarity and Quest workload you want before downloading. The UI then shows metadata preparation, download byte/percentage progress and speed/ETA when known, and a separate **Preparing video for playback** stage when an HLS stream must be copied into an MP4 container. This copies the existing H.264 video without changing its quality. If that preparation fails but a software-decoder test succeeds, Big Screen keeps the usable video and warns that software playback may reduce video frame rate or gameplay performance. Clearing the URL before assignment also clears its thumbnail.
 
-If a mapper supplied a URL but not the video, the normal song-detail screen offers **Download Video**. It opens a resolution dialog, checks the URL when necessary, and lists the same available tiers before downloading into the same library. Private/login-required, deleted, age/parental-control-restricted, 403/404, rate-limited, and temporary server failures are translated into readable explanations and recovery suggestions. Big Screen has no YouTube login and does not consume browser cookies.
+If a mapper supplied a URL but not the video, the normal song-detail screen offers **Download Video**. It opens a resolution dialog, checks the URL when necessary, and lists the same available tiers before downloading into the same library. Private/login-required, deleted, age/parental-control-restricted, 403/404, rate-limited, and temporary server failures are translated into readable explanations and recovery suggestions. A failure automatically opens a full popup with those details while the compact row changes to **Retry Check** or **Retry Download**, so its narrow status line never has to contain the complete error. Big Screen has no YouTube login and does not consume browser cookies.
+
+An active download continues if you browse to another song, close Big Screen,
+or enter gameplay. Big Screen currently runs one download at a time: return to
+the originating song and select the compact **Cancel** button to stop it. If
+you request another song while that transfer is active, Big Screen leaves the
+original download running and explains why the second one cannot start yet.
 
 Only one downloaded source is assigned per song. Selecting another tier explains what will be replaced and leaves the current video untouched until the new transfer and library commit succeed. Replacing a browser-selected local file changes only the assignment; Big Screen never deletes that user-owned file. A 1440p choice warns that software decoding is unsupported and playback will stop safely, without stopping the map, if hardware decoding fails.
 

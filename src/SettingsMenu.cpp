@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -146,10 +147,22 @@ namespace BigScreen {
         // A flow coordinator gives Big Screen a dedicated left settings panel
         // while leaving the center view available for real world-scale screen
         // placement instead of a misleading thumbnail.
-        BSML::Register::RegisterMainMenuFlowCoordinator(
+        // Use Big Screen's shared retained coordinator rather than letting
+        // BSML create a main-menu-only instance. The same coordinator can then
+        // be presented safely above Solo for Configure Video without two UI
+        // hierarchies competing for the singleton-backed menu state.
+        BSML::Register::RegisterMenuButton(
             "Big Screen",
             "Configure video playback, screen appearance, and environments.",
-            csTypeOf(MenuFlowCoordinator*));
+            []()
+            {
+                if(!OpenBigScreenMenu())
+                {
+                    ErrorManager::Instance().ReportUserVisible(
+                        "Could not open Big Screen",
+                        "Beat Saber's menu is still changing. Please wait a moment and try again.");
+                }
+            });
     }
 
     void SettingsMenu::CreateUi(
@@ -2724,6 +2737,16 @@ namespace BigScreen {
     void SettingsMenu::RefreshValues()
     {
         const auto& settings = Settings::Instance();
+        const auto setSliderIfChanged = [](
+            BSML::SliderSetting* slider,
+            float value)
+        {
+            // SliderSetting::set_Value updates labels and can invoke retained
+            // Unity/BSML work even when the value did not change. Most menu
+            // activations merely mirror the values already on screen.
+            if(slider && std::abs(slider->get_Value() - value) > 0.0001f)
+                slider->set_Value(value);
+        };
         SetToggleWithoutNotification(modEnabledToggle_, settings.ModEnabled());
         SetToggleWithoutNotification(
             distractionFreeMenuToggle_,
@@ -2746,10 +2769,10 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             embeddedVideoShaderToggle_,
             settings.EmbeddedVideoShaderEnabled());
-        if(nativeBloomLevelSlider_)
-            nativeBloomLevelSlider_->set_Value(settings.NativeBloomLevel());
-        if(cinemaBloomLevelSlider_)
-            cinemaBloomLevelSlider_->set_Value(settings.CinemaBloomLevel());
+        setSliderIfChanged(
+            nativeBloomLevelSlider_, settings.NativeBloomLevel());
+        setSliderIfChanged(
+            cinemaBloomLevelSlider_, settings.CinemaBloomLevel());
         SetToggleWithoutNotification(
             hardwareDecodingToggle_, settings.HardwareDecodingEnabled());
         SetToggleWithoutNotification(
@@ -2757,9 +2780,9 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             consolidatedYuvUploadToggle_,
             settings.ConsolidatedYuvUploadEnabled());
-        if(gpuReadAheadMemorySlider_)
-            gpuReadAheadMemorySlider_->set_Value(
-                static_cast<float>(settings.GpuReadAheadMemoryMiB()));
+        setSliderIfChanged(
+            gpuReadAheadMemorySlider_,
+            static_cast<float>(settings.GpuReadAheadMemoryMiB()));
         SetToggleWithoutNotification(
             performanceDiagnosticsToggle_, settings.PerformanceDiagnosticsEnabled());
         SetToggleWithoutNotification(
@@ -2814,55 +2837,44 @@ namespace BigScreen {
             screenLayoutDropdown_->UpdateState();
         }
 
-        if(distanceSetting_)
-            distanceSetting_->set_Value(settings.ScreenDistanceOffset());
-        if(horizontalSetting_)
-            horizontalSetting_->set_Value(settings.ScreenHorizontalOffset());
-        if(verticalSetting_)
-            verticalSetting_->set_Value(settings.ScreenVerticalOffset());
-        if(tiltSetting_)
-            tiltSetting_->set_Value(settings.ScreenTiltOffset());
-        if(sizeSetting_)
-            sizeSetting_->set_Value(settings.ScreenScale());
-        if(curvatureSlider_)
-            curvatureSlider_->set_Value(settings.ScreenCurvature());
-        if(videoOpacitySlider_)
-            videoOpacitySlider_->set_Value(settings.VideoOpacity());
-        if(screenRotationSlider_)
-            screenRotationSlider_->set_Value(settings.ScreenRoll());
-        if(videoRotationSlider_)
-            videoRotationSlider_->set_Value(settings.VideoRotation());
-        if(videoZoomSlider_)
-            videoZoomSlider_->set_Value(settings.VideoZoom());
-        if(videoHorizontalSlider_)
-            videoHorizontalSlider_->set_Value(
-                VideoOffsetToZoomSlider(settings.VideoOffsetX()));
-        if(videoVerticalSlider_)
-            videoVerticalSlider_->set_Value(
-                VideoOffsetToZoomSlider(settings.VideoOffsetY()));
-        if(videoTiltSlider_)
-            videoTiltSlider_->set_Value(settings.VideoTilt());
+        setSliderIfChanged(distanceSetting_, settings.ScreenDistanceOffset());
+        setSliderIfChanged(
+            horizontalSetting_, settings.ScreenHorizontalOffset());
+        setSliderIfChanged(verticalSetting_, settings.ScreenVerticalOffset());
+        setSliderIfChanged(tiltSetting_, settings.ScreenTiltOffset());
+        setSliderIfChanged(sizeSetting_, settings.ScreenScale());
+        setSliderIfChanged(curvatureSlider_, settings.ScreenCurvature());
+        setSliderIfChanged(videoOpacitySlider_, settings.VideoOpacity());
+        setSliderIfChanged(screenRotationSlider_, settings.ScreenRoll());
+        setSliderIfChanged(videoRotationSlider_, settings.VideoRotation());
+        setSliderIfChanged(videoZoomSlider_, settings.VideoZoom());
+        setSliderIfChanged(
+            videoHorizontalSlider_,
+            VideoOffsetToZoomSlider(settings.VideoOffsetX()));
+        setSliderIfChanged(
+            videoVerticalSlider_,
+            VideoOffsetToZoomSlider(settings.VideoOffsetY()));
+        setSliderIfChanged(videoTiltSlider_, settings.VideoTilt());
         RefreshVideoOffsetValueTexts();
         RefreshPlaybackFpsControl();
-        if(automaticPerformanceThresholdSlider_)
-            automaticPerformanceThresholdSlider_->set_Value(
-                static_cast<float>(settings.AutomaticPerformanceThreshold()));
-        if(automaticPerformanceAttackSlider_)
-            automaticPerformanceAttackSlider_->set_Value(
-                settings.AutomaticPerformanceAttackSeconds());
-        if(automaticPerformanceReleaseSlider_)
-            automaticPerformanceReleaseSlider_->set_Value(
-                settings.AutomaticPerformanceReleaseSeconds());
-        if(automaticPerformanceFpsStepSlider_)
-            automaticPerformanceFpsStepSlider_->set_Value(
-                static_cast<float>(settings.AutomaticPerformanceFpsStep()));
+        setSliderIfChanged(
+            automaticPerformanceThresholdSlider_,
+            static_cast<float>(settings.AutomaticPerformanceThreshold()));
+        setSliderIfChanged(
+            automaticPerformanceAttackSlider_,
+            settings.AutomaticPerformanceAttackSeconds());
+        setSliderIfChanged(
+            automaticPerformanceReleaseSlider_,
+            settings.AutomaticPerformanceReleaseSeconds());
+        setSliderIfChanged(
+            automaticPerformanceFpsStepSlider_,
+            static_cast<float>(settings.AutomaticPerformanceFpsStep()));
         SetToggleWithoutNotification(
             automaticPerformanceOscillationToggle_,
             settings.AutomaticPerformanceOscillationPreventionEnabled());
-        if(automaticPerformanceOscillationLimitSlider_)
-            automaticPerformanceOscillationLimitSlider_->set_Value(
-                static_cast<float>(
-                    settings.AutomaticPerformanceOscillationLimit()));
+        setSliderIfChanged(
+            automaticPerformanceOscillationLimitSlider_,
+            static_cast<float>(settings.AutomaticPerformanceOscillationLimit()));
     }
 
     void SettingsMenu::RefreshEnabledState()

@@ -11,6 +11,7 @@
 
 #include "UnityEngine/Behaviour.hpp"
 #include "UnityEngine/Renderer.hpp"
+#include "UnityEngine/Transform.hpp"
 
 namespace BigScreen {
     /// Reconciles the positive Show Menu Environment preference while Big
@@ -32,6 +33,12 @@ namespace BigScreen {
         void HideVisualComponents();
 
         bool hidden_ = false;
+        // Global FindObjectsOfType calls are expensive in heavily modded menu
+        // scenes. Cache the environment-owned components through ordinary menu
+        // visits and rebuild this weak-handle index after Unity replaces them.
+        UnityW<UnityEngine::Transform> environmentRoot_ = nullptr;
+        std::vector<UnityW<UnityEngine::Renderer>> knownRenderers_;
+        std::vector<UnityW<UnityEngine::Behaviour>> knownLights_;
         std::vector<UnityW<UnityEngine::Renderer>> hiddenRenderers_;
         std::vector<UnityW<UnityEngine::Behaviour>> hiddenLights_;
     };

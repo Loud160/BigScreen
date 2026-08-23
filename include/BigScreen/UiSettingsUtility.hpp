@@ -26,6 +26,15 @@ namespace BigScreen::UiUtility {
     {
         if(!setting)
             return;
+        // Retained BSML controls normally already contain the saved value on
+        // later menu visits. Avoid replaying AnimatedSwitchView's visual
+        // transition for every toggle when neither the setting wrapper nor
+        // the underlying Unity toggle is stale. Reset paths still repair a
+        // mismatch because either half differing deliberately bypasses this
+        // fast path.
+        if(setting->currentValue == value &&
+           (!setting->toggle || setting->toggle->get_isOn() == value))
+            return;
         setting->currentValue = value;
         if(setting->toggle)
         {

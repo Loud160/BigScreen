@@ -885,7 +885,9 @@ assert "HasBigScreenAncestor" in menu_environment_visibility_source
 assert "HasPointerOrControllerAncestor" in menu_environment_visibility_source
 assert "renderer->set_enabled(false);" in menu_environment_visibility_source
 assert "renderer->set_enabled(true);" in menu_environment_visibility_source
-assert "DisableEnabledLights<UnityEngine::Light>" in menu_environment_visibility_source
+assert "CacheEnvironmentLights<UnityEngine::Light>" in menu_environment_visibility_source
+assert "knownRenderers_" in menu_environment_visibility_source
+assert "knownLights_" in menu_environment_visibility_source
 assert "environment->SetActive(false)" not in menu_environment_visibility_source
 assert "parentHint->set_text(nestedText);" in nested_hover_hint_source
 assert "parentHint->set_text(parentText);" in nested_hover_hint_source
@@ -1406,11 +1408,19 @@ assert "PaintEditorNotice" not in refresh_details
 assert "editorNoticeModel_" not in refresh_details
 select_row = library_menu_source.split(
     "void VideoLibraryMenu::SelectRow(int row)", 1
+)[1].split("bool VideoLibraryMenu::OpenEditorForLevelId(", 1)[0]
+assert "SelectLevel(visible_[row]->level, true);" in select_row
+select_level = library_menu_source.split(
+    "void VideoLibraryMenu::SelectLevel(", 1
 )[1].split("void VideoLibraryMenu::ShowBrowser()", 1)[0]
-assert select_row.index("CloseEditorNotice();") < (
-    select_row.index("selected_ = visible_[row]->level;")
+assert select_level.index("CloseEditorNotice();") < (
+    select_level.index("selected_ = level;")
 )
-assert select_row.index("ShowEditor();") < select_row.index("OpenEditorNotice();")
+assert select_level.index("ShowEditor();") < (
+    select_level.index("OpenEditorNotice();")
+)
+assert "bool VideoLibraryMenu::OpenEditorForLevelId(" in library_menu_source
+assert "std::string(candidate.level->levelID) == levelId" in library_menu_source
 open_editor_notice = library_menu_source.split(
     "void VideoLibraryMenu::OpenEditorNotice()", 1
 )[1].split("void VideoLibraryMenu::CloseEditorNotice()", 1)[0]
@@ -1662,7 +1672,8 @@ assert back_exit.index("PrepareForDismissal();") < \
 
 # A failure raised from DidActivate must not dismiss HMUI reentrantly. Queue the
 # flow and let the normal main-thread update perform the dismissal on a later
-# frame, then wait for Beat Saber's main menu to become stable before re-entry.
+# frame, then wait for Beat Saber's main-menu or Solo hierarchy to become
+# stable before re-entry.
 failed_exit = menu_flow_source.split(
     "bool ExitBigScreenMenuAfterError() noexcept", 1
 )[1].split("bool ExitBigScreenMenuForShowcase() noexcept", 1)[0]
@@ -1674,6 +1685,10 @@ reentry_tick = menu_flow_source.split(
 assert "if(++pendingFailedMenuExitFrames < 2)" in reentry_tick
 assert "parent->DismissFlowCoordinator(" in reentry_tick
 assert "pendingFailedMenuExit = nullptr;" in reentry_tick
+assert "stableMainMenu" in reentry_tick
+assert "stableSolo" in reentry_tick
+assert "IsInSoloHierarchy(youngest, solo)" in reentry_tick
+assert "stableEntryHierarchyFrames < 12" in reentry_tick
 
 # Showcase glass remains deterministic, programmatic, and isolated from the
 # normal video surface. Only the authored 2:03 damage sequence uses it. Its
@@ -1954,6 +1969,9 @@ library_deactivate = library_menu_source.split(
 )[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
 assert "SetLibraryPreviewOwnershipActive(true);" in library_refresh
 assert "SetLibraryPreviewOwnershipActive(false);" in library_deactivate
+assert "if(catalogRefreshRequested_)" in library_refresh
+assert "RebuildCatalog();" in library_refresh
+assert "RequestCatalogRefresh();" in showcase_source
 preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
 )[1].split("void VideoLibraryMenu::LoopPreviewPlayback()", 1)[0]
@@ -2171,9 +2189,26 @@ assert menu_flow_source.count(
     "HMUI::ViewController::AnimationDirection::Horizontal,\n                nullptr,\n                true"
 ) >= 2
 assert "BeginMenuReentryGuard" in menu_flow_source
-assert "stableMainMenuFrames < 12" in menu_flow_source
+assert "stableEntryHierarchyFrames < 12" in menu_flow_source
 assert "mainMenu->get_isActivated()" in menu_flow_source
+assert "solo->get_isActivated()" in menu_flow_source
+assert "IsInSoloHierarchy(youngest, solo)" in menu_flow_source
 assert "TickMenuReentryGuard();" in main_source
+
+# Opening the retained flow must not repeat its complete catalog scan, and
+# generic screen-preview teardown must not reopen a stale song decoder while
+# the menu is returning to Beat Saber's main screen.
+menu_activation = menu_flow_source.split(
+    "void MenuFlowCoordinator::DidActivate(", 1
+)[1].split("void MenuFlowCoordinator::ApplyModEnabledUi", 1)[0]
+assert "VideoLibraryMenu::Instance().Refresh();" not in menu_activation
+screen_preview_source = (root / "src/ScreenPreview.cpp").read_text(
+    encoding="utf-8")
+screen_preview_suspend = screen_preview_source.split(
+    "void ScreenPreview::Suspend()", 1
+)[1].split("void ScreenPreview::CaptureBasePlacement()", 1)[0]
+assert "MenuPreviewPreferenceChanged" not in screen_preview_suspend
+assert '"deactivation", deactivationStarted' in menu_flow_source
 
 # Native menu singletons outlive MenuCore's Unity hierarchy. Every retained
 # menu must forget its old objects before replacement controllers are built,
@@ -2184,6 +2219,15 @@ for menu_name in (
 ):
     assert f"{menu_name}::Instance().ForgetUi();" in menu_flow_source
 assert "UnityW<MenuFlowCoordinator> activeMenuFlow" in menu_flow_source
+assert "UnityW<MenuFlowCoordinator> retainedMenuFlow" in menu_flow_source
+assert "PresentSharedMenu(levelId, true)" in menu_flow_source
+assert "YoungestChildFlowCoordinatorOrSelf()" in menu_flow_source
+assert "BigScreenMenuClosedToSongSelection();" in menu_flow_source
+assert '"Configure Video"' in selection_toggle_source
+assert "OpenBigScreenVideoEditor(selectedLevelId_)" in selection_toggle_source
+assert "CaptureSelectedSongPreviewForReturn();" in selection_toggle_source
+assert "songPreviewPlayer->CrossfadeTo(" in selection_toggle_source
+assert "restartSelectedSongAudio_" in selection_toggle_source
 assert "auto* coordinator = activeMenuFlow.ptr();" in menu_flow_source
 assert main_source.count("if(BigScreen::IsBigScreenMenuActive())") >= 2
 assert "void SettingsMenu::ForgetUi()" in settings_menu_source
@@ -2195,17 +2239,50 @@ assert "void StorageMaintenanceMenu::ForgetUi()" in (
 ).read_text(encoding="utf-8")
 assert "void LocalVideoBrowserMenu::ForgetUi()" in local_browser_source
 
-# A stock song-screen close owns only the task it started. Video Library jobs
-# continue when the stock detail view is hidden.
+# The process-owned downloader survives song changes, gameplay entry, and menu
+# closure. A different song must never cancel that transfer through the shared
+# cancellation mailbox; only returning to the originating song exposes Cancel.
 assert "ownedDownloadLevelId_" in selection_toggle_source
 song_hidden = selection_toggle_source.split(
     "void SelectionVideoToggle::SongSelectionHidden()", 1
 )[1].split("void SelectionVideoToggle::", 1)[0]
-assert "download.levelId == ownedDownloadLevelId_" in song_hidden
+assert "DownloadManager::Instance().Cancel()" not in song_hidden
+download_pressed = selection_toggle_source.split(
+    "void SelectionVideoToggle::DownloadButtonPressed()", 1
+)[1].split("void SelectionVideoToggle::", 1)[0]
+assert "snapshot.levelId == selectedLevelId_" in download_pressed
+assert '"Another video is downloading"' in download_pressed
+assert 'downloadButton_.ptr(), "Cancel"' in selection_toggle_source
+assert "compact ? 45.0f : 33.0f" in selection_toggle_source
+assert "compact ? 18.0f : 30.0f" in selection_toggle_source
+download_row_creation = selection_toggle_source.split(
+    "downloadStatus_ = BSML::Lite::CreateText(", 1
+)[1].split("downloadButton_ = BSML::Lite::CreateUIButton(", 1)[0]
+assert "TextAlignmentOptions::Center" in download_row_creation
+assert "TextAlignmentOptions::MidlineLeft" not in download_row_creation
+assert '"Retry Check" : "Retry Download"' in selection_toggle_source
+assert "ReportDownloadFailure(" in selection_toggle_source
+library_deactivate = library_menu_source.split(
+    "void VideoLibraryMenu::Deactivate()", 1
+)[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
+assert "DownloadManager::Instance().Cancel()" not in library_deactivate
 forget_selection = selection_toggle_source.split(
     "void SelectionVideoToggle::ForgetUi()", 1
 )[1].split("void SelectionVideoToggle::", 1)[0]
 assert "selectedLevel_ = nullptr" in forget_selection
+
+# Retained menu visits reuse immutable/static presentation assets and cache
+# expensive scene-wide environment lookups instead of repeating them whenever
+# the player opens Big Screen.
+assert "knownDistractionObjects" in menu_flow_source
+assert "knownRenderers_" in (
+    root / "include/BigScreen/MenuEnvironmentVisibility.hpp"
+).read_text(encoding="utf-8")
+assert "knownLights_" in (
+    root / "include/BigScreen/MenuEnvironmentVisibility.hpp"
+).read_text(encoding="utf-8")
+assert "static const VideoFrame pattern" in screen_preview_source
+assert "setSliderIfChanged" in settings_menu_source
 
 # Misc-tab visibility changes redraw its sliders immediately, and a queued
 # error cannot be consumed before the settings modal has been constructed.

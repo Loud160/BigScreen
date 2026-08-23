@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Song-selection downloads now continue while browsing other maps, entering
+  gameplay, or closing Big Screen. The compact action reads `Cancel`, and a
+  different map can no longer accidentally cancel the active transfer. Status
+  text is centered in its available row space, and full download failures use
+  the frontmost popup while the compact action remains available for retry.
+- Fixed the retained-menu re-entry guard so entering Solo immediately after
+  closing Big Screen can safely re-enable **Configure Video** after the same
+  cooldown and 12 stable frames used by the main menu. Repeated menu visits now
+  reuse the retained song catalog instead of rebuilding roughly 580 map rows
+  twice per activation, and normal main-menu exits no longer start an obsolete
+  song-preview decoder during teardown. Lifecycle and catalog timing are logged
+  to make any remaining Quest-specific opening or closing delay measurable.
+- Added **Configure Video** beside **Video Ready!** on Beat Saber's Solo song
+  selection. It opens the full Big Screen menu directly on that map's video
+  editor and closes back onto the unchanged Solo selection. Both entry paths
+  reuse one flow coordinator. The button is compact enough for the stock song
+  details row, and closing the nested menu restarts Beat Saber's retained song
+  preview together with Big Screen's re-prepared video without requiring the
+  player to select a different map first.
 - Replaced the decoder's exponential wall-clock "average" and periodically
   reset peak with true session-average/peak frame-preparation CPU statistics.
   Asynchronous MediaCodec waits and decoder-thread descheduling are now logged
