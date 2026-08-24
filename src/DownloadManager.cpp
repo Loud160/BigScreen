@@ -1447,7 +1447,7 @@ except BaseException as error:
 )PY";
 
         constexpr const char* UpdaterScript = R"PY(
-import hashlib, json, os, urllib.request, zipfile
+import hashlib, json, os, time, urllib.request, zipfile
 job = json.loads(BIGSCREEN_JOB)
 def version_key(value):
     try:
@@ -1507,6 +1507,8 @@ try:
             if declared_size > maximum_package_bytes:
                 raise RuntimeError('The yt-dlp update is larger than Big Screen\'s 32 MB safety limit.')
             downloaded_size = 0
+            download_started = time.monotonic()
+            last_progress_publish = 0.0
             while True:
                 cancelled()
                 block = response.read(262144)
@@ -1515,9 +1517,32 @@ try:
                 if downloaded_size > maximum_package_bytes:
                     raise RuntimeError('The yt-dlp update exceeded Big Screen\'s 32 MB safety limit.')
                 output.write(block); digest.update(block)
+                now = time.monotonic()
+                if now - last_progress_publish >= 0.125:
+                    last_progress_publish = now
+                    elapsed = max(now - download_started, 0.001)
+                    speed = downloaded_size / elapsed
+                    eta = ((declared_size - downloaded_size) / speed
+                           if declared_size > downloaded_size and speed > 0 else 0)
+                    publish(
+                        'downloading', 'Downloading yt-dlp update',
+                        downloadedBytes=downloaded_size,
+                        totalBytes=declared_size,
+                        speed=speed,
+                        eta=eta)
+        publish(
+            'preparing', 'Verifying official yt-dlp checksum',
+            downloadedBytes=downloaded_size,
+            totalBytes=declared_size)
+        cancelled()
         if digest.hexdigest().lower() != expected.lower():
             os.remove(temporary)
             raise RuntimeError('Downloaded yt-dlp SHA-256 did not match the official release checksum.')
+        publish(
+            'preparing', 'Checking yt-dlp package compatibility',
+            downloadedBytes=downloaded_size,
+            totalBytes=declared_size)
+        cancelled()
         with zipfile.ZipFile(temporary) as package:
             required_entries = {
                 'yt_dlp/__init__.py',
@@ -1528,6 +1553,11 @@ try:
             }
             if package.testzip() is not None or not required_entries.issubset(package.namelist()):
                 raise RuntimeError('The downloaded yt-dlp package failed its compatibility self-test.')
+        publish(
+            'preparing', 'Staging yt-dlp for the next Beat Saber start',
+            downloadedBytes=downloaded_size,
+            totalBytes=declared_size)
+        cancelled()
         os.replace(temporary, job['nextPath'])
         with open(job['nextPath'] + '.version', 'w', encoding='utf-8') as version_file:
             version_file.write(version)
@@ -3799,7 +3829,11 @@ os.replace(temporary, job['destination'])
                     "yt-dlp update ready",
                     std::string("yt-dlp ") +
                         (nightly ? "nightly" : "stable") +
-                        " was downloaded and verified. Restart Beat Saber to activate it."};
+                        " was downloaded and verified. Restart Beat Saber to activate it.",
+                    false,
+                    false,
+                    false,
+                    true};
             }
             else if(terminal.state == DownloadState::UpToDate)
             {

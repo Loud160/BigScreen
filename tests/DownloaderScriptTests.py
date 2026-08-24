@@ -225,6 +225,21 @@ assert "raise KeyboardInterrupt('yt-dlp update cancelled')" in updater_script
 assert "def version_key(value):" in updater_script
 assert "latest_key <= current_key" in updater_script
 assert updater_script.count("cancelled()") >= 4
+# A user-approved updater install must fill the same status mailbox as video
+# downloads instead of disappearing between the confirmation and terminal
+# restart notice. Exact byte progress is throttled; verification and staging
+# retain the completed byte total while changing the visible phase message.
+assert "'downloading', 'Downloading yt-dlp update'" in updater_script
+assert "downloadedBytes=downloaded_size" in updater_script
+assert "totalBytes=declared_size" in updater_script
+assert "speed=speed" in updater_script
+assert "eta=eta" in updater_script
+for updater_phase in (
+    "Verifying official yt-dlp checksum",
+    "Checking yt-dlp package compatibility",
+    "Staging yt-dlp for the next Beat Saber start",
+):
+    assert updater_phase in updater_script
 assert "raise RuntimeError('BIGSCREEN_CANCELLED')" in map_package_script
 assert map_package_script.count("cancelled()") >= 4
 

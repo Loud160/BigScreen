@@ -20,6 +20,7 @@ namespace BSML {
 
 namespace HMUI {
     class HoverHint;
+    class ImageView;
     class TextSegmentedControl;
     class ViewController;
 }
@@ -165,6 +166,9 @@ namespace BigScreen {
         BSML::ModalView* nightlyWarningModal_ = nullptr;
         BSML::ModalView* ytDlpUpdateModal_ = nullptr;
         TMPro::TextMeshProUGUI* ytDlpUpdateModalText_ = nullptr;
+        HMUI::ImageView* ytDlpUpdateProgressTrack_ = nullptr;
+        HMUI::ImageView* ytDlpUpdateProgressFill_ = nullptr;
+        UnityEngine::UI::Button* ytDlpUpdateCloseButton_ = nullptr;
         UnityEngine::UI::Button* ytDlpUpdateActionButton_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
@@ -188,6 +192,14 @@ namespace BigScreen {
         bool suppressNightlyCallback_ = false;
         bool pendingYtDlpInstallNightly_ = false;
         bool pendingYtDlpChannelSwitch_ = false;
+        // True only between a user accepting an install/channel switch and the
+        // terminal updater result. The modal remains visible and reads the
+        // downloader's ordinary snapshot; no Unity object crosses to Python's
+        // worker thread.
+        bool ytDlpInstallProgressVisible_ = false;
+        bool ytDlpCloseGameAvailable_ = false;
+        bool ytDlpCloseGameConfirmationVisible_ = false;
+        std::string ytDlpUpdateReadyMessage_;
         bool suppressAutomaticPerformanceCallback_ = false;
         bool suppressAdvancedCallback_ = false;
         bool suppressUndockCallback_ = false;

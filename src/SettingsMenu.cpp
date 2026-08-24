@@ -33,18 +33,22 @@
 #include "BigScreen/Settings.hpp"
 #include "BigScreen/UiUtility.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
+#include "BigScreen/Utility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
 #include "BigScreen/VideoLibraryMenu.hpp"
 #include "HMUI/HoverHint.hpp"
+#include "HMUI/ImageView.hpp"
 #include "HMUI/TextSegmentedControl.hpp"
 #include "HMUI/ViewController.hpp"
 #include "TMPro/FontStyles.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextOverflowModes.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/Application.hpp"
 #include "UnityEngine/Canvas.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/TextAnchor.hpp"
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/Transform.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ContentSizeFitter.hpp"
@@ -53,6 +57,7 @@
 #include "UnityEngine/UI/LayoutRebuilder.hpp"
 #include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
+#include "bsml/shared/BSML-Lite/Creation/Image.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -64,6 +69,7 @@
 #include "bsml/shared/BSML/Components/Settings/IncrementSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/SliderSetting.hpp"
 #include "bsml/shared/BSML/Components/Settings/ToggleSetting.hpp"
+#include "bsml/shared/Helpers/utilities.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
@@ -274,7 +280,11 @@ namespace BigScreen {
         nightlyWarningModal_ = nullptr;
         ytDlpUpdateModal_ = nullptr;
         ytDlpUpdateModalText_ = nullptr;
+        ytDlpUpdateProgressTrack_ = nullptr;
+        ytDlpUpdateProgressFill_ = nullptr;
+        ytDlpUpdateCloseButton_ = nullptr;
         ytDlpUpdateActionButton_ = nullptr;
+        ytDlpInstallProgressVisible_ = false;
         localVideoInstructionsModal_ = nullptr;
         resetConfirmationModal_ = nullptr;
         advancedWarningModal_ = nullptr;
@@ -297,6 +307,9 @@ namespace BigScreen {
         showcaseStatus_ = nullptr;
         pendingYtDlpInstallNightly_ = false;
         pendingYtDlpChannelSwitch_ = false;
+        ytDlpCloseGameAvailable_ = false;
+        ytDlpCloseGameConfirmationVisible_ = false;
+        ytDlpUpdateReadyMessage_.clear();
 
         // Hide the FlowCoordinator's center title strip and recreate its useful
         // navigation inside this left panel. Anchor a dedicated header to the
@@ -2303,12 +2316,63 @@ namespace BigScreen {
             TMPro::TextOverflowModes::Ellipsis);
         ytDlpUpdateModalText_->set_alignment(
             TMPro::TextAlignmentOptions::Center);
-        BSML::Lite::CreateUIButton(
+
+        // UpdaterScript publishes to DownloadManager's existing status file,
+        // exactly like a video transfer. This modal reads that in-memory
+        // snapshot on Unity's normal menu tick; Python never touches this bar.
+        ytDlpUpdateProgressTrack_ = BSML::Lite::CreateImage(
+            ytDlpUpdateModal_->get_transform(),
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ytDlpUpdateProgressTrack_->set_color(
+            {0.08f, 0.10f, 0.13f, 0.92f});
+        ytDlpUpdateProgressTrack_->set_preserveAspect(false);
+        if(auto trackRect = ytDlpUpdateProgressTrack_->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            trackRect->set_anchoredPosition({0.0f, -17.5f});
+            trackRect->set_sizeDelta({60.0f, 2.4f});
+        }
+        ytDlpUpdateProgressFill_ = BSML::Lite::CreateImage(
+            ytDlpUpdateProgressTrack_->get_transform(),
+            BSML::Utilities::ImageResources::GetBlankSprite());
+        ytDlpUpdateProgressFill_->set_color(
+            {0.10f, 0.75f, 1.0f, 1.0f});
+        ytDlpUpdateProgressFill_->set_preserveAspect(false);
+        if(auto fillRect = ytDlpUpdateProgressFill_->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            fillRect->set_anchorMin({0.0f, 0.0f});
+            fillRect->set_anchorMax({0.0f, 1.0f});
+            fillRect->set_pivot({0.0f, 0.5f});
+            fillRect->set_anchoredPosition({0.0f, 0.0f});
+            fillRect->set_sizeDelta({0.0f, -0.3f});
+        }
+        ytDlpUpdateProgressTrack_->get_gameObject()->SetActive(false);
+
+        ytDlpUpdateCloseButton_ = BSML::Lite::CreateUIButton(
             ytDlpUpdateModal_->get_transform(),
             "Close",
             {20.0f, -31.5f},
             {22.0f, 7.0f},
             [this]() {
+                if(ytDlpCloseGameConfirmationVisible_)
+                {
+                    ytDlpCloseGameConfirmationVisible_ = false;
+                    if(ytDlpUpdateModalText_)
+                        ytDlpUpdateModalText_->set_text(
+                            ytDlpUpdateReadyMessage_);
+                    if(ytDlpUpdateCloseButton_)
+                        BSML::Lite::SetButtonText(
+                            ytDlpUpdateCloseButton_, "Close");
+                    if(ytDlpUpdateActionButton_)
+                    {
+                        BSML::Lite::SetButtonText(
+                            ytDlpUpdateActionButton_, "Close Beat Saber");
+                        ytDlpUpdateActionButton_->set_interactable(true);
+                    }
+                    ShowModalInFront(ytDlpUpdateModal_);
+                    return;
+                }
                 if(ytDlpUpdateModal_)
                     ytDlpUpdateModal_->Hide();
             });
@@ -2318,8 +2382,53 @@ namespace BigScreen {
             {51.0f, -31.5f},
             {27.0f, 7.0f},
             [this]() {
+                auto& downloader = DownloadManager::Instance();
+                if(ytDlpCloseGameAvailable_)
+                {
+                    if(!ytDlpCloseGameConfirmationVisible_)
+                    {
+                        ytDlpCloseGameConfirmationVisible_ = true;
+                        ytDlpUpdateModalText_->set_text(
+                            "<b>Close Beat Saber now?</b>\n\n"
+                            "The verified yt-dlp update will activate the next time you start the game. Any unsaved changes outside Big Screen may be lost.");
+                        BSML::Lite::SetButtonText(
+                            ytDlpUpdateCloseButton_, "Go Back");
+                        BSML::Lite::SetButtonText(
+                            ytDlpUpdateActionButton_, "Close Now");
+                        ShowModalInFront(ytDlpUpdateModal_);
+                        return;
+                    }
+
+                    // Use Unity's normal application shutdown rather than
+                    // killing the Android process. This gives Beat Saber and
+                    // every loaded mod their ordinary quit callbacks while
+                    // still saving the trip back through the game's menus.
+                    DiagnosticSessionLogger::Instance().MenuEvent(
+                        "close_game_requested", "yt_dlp_update");
+                    ErrorManager::Instance().Guard(
+                        "saving settings before closing Beat Saber", []()
+                        {
+                            Settings::Instance().Flush();
+                        });
+                    PaperLogger.info(
+                        "Closing Beat Saber after a staged yt-dlp update");
+                    UnityEngine::Application::Quit(0);
+                    return;
+                }
+                if(ytDlpInstallProgressVisible_)
+                {
+                    downloader.Cancel();
+                    if(ytDlpUpdateModalText_)
+                        ytDlpUpdateModalText_->set_text(
+                            "<b>Stopping yt-dlp update</b>\n\n"
+                            "Waiting for the current network step to finish safely...");
+                    if(ytDlpUpdateActionButton_)
+                        ytDlpUpdateActionButton_->set_interactable(false);
+                    return;
+                }
+
                 std::string error;
-                if(!DownloadManager::Instance().StartUpdaterCheck(
+                if(!downloader.StartUpdaterCheck(
                        pendingYtDlpInstallNightly_,
                        true,
                        error,
@@ -2330,9 +2439,30 @@ namespace BigScreen {
                     ErrorManager::Instance().ReportUserVisible(
                         "Could not start yt-dlp update", error);
                     pendingYtDlpChannelSwitch_ = false;
+                    if(ytDlpUpdateModal_)
+                        ytDlpUpdateModal_->Hide();
+                    RefreshDownloaderStatus();
+                    return;
                 }
-                if(ytDlpUpdateModal_)
-                    ytDlpUpdateModal_->Hide();
+
+                // Keep the decision modal in front and turn it into the live
+                // operation view. A slow connection now has immediate feedback
+                // instead of an unexplained gap before the restart notice.
+                ytDlpInstallProgressVisible_ = true;
+                ytDlpCloseGameAvailable_ = false;
+                ytDlpCloseGameConfirmationVisible_ = false;
+                ytDlpUpdateReadyMessage_.clear();
+                if(ytDlpUpdateModalText_)
+                    ytDlpUpdateModalText_->set_text(
+                        "<b>Updating yt-dlp</b>\n\nStarting the secure download...");
+                if(ytDlpUpdateProgressTrack_)
+                    ytDlpUpdateProgressTrack_->get_gameObject()->SetActive(true);
+                if(ytDlpUpdateCloseButton_)
+                    ytDlpUpdateCloseButton_->get_gameObject()->SetActive(false);
+                BSML::Lite::SetButtonText(
+                    ytDlpUpdateActionButton_, "Cancel Update");
+                ytDlpUpdateActionButton_->set_interactable(true);
+                ShowModalInFront(ytDlpUpdateModal_);
                 RefreshDownloaderStatus();
             });
         ytDlpUpdateActionButton_->get_gameObject()->SetActive(false);
@@ -3488,6 +3618,9 @@ namespace BigScreen {
 
     void SettingsMenu::RefreshDownloaderStatus()
     {
+        auto& downloader = DownloadManager::Instance();
+        const auto snapshot = downloader.Snapshot();
+        const bool installing = snapshot.levelId == "__updater__";
         if(auto recovery = VideoLibrary::Instance().TakeRecoveryNotice())
             ErrorManager::Instance().ReportUserVisible("Video library recovered", *recovery);
         if(auto update = DownloadManager::Instance().TakeUpdateNotice())
@@ -3501,16 +3634,31 @@ namespace BigScreen {
             if(auto notice =
                    DownloadManager::Instance().TakeYtDlpReleaseNotice())
             {
-                ytDlpUpdateModalText_->set_text(
-                    "<b>" + notice->title + "</b>\n\n" +
-                    notice->message);
+                ytDlpInstallProgressVisible_ = false;
+                ytDlpCloseGameAvailable_ = notice->restartRequired;
+                ytDlpCloseGameConfirmationVisible_ = false;
+                const std::string modalMessage =
+                    "<b>" + notice->title + "</b>\n\n" + notice->message;
+                ytDlpUpdateReadyMessage_ = notice->restartRequired
+                    ? modalMessage
+                    : std::string{};
+                ytDlpUpdateModalText_->set_text(modalMessage);
+                if(ytDlpUpdateProgressTrack_)
+                    ytDlpUpdateProgressTrack_->get_gameObject()->SetActive(false);
+                if(ytDlpUpdateCloseButton_)
+                {
+                    ytDlpUpdateCloseButton_->get_gameObject()->SetActive(true);
+                    BSML::Lite::SetButtonText(
+                        ytDlpUpdateCloseButton_, "Close");
+                }
                 if(notice->offerInstall)
                 {
                     pendingYtDlpInstallNightly_ = notice->installNightly;
                     pendingYtDlpChannelSwitch_ = notice->channelSwitch;
                 }
                 ytDlpUpdateActionButton_->get_gameObject()->SetActive(
-                    notice->offerInstall);
+                    notice->offerInstall || notice->restartRequired);
+                ytDlpUpdateActionButton_->set_interactable(true);
                 if(notice->offerInstall)
                 {
                     BSML::Lite::SetButtonText(
@@ -3519,7 +3667,135 @@ namespace BigScreen {
                             ? "Switch to Stable"
                             : "Install Update");
                 }
+                else if(notice->restartRequired)
+                {
+                    BSML::Lite::SetButtonText(
+                        ytDlpUpdateActionButton_, "Close Beat Saber");
+                }
                 ShowModalInFront(ytDlpUpdateModal_);
+            }
+            else if(ytDlpInstallProgressVisible_)
+            {
+                if(installing &&
+                   (snapshot.Active() || downloader.OperationInProgress()))
+                {
+                    std::string progressText =
+                        "<b>Updating yt-dlp</b>\n\n" +
+                        (snapshot.message.empty()
+                            ? "Preparing the update"
+                            : snapshot.message);
+                    if(snapshot.totalBytes > 0)
+                    {
+                        const double percentage = std::clamp(
+                            100.0 * static_cast<double>(snapshot.downloadedBytes) /
+                                static_cast<double>(snapshot.totalBytes),
+                            0.0,
+                            100.0);
+                        progressText += fmt::format(
+                            "\n{} / {} ({:.0f}%)",
+                            Utility::FormatMegabytes(snapshot.downloadedBytes),
+                            Utility::FormatMegabytes(snapshot.totalBytes),
+                            percentage);
+                        if(snapshot.speedBytesPerSecond > 0.0)
+                        {
+                            progressText += fmt::format(
+                                "\n{}/s",
+                                Utility::FormatMegabytes(
+                                    static_cast<std::uint64_t>(
+                                        snapshot.speedBytesPerSecond)));
+                            if(snapshot.etaSeconds > 0.0)
+                            {
+                                const int eta = static_cast<int>(
+                                    std::ceil(snapshot.etaSeconds));
+                                progressText += fmt::format(
+                                    " - about {}:{:02d} remaining",
+                                    eta / 60,
+                                    eta % 60);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        progressText +=
+                            "\nPlease wait while Big Screen completes this step.";
+                    }
+                    ytDlpUpdateModalText_->set_text(progressText);
+                    if(ytDlpUpdateProgressTrack_ &&
+                       ytDlpUpdateProgressFill_)
+                    {
+                        ytDlpUpdateProgressTrack_->get_gameObject()->SetActive(true);
+                        float progress = 0.0f;
+                        if(snapshot.totalBytes > 0)
+                        {
+                            progress = std::clamp(
+                                static_cast<float>(snapshot.downloadedBytes) /
+                                    static_cast<float>(snapshot.totalBytes),
+                                0.0f,
+                                1.0f);
+                        }
+                        else
+                        {
+                            // GitHub release discovery and pre-download setup
+                            // do not expose a meaningful byte total. Pulse the
+                            // same bar so it still proves the worker is active.
+                            progress = 0.12f + 0.68f * std::abs(std::sin(
+                                UnityEngine::Time::get_realtimeSinceStartup() *
+                                1.8f));
+                        }
+                        if(auto fillRect = ytDlpUpdateProgressFill_
+                               ->get_transform().cast<UnityEngine::RectTransform>())
+                            fillRect->set_anchorMax({progress, 1.0f});
+                    }
+                    if(ytDlpUpdateCloseButton_)
+                        ytDlpUpdateCloseButton_->get_gameObject()->SetActive(false);
+                    ytDlpUpdateActionButton_->get_gameObject()->SetActive(true);
+                    // Do not re-push this modal onto the stack every tick.
+                    // TickFrontmostMenuModal keeps the active stack raised;
+                    // repeatedly promoting this one would cover a newer error
+                    // dialog that legitimately needs the user's attention.
+                }
+                else
+                {
+                    // RunUpdater normally publishes a richer release notice
+                    // before clearing operationBusy_. Keep this fallback so a
+                    // cancelled task or unexpected notice-consumption ordering
+                    // can never leave the progress modal stuck indefinitely.
+                    ytDlpInstallProgressVisible_ = false;
+                    pendingYtDlpChannelSwitch_ = false;
+                    const bool completed =
+                        installing && snapshot.state == DownloadState::Completed;
+                    const bool cancelled =
+                        installing && snapshot.state == DownloadState::Cancelled;
+                    const std::string terminalMessage = completed
+                            ? "<b>yt-dlp update ready</b>\n\n"
+                              "The update was downloaded and verified. Restart Beat Saber to activate it."
+                            : cancelled
+                                ? "<b>yt-dlp update cancelled</b>\n\n"
+                                  "The current downloader was not changed."
+                                : "<b>yt-dlp update stopped</b>\n\n" +
+                                  (snapshot.message.empty()
+                                      ? "The update did not complete."
+                                      : snapshot.message);
+                    ytDlpUpdateModalText_->set_text(terminalMessage);
+                    ytDlpCloseGameAvailable_ = completed;
+                    ytDlpCloseGameConfirmationVisible_ = false;
+                    ytDlpUpdateReadyMessage_ = completed
+                        ? terminalMessage
+                        : std::string{};
+                    if(ytDlpUpdateProgressTrack_)
+                        ytDlpUpdateProgressTrack_->get_gameObject()->SetActive(false);
+                    if(ytDlpUpdateCloseButton_)
+                        ytDlpUpdateCloseButton_->get_gameObject()->SetActive(true);
+                    ytDlpUpdateActionButton_->get_gameObject()->SetActive(
+                        completed);
+                    if(completed)
+                    {
+                        BSML::Lite::SetButtonText(
+                            ytDlpUpdateActionButton_, "Close Beat Saber");
+                        ytDlpUpdateActionButton_->set_interactable(true);
+                    }
+                    ShowModalInFront(ytDlpUpdateModal_);
+                }
             }
         }
         // TakePendingDialog clears the queue. Consume only after this menu has
@@ -3548,7 +3824,6 @@ namespace BigScreen {
             showcaseButton_->set_interactable(
                 Settings::Instance().ModEnabled());
         }
-        auto& downloader = DownloadManager::Instance();
         RefreshYtDlpChannelState();
         if(ytDlpVersionText_)
             ytDlpVersionText_->set_text(
@@ -3575,9 +3850,7 @@ namespace BigScreen {
                 !release.Active());
         }
         if(!updaterButton_ || !updaterStatus_) return;
-        const auto snapshot = downloader.Snapshot();
         const auto ytDlpRelease = downloader.YtDlpReleaseStatus();
-        const bool installing = snapshot.levelId == "__updater__";
         if(installing && snapshot.state == DownloadState::Completed &&
            pendingYtDlpChannelSwitch_)
         {

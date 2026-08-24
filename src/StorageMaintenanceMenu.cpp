@@ -53,6 +53,13 @@ namespace BigScreen {
         // the 54-unit side-panel width to a center-screen maintenance table.
         constexpr float PanelWidth = 120.0f;
 
+        // The BSML scroll-view viewport is narrower than its outer layout
+        // element because the mask and vertical scroll controls consume both
+        // horizontal edges. Keep candidate rows centered inside that usable
+        // area; allowing the list to force-expand them pushes NameText under
+        // the left mask and SwitchView under the right mask.
+        constexpr float FileRowWidth = 108.0f;
+
         void ConfigureLayout(
             UnityEngine::Component* component,
             float preferredWidth,
@@ -194,7 +201,7 @@ namespace BigScreen {
             rows->set_spacing(0.35f);
             rows->set_childControlWidth(true);
             rows->set_childControlHeight(true);
-            rows->set_childForceExpandWidth(true);
+            rows->set_childForceExpandWidth(false);
             rows->set_childForceExpandHeight(false);
             rows->set_childAlignment(UnityEngine::TextAnchor::UpperCenter);
         }
@@ -401,9 +408,14 @@ namespace BigScreen {
         for(const auto& item : snapshot.items)
         {
             const auto key = item.path.lexically_normal().string();
+            // PanelWidth already consumes most of Beat Saber's center canvas,
+            // while filenames have no practical maximum length. Widening the
+            // entire page would move the clipping problem to the panel edges.
+            // Keep the fixed metadata together on line one and give the real
+            // filename its own wrapped line instead.
             const std::string label = item.category + "  |  " +
                 Utility::FormatStorageSize(item.bytes, 1, 2) +
-                    "  |  " + item.path.filename().string();
+                    "\n" + item.path.filename().string();
             auto* checkbox = BSML::Lite::CreateToggle(
                 fileListContent_,
                 label,
@@ -417,7 +429,10 @@ namespace BigScreen {
                     RefreshSelectionState(
                         StorageManager::Instance().Snapshot());
                 });
-            ConfigureLayout(checkbox, PanelWidth - 3.5f, 7.5f, 1.0f);
+            // Do not give this row flexible width. The scroll container would
+            // otherwise stretch it back across the masked edge area and undo
+            // FileRowWidth, clipping both the two-line label and the switch.
+            ConfigureLayout(checkbox, FileRowWidth, 10.5f);
             fileRows_.push_back(checkbox->get_gameObject());
 
             // ToggleSetting normally puts the switch at the right edge. This
@@ -429,8 +444,10 @@ namespace BigScreen {
                    ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
             {
                 text->set_richText(false);
-                text->set_fontSize(1.15f);
-                text->set_enableWordWrapping(false);
+                text->set_enableAutoSizing(true);
+                text->set_fontSizeMin(1.0f);
+                text->set_fontSizeMax(1.3f);
+                text->set_enableWordWrapping(true);
                 text->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
                 text->set_alignment(TMPro::TextAlignmentOptions::MidlineLeft);
             }

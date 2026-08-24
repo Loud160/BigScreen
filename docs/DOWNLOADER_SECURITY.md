@@ -36,6 +36,21 @@ returns at its timeout before the worker joins. C++ terminal failures remove a
 stale progress record before publishing failure, preventing an old active state
 from blocking all future work.
 
+A user-approved yt-dlp install or channel switch publishes its progress through
+the same atomic status file and in-memory C++ snapshot as a video download. The
+Update-tab modal stays above its owning panel and reports exact package bytes,
+percentage, speed, and ETA while downloading. Release discovery uses an active
+indeterminate bar; checksum verification, archive compatibility testing, and
+transactional staging each publish a named phase while retaining the completed
+byte total. Unity reads only the in-memory snapshot on its normal menu tick, so
+neither Python nor the network worker touches a Unity object.
+
+After a package is verified and staged, the result dialog may close Beat Saber
+only after a second explicit confirmation. The action records the request,
+flushes Big Screen settings, and uses Unity's ordinary application shutdown.
+It does not kill the Android process, silently relaunch the game, or bypass the
+normal shutdown path used by other loaded mods.
+
 Metadata probing reports only compatible exact resolution tiers. A selected
 tier is pinned into the job rather than delegated to yt-dlp's changing `best`
 policy: H.264 is required through 1080p and VP9 at 1440p. Both probing and

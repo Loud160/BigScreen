@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added continuous Update-tab feedback after accepting a yt-dlp update or
+  stable/nightly channel switch. The existing foreground modal now remains in
+  front, shows exact downloaded bytes, percentage, transfer speed, and ETA,
+  pulses during release discovery, and names checksum verification,
+  compatibility testing, and staging. It offers safe cancellation instead of
+  disappearing until the terminal restart notice arrives.
+- Added a confirmed `Close Beat Saber` action to the successful yt-dlp update
+  screen. It uses Unity's normal application shutdown so the staged downloader
+  activates on the next launch without forcing the user back through the game
+  menus first.
+- Changed removable-file rows in Storage Maintenance to keep category and size
+  on the first line while wrapping the filename on a dedicated second line.
+  Rows now use a centered fixed width inside the scroll viewport instead of
+  being force-expanded beneath its mask, keeping both the two-line label and
+  the selection switch clear of the panel's left and right edges.
 - Replaced the first-open construction spike with staged, retained Unity-menu
   prewarming after Beat Saber's main menu has remained stable for 90 frames.
   Each controller group or scene cache is built and timed on a separate game-

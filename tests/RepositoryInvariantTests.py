@@ -78,6 +78,9 @@ settings_menu_header = (
     root / "include/BigScreen/SettingsMenu.hpp"
 ).read_text(encoding="utf-8")
 settings_menu_source = (root / "src/SettingsMenu.cpp").read_text(encoding="utf-8")
+storage_maintenance_source = (
+    root / "src/StorageMaintenanceMenu.cpp"
+).read_text(encoding="utf-8")
 menu_modal_header = (
     root / "include/BigScreen/MenuModal.hpp"
 ).read_text(encoding="utf-8")
@@ -1221,6 +1224,34 @@ assert '"Several YouTube downloads failed"' in download_manager_source
 assert "consecutiveYoutubeDownloadFailures_ < 3" in download_manager_source
 assert "youtubeFailureGuidancePending_" in download_manager_source
 assert "ShowModalInFront(ytDlpUpdateModal_)" in settings_menu_source
+assert "ytDlpUpdateProgressTrack_" in settings_menu_header
+assert "ytDlpUpdateProgressFill_" in settings_menu_header
+assert "ytDlpInstallProgressVisible_" in settings_menu_header
+assert 'SetButtonText(\n                    ytDlpUpdateActionButton_, "Cancel Update")' in (
+    settings_menu_source
+)
+assert "snapshot.downloadedBytes" in settings_menu_source
+assert "snapshot.totalBytes" in settings_menu_source
+assert "snapshot.speedBytesPerSecond" in settings_menu_source
+assert "snapshot.etaSeconds" in settings_menu_source
+assert "ytDlpUpdateCloseButton_->get_gameObject()->SetActive(false)" in (
+    settings_menu_source
+)
+assert "The update was downloaded and verified. Restart Beat Saber" in (
+    settings_menu_source
+)
+assert "restartRequired" in download_manager_header
+assert '"Close Beat Saber"' in settings_menu_source
+assert '"Close Now"' in settings_menu_source
+assert "UnityEngine::Application::Quit(0);" in settings_menu_source
+assert '"saving settings before closing Beat Saber"' in settings_menu_source
+assert '"\\n" + item.path.filename().string()' in storage_maintenance_source
+assert "constexpr float FileRowWidth = 108.0f;" in storage_maintenance_source
+assert "rows->set_childForceExpandWidth(false);" in storage_maintenance_source
+assert "ConfigureLayout(checkbox, FileRowWidth, 10.5f);" in (
+    storage_maintenance_source
+)
+assert "text->set_enableWordWrapping(true);" in storage_maintenance_source
 assert settings_menu_source.count("UnityEngine::Vector2{42, 8}") >= 2
 assert "BSML::Lite::SetButtonTextSize(updaterButton_, 2.6f);" in settings_menu_source
 assert "BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);" in settings_menu_source

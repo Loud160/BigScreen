@@ -27,6 +27,18 @@ isolated QuickJS runtime with memory, stack, source, output, and time limits.
 yt-dlp updates are staged transactionally and tested with both real EJS solver
 bundles, the provider API, and the engine before activation.
 
+Accepting a yt-dlp update keeps the Update-tab modal visible for the complete
+background operation. Updater Python publishes throttled byte counts, speed,
+ETA, and named verification/staging phases to its atomic status file; the
+existing polling worker copies that data into the ordinary download snapshot.
+Only the Unity-thread menu tick moves the progress bar or changes modal text.
+The terminal result replaces that progress view and still requires a fresh Beat
+Saber process before the staged Python package can become active. A successful
+install therefore offers a confirmed **Close Beat Saber** action. It flushes
+Big Screen settings and calls Unity's normal application quit path, allowing
+the game and other mods to receive their normal shutdown callbacks; it does not
+force-kill the Android process or attempt an unreliable self-relaunch.
+
 Video, map-package, URL-probe, and yt-dlp-update actions are serialized through
 one persistent downloader operation worker. A menu callback only validates and
 queues an action; it never joins a previous network/Python thread. Python may

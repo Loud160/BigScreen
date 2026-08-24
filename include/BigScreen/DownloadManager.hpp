@@ -163,6 +163,10 @@ namespace BigScreen {
         bool offerInstall = false;
         bool installNightly = false;
         bool channelSwitch = false;
+        // A successfully staged package is not activated inside the running
+        // embedded Python process. The UI may offer a graceful game close so
+        // the next normal launch can activate it.
+        bool restartRequired = false;
     };
 
     /// Runs the official Android CPython build and yt-dlp in-process on one
