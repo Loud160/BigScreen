@@ -2,18 +2,41 @@
 
 ## Unreleased
 
+- Replaced the first-open construction spike with staged, retained Unity-menu
+  prewarming after Beat Saber's main menu has remained stable for 90 frames.
+  Each controller group or scene cache is built and timed on a separate game-
+  thread stage; no worker touches Unity objects, hidden construction does not
+  claim preview ownership, and automatic work pauses when the master switch or
+  safety circuit disables the mod. The architecture document highlights this
+  as a reusable Quest-mod lifecycle pattern rather than an end-user feature.
+  SongCore completion independently invalidates the retained catalog, so maps
+  installed after startup still receive their video download and configuration
+  controls without reconstructing the complete UI. First-use video descriptors
+  are resolved incrementally as an optional cache and never gate the menu
+  button, preventing mapper metadata I/O from reappearing as a large first-open
+  pause without making the player wait to enter Big Screen.
 - Song-selection downloads now continue while browsing other maps, entering
   gameplay, or closing Big Screen. The compact action reads `Cancel`, and a
   different map can no longer accidentally cancel the active transfer. Status
   text is centered in its available row space, and full download failures use
   the frontmost popup while the compact action remains available for retry.
-- Fixed the retained-menu re-entry guard so entering Solo immediately after
-  closing Big Screen can safely re-enable **Configure Video** after the same
-  cooldown and 12 stable frames used by the main menu. Repeated menu visits now
-  reuse the retained song catalog instead of rebuilding roughly 580 map rows
-  twice per activation, and normal main-menu exits no longer start an obsolete
-  song-preview decoder during teardown. Lifecycle and catalog timing are logged
-  to make any remaining Quest-specific opening or closing delay measurable.
+- Fixed the retained-menu re-entry guard so HMUI's completed `DidDeactivate`
+  lifecycle releases both the main button and **Configure Video**. The guard no
+  longer polls destroyed parent-flow wrappers, which could throw every frame
+  and leave all Big Screen entry paths blocked indefinitely. Repeated menu
+  visits reuse the retained song catalog instead of rebuilding roughly 580 map
+  rows twice per activation, and normal main-menu exits no longer start an
+  obsolete song-preview decoder during teardown. Lifecycle and catalog timing
+  remain logged for Quest-specific opening and closing measurements.
+- Restored deterministic **Configure Video** deep-linking after staged catalog
+  preparation. Menu activation now builds only the inexpensive level-pointer
+  model before selecting the requested song and isolates an invalid mapper
+  metadata file to its own catalog entry. First activation supplies the editor
+  as HMUI's initial right-side controller. Retained activations now wait two
+  ordinary menu frames, then reuse the browser's proven editor-navigation
+  callback; HMUI can no longer overwrite the requested editor while it is still
+  restoring the parent presentation. A malformed `cinema-video.json` in an
+  unrelated installed map can no longer delay or redirect the selected editor.
 - Added **Configure Video** beside **Video Ready!** on Beat Saber's Solo song
   selection. It opens the full Big Screen menu directly on that map's video
   editor and closes back onto the unchanged Solo selection. Both entry paths

@@ -21,12 +21,24 @@ namespace BigScreen {
     void RestoreDistractionFreeMenu();
     /// True only while Big Screen's own flow is the active menu hierarchy.
     bool IsBigScreenMenuActive();
-    /// Keeps Big Screen's main-menu entry disabled until Beat Saber's parent
-    /// menu is active and stable after this flow has been dismissed.
+    /// Services deferred error dismissal and a fail-safe for an interrupted
+    /// HMUI close. Normal re-entry is released directly by DidDeactivate; this
+    /// update path never polls destroyed parent coordinators or gates prewarming.
     void TickMenuReentryGuard() noexcept;
-    /// True while Beat Saber is still settling its parent HMUI hierarchy after
-    /// Big Screen closes. New child flows, including Solo, must not be
-    /// presented until this shared transition gate has cleared.
+    /// Completes a retained-flow Configure Video deep-link after HMUI has
+    /// finished the activation callback that attached Big Screen itself.
+    /// Deferring only this proven editor navigation by two ordinary frames
+    /// prevents a side-panel replacement from being discarded by the parent
+    /// presentation transition.
+    void TickPendingMenuNavigation() noexcept;
+    /// Advances at most one menu-construction stage after Beat Saber's menu
+    /// hierarchy has settled. Unity objects remain on the game thread; the
+    /// work is deliberately distributed across frames so neither application
+    /// startup nor Big Screen's first visible activation pays the complete UI
+    /// construction cost in one uninterrupted stall.
+    void TickMenuPrewarm();
+    /// True only while Big Screen itself is actively being dismissed or an
+    /// error-recovery dismissal is queued. Prewarming never sets this gate.
     bool IsBigScreenMenuTransitionPending() noexcept;
     /// Cancels mod-owned interaction and dismisses Big Screen without routing
     /// through controls that may be part of the failed UI operation.
@@ -67,6 +79,12 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, showcaseViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, thumbnailPickerViewController);
+    // Set only after every retained controller and its BSML hierarchy has been
+    // constructed. A prewarmed coordinator still receives firstActivation on
+    // its first presentation, so that callback must use this explicit marker
+    // instead of interpreting firstActivation as "the UI is not built."
+    DECLARE_INSTANCE_FIELD(bool, menuUiConstructed);
+    DECLARE_INSTANCE_FIELD(int, menuPrewarmStage);
     // HMUI retains whichever center subpage was on top when the whole flow was
     // dismissed. Track that state explicitly rather than querying a transient
     // top controller during activation, where Beat Saber may throw.
@@ -78,6 +96,10 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     /// this normalization before yielding the hierarchy to the parent menu.
     DECLARE_INSTANCE_METHOD(void, PrepareForDismissal);
     DECLARE_INSTANCE_METHOD(void, ApplyModEnabledUi, bool enabled);
+    /// Builds one logical page of the retained menu and returns true once all
+    /// pages are ready. This is intentionally a main-thread state machine:
+    /// worker-thread construction of Unity/BSML objects is not supported.
+    DECLARE_INSTANCE_METHOD(bool, PrewarmNextMenuStage);
 
     DECLARE_OVERRIDE_METHOD_MATCH(
         void,

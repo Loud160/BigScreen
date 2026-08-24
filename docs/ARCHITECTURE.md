@@ -139,6 +139,90 @@ and invokes the normal single-player StartLevel path. The showcase marker is
 cleared at gameplay teardown; Results, Replay, Continue, Solo dismissal, and
 the user's eventual return to Big Screen all remain Beat Saber's normal path.
 
+## Developer pattern: staged Unity menu prewarming
+
+> **This is an internal lifecycle/performance design, not an advertised Big
+> Screen feature.** It is documented prominently because Quest mods with large
+> BSML hierarchies should consider the same ownership and scheduling problem.
+
+Creating Unity, HMUI, or BSML objects on a background thread is unsafe. Moving
+menu construction to a worker would make the visible hitch less predictable,
+not solve it. Building every Big Screen page synchronously from
+`MenuFlowCoordinator::DidActivate`, however, charged settings, the song browser
+and editor, storage, Showcase, file browsing, thumbnail picking, and several
+scene-wide caches to the first press of the menu button. On a Quest 2 that
+single activation had been measured at approximately 1.6 seconds even though
+later retained activations took roughly 0.1 seconds.
+
+Big Screen therefore **prewarms its retained menu as a main-thread state
+machine**:
+
+1. Beat Saber's stock main menu must remain active and transition-free for 90
+   consecutive update frames. This lets the game, MenuCore, and other mods
+   finish their own startup work first; a transition resets the count.
+2. Big Screen creates at most one logical page, controller group, or scene
+   cache per stage. Three ordinary update frames separate the stages so Unity
+   can finish layout and mesh work before the next group is allocated.
+3. Prewarming is never an access gate: the Big Screen button remains usable.
+   If the player enters before hidden construction finishes, `DidActivate`
+   completes the remaining UI stages through the same authoritative builder.
+   It then attaches the left/right controllers through HMUI's normal
+   `ProvideInitialViewControllers` lifecycle.
+4. Hidden construction does not activate the Video Library, claim preview
+   ownership, select a map, start a decoder, or change environment visibility.
+   Those are visible-activation responsibilities. Scene discovery stages only
+   populate weak Unity caches; the requested settings are reconciled when Big
+   Screen actually opens.
+5. Every stage logs its name and elapsed time. A regression can therefore be
+   attributed to one page or cache instead of appearing only as a vague
+   first-open delay.
+
+Retaining UI does not mean retaining a frozen song list. SongCore's completed
+song-load event publishes a thread-safe invalidation flag, which Big Screen
+consumes on Unity's update thread. The inexpensive level-pointer model is built
+first; first-use video descriptors are then resolved four maps at a time while
+the stock menu is idle, or eight maps at a time while Big Screen's browser is
+open. Mapper JSON and managed-file discovery can touch Quest shared storage, so
+this optional cache work is deliberately separate from menu readiness. A map
+installed after startup can therefore expose its mapper video, download action,
+and Configure Video shortcut without reconstructing the complete UI or pausing
+the menu for a large library scan. If the editor is already open, catalog work
+waits until the browser is visible so an active selected-level object is never
+swapped underneath its callbacks.
+
+The Solo **Configure Video** shortcut passes a stable level ID into the same
+retained flow. On first activation HMUI receives that editor as the initial
+right-side controller. On later activations Big Screen first lets HMUI restore
+the retained browser, waits two ordinary update frames for the enclosing
+presentation to finish, and then invokes the same browser-to-editor callback as
+a normal song-row selection. Performing that replacement inside `DidActivate`
+is not reliable: HMUI can accept the selected map and still overwrite the visible
+right panel while completing its parent transition.
+
+Menu re-entry uses lifecycle ownership rather than polling retained Unity
+parents. `BackButtonWasPressed` marks dismissal in progress and HMUI's
+`DidDeactivate` callback releases both the main-menu and Configure Video entry
+paths. `PresentSharedMenu` still validates the actual active presenter and its
+transition state on every click. A timed fail-safe handles an interrupted
+dismissal only after the retained Big Screen coordinator is no longer alive;
+it never dereferences destroyed parent-flow wrappers.
+
+The master switch and safety circuit remain authoritative. Automatic prewarming
+does no work while the mod is disabled or ErrorManager is recovering from a
+failure. If either condition becomes true between stages, preparation pauses
+without destroying the already-built inactive pages; it can resume only after
+the user deliberately enables the mod again. An explicit attempt to open a
+disabled Big Screen instance retains a synchronous recovery path so the master
+switch cannot make its own UI permanently inaccessible.
+
+This design intentionally combines three properties that are easy to lose in
+an otherwise reasonable optimization: Unity-thread ownership, bounded work per
+frame, and lifecycle cancellation. Retaining only the first two can keep doing
+unwanted work after a circuit breaker trips; retaining only the last two can
+tempt a mod to create Unity objects from an unsafe worker. Other Quest mods
+with substantial first-open UI should measure their own construction stages
+and apply the pattern only after their normal menu hierarchy is stable.
+
 Menu-controller singletons do not own an IL2CPP hierarchy. A MenuCore flow
 recreation calls each menu's `ForgetUi` boundary before new controllers are
 created, and the active coordinator is retained through `UnityW`. Per-frame UI

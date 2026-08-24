@@ -154,17 +154,45 @@ namespace BigScreen {
         return guide;
     }
 
-    bool MenuPlacementGuide::HideCompatibleMenuFloorRenderers()
+    void MenuPlacementGuide::PrewarmCache()
     {
-        const std::size_t originalCount = hiddenFloorRenderers_.size();
+        const bool cachedSceneInvalid = std::any_of(
+            knownFloorRenderers_.begin(), knownFloorRenderers_.end(),
+            [](UnityW<UnityEngine::Renderer> renderer)
+            {
+                return !UnityW<UnityEngine::Renderer>::isAlive(
+                    renderer.unsafePtr());
+            });
+        if(floorCacheInitialized_ && !cachedSceneInvalid)
+            return;
+
+        knownFloorRenderers_.clear();
         for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
                 UnityEngine::Renderer*>(true))
         {
-            if(!renderer || !renderer->get_enabled() ||
-               !renderer->get_gameObject() ||
-               !renderer->get_gameObject()->get_activeInHierarchy() ||
+            if(!renderer || !renderer->get_gameObject() ||
                HasBigScreenAncestor(renderer->get_transform()) ||
                !LooksLikeHorizontalFloor(renderer))
+                continue;
+            knownFloorRenderers_.emplace_back(renderer);
+        }
+        floorCacheInitialized_ = true;
+        PaperLogger.info(
+            "Prewarmed {} compatible menu-floor renderer(s) for this scene",
+            knownFloorRenderers_.size());
+    }
+
+    bool MenuPlacementGuide::HideCompatibleMenuFloorRenderers()
+    {
+        PrewarmCache();
+        const std::size_t originalCount = hiddenFloorRenderers_.size();
+        for(auto renderer : knownFloorRenderers_)
+        {
+            if(!UnityW<UnityEngine::Renderer>::isAlive(renderer.unsafePtr()) ||
+               !renderer->get_enabled() ||
+               !renderer->get_gameObject() ||
+               !renderer->get_gameObject()->get_activeInHierarchy() ||
+               HasBigScreenAncestor(renderer->get_transform()))
             {
                 continue;
             }

@@ -21,6 +21,10 @@ namespace BigScreen {
     public:
         static MenuEnvironmentVisibility& Instance();
 
+        /// Resolves and indexes the current menu environment without changing
+        /// any renderer or light. Menu prewarming calls this on a separate
+        /// stable frame so a later Apply is only a cheap state reconciliation.
+        void PrewarmCache();
         /// Applies the current preference. Repeated calls while hidden also
         /// capture components that another menu system enabled afterward.
         void Apply();
@@ -37,6 +41,7 @@ namespace BigScreen {
         // scenes. Cache the environment-owned components through ordinary menu
         // visits and rebuild this weak-handle index after Unity replaces them.
         UnityW<UnityEngine::Transform> environmentRoot_ = nullptr;
+        bool cacheInitialized_ = false;
         std::vector<UnityW<UnityEngine::Renderer>> knownRenderers_;
         std::vector<UnityW<UnityEngine::Behaviour>> knownLights_;
         std::vector<UnityW<UnityEngine::Renderer>> hiddenRenderers_;

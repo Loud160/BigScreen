@@ -22,6 +22,10 @@ namespace BigScreen {
     public:
         static MenuPlacementGuide& Instance();
 
+        /// Indexes compatible floor renderers without hiding them. Separating
+        /// discovery from Apply avoids a global renderer scan when the player
+        /// first opens Big Screen while preserving the setting's exact effect.
+        void PrewarmCache();
         /// Applies the current setting while Big Screen's flow is active.
         /// Calling this repeatedly is safe and does not rescan a live guide.
         bool Apply();
@@ -40,6 +44,8 @@ namespace BigScreen {
         // when no compatible floor was present. This prevents repeated global
         // renderer scans while the independent lane toggle changes.
         bool floorRemovalApplied_ = false;
+        bool floorCacheInitialized_ = false;
+        std::vector<UnityW<UnityEngine::Renderer>> knownFloorRenderers_;
         std::vector<UnityW<UnityEngine::Renderer>> hiddenFloorRenderers_;
         UnityW<UnityEngine::GameObject> guideRoot_ = nullptr;
         UnityW<UnityEngine::Material> guideMaterial_ = nullptr;

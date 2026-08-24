@@ -1672,8 +1672,8 @@ assert back_exit.index("PrepareForDismissal();") < \
 
 # A failure raised from DidActivate must not dismiss HMUI reentrantly. Queue the
 # flow and let the normal main-thread update perform the dismissal on a later
-# frame, then wait for Beat Saber's main-menu or Solo hierarchy to become
-# stable before re-entry.
+# frame. HMUI's DidDeactivate callback releases normal re-entry; the update
+# fail-safe must never inspect destroyed parent-flow wrappers.
 failed_exit = menu_flow_source.split(
     "bool ExitBigScreenMenuAfterError() noexcept", 1
 )[1].split("bool ExitBigScreenMenuForShowcase() noexcept", 1)[0]
@@ -1685,10 +1685,9 @@ reentry_tick = menu_flow_source.split(
 assert "if(++pendingFailedMenuExitFrames < 2)" in reentry_tick
 assert "parent->DismissFlowCoordinator(" in reentry_tick
 assert "pendingFailedMenuExit = nullptr;" in reentry_tick
-assert "stableMainMenu" in reentry_tick
-assert "stableSolo" in reentry_tick
-assert "IsInSoloHierarchy(youngest, solo)" in reentry_tick
-assert "stableEntryHierarchyFrames < 12" in reentry_tick
+assert "UnityW<MenuFlowCoordinator>::isAlive(activeMenuFlow)" in reentry_tick
+assert "YoungestChildFlowCoordinatorOrSelf" not in reentry_tick
+assert "CompleteMenuReentryGuard();" in reentry_tick
 
 # Showcase glass remains deterministic, programmatic, and isolated from the
 # normal video surface. Only the authored 2:03 damage sequence uses it. Its
@@ -1969,8 +1968,9 @@ library_deactivate = library_menu_source.split(
 )[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
 assert "SetLibraryPreviewOwnershipActive(true);" in library_refresh
 assert "SetLibraryPreviewOwnershipActive(false);" in library_deactivate
-assert "if(catalogRefreshRequested_)" in library_refresh
-assert "RebuildCatalog();" in library_refresh
+assert "if(catalogRefreshRequested_ && !catalogPrewarmModelReady_)" in library_refresh
+assert "BeginCatalogRebuild();" in library_refresh
+assert "PrewarmCatalogStep(8);" not in library_refresh
 assert "RequestCatalogRefresh();" in showcase_source
 preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
@@ -2189,19 +2189,72 @@ assert menu_flow_source.count(
     "HMUI::ViewController::AnimationDirection::Horizontal,\n                nullptr,\n                true"
 ) >= 2
 assert "BeginMenuReentryGuard" in menu_flow_source
-assert "stableEntryHierarchyFrames < 12" in menu_flow_source
-assert "mainMenu->get_isActivated()" in menu_flow_source
-assert "solo->get_isActivated()" in menu_flow_source
-assert "IsInSoloHierarchy(youngest, solo)" in menu_flow_source
+assert "CompleteMenuReentryGuard();" in menu_flow_source
+reentry_guard = menu_flow_source.split(
+    "void TickMenuReentryGuard() noexcept", 1
+)[1].split("bool ExitBigScreenMenuAfterError()", 1)[0]
+# A destroyed Unity parent must never be dereferenced by the asynchronous
+# transition fail-safe. Normal release belongs to DidDeactivate, while every
+# new presentation validates its live parent at click time.
+assert "YoungestChildFlowCoordinatorOrSelf" not in reentry_guard
+assert "mainMenu->get_isActivated()" not in reentry_guard
+assert "UnityW<MenuFlowCoordinator>::isAlive(activeMenuFlow)" in reentry_guard
+menu_deactivation = menu_flow_source.split(
+    "void MenuFlowCoordinator::DidDeactivate(", 1
+)[1].split("void MenuFlowCoordinator::BackButtonWasPressed(", 1)[0]
+assert "CompleteMenuReentryGuard();" in menu_deactivation
 assert "TickMenuReentryGuard();" in main_source
 
-# Opening the retained flow must not repeat its complete catalog scan, and
-# generic screen-preview teardown must not reopen a stale song decoder while
-# the menu is returning to Beat Saber's main screen.
+# Staged construction must not claim song-preview ownership while its hidden
+# controllers are being built. The Video Library is activated exactly once in
+# DidActivate's first-activation branch; retained visits continue to reuse that
+# catalog. Generic screen-preview teardown must not reopen a stale decoder.
 menu_activation = menu_flow_source.split(
     "void MenuFlowCoordinator::DidActivate(", 1
 )[1].split("void MenuFlowCoordinator::ApplyModEnabledUi", 1)[0]
-assert "VideoLibraryMenu::Instance().Refresh();" not in menu_activation
+assert menu_activation.count("VideoLibraryMenu::Instance().Refresh();") == 1
+assert "OpenEditorForLevelId(\n                    requestedEditorLevelId,\n                    false)" in menu_activation
+retained_activation = menu_activation.split(
+    "const bool modEnabled = Settings::Instance().ModEnabled();", 1
+)[1]
+assert retained_activation.index("ApplyModEnabledUi(modEnabled);") < \
+    retained_activation.index(
+        "pendingActivatedVideoEditorLevelId = requestedEditorLevelId;")
+assert "SetRightScreenViewController(\n                openedRequestedEditor" not in retained_activation
+pending_navigation = menu_flow_source.split(
+    "void TickPendingMenuNavigation() noexcept", 1
+)[1].split("bool ExitBigScreenMenuAfterError() noexcept", 1)[0]
+assert "if(++pendingVideoEditorNavigationFrames < 2" in pending_navigation
+assert "coordinator->get_isActivated()" in pending_navigation
+assert "coordinator->get_isInTransition()" in pending_navigation
+assert "OpenEditorForLevelId(\n                    levelId,\n                    true)" in pending_navigation
+assert "TickPendingMenuNavigation();" in main_source
+prewarm_builder = menu_flow_source.split(
+    "bool MenuFlowCoordinator::PrewarmNextMenuStage()", 1
+)[1].split("void MenuFlowCoordinator::DidActivate(", 1)[0]
+assert "VideoLibraryMenu::Instance().Refresh();" not in prewarm_builder
+assert "false);" in prewarm_builder
+# Catalog descriptor warming is optional and must never hold menuUiConstructed
+# false or disable the public MenuCore button.
+assert "PrewarmCatalogStep(4)" not in prewarm_builder
+menu_prewarm_tick = menu_flow_source.split(
+    "void TickMenuPrewarm()", 1
+)[1].split("void MenuFlowCoordinator::PrepareForDismissal", 1)[0]
+assert "PrewarmCatalogStep(4)" in menu_prewarm_tick
+assert "SetBigScreenMenuButtonInteractable(false)" not in menu_prewarm_tick
+assert "descriptorBudget" in library_menu_source
+assert "catalogPrewarmIndex_" in library_menu_header
+assert "while(!menuUiConstructed)" in menu_activation
+assert "TickMenuPrewarm();" in main_source
+assert "MenuPrewarmStableFrameRequirement = 90" in menu_flow_source
+assert "if(!settings.ModEnabled() ||" in menu_flow_source
+assert "ErrorManager::Instance().MenuRecoveryActive())" in menu_flow_source
+assert "PrewarmCache();" in prewarm_builder
+assert "GetSongsLoadedEvent().addCallback(HandleSongsLoaded)" in main_source
+assert "songCatalogRefreshPending.exchange(" in main_source
+assert "catalogRefreshRequested_ && !editorVisible_" in library_menu_source
+assert "PrewarmCatalogStep(8);" in library_menu_source
+assert "catalog_[catalogPrewarmIndex_++].level" in library_menu_source
 screen_preview_source = (root / "src/ScreenPreview.cpp").read_text(
     encoding="utf-8")
 screen_preview_suspend = screen_preview_source.split(

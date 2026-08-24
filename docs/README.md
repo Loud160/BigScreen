@@ -16,7 +16,7 @@ This index separates ordinary player instructions from mapper and developer mate
 
 ## Developers and distributors
 
-- [Architecture](ARCHITECTURE.md) — lifecycle, main-thread ownership, decoder/downloader workers, persistence, and failure containment.
+- [Architecture](ARCHITECTURE.md) — lifecycle, main-thread ownership, staged Unity menu prewarming, decoder/downloader workers, persistence, and failure containment. Its prewarming section is a developer-facing design pattern, not an end-user feature claim.
 - [Downloader security](DOWNLOADER_SECURITY.md) — pinned runtime, checksum verification, update activation, rejection, and rollback.
 - [Build dependencies and network downloads](DEPENDENCIES.md) — required host tools, exact automatic downloads, cache behavior, integrity checks, and equivalent manual commands.
 - [Building and packaging](BUILDING.md) — toolchain, host tests, Quest build, QMOD contents, and CI.

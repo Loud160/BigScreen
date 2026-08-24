@@ -706,7 +706,8 @@ namespace BigScreen {
         HMUI::ViewController* editorController,
         std::function<void(bool showEditor)> navigate,
         std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
-        std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker)
+        std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker,
+        bool activate)
     {
         if(!browserController || !editorController)
             return;
@@ -1932,10 +1933,14 @@ namespace BigScreen {
             if(text) text->set_alignment(TMPro::TextAlignmentOptions::Center);
 
         editorVisible_ = false;
-        Refresh();
+        // Menu prewarming constructs this inactive hierarchy before Big Screen
+        // owns the foreground. Do not claim song-preview ownership or rebuild
+        // the catalog until the coordinator is actually presented.
+        if(activate)
+            Refresh();
     }
 
-    void VideoLibraryMenu::RebuildCatalog()
+    void VideoLibraryMenu::BeginCatalogRebuild()
     {
         const auto rebuildStarted = std::chrono::steady_clock::now();
         catalog_.clear();
@@ -2013,8 +2018,78 @@ namespace BigScreen {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - rebuildStarted).count(),
             catalog_.size(), groupCounts[0], groupCounts[1], groupCounts[2], groupCounts[3]);
+        catalogPrewarmModelReady_ = true;
+        catalogPrewarmIndex_ = 0;
+    }
+
+    bool VideoLibraryMenu::PrewarmCatalogStep(
+        std::size_t descriptorBudget)
+    {
+        if(!browserController_ || !editorController_)
+            return false;
+        if(!catalogRefreshRequested_)
+            return true;
+        if(!catalogPrewarmModelReady_)
+            BeginCatalogRebuild();
+
+        // Describe() performs the map-local Cinema JSON and managed-assignment
+        // lookup on its first call, then retains the result in VideoLibrary.
+        // Warming only a few entries per frame preserves Unity ownership while
+        // avoiding the roughly 800 ms first-open burst observed with 578 maps.
+        descriptorBudget = std::max<std::size_t>(descriptorBudget, 1);
+        const auto end = std::min(
+            catalogPrewarmIndex_ + descriptorBudget,
+            catalog_.size());
+        while(catalogPrewarmIndex_ < end)
+        {
+            // One malformed mapper file must not pin the incremental cursor or
+            // prevent an unrelated Configure Video deep-link from opening.
+            // Advance ownership before parsing, then isolate any unexpected
+            // filesystem/parser exception to this one catalog entry. Describe
+            // already records ordinary rejected Cinema JSON as a map-specific
+            // diagnostic and returns the usable non-mapper state.
+            auto* level = catalog_[catalogPrewarmIndex_++].level;
+            try
+            {
+                VideoLibrary::Instance().Describe(level);
+            }
+            catch(const std::exception& exception)
+            {
+                PaperLogger.error(
+                    "Skipped one video-library descriptor during incremental catalog preparation: {}",
+                    exception.what());
+            }
+            catch(...)
+            {
+                PaperLogger.error(
+                    "Skipped one video-library descriptor during incremental catalog preparation");
+            }
+        }
+        if(catalogPrewarmIndex_ < catalog_.size())
+            return false;
+
         catalogRefreshRequested_ = false;
+        catalogPrewarmModelReady_ = false;
+        catalogPrewarmIndex_ = 0;
+        const auto rowsStarted = std::chrono::steady_clock::now();
         RebuildVisibleRows();
+        PaperLogger.info(
+            "Video library catalog prewarming completed; retained rows finalized in {} ms",
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - rowsStarted).count());
+        return true;
+    }
+
+    void VideoLibraryMenu::RebuildCatalog()
+    {
+        BeginCatalogRebuild();
+        // Explicit refreshes occur after SongCore changes the installed map
+        // model. Almost every descriptor is already cached; completing this
+        // uncommon invalidation atomically keeps the visible table consistent.
+        while(!PrewarmCatalogStep(
+            std::max<std::size_t>(catalog_.size(), 1)))
+        {
+        }
     }
 
     void VideoLibraryMenu::RebuildVisibleRows(bool preserveScrollPosition)
@@ -4751,6 +4826,16 @@ namespace BigScreen {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
 
+        // The hierarchy is prewarmed and retained, but its map rows are not a
+        // permanent startup snapshot. Resolve a small descriptor slice on each
+        // safe browser frame after SongCore reports a completed refresh. If the
+        // editor is open, keep its selected BeatmapLevel stable and defer until
+        // the user backs out instead of replacing table objects underneath
+        // active callbacks. This keeps large libraries from blocking Unity's
+        // UI thread when Big Screen first appears.
+        if(catalogRefreshRequested_ && !editorVisible_)
+            PrewarmCatalogStep(8);
+
         const auto ownedTask = DownloadManager::Instance().Snapshot();
         if(!ownedTask.Active() && !ownedDownloadLevelId_.empty() &&
            ownedTask.levelId == ownedDownloadLevelId_)
@@ -5028,11 +5113,12 @@ namespace BigScreen {
         PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(true);
         active_ = true;
         // Beat Saber and SongCore retain their level objects for the menu
-        // session. Rebuilding this catalog used to parse/probe roughly 580 maps
-        // twice on first activation and twice again on every later visit. Keep
-        // the completed model until a known SongCore refresh invalidates it.
-        if(catalogRefreshRequested_)
-            RebuildCatalog();
+        // session. A first activation with hundreds of maps must not synchronously
+        // parse any unrelated descriptor before a Configure Video deep-link is
+        // honored. Build only the inexpensive pointer model here; Tick or the
+        // hidden main-menu warmer advances descriptor slices afterward.
+        if(catalogRefreshRequested_ && !catalogPrewarmModelReady_)
+            BeginCatalogRebuild();
         if(editorVisible_) RefreshDetails();
         if(!Settings::Instance().ModEnabled())
         {
@@ -5104,6 +5190,11 @@ namespace BigScreen {
     void VideoLibraryMenu::RequestCatalogRefresh()
     {
         catalogRefreshRequested_ = true;
+        // A SongCore refresh can arrive while startup prewarming is between
+        // slices. Discard the partial index so the rebuilt model and its level
+        // pointers all come from one completed SongCore generation.
+        catalogPrewarmModelReady_ = false;
+        catalogPrewarmIndex_ = 0;
     }
 
     void VideoLibraryMenu::StopActivePreview()

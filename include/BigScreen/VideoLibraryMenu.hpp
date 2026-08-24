@@ -7,6 +7,7 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -60,11 +61,17 @@ namespace BigScreen {
             HMUI::ViewController* editorController,
             std::function<void(bool showEditor)> navigate,
             std::function<void(GlobalNamespace::BeatmapLevel*)> browseLocalVideo,
-            std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker);
+            std::function<void(GlobalNamespace::BeatmapLevel*)> openThumbnailPicker,
+            bool activate = true);
         /// Releases every scene-owned UI/media reference before MenuCore
         /// replaces the menu hierarchy.
         void ForgetUi();
         void Refresh();
+        /// Builds the retained song model without activating preview playback.
+        /// Metadata is warmed in small Unity-thread slices so a large library
+        /// cannot turn either application startup or first menu entry into one
+        /// long synchronous pause. Returns true when rows are ready to present.
+        bool PrewarmCatalogStep(std::size_t descriptorBudget);
         /// Invalidates the retained song catalog after an explicit SongCore
         /// refresh. Ordinary menu re-entry reuses the proven catalog instead
         /// of re-reading every map and rebuilding every row on Unity's thread.
@@ -92,6 +99,7 @@ namespace BigScreen {
         enum class EditorTransferKind { None, Probe, Download };
 
         VideoLibraryMenu() = default;
+        void BeginCatalogRebuild();
         void RebuildCatalog();
         void RebuildVisibleRows(bool preserveScrollPosition = false);
         void SelectRow(int row);
@@ -337,6 +345,8 @@ namespace BigScreen {
         int playbackControlsTickCounter_ = 0;
         bool periodicDownloadWasActive_ = false;
         bool catalogRefreshRequested_ = true;
+        bool catalogPrewarmModelReady_ = false;
+        std::size_t catalogPrewarmIndex_ = 0;
         int pendingDownloadHeight_ = 0;
     };
 }

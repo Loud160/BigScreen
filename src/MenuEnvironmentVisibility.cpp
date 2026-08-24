@@ -138,6 +138,71 @@ namespace BigScreen {
         return visibility;
     }
 
+    void MenuEnvironmentVisibility::PrewarmCache()
+    {
+        auto root = UnityW<UnityEngine::Transform>::isAlive(
+                environmentRoot_.unsafePtr())
+            ? environmentRoot_
+            : ResolveMenuEnvironmentRoot();
+        if(!root)
+        {
+            cacheInitialized_ = false;
+            PaperLogger.warn(
+                "Could not prewarm the menu-environment cache because no compatible hierarchy was found");
+            return;
+        }
+        environmentRoot_ = root;
+
+        const bool cachedSceneInvalid =
+            !UnityW<UnityEngine::Transform>::isAlive(
+                environmentRoot_.unsafePtr()) ||
+            std::any_of(
+                knownRenderers_.begin(), knownRenderers_.end(),
+                [](UnityW<UnityEngine::Renderer> renderer)
+                {
+                    return !UnityW<UnityEngine::Renderer>::isAlive(
+                        renderer.unsafePtr());
+                }) ||
+            std::any_of(
+                knownLights_.begin(), knownLights_.end(),
+                [](UnityW<UnityEngine::Behaviour> light)
+                {
+                    return !UnityW<UnityEngine::Behaviour>::isAlive(
+                        light.unsafePtr());
+                });
+        if(cacheInitialized_ && !cachedSceneInvalid)
+            return;
+
+        knownRenderers_.clear();
+        knownLights_.clear();
+        for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
+                UnityEngine::Renderer*>(true))
+        {
+            if(!renderer || !renderer->get_gameObject() ||
+               !IsOwnedByEnvironment(renderer->get_transform(), root) ||
+               HasBigScreenAncestor(renderer->get_transform()) ||
+               HasPointerOrControllerAncestor(renderer->get_transform()))
+                continue;
+            knownRenderers_.emplace_back(renderer);
+        }
+        CacheEnvironmentLights<UnityEngine::Light>(root, knownLights_);
+        CacheEnvironmentLights<GlobalNamespace::BloomPrePassLight>(
+            root, knownLights_);
+        CacheEnvironmentLights<GlobalNamespace::LineLight>(
+            root, knownLights_);
+        CacheEnvironmentLights<GlobalNamespace::PointLight>(
+            root, knownLights_);
+        CacheEnvironmentLights<GlobalNamespace::DirectionalLight>(
+            root, knownLights_);
+        CacheEnvironmentLights<GlobalNamespace::LightWithIdMonoBehaviour>(
+            root, knownLights_);
+        cacheInitialized_ = true;
+        PaperLogger.info(
+            "Prewarmed {} menu-environment renderers and {} lighting components for this scene",
+            knownRenderers_.size(),
+            knownLights_.size());
+    }
+
     void MenuEnvironmentVisibility::Apply()
     {
         const auto& settings = Settings::Instance();
@@ -152,61 +217,14 @@ namespace BigScreen {
 
     void MenuEnvironmentVisibility::HideVisualComponents()
     {
-        auto root = UnityW<UnityEngine::Transform>::isAlive(
-                environmentRoot_.unsafePtr())
-            ? environmentRoot_
-            : ResolveMenuEnvironmentRoot();
-        if(!root)
+        PrewarmCache();
+        if(!cacheInitialized_ ||
+           !UnityW<UnityEngine::Transform>::isAlive(
+               environmentRoot_.unsafePtr()))
         {
             PaperLogger.warn(
                 "Show Menu Environment is off, but no compatible menu-environment hierarchy was found");
             return;
-        }
-        environmentRoot_ = root;
-
-        const bool cachedSceneInvalid = std::any_of(
-                knownRenderers_.begin(), knownRenderers_.end(),
-                [](UnityW<UnityEngine::Renderer> renderer)
-                {
-                    return !UnityW<UnityEngine::Renderer>::isAlive(
-                        renderer.unsafePtr());
-                }) ||
-            std::any_of(
-                knownLights_.begin(), knownLights_.end(),
-                [](UnityW<UnityEngine::Behaviour> light)
-                {
-                    return !UnityW<UnityEngine::Behaviour>::isAlive(
-                        light.unsafePtr());
-                });
-        if(knownRenderers_.empty() || cachedSceneInvalid)
-        {
-            knownRenderers_.clear();
-            knownLights_.clear();
-            for(auto* renderer : UnityEngine::Object::FindObjectsOfType<
-                    UnityEngine::Renderer*>(true))
-            {
-                if(!renderer || !renderer->get_gameObject() ||
-                   !IsOwnedByEnvironment(renderer->get_transform(), root) ||
-                   HasBigScreenAncestor(renderer->get_transform()) ||
-                   HasPointerOrControllerAncestor(renderer->get_transform()))
-                    continue;
-                knownRenderers_.emplace_back(renderer);
-            }
-            CacheEnvironmentLights<UnityEngine::Light>(root, knownLights_);
-            CacheEnvironmentLights<GlobalNamespace::BloomPrePassLight>(
-                root, knownLights_);
-            CacheEnvironmentLights<GlobalNamespace::LineLight>(
-                root, knownLights_);
-            CacheEnvironmentLights<GlobalNamespace::PointLight>(
-                root, knownLights_);
-            CacheEnvironmentLights<GlobalNamespace::DirectionalLight>(
-                root, knownLights_);
-            CacheEnvironmentLights<GlobalNamespace::LightWithIdMonoBehaviour>(
-                root, knownLights_);
-            PaperLogger.info(
-                "Cached {} menu-environment renderers and {} lighting components for this scene",
-                knownRenderers_.size(),
-                knownLights_.size());
         }
 
         hidden_ = true;

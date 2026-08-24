@@ -8,9 +8,11 @@
 #include "main.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <format>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "BigScreen/DownloadManager.hpp"
@@ -120,6 +122,18 @@
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
 
 namespace {
+    // SongCore may finish a refresh outside the exact frame on which Big
+    // Screen owns Unity UI. The callback publishes only this plain flag; the
+    // SongPreviewPlayer update consumes it on Unity's thread before any table
+    // or selected-level object is touched.
+    std::atomic_bool songCatalogRefreshPending{false};
+
+    void HandleSongsLoaded(
+        std::span<SongCore::SongLoader::CustomBeatmapLevel* const>)
+    {
+        songCatalogRefreshPending.store(true, std::memory_order_release);
+    }
+
     void PrepareGameplayVideoForLevel(
         GlobalNamespace::BeatmapLevel* level,
         GlobalNamespace::BeatmapKey beatmapKey)
@@ -1727,13 +1741,38 @@ namespace {
         // Probe from the first stable main-menu update so battery telemetry is
         // verified before the user spends time on an A/B gameplay pair.
         BigScreen::PowerBenchmark::Instance().ProbeBatteryAccessOnce();
-        // This must run even when Big Screen has disabled itself: it releases
-        // only the main-menu entry after Beat Saber's dismissal hierarchy is
-        // safe, preventing immediate re-entry from freezing every menu panel.
+        // This must run even when Big Screen has disabled itself: it services
+        // safe-frame error dismissal and the interrupted-lifecycle fail-safe.
+        // Normal close/re-entry is released directly by HMUI DidDeactivate.
         BigScreen::TickMenuReentryGuard();
+        // A retained Configure Video launch selects its map only after HMUI has
+        // finished presenting Big Screen. This avoids losing the editor panel
+        // to the enclosing side-controller restoration during DidActivate.
+        BigScreen::TickPendingMenuNavigation();
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
         BigScreen::ErrorManager::Instance().TickMainThread();
+        // Unity and BSML objects must be created on this thread. Build only
+        // one retained menu page per stable startup frame instead of moving
+        // unsafe Unity work to a worker or charging the complete hierarchy to
+        // the player's first click. TickMenuPrewarm enforces the master-switch
+        // and circuit-breaker gates internally before creating anything.
+        BigScreen::ErrorManager::Instance().Guard(
+            "prewarming the Big Screen menu", []()
+            {
+                BigScreen::TickMenuPrewarm();
+            });
+        if(songCatalogRefreshPending.exchange(
+               false, std::memory_order_acq_rel))
+        {
+            // UI construction is retained, but its map model is not frozen at
+            // startup. A map downloaded by any supported installer becomes
+            // eligible for Video Available/Download and Configure Video as
+            // soon as SongCore publishes its completed refresh.
+            BigScreen::VideoLibraryMenu::Instance().RequestCatalogRefresh();
+            PaperLogger.info(
+                "Invalidated Big Screen's retained catalog after SongCore loaded new map data");
+        }
         if(BigScreen::IsBigScreenMenuActive())
             BigScreen::TickFrontmostMenuModal();
         if(!BigScreen::Settings::Instance().ModEnabled() ||
@@ -2047,6 +2086,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // including WIP songs. A plain native callback keeps this path independent
     // of Beat Saber's private view-controller field layout.
     SongCore::API::LevelSelect::GetLevelWasSelectedEvent().addCallback(HandleLevelWasSelected);
+    SongCore::API::Loading::GetSongsLoadedEvent().addCallback(HandleSongsLoaded);
     BigScreen::SettingsMenu::Instance().Register();
     PaperLogger.info("Big Screen hooks installed");
 }
