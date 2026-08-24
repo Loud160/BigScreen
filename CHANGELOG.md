@@ -23,9 +23,8 @@
   activation refresh rebinds its virtualized cell pool. The definitive data and
   layout reload now occurs on the first frame where the browser is fully active,
   after the right-panel transition can no longer overwrite it, while preserving
-  the user's exact scroll position. The repair is a single transition-time
-  reload of HMUI's small live cell pool; it does not poll or repeatedly refresh
-  rows while the browser remains open.
+  the user's exact scroll position. The existing visible-row presentation pass
+  remains responsible for attaching cached and newly available video thumbnails.
 - Replaced the first-open construction spike with staged, retained Unity-menu
   prewarming after Beat Saber's main menu has remained stable for 90 frames.
   Each controller group or scene cache is built and timed on a separate game-

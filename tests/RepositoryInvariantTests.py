@@ -1289,8 +1289,8 @@ assert "nameText->set_text(cellInfo->text);" in visible_row_refresh_body
 assert "cellInfo->subText ? cellInfo->subText : \"\"" in visible_row_refresh_body
 # The final full reload must happen after HMUI reports the retained browser as
 # active; reloading only during ShowBrowser is overwritten by the side-panel
-# transition. Preserve position without introducing a recurring visible-row
-# refresh whose cost would continue for the lifetime of the browser.
+# transition. Preserve position while retaining the existing visible-row pass
+# that supplies video thumbnails after their files become available.
 assert "browserTableReloadPending_ = true;" in library_menu_source
 assert "browserController_->get_isActiveAndEnabled()" in library_menu_source
 assert "tableView->ReloadData();" in library_menu_source
@@ -1299,7 +1299,7 @@ assert "scrollView->ScrollTo(browserReturnScrollPosition_, false);" in (
 )
 assert "browserTableReloadPending_ = false;" in library_menu_source
 assert "LogVisibleRowState" not in library_menu_source
-assert "thumbnailTickCounter_" not in library_menu_source
+assert "thumbnailTickCounter_" in library_menu_source
 assert settings_menu_source.count("UnityEngine::Vector2{42, 8}") >= 2
 assert "BSML::Lite::SetButtonTextSize(updaterButton_, 2.6f);" in settings_menu_source
 assert "BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);" in settings_menu_source

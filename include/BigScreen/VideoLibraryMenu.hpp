@@ -345,14 +345,14 @@ namespace BigScreen {
         bool editorNoticePaintPending_ = false;
         int editorNoticePaintAfterFrame_ = -1;
         int tickCounter_ = 0;
+        int thumbnailTickCounter_ = 0;
         int playbackControlsTickCounter_ = 0;
         bool periodicDownloadWasActive_ = false;
         // HMUI completes right-panel activation after ShowBrowser returns. A
         // reload performed while the controller is still inactive can be
         // overwritten by the final active layout. Retain the exact scroll
         // position and perform one definitive reload only after the browser
-        // reports active. TableView virtualizes the song rows, so this reload
-        // rebinds only its small live cell pool even for very large libraries.
+        // reports active.
         bool browserTableReloadPending_ = false;
         float browserReturnScrollPosition_ = 0.0f;
         bool catalogRefreshRequested_ = true;

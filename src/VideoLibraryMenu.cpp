@@ -4912,6 +4912,12 @@ namespace BigScreen {
            !IsAlive(previewAudioClip_) && !audioLoadTask_ &&
            !levelDataLoadTask_)
             RequestSelectedAudio();
+        if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
+        {
+            thumbnailTickCounter_ = 0;
+            RefreshVisibleRowPresentation();
+        }
+
         try
         {
           if(editorVisible_ && levelDataLoadTask_ &&
