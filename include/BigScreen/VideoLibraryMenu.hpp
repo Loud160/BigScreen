@@ -153,7 +153,11 @@ namespace BigScreen {
         void RefreshUrlTextColor();
         void RefreshDetails();
         void ClearThumbnail();
-        void RefreshVisibleVideoThumbnails();
+        /// Rebinds every visible recycled cell from its current table index.
+        /// Big Screen owns both the custom video thumbnail and the text/layout
+        /// presentation, so refreshing only the thumbnail can leave retained
+        /// HMUI cells displaying another row's song until pointer hover.
+        void RefreshVisibleRowPresentation();
         void StartSelectedPreview();
         void RequestSelectedAudio();
         /// Releases the reference-counted full-song audio acquired for an
@@ -341,9 +345,16 @@ namespace BigScreen {
         bool editorNoticePaintPending_ = false;
         int editorNoticePaintAfterFrame_ = -1;
         int tickCounter_ = 0;
-        int thumbnailTickCounter_ = 0;
         int playbackControlsTickCounter_ = 0;
         bool periodicDownloadWasActive_ = false;
+        // HMUI completes right-panel activation after ShowBrowser returns. A
+        // reload performed while the controller is still inactive can be
+        // overwritten by the final active layout. Retain the exact scroll
+        // position and perform one definitive reload only after the browser
+        // reports active. TableView virtualizes the song rows, so this reload
+        // rebinds only its small live cell pool even for very large libraries.
+        bool browserTableReloadPending_ = false;
+        float browserReturnScrollPosition_ = 0.0f;
         bool catalogRefreshRequested_ = true;
         bool catalogPrewarmModelReady_ = false;
         std::size_t catalogPrewarmIndex_ = 0;

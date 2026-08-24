@@ -76,6 +76,7 @@
 #include "UnityEngine/Sprite.hpp"
 #include "UnityEngine/TextAnchor.hpp"
 #include "UnityEngine/Time.hpp"
+#include "UnityEngine/Transform.hpp"
 #include "UnityEngine/UI/Button.hpp"
 #include "UnityEngine/UI/ColorBlock.hpp"
 #include "UnityEngine/UI/ContentSizeFitter.hpp"
@@ -844,6 +845,15 @@ namespace BigScreen {
                 // Search and filter changes already reset the list explicitly,
                 // so controller activation should preserve the current row.
                 list_->tableView->__cordl_internal_set__scrollToTopOnEnable(false);
+                // The same retained controller also owns a virtualized pool of
+                // LevelListTableCells. HMUI can lay those cells out again when
+                // the browser is re-enabled without asking BSML to bind their
+                // text to the current row. That is why returning from the song
+                // editor showed the existing rows in reverse/stale order until
+                // pointer hover caused each cell to refresh. Use TableView's
+                // native activation contract so every enabled browser rebinds
+                // the visible cells from CustomListTableData.
+                list_->tableView->__cordl_internal_set__refreshCellsOnEnable(true);
             }
             if(listObject && list_->tableView)
             {
@@ -2096,6 +2106,7 @@ namespace BigScreen {
     {
         auto* tableView = list_ ? list_->tableView : nullptr;
         auto* scrollView = tableView ? tableView->get_scrollView().ptr() : nullptr;
+        float retainedScrollPosition = 0.0f;
         if(preserveScrollPosition && scrollView)
         {
             // Selecting a song can hide the browser before an animated letter
@@ -2103,6 +2114,8 @@ namespace BigScreen {
             // before replacing data so it cannot keep moving recycled cells
             // after the browser controller becomes visible again.
             scrollView->ScrollTo(scrollView->get_position(), false);
+            retainedScrollPosition = scrollView->get_position();
+            browserReturnScrollPosition_ = retainedScrollPosition;
         }
 
         visible_.clear();
@@ -2160,10 +2173,18 @@ namespace BigScreen {
             tableView->ClearSelection();
             if(preserveScrollPosition)
             {
-                // Returning from the editor does not intentionally change the
-                // sort. Reload the metadata and the visible cells as one native
-                // operation while retaining the current letter/scroll position.
-                tableView->ReloadDataKeepingPosition();
+                // Do not use ReloadDataKeepingPosition here. In Beat Saber's
+                // virtualized table it can relayout the retained cell pool in
+                // reverse order without asking CustomListTableData to bind the
+                // new row content. Those stale titles persist until hover or
+                // joystick scrolling happens to recycle each individual cell.
+                // A full reload rebinds every visible cell and establishes a
+                // correct reusable pool for rows reached later by scrolling;
+                // restoring the saved pixel position separately preserves the
+                // user's A-Z jump/scroll location without preserving stale UI.
+                tableView->ReloadData();
+                if(scrollView && !visible_.empty())
+                    scrollView->ScrollTo(retainedScrollPosition, false);
             }
             else
             {
@@ -2176,7 +2197,7 @@ namespace BigScreen {
                         HMUI::TableView::ScrollPositionType::Beginning,
                         false);
             }
-            RefreshVisibleVideoThumbnails();
+            RefreshVisibleRowPresentation();
         }
     }
 
@@ -2326,9 +2347,15 @@ namespace BigScreen {
         // frame reserve or keep the prior video's memory allocated.
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
+        // Rebuild the sorted backing data while the browser controller is still
+        // inactive. SetRightScreenViewController enables it asynchronously;
+        // its refreshCellsOnEnable pass must see the final rows rather than the
+        // editor's retained cell pool. Performing this after navigation lets
+        // HMUI's activation overwrite the freshly rebound cells.
+        RebuildVisibleRows(true);
+        browserTableReloadPending_ = true;
         if(navigate_) navigate_(false);
         ScreenPreview::Instance().ActivateUserLayout();
-        RebuildVisibleRows(true);
     }
 
     void VideoLibraryMenu::ShowEditor()
@@ -3189,7 +3216,7 @@ namespace BigScreen {
         }
     }
 
-    void VideoLibraryMenu::RefreshVisibleVideoThumbnails()
+    void VideoLibraryMenu::RefreshVisibleRowPresentation()
     {
         if(!list_ || !list_->tableView || !list_->data)
             return;
@@ -3213,6 +3240,8 @@ namespace BigScreen {
             auto* item = visible_[row];
             auto* level = item ? item->level : nullptr;
             if(!level || !level->levelID) continue;
+            auto* cellInfo = list_->data[row];
+            if(!cellInfo) continue;
             const std::string levelId(level->levelID);
             const auto metadata = RowVideoThumbnails.find(levelId);
             const bool hasVideo = metadata != RowVideoThumbnails.end() &&
@@ -3238,6 +3267,14 @@ namespace BigScreen {
             }
             if(auto nameText = levelCell->__cordl_internal_get__songNameText())
             {
+                // CustomListTableData normally assigns text only when HMUI
+                // requests a cell. A retained right-side controller can reuse
+                // an already-visible cell at a different index without making
+                // that request, leaving its old title in place until hover.
+                // Bind from the current row every time Big Screen refreshes the
+                // row presentation instead of treating text and thumbnails as
+                // separate ownership paths.
+                nameText->set_text(cellInfo->text);
                 auto rect = nameText->get_rectTransform();
                 rect->set_anchorMin({0.0f, 0.5f});
                 rect->set_anchorMax({1.0f, 0.5f});
@@ -3247,6 +3284,8 @@ namespace BigScreen {
             }
             if(auto authorText = levelCell->__cordl_internal_get__songAuthorText())
             {
+                authorText->set_text(
+                    cellInfo->subText ? cellInfo->subText : "");
                 auto rect = authorText->get_rectTransform();
                 rect->set_anchorMin({0.0f, 0.5f});
                 rect->set_anchorMax({1.0f, 0.5f});
@@ -3255,7 +3294,6 @@ namespace BigScreen {
                 rect->set_sizeDelta({hasVideo ? -11.0f : -2.0f, 3.0f});
             }
 
-            auto* cellInfo = list_->data[row];
             if(!hasVideo || !metadata->second.path)
             {
                 cellInfo->icon = nullptr;
@@ -4836,6 +4874,27 @@ namespace BigScreen {
         if(catalogRefreshRequested_ && !editorVisible_)
             PrewarmCatalogStep(8);
 
+        // The right-panel replacement is not complete inside ShowBrowser. Do
+        // the definitive TableView reload on the first frame where HMUI reports
+        // the browser active, then restore the frozen pixel position. This
+        // rebuilds both the cell-to-index mapping and its physical layout after
+        // the transition that previously overwrote the inactive reload.
+        if(browserTableReloadPending_ && !editorVisible_ &&
+           UnityW<HMUI::ViewController>::isAlive(browserController_) &&
+           browserController_->get_isActiveAndEnabled())
+        {
+            if(list_ && list_->tableView)
+            {
+                auto* tableView = list_->tableView;
+                tableView->ReloadData();
+                if(auto* scrollView = tableView->get_scrollView().ptr();
+                   scrollView && !visible_.empty())
+                    scrollView->ScrollTo(browserReturnScrollPosition_, false);
+                RefreshVisibleRowPresentation();
+            }
+            browserTableReloadPending_ = false;
+        }
+
         const auto ownedTask = DownloadManager::Instance().Snapshot();
         if(!ownedTask.Active() && !ownedDownloadLevelId_.empty() &&
            ownedTask.levelId == ownedDownloadLevelId_)
@@ -4853,12 +4912,6 @@ namespace BigScreen {
            !IsAlive(previewAudioClip_) && !audioLoadTask_ &&
            !levelDataLoadTask_)
             RequestSelectedAudio();
-        if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
-        {
-            thumbnailTickCounter_ = 0;
-            RefreshVisibleVideoThumbnails();
-        }
-
         try
         {
           if(editorVisible_ && levelDataLoadTask_ &&
@@ -5150,6 +5203,7 @@ namespace BigScreen {
     void VideoLibraryMenu::Deactivate()
     {
         active_ = false;
+        browserTableReloadPending_ = false;
         CloseEditorNotice();
         editorVisible_ = false;
         pendingDownloadRefreshLevelId_.clear();

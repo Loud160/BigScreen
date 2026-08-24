@@ -17,6 +17,15 @@
   Rows now use a centered fixed width inside the scroll viewport instead of
   being force-expanded beneath its mask, keeping both the two-line label and
   the selection switch clear of the panel's left and right edges.
+- Fixed the Video Library showing stale or reversed song names after returning
+  from a song's configuration page. The sorted backing rows are now rebuilt
+  before the retained browser controller is re-enabled, and HMUI's native
+  activation refresh rebinds its virtualized cell pool. The definitive data and
+  layout reload now occurs on the first frame where the browser is fully active,
+  after the right-panel transition can no longer overwrite it, while preserving
+  the user's exact scroll position. The repair is a single transition-time
+  reload of HMUI's small live cell pool; it does not poll or repeatedly refresh
+  rows while the browser remains open.
 - Replaced the first-open construction spike with staged, retained Unity-menu
   prewarming after Beat Saber's main menu has remained stable for 90 frames.
   Each controller group or scene cache is built and timed on a separate game-

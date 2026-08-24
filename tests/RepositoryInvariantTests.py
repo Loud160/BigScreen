@@ -1252,6 +1252,54 @@ assert "ConfigureLayout(checkbox, FileRowWidth, 10.5f);" in (
     storage_maintenance_source
 )
 assert "text->set_enableWordWrapping(true);" in storage_maintenance_source
+# Returning from the selected-song editor must fully rebind BSML's recycled
+# LevelListTableCells. ReloadDataKeepingPosition preserves the native cell pool
+# and can reverse stale visible labels; restore the saved scroll position only
+# after a normal ReloadData has established correct visible and future rows.
+assert "float retainedScrollPosition = 0.0f;" in library_menu_source
+assert "retainedScrollPosition = scrollView->get_position();" in (
+    library_menu_source
+)
+assert "scrollView->ScrollTo(retainedScrollPosition, false);" in (
+    library_menu_source
+)
+assert "tableView->ReloadDataKeepingPosition();" not in library_menu_source
+# The right-side browser is a retained controller. Rebuild its sorted model
+# before navigation enables that controller, then let HMUI's purpose-built
+# activation refresh bind every recycled cell to the correct row.
+assert (
+    "__cordl_internal_set__refreshCellsOnEnable(true);"
+    in library_menu_source
+)
+show_browser_body = library_menu_source.split(
+    "void VideoLibraryMenu::ShowBrowser()", 1
+)[1].split("void VideoLibraryMenu::ShowEditor()", 1)[0]
+assert show_browser_body.index("RebuildVisibleRows(true);") < (
+    show_browser_body.index("if(navigate_) navigate_(false);")
+)
+# Big Screen customizes retained LevelListTableCells after BSML creates them.
+# The same pass must rebind text from the cell's current table index; updating
+# only thumbnails/layout leaves recycled rows with stale song identities.
+visible_row_refresh_body = library_menu_source.split(
+    "void VideoLibraryMenu::RefreshVisibleRowPresentation(", 1
+)[1].split("bool VideoLibraryMenu::SaveTiming()", 1)[0]
+assert "const int row = levelCell->get_idx();" in visible_row_refresh_body
+assert "auto* cellInfo = list_->data[row];" in visible_row_refresh_body
+assert "nameText->set_text(cellInfo->text);" in visible_row_refresh_body
+assert "cellInfo->subText ? cellInfo->subText : \"\"" in visible_row_refresh_body
+# The final full reload must happen after HMUI reports the retained browser as
+# active; reloading only during ShowBrowser is overwritten by the side-panel
+# transition. Preserve position without introducing a recurring visible-row
+# refresh whose cost would continue for the lifetime of the browser.
+assert "browserTableReloadPending_ = true;" in library_menu_source
+assert "browserController_->get_isActiveAndEnabled()" in library_menu_source
+assert "tableView->ReloadData();" in library_menu_source
+assert "scrollView->ScrollTo(browserReturnScrollPosition_, false);" in (
+    library_menu_source
+)
+assert "browserTableReloadPending_ = false;" in library_menu_source
+assert "LogVisibleRowState" not in library_menu_source
+assert "thumbnailTickCounter_" not in library_menu_source
 assert settings_menu_source.count("UnityEngine::Vector2{42, 8}") >= 2
 assert "BSML::Lite::SetButtonTextSize(updaterButton_, 2.6f);" in settings_menu_source
 assert "BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);" in settings_menu_source
