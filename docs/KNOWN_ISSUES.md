@@ -4,20 +4,19 @@
 > unresolved quality concerns. It is a preservation checkpoint, not a release
 > candidate. Everything must be retested on Quest before release.
 
-Last reviewed: August 22, 2026
+Last reviewed: August 24, 2026
 
 ## Experimental GPU conversion status
 
-The default-off GPU Video Conversion option has passed host invariants, shader
-compilation, and an ARM64 Quest build. Its first Quest 2 run reduced decoder
-time and played smoothly, but exposed a gamma/linear presentation mismatch
-that made the GPU picture too bright. The conversion shader now mirrors the
-CPU sRGB-texture transfer and still requires visual A/B confirmation on Quest.
+GPU Video Conversion now defaults on after Quest 2 A/B testing confirmed the
+corrected picture matches the CPU path while materially reducing frame
+preparation time. Existing settings files are promoted once through the
+versioned settings migration ledger; users may still turn the option off after
+that migration. Quest 3/3S testing remains required before a stable release.
 Its supported scope is 8-bit SDR YUV420P,
 YUVJ420P, and NV12. Unsupported pixel layouts, color matrices, or Unity GPU
 resources are designed to fall back permanently to CPU RGBA for that playback
-session. Do not enable it by default until the release-checklist A/B and
-Showcase compatibility tests pass on-device.
+session.
 
 ## Video screen and Bloom status
 

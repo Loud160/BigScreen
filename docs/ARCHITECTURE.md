@@ -92,9 +92,8 @@ Java VM captured by Scotland2 during Android preload and passes it across the
 FFmpeg-type-free boundary so each isolated libavcodec instance registers the
 VM in its own internal state. MediaCodec is
 opened without an Android output Surface: FFmpeg copies the decoder's NV12 or
-YUV420P output into a CPU-readable frame. The default path remains the existing
-stride-aware swscale/RGBA mailbox. The default-off **GPU Video Conversion**
-experiment instead keeps 8-bit SDR 4:2:0 in reusable YUV allocations and places
+YUV420P output into a CPU-readable frame. The default **GPU Video Conversion**
+path keeps 8-bit SDR 4:2:0 in reusable YUV allocations and places
 eligible future pictures in the bounded timestamp queue. The default GPU
 layout uploads separate Y/U/V planes. A second default-off consolidated mode
 writes luma above side-by-side chroma regions in one R8 atlas, reducing three
@@ -104,6 +103,8 @@ correction, and vignette once into one shared RGBA RenderTexture. It is not
 zero-copy decoding; it reduces transported/uploaded bytes, removes the CPU
 full-frame conversion/rotation work, and gives brief worker stalls a prepared
 reserve. Thumbnails retain the bounded RGBA path.
+The established stride-aware swscale/RGBA mailbox remains selectable for A/B
+testing and is the automatic per-session fallback described below.
 If the packed shader, atlas allocation, or atlas layout cannot be used, that
 playback session first returns to the established three-plane GPU path. An
 unsupported YUV pixel layout or a separate failure of the three-plane Unity

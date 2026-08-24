@@ -802,10 +802,10 @@ assert resolve_video_shader.index('FindVideoShader()') \
 assert "UI/Default was unexpectedly missing" in screen_surface_source
 # The method toggle must exist in the Misc tab, persist through Settings,
 # and apply immediately to an active preview via the proven recreation path.
-assert '"embeddedVideoShaderEnabled", false' in settings_source
+assert '"embeddedVideoShaderEnabled", true' in settings_source
 assert 'Replace(\n            document,\n            "embeddedVideoShaderEnabled",' \
     in settings_source
-assert 'bool embeddedVideoShaderEnabled_ = false;' in settings_header
+assert 'bool embeddedVideoShaderEnabled_ = true;' in settings_header
 assert '"Embedded Video Shader"' in settings_menu_source
 assert 'SetEmbeddedVideoShaderEnabled(enabled);' in settings_menu_source
 embedded_shader_toggle = settings_menu_source.split(
@@ -1856,7 +1856,16 @@ assert "AV_PIX_FMT_NV12" in frame_decoder_source
 assert "SetGpuConversionEnabled" in frame_decoder_header
 assert "permanently using CPU RGBA for this playback session" in playback_source
 assert "GPU Video Conversion" in settings_menu_source
-assert "gpuVideoConversionEnabled_ = false" in settings_header
+assert "gpuVideoConversionEnabled_ = true" in settings_header
+assert "CurrentSettingsMigrationVersion = 2" in settings_source
+assert 'case 0:' in settings_source
+assert 'Replace(document, "gpuVideoConversionEnabled", true)' in settings_source
+assert 'case 1:' in settings_source
+assert 'Replace(document, "embeddedVideoShaderEnabled", true)' in settings_source
+assert 'ReadBool(\n            document, "gpuVideoConversionEnabled", true)' in settings_source
+assert settings_source.index("ApplySettingsMigrations(document);") < \
+    settings_source.index('gpuVideoConversionEnabled_ = ReadBool(')
+assert 'Replace(\n            document,\n            "settingsMigrationVersion"' in settings_source
 assert "Consolidated YUV Upload" in settings_menu_source
 assert "consolidatedYuvUploadEnabled_ = false" in settings_header
 assert '"consolidatedYuvUploadEnabled"' in settings_source

@@ -228,19 +228,23 @@ Opening the page never starts a download. A missing map gets its own **Download 
 
 This is an experimental comparison option. It selects which bundled decoder runtime opens the next video. Off uses FFmpeg 4.4.8; on uses FFmpeg 9.0.1. It does not change, convert, or redownload the video. If a Video Library preview is active, changing the switch safely recreates playback at the retained song position. A map already in gameplay is never switched underneath its running decoder; the new choice applies when the next playback session starts. The performance overlay and results summary identify the runtime that actually opened.
 
-#### Embedded Video Shader — default: Off
+#### Embedded Video Shader — default: On
 
 Selects between two visible video-material paths for the next gameplay session and recreates an active Video Library preview. Off selects Unity's `UI/Default` shader for the picture and follows it with an invisible alpha-only guard so map lighting cannot turn the video into a bloom emitter. On selects the embedded `BigScreen/Video` shader with explicit alpha blending and depth writes. Map-driven bloom and Cinema soft-additive blending are currently ignored in both modes. The former bloom renderer and diagnostic sliders remain preserved in source but are compiled out. If a requested shader cannot load, Big Screen follows its fallback ladder and records the selected tier.
+
+The settings migration ledger forces this option on once for installations that saved the former off default. After migration, a user may turn it off again and that later choice is preserved.
 
 #### Hardware Video Decoding — default: On
 
 On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever FFmpeg runtime is selected. MediaCodec output is copied into CPU-readable memory for Big Screen's existing color conversion and Unity texture upload; this preserves every screen shape and effect but is not a zero-copy GPU path. Startup or mid-video hardware failures reopen with software only when the codec and resolution policy permits it. HEVC and content above 1080p instead stop video safely while the map continues. Turn the option off to force the permitted FFmpeg software decoder for H.264, VP8, or VP9 content at no more than 1080p. The live panel, results summary, error history, and power benchmark identify the backend that actually remained active. Changing this option restarts an active Video Library preview at its retained time and applies to gameplay on the next map.
 
-#### GPU Video Conversion — default: Off
+#### GPU Video Conversion — default: On
 
 Experimental. On keeps MediaCodec or FFmpeg decoding into CPU-readable 8-bit SDR 4:2:0, but transports tightly packed Y/U/V planes instead of creating a full RGBA picture on the decoder worker. Unity uploads the three planes and performs YUV-to-RGB conversion, container rotation, mapper color correction, and vignette in one offscreen GPU pass. The resulting RGBA texture remains shared by the main screen, mapper-authored additional screens, and the Showcase, so canvas movement, curves, deformation, cracks, shatter, and snapshots remain available. This is not a zero-copy decoder and does not change the thumbnail picker.
 
-Only YUV420P/YUVJ420P and NV12 frames use this path. An unsupported decoded layout, missing conversion shader, or failed Unity texture/RenderTexture setup automatically and permanently returns that playback session to the normal CPU RGBA path; the reason is written to diagnostics. Changing this switch recreates an active Video Library preview and affects gameplay on the next map. Quest 2 is the first acceptance target; Quest 3/3S validation follows after the Quest 2 path is stable.
+Only YUV420P/YUVJ420P and NV12 frames use this path. An unsupported decoded layout, missing conversion shader, or failed Unity texture/RenderTexture setup automatically and permanently returns that playback session to the normal CPU RGBA path; the reason is written to diagnostics. Changing this switch recreates an active Video Library preview and affects gameplay on the next map. Quest 2 is the validated acceptance target; Quest 3/3S validation follows before stable release.
+
+Big Screen stores a settings-migration version in its configuration. The first release with this default forces GPU Video Conversion on once for an existing installation, even when an earlier experimental build saved it as off. After that one-time migration, later changes made by the user are preserved normally. Future migrations can retire an experimental control or change one specific default without resetting unrelated screen, environment, or playback settings.
 
 #### Consolidated YUV Upload — default: Off
 

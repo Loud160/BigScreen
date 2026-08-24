@@ -28,6 +28,11 @@ namespace BigScreen {
         constexpr float InitialUndockedZ = 3.2f;
         constexpr float InitialUndockedWidth = 2.4f;
         constexpr float InitialUndockedHeight = 1.35f;
+        // This version belongs to the persisted settings document, not the mod
+        // release. Increment it only when an upgrade must deliberately replace
+        // an already-saved value. Each migration runs once, after which the
+        // user's new choice is respected normally.
+        constexpr int CurrentSettingsMigrationVersion = 2;
 
         bool NearlyEqual(float left, float right)
         {
@@ -85,6 +90,64 @@ namespace BigScreen {
             document.RemoveMember(name);
             rapidjson::Value key(name, document.GetAllocator());
             document.AddMember(key.Move(), value, document.GetAllocator());
+        }
+
+        void ApplySettingsMigrations(rapidjson::Document& document)
+        {
+            // A missing version identifies every settings file written before
+            // the migration ledger existed. Keep these steps ordered and
+            // append-only so a user can upgrade across several releases in one
+            // launch without resetting unrelated preferences.
+            int version = std::max(
+                ReadInt(document, "settingsMigrationVersion", 0),
+                0);
+            while(version < CurrentSettingsMigrationVersion)
+            {
+                switch(version)
+                {
+                    case 0:
+                        // GPU conversion/read-ahead has completed its initial
+                        // Quest 2 validation. Promote it for both fresh installs
+                        // and existing users even when an experimental build
+                        // previously persisted the old false default. Once this
+                        // migration is recorded, a user may turn it off again.
+                        Replace(document, "gpuVideoConversionEnabled", true);
+                        version = 1;
+                        PaperLogger.info(
+                            "Applied settings migration 1: enabled GPU Video Conversion");
+                        break;
+                    case 1:
+                        // The embedded shader is now the preferred visible
+                        // video-material path. Promote existing settings once,
+                        // including the false value written by its former
+                        // experimental default, without permanently overriding
+                        // a user's later choice.
+                        Replace(document, "embeddedVideoShaderEnabled", true);
+                        version = 2;
+                        PaperLogger.info(
+                            "Applied settings migration 2: enabled Embedded Video Shader");
+                        break;
+                    default:
+                        // The loop is intentionally guarded even though every
+                        // known version has an explicit case. Never risk a
+                        // startup loop if a future edit increments the current
+                        // version before adding its migration body.
+                        PaperLogger.error(
+                            "No migration exists for Big Screen settings version {}",
+                            version);
+                        version = CurrentSettingsMigrationVersion;
+                        break;
+                }
+            }
+
+            // Preserve a newer version if a settings file is later read by an
+            // older build. Unknown keys are likewise retained by WriteNow().
+            Replace(
+                document,
+                "settingsMigrationVersion",
+                std::max(
+                    version,
+                    ReadInt(document, "settingsMigrationVersion", 0)));
         }
 
         int NormalizePlaybackFps(int value)
@@ -186,6 +249,8 @@ namespace BigScreen {
         auto& document = configuration.config;
         if(!document.IsObject())
             document.SetObject();
+
+        ApplySettingsMigrations(document);
 
         modEnabled_ = ReadBool(document, "modEnabled", true);
         distractionFreeMenu_ = ReadBool(
@@ -366,7 +431,7 @@ namespace BigScreen {
             ReadInt(document, "playbackFpsLimit", 30));
         useFfmpeg9_ = ReadBool(document, "useFfmpeg9", true);
         embeddedVideoShaderEnabled_ = ReadBool(
-            document, "embeddedVideoShaderEnabled", false);
+            document, "embeddedVideoShaderEnabled", true);
         nativeBloomLevel_ = std::clamp(
             ReadFloat(document, "nativeBloomLevel", 1.0f), 0.0f, 1.0f);
         cinemaBloomLevel_ = std::clamp(
@@ -374,7 +439,7 @@ namespace BigScreen {
         hardwareDecodingEnabled_ = ReadBool(
             document, "hardwareDecodingEnabled", true);
         gpuVideoConversionEnabled_ = ReadBool(
-            document, "gpuVideoConversionEnabled", false);
+            document, "gpuVideoConversionEnabled", true);
         consolidatedYuvUploadEnabled_ = ReadBool(
             document, "consolidatedYuvUploadEnabled", false);
         gpuReadAheadMemoryMiB_ = NormalizeGpuReadAheadMemoryMiB(
@@ -1066,6 +1131,16 @@ namespace BigScreen {
         auto& document = configuration.config;
         if(!document.IsObject())
             document.SetObject();
+
+        // Record the migration ledger alongside ordinary settings on every
+        // write. This is what makes forced upgrade values one-time changes
+        // rather than permanent overrides of later user choices.
+        Replace(
+            document,
+            "settingsMigrationVersion",
+            std::max(
+                CurrentSettingsMigrationVersion,
+                ReadInt(document, "settingsMigrationVersion", 0)));
 
         Replace(document, "modEnabled", modEnabled_);
         Replace(document, "distractionFreeMenu", distractionFreeMenu_);

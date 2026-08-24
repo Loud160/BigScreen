@@ -207,9 +207,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-ffmpeg-c
 Install that single QMOD, then use **Misc > Performance > Use FFmpeg 9** to
 switch between the bundled runtimes and **Hardware Video Decoding** to switch
 between supported software decoders and MediaCodec. Both switches default on.
-The separate **GPU Video Conversion** experiment defaults off and compares the
-normal swscale/RGBA upload with reusable 8-bit Y/U/V plane uploads plus one GPU
-conversion pass. An
+**GPU Video Conversion** defaults on and compares reusable 8-bit Y/U/V plane
+uploads plus one GPU conversion pass with the normal swscale/RGBA fallback. An
 active Video Library preview is recreated at its retained song position, while
 gameplay uses the selection when the next map opens. Compare the same map,
 screen resolution, FPS cap, headset charge/thermal state, and playback

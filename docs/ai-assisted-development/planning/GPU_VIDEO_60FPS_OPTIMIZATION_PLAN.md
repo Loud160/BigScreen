@@ -10,7 +10,8 @@ Last reviewed: August 23, 2026
 ## Purpose
 
 This document records the next practical optimization choices after Big
-Screen's first default-off GPU Video Conversion implementation. It is a
+Screen's first GPU Video Conversion implementation, which was default-off when
+this plan was written and has since been promoted to default-on. It is a
 follow-up to [GPU video-pipeline feasibility](GPU_VIDEO_PIPELINE_FEASIBILITY.md),
 not a commitment to implement every option.
 
@@ -259,7 +260,8 @@ separate research options in the parent feasibility document.
 
 ## Acceptance criteria
 
-- GPU conversion remains default-off until the complete Quest pass succeeds.
+- GPU conversion defaults on after the Quest 2 visual and performance pass;
+  Quest 3/3S validation remains required for stable-release acceptance.
 - GPU and CPU pictures remain visually equivalent for supported SDR content.
 - A CFR 59.94/60 FPS source approaches its actual source cadence without
   lowering Quest gameplay FPS or increasing visible judder.

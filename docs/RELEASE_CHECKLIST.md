@@ -84,7 +84,10 @@
       and full-song synchronization remain correct.
 - [ ] A MediaCodec failure logs its reason, reports Software after automatic
       fallback, and never interrupts Beat Saber gameplay.
-- [ ] GPU Video Conversion defaults off. With it on, YUV420P and MediaCodec
+- [ ] GPU Video Conversion defaults on. A pre-migration settings file with the
+      old saved `false` value is promoted to on exactly once, unrelated saved
+      settings are unchanged, and turning it off afterward survives a restart.
+      With it on, YUV420P and MediaCodec
       NV12 preserve color/range, container rotation, vignette transparency,
       mapper correction, flat/curved/additional screens, Showcase deformation,
       crack/shatter snapshots, pause, seek, practice speed, Replay, and loops.

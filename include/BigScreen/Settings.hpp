@@ -294,13 +294,13 @@ namespace BigScreen {
         // New installations use the current bundled runtime. FFmpeg 4.4.8
         // remains available from the menu as a compatibility/A-B option.
         bool useFfmpeg9_ = true;
-        // Selects how the visible video picture is drawn. OFF (default) uses
-        // Unity's UI/Default shader and an invisible embedded alpha-only guard.
-        // ON uses Big Screen's embedded full-featured shader directly. Both
+        // Selects how the visible video picture is drawn. ON (default) uses Big
+        // Screen's embedded full-featured shader directly. OFF uses Unity's
+        // UI/Default shader and an invisible embedded alpha-only guard. Both
         // paths feed mapper bloom through the same mono-safe capture material;
         // if an embedded resource cannot load, the documented fallback ladder
         // keeps the UI path usable and records the failure for diagnosis.
-        bool embeddedVideoShaderEnabled_ = false;
+        bool embeddedVideoShaderEnabled_ = true;
         // Diagnostic controls keep Beat Saber's framebuffer-alpha bloom and
         // Big Screen's Cinema/Kawase contribution independently adjustable.
         float nativeBloomLevel_ = 1.0f;
@@ -309,10 +309,10 @@ namespace BigScreen {
         // Formats that permit software decoding still fall back safely when
         // MediaCodec cannot open the file.
         bool hardwareDecodingEnabled_ = true;
-        // Experimental and default-off until Quest 2 acceptance testing is
-        // complete. Failure at any decoder or Unity resource boundary returns
-        // the current session to the established CPU RGBA conversion path.
-        bool gpuVideoConversionEnabled_ = false;
+        // The validated GPU presentation/read-ahead path is the normal default.
+        // Failure at any decoder or Unity resource boundary still returns the
+        // current session to the established CPU RGBA conversion path.
+        bool gpuVideoConversionEnabled_ = true;
         // Experimental packed-atlas transport. The established three-plane
         // upload remains the default and the automatic fallback.
         bool consolidatedYuvUploadEnabled_ = false;

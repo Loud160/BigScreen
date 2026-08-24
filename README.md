@@ -155,7 +155,7 @@ For comparison and performance tuning, the mod includes:
   selectable in-game for A/B testing
 - Automatic Performance with separate attack/release timing, configurable FPS
   steps, and anti-oscillation protection, without reopening the decoder
-- A default-off experimental GPU conversion path that uploads reusable 8-bit
+- A default-on GPU conversion path that uploads reusable 8-bit
   Y/U/V planes, performs conversion and mapper picture effects in one pass,
   keeps a configurable 32–256 MiB decoded-frame reserve, and offers a separate
   experimental one-upload packed mode with visible 3-plane/CPU fallbacks
@@ -366,12 +366,13 @@ thumbnail retrieval, update checks, or the user-requested showcase assets. See
 <summary><strong>Video and rendering path</strong></summary>
 
 Big Screen dynamically loads two private LGPL FFmpeg runtimes behind one stable
-decoder facade. Software or MediaCodec decoding produces CPU-readable frames,
-which use the established reusable CPU RGBA conversion and Unity texture-upload
-path by default. A default-off experimental option instead transports supported
-8-bit YUV420P/NV12 planes and performs YUV conversion, container rotation, color
-correction, and vignette in one GPU pass. Both paths produce one ordinary shared
-presentation texture, preserving curved screens, free placement, transparency,
+decoder facade. Software or MediaCodec decoding produces CPU-readable frames.
+The default presentation path transports supported 8-bit YUV420P/NV12 planes
+and performs YUV conversion, container rotation, color correction, and vignette
+in one GPU pass; the reusable CPU RGBA conversion and Unity texture-upload path
+remains the automatic fallback and an in-game comparison option. Both paths
+produce one ordinary shared presentation texture, preserving curved screens,
+free placement, transparency,
 deformations, and showcase effects regardless of decoder backend. Unsupported
 layouts or failed GPU resources fall back for the rest of that playback session.
 Playback workers own codec state; Unity and Beat Saber objects remain on the

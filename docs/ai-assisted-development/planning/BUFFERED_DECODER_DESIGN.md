@@ -4,9 +4,9 @@
 
 The first bounded implementation now exists on the experimental GPU YUV path
 of `codex/major-feature-development`. It is not enabled independently: GPU Video
-Conversion remains the default-off switch for both YUV transport and read-ahead.
-CPU RGBA and thumbnail decoding retain their one-frame behavior. Quest 2/3
-measurement is still required before this can be considered for default-on use.
+Conversion is now the default-on switch for both YUV transport and read-ahead.
+CPU RGBA and thumbnail decoding retain their one-frame behavior. Quest 3/3S
+measurement is still required before this is considered stable-release ready.
 Queue-capacity and low/empty-transition diagnostics now exist in the append-only
 performance log.
 
