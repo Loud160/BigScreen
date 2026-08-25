@@ -121,7 +121,10 @@ function Sync-BigScreenRuntimeManifest {
     else {
         $modJson | Add-Member -NotePropertyName fileCopies -NotePropertyValue @($copies)
     }
-    $serializedModJson = $modJson | ConvertTo-Json -Depth 10
+    # Compact JSON avoids PowerShell 5.1/Core indentation and newline
+    # differences. Property order comes from the generated manifest and the
+    # explicitly ordered fileCopies array, so both hosts write identical bytes.
+    $serializedModJson = $modJson | ConvertTo-Json -Depth 10 -Compress
     Write-BigScreenUtf8NoBom -Path $ModJsonPath -Content $serializedModJson
 
     # Write-Host keeps this progress message out of the function's return

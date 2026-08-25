@@ -35,6 +35,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "adb-target.ps1")
+. (Join-Path $PSScriptRoot "console-choice.ps1")
 
 $script:PackageName = "com.beatgames.beatsaber"
 $script:ModDataRoot = "/sdcard/ModData/$($script:PackageName)"
@@ -66,16 +67,22 @@ function Write-Utf8File([string] $Path, [string] $Text) {
 }
 
 function Find-Adb {
-    $command = Get-Command adb.exe -ErrorAction SilentlyContinue
+    $command = Get-Command adb -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
 
     $candidates = New-Object System.Collections.Generic.List[string]
+    $candidates.Add((Join-Path $PSScriptRoot "../BigScreen Tools/platform-tools/adb"))
+    $candidates.Add((Join-Path $PSScriptRoot "../platform-tools/adb"))
+    $candidates.Add((Join-Path $PSScriptRoot "../../platform-tools/adb"))
     $candidates.Add((Join-Path $PSScriptRoot "../BigScreen Tools/platform-tools/adb.exe"))
     $candidates.Add((Join-Path $PSScriptRoot "../platform-tools/adb.exe"))
     $candidates.Add((Join-Path $PSScriptRoot "../../platform-tools/adb.exe"))
 
     foreach ($sdkRoot in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)) {
-        if ($sdkRoot) { $candidates.Add((Join-Path $sdkRoot "platform-tools/adb.exe")) }
+        if ($sdkRoot) {
+            $candidates.Add((Join-Path $sdkRoot "platform-tools/adb"))
+            $candidates.Add((Join-Path $sdkRoot "platform-tools/adb.exe"))
+        }
     }
     if ($env:LOCALAPPDATA) {
         $candidates.Add((Join-Path $env:LOCALAPPDATA "Android/Sdk/platform-tools/adb.exe"))
@@ -196,16 +203,9 @@ function Complete-AdbSession {
             Write-Host ""
             Write-Host "ADB was already running before log collection." -ForegroundColor Yellow
             Write-Host "Stopping it can help ModsBeforeFriday connect. If no choice is made within five minutes, ADB will be left running." -ForegroundColor Yellow
-            $choiceResult = 2
-            $priorErrorActionPreference = $ErrorActionPreference
-            try {
-                $ErrorActionPreference = "Continue"
-                & choice.exe /C YN /N /T $AdbPromptTimeoutSeconds /D N /M "Stop ADB now? [Y/N] "
-                $choiceResult = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $priorErrorActionPreference
-            }
-            $stopExisting = $choiceResult -eq 1
+            $stopExisting = Read-BigScreenTimedYesNo `
+                -Prompt "Stop ADB now? [Y/N] " `
+                -TimeoutSeconds $AdbPromptTimeoutSeconds
         }
     }
 

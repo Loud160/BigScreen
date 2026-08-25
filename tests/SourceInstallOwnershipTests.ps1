@@ -121,21 +121,24 @@ $exclusiveFixture = [pscustomobject]@{
     preDeployWasSourceOwned = $true
     installedSha256 = "source"
 }
-Assert-Equal "RemoveOrRestore" `
+Assert-Equal "RemoveExclusive" `
     (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture "source" -Partial) `
     "partial completed source write"
-Assert-Equal "AlreadyBaseline" `
+Assert-Equal "RemoveExclusive" `
     (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture "baseline" -Partial) `
-    "partial already-restored baseline"
-Assert-Equal "RemoveOrRestore" `
+    "partial baseline bytes do not block removal"
+Assert-Equal "RemoveExclusive" `
     (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture "old-source" -Partial) `
     "partial prior source build"
-Assert-Equal "PreserveAmbiguous" `
+Assert-Equal "RemoveExclusive" `
     (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture "unknown" -Partial) `
-    "partial contradictory hash"
-Assert-Equal "PreserveAmbiguous" `
+    "partial changed hash does not block removal"
+Assert-Equal "RemoveExclusive" `
     (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture "baseline") `
-    "complete receipt changed after deployment"
+    "complete receipt changed after deployment does not block removal"
+Assert-Equal "AlreadyAbsent" `
+    (Resolve-BigScreenReceiptRemovalAction $exclusiveFixture $null) `
+    "already absent private payload"
 $sharedFixture = $exclusiveFixture.PSObject.Copy()
 $sharedFixture.ownership = "SharedDependency"
 Assert-Equal "PreserveShared" `
@@ -192,13 +195,17 @@ try {
 }
 
 $remover = Get-Content -LiteralPath (Join-Path $root "scripts/remove-bigscreen.ps1") -Raw
-foreach ($protected in @("BigScreen/Videos", "BigScreen/Thumbnails", "BigScreen/Video Import", "library.json", "BigScreen/Logs")) {
+foreach ($protected in @("BigScreen/Thumbnails", "BigScreen/Video Import", "library.json", "BigScreen/Logs")) {
     if ($remover -match [regex]::Escape("rm") + ".*" + [regex]::Escape($protected)) {
         throw "Removal script contains a deletion path for protected user data: $protected"
     }
 }
 if ($remover -match 'rm\s+-rf\s+[^\r\n]*BigScreen[\x27\x22]?\s*$') {
     throw "Removal script contains a broad BigScreen data-root deletion."
+}
+if ($remover -notmatch [regex]::Escape("Also remove Big Screen's downloaded videos? [y/N]") -or
+    $remover -notmatch [regex]::Escape('$expectedVideosPath = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Videos"')) {
+    throw "Removal script does not gate the exact managed-video directory behind confirmation."
 }
 
 Write-Output "Source ownership classifier and removal-safety tests passed."

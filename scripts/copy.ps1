@@ -21,6 +21,14 @@ Param(
     [Parameter(Mandatory=$false)]
     [Switch] $all,
 
+    # The native Linux launcher completes the full tested build and QMOD
+    # package before calling this deployment workflow. This switch prevents a
+    # duplicate compile while still requiring and hash-checking build.ps1's
+    # verified success stamp below. It is intentionally not exposed by the
+    # ordinary Windows launcher.
+    [Parameter(Mandatory=$false)]
+    [Switch] $UseExistingVerifiedBuild,
+
     [Parameter(Mandatory=$false)]
     [String] $custom="",
 
@@ -32,6 +40,7 @@ Param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "file-hash.ps1")
 
 if ($help -eq $true) {
     Write-Output "`"Copy`" - Builds and copies your mod to your quest, and also starts Beat Saber with optional logging"
@@ -40,6 +49,7 @@ if ($help -eq $true) {
     Write-Output "-Clean `t`t Performs a clean build (equvilant to running `"build -clean`")"
     Write-Output "-UseDebug `t Copies the debug version of the mod to your quest"
     Write-Output "-Log `t`t Logs Beat Saber using the `"Start-Logging`" command"
+    Write-Output "-UseExistingVerifiedBuild `t Deploys an already verified build without compiling again"
 
     Write-Output "`n-- Logging Arguments --`n"
 
@@ -80,6 +90,20 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
 . (Join-Path $PSScriptRoot "adb-target.ps1")
 [void](Select-BigScreenAdbTarget "source deployment")
 
+# QMOD installers resolve shared dependencies before installing Big Screen,
+# but this direct ADB path bypasses that package-manager step. Refuse the
+# source deployment before compilation or Quest mutation unless the selected
+# headset has compatible, complete registrations for every dependency declared
+# by the same generated manifest shipped in the QMOD.
+. (Join-Path $PSScriptRoot "quest-dependency-check.ps1")
+$dependencyManifestPath = Join-Path $PSScriptRoot "../mod.json"
+$packageTemplatePath = Join-Path $PSScriptRoot "../mod.template.json"
+$packageTemplate = Get-Content -LiteralPath $packageTemplatePath -Raw |
+    ConvertFrom-Json -ErrorAction Stop
+Assert-BigScreenQuestDependencies `
+    -ManifestPath $dependencyManifestPath `
+    -GameVersion ([string]$packageTemplate.packageVersion)
+
 # The embedded video shader bundle must never be stale relative to its Unity
 # source, or the build silently ships a broken screen material. When any
 # shader-project input is newer than the built bundle, rebuild it here so the
@@ -105,7 +129,7 @@ if (-not $shaderRebuildNeeded) {
         }
     }
 }
-if ($shaderRebuildNeeded) {
+if (-not $UseExistingVerifiedBuild -and $shaderRebuildNeeded) {
     Write-Output ""
     Write-Output "The embedded video shader source changed; rebuilding assets/bigscreen_video_shader with Unity..."
     $shaderBuildError = $null
@@ -127,19 +151,42 @@ if ($shaderRebuildNeeded) {
         exit 1
     }
     Write-Output "Android video shader bundle rebuilt successfully."
-} else {
+} elseif (-not $UseExistingVerifiedBuild) {
     Write-Output "Embedded video shader bundle is up to date."
+} elseif (-not (Test-Path -LiteralPath $shaderAsset -PathType Leaf)) {
+    throw "The existing verified build has no embedded video shader bundle. Re-run the complete Linux build before deployment."
+} else {
+    Write-Output "Using the committed video shader bundle from the completed Linux build."
 }
 
-& $PSScriptRoot/build.ps1 -clean:$clean
+if (-not $UseExistingVerifiedBuild) {
+    & $PSScriptRoot/build.ps1 -clean:$clean
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Output "Failed to build, exiting..."
-    exit $LASTEXITCODE
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "Failed to build, exiting..."
+        exit $LASTEXITCODE
+    }
+} else {
+    Write-Output "Using the complete build already validated by Build-And-Deploy-Linux.sh."
 }
 $buildSuccessStamp = Join-Path $PSScriptRoot "../build/.bigscreen-build-success"
 if (-not (Test-Path -LiteralPath $buildSuccessStamp)) {
     throw "The build did not publish its verified success stamp. Deployment is blocked so an older binary cannot be installed after a failed compile or link."
+}
+if ($UseExistingVerifiedBuild) {
+    $verifiedLibrary = Join-Path $PSScriptRoot "../build/libbigscreen.so"
+    if (-not (Test-Path -LiteralPath $verifiedLibrary -PathType Leaf)) {
+        throw "The existing verified build is missing build/libbigscreen.so. Re-run the complete Linux build before deployment."
+    }
+    $stampText = Get-Content -LiteralPath $buildSuccessStamp -Raw
+    if ($stampText -notmatch '(?m)^binarySha256=(?<hash>[0-9a-fA-F]{64})\s*$') {
+        throw "The existing build success stamp has no valid binary SHA-256. Re-run the complete Linux build before deployment."
+    }
+    $verifiedHash = Get-BigScreenFileSha256 $verifiedLibrary
+    if ($verifiedHash -ne $Matches.hash) {
+        throw "build/libbigscreen.so no longer matches its verified success stamp. Re-run the complete Linux build before deployment."
+    }
+    Write-Output "Existing native build SHA-256 matches its verified success stamp."
 }
 
 & $PSScriptRoot/validate-modjson.ps1
@@ -180,7 +227,7 @@ if ($classification.State -eq "MBF_MANAGED" -or
 }
 if ($classification.State -eq "MIXED_OR_AMBIGUOUS") {
     Write-BigScreenOwnershipDiagnostic $classification
-    throw "Big Screen's source/MBF ownership is mixed or ambiguous. No Quest files were changed. Run Remove-BigScreen.bat or remove the MBF package before deploying source."
+    throw "Big Screen's source/MBF ownership is mixed or ambiguous. No Quest files were changed. Run the repository's source-removal launcher for this host OS, or remove the MBF package before deploying source."
 }
 
 $priorReceipt = $null

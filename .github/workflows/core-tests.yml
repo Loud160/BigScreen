@@ -15,20 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Install host FFmpeg development libraries
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev pkg-config
-      - name: Fetch pinned QuickJS-NG source
-        shell: pwsh
-        run: ./scripts/fetch-quickjs-ng.ps1
-      - name: Fetch pinned RapidJSON source
-        shell: pwsh
-        run: ./scripts/fetch-rapidjson.ps1
-      - name: Configure
-        run: cmake -S tests -B build-host-tests
-      - name: Build
-        run: cmake --build build-host-tests --config Release
-      - name: Test
-        run: ctest --test-dir build-host-tests -C Release --output-on-failure
+      - name: Install canonical Linux host prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential ca-certificates cmake curl ffmpeg \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+            ninja-build pkg-config python3 unzip xz-utils
+      - name: Run the canonical Linux validation suite
+        run: bash ./scripts/test-linux.sh
       - name: Validate public files
         run: test -f LICENSE && test -f LICENSE-ADDITIONAL-TERMS.md && test -f NOTICE && test -f INBOUND_LICENSE.md && test -f DCO.txt && test -f CONTRIBUTING.md && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md && test -f scripts/build-downloader-from-source.ps1 && test -f scripts/build_downloader_runtime.py
 
@@ -44,6 +39,9 @@ jobs:
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
           version: 11.16.0
+      # This independent provenance audit is intentionally outside the normal
+      # QMOD build. It reconstructs the bundled downloader from upstream source
+      # and therefore retains its own Node/pnpm toolchain.
       - name: Rebuild yt-dlp and yt-dlp-ejs from verified source
         shell: pwsh
         run: ./scripts/build-downloader-from-source.ps1

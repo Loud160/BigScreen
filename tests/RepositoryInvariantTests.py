@@ -23,15 +23,50 @@ root = pathlib.Path(sys.argv[1]).resolve()
 gitignore = (root / ".gitignore").read_text(encoding="utf-8")
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
+cmake_utils = (root / "cmake/utils.cmake").read_text(encoding="utf-8")
 strip_script = (root / "cmake" / "strip.cmake").read_text(encoding="utf-8")
 bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
     encoding="utf-8")
 build_launcher = (root / "Build-And-Deploy.bat").read_text(encoding="utf-8")
+linux_build_launcher = (root / "Build-QMOD-Linux.sh").read_text(
+    encoding="utf-8")
+linux_deploy_launcher = (root / "Build-And-Deploy-Linux.sh").read_text(
+    encoding="utf-8")
+linux_remove_launcher = (root / "Remove-BigScreen-Linux.sh").read_text(
+    encoding="utf-8")
+linux_log_launcher = (root / "Collect-BigScreen-Logs-Linux.sh").read_text(
+    encoding="utf-8")
+linux_build_common = (root / "scripts/linux-build-common.sh").read_text(
+    encoding="utf-8")
+linux_host_bootstrap = (root / "scripts/linux-host-bootstrap.sh").read_text(
+    encoding="utf-8")
+linux_adb_common = (root / "scripts/linux-adb-common.sh").read_text(
+    encoding="utf-8")
+linux_quest_tool = (root / "scripts/quest_tool.py").read_text(
+    encoding="utf-8")
+quest_connection_preflight = (
+    root / "scripts/check-quest-connection.ps1"
+).read_text(encoding="utf-8")
+linux_bootstrap = (root / "scripts/bootstrap-linux.sh").read_text(
+    encoding="utf-8")
+linux_build = (root / "scripts/build-linux.sh").read_text(encoding="utf-8")
+linux_test = (root / "scripts/test-linux.sh").read_text(encoding="utf-8")
+canonical_build_pipeline = (
+    root / "scripts/build_pipeline.py"
+).read_text(encoding="utf-8")
+canonical_pipeline_tests = (
+    root / "tests/BuildPipelineTests.py"
+).read_text(encoding="utf-8")
+shared_test_script = (root / "scripts/test.ps1").read_text(encoding="utf-8")
+linux_build_guide = (root / "docs/BUILDING-LINUX.md").read_text(
+    encoding="utf-8")
 log_collector_launcher = (root / "Collect-BigScreen-Logs.bat").read_text(
     encoding="utf-8")
 log_collector = (root / "scripts/collect-crash-logs.ps1").read_text(
     encoding="utf-8")
 adb_session_completion = (root / "scripts/complete-adb-session.ps1").read_text(
+    encoding="utf-8")
+console_choice = (root / "scripts/console-choice.ps1").read_text(
     encoding="utf-8")
 adb_bootstrap = (root / "scripts/ensure-adb.ps1").read_text(encoding="utf-8")
 ffmpeg_build = (root / "scripts/build-ffmpeg-lgpl.sh").read_text(encoding="utf-8")
@@ -40,6 +75,20 @@ ndk_install = (root / "scripts/install-pinned-ndk.sh").read_text(
 ffmpeg_elf_audit = (root / "scripts/validate-ffmpeg-elf.ps1").read_text(
     encoding="utf-8")
 runtime_fetch = (root / "scripts/fetch-downloader-runtime.ps1").read_text(encoding="utf-8")
+deterministic_zip = (root / "scripts/deterministic-zip.ps1").read_text(
+    encoding="utf-8")
+deterministic_zip_build = (
+    root / "scripts/build-deterministic-zip-tool.ps1"
+).read_text(encoding="utf-8")
+deterministic_zip_main = (
+    root / "tools/deterministic-zip/main.cpp"
+).read_text(encoding="utf-8")
+miniz_license = (
+    root / "tools/deterministic-zip/vendor/miniz-3.1.2/LICENSE"
+).read_text(encoding="utf-8")
+deterministic_zip_tests = (
+    root / "tests/DeterministicZipTests.ps1"
+).read_text(encoding="utf-8")
 downloader_source_build = (
     root / "scripts/build-downloader-from-source.ps1"
 ).read_text(encoding="utf-8")
@@ -50,6 +99,9 @@ rapidjson_fetch = (root / "scripts/fetch-rapidjson.ps1").read_text(
 core_tests_workflow = (root / ".github/workflows/core-tests.yml").read_text(
     encoding="utf-8")
 copy_script = (root / "scripts/copy.ps1").read_text(encoding="utf-8")
+quest_dependency_check = (
+    root / "scripts/quest-dependency-check.ps1"
+).read_text(encoding="utf-8")
 ownership_script = (
     root / "scripts/source-install-ownership.ps1"
 ).read_text(encoding="utf-8")
@@ -189,6 +241,7 @@ cinema_interop_source = (root / "src/CinemaInterop.cpp").read_text(
 )
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
 qpm_shared = json.loads((root / "qpm.shared.json").read_text(encoding="utf-8"))
+mod_json = json.loads((root / "mod.json").read_text(encoding="utf-8"))
 
 # Big Screen's outbound license, section 7 terms, inbound contribution grant,
 # and DCO certification are deliberately separate mechanisms. Keep the release
@@ -260,6 +313,20 @@ for dependency_id, dependency_version in {
     "custom-types": "0.18.4",
 }.items():
     assert resolved_dependencies[dependency_id] == dependency_version
+configured_dependencies = {
+    entry["id"]: entry["versionRange"] for entry in qpm["dependencies"]
+}
+shared_dependencies = {
+    entry["id"]: entry["versionRange"]
+    for entry in qpm_shared["config"]["dependencies"]
+}
+manifest_dependencies = {
+    entry["id"]: entry["version"] for entry in mod_json["dependencies"]
+}
+for dependency_ranges in (
+    configured_dependencies, shared_dependencies, manifest_dependencies,
+):
+    assert dependency_ranges["paper2_scotland2"] == "^4.8.0"
 for packaging_guard in (
     "Programs/QPM/qpm.exe",
     '"packageVersion"',
@@ -268,6 +335,8 @@ for packaging_guard in (
     "qmod-schema-$schemaRevision.json",
     "schemaSha256",
     "Using cached QMOD validation schema",
+    "stale version range",
+    "stale downloadIfMissing URL",
 ):
     assert packaging_guard in validate_mod_json
 assert "source%20license-GPL--3.0--only-blue" in readme
@@ -277,6 +346,12 @@ assert "source%20license-GPL--3.0--only-blue" in readme
 # ambiguous, and its error text can be mistaken for ownership metadata.
 assert "Select-BigScreenAdbTarget \"source deployment\"" in copy_script
 assert '"adb-target.ps1"' in copy_script
+assert '"quest-dependency-check.ps1"' in copy_script
+assert "Assert-BigScreenQuestDependencies" in copy_script
+assert "before any Big Screen files changed" in quest_dependency_check
+assert "Get-BigScreenQuestDependencyPackages" in quest_dependency_check
+assert "Test-BigScreenSemanticVersionRange" in quest_dependency_check
+assert "paper2_queue_log_bytes_ffi" in dependency_guide
 assert "$env:ANDROID_SERIAL = $selected.Serial" in adb_target_script
 assert "Get-BigScreenQuestCandidates" in adb_target_script
 assert "com.beatgames.beatsaber" in adb_target_script
@@ -289,6 +364,178 @@ assert "ADB could not inspect ModsBeforeFriday package metadata" in \
     ownership_script
 assert 'PSObject.Properties["modLink"]' in validate_mod_json
 assert "docs/DEPENDENCIES.md" in readme
+assert "docs/BUILDING-LINUX.md" in readme
+
+# Native Linux support must remain one wrapper around the same pinned build,
+# validation, and packaging scripts used by CI. Do not let a second recipe
+# silently drift to a different QPM/NDK/FFmpeg or incomplete QMOD.
+for linux_marker in (
+    "x86-64",
+    "bash ./Build-QMOD-Linux.sh",
+    "Build-And-Deploy-Linux.sh",
+    "Remove-BigScreen-Linux.sh",
+    "Collect-BigScreen-Logs-Linux.sh",
+    "Big Screen.qmod",
+    "Bazzite",
+):
+    assert linux_marker in linux_build_guide
+assert 'scripts/linux-host-bootstrap.sh' in linux_build_launcher
+assert 'bigscreen_prepare_or_reexec_linux_host' in linux_build_launcher
+assert 'exec bash "${repository_root}/scripts/build-linux.sh"' in \
+    linux_build_launcher
+assert 'scripts/linux-host-bootstrap.sh' in linux_deploy_launcher
+assert 'bigscreen_prepare_or_reexec_linux_host' in linux_deploy_launcher
+assert 'bash "${repository_root}/scripts/build-linux.sh"' in \
+    linux_deploy_launcher
+assert 'scripts/quest_tool.py" check --retry' in linux_deploy_launcher
+assert 'scripts/quest_tool.py" deploy' in linux_deploy_launcher
+assert linux_deploy_launcher.index('scripts/quest_tool.py" check') < \
+    linux_deploy_launcher.index(
+        'bash "${repository_root}/scripts/build-linux.sh"')
+assert 'QUEST_READY_TIMEOUT_SECONDS = 30.0' in linux_quest_tool
+assert '[self.executable, "start-server"]' in linux_quest_tool
+assert 'time.sleep(QUEST_READY_POLL_SECONDS)' in linux_quest_tool
+assert "prompt_quest_connection_retry" in linux_quest_tool
+assert "USB-debugging authorization prompt" in linux_quest_tool
+assert linux_quest_tool.count("stdin=subprocess.DEVNULL") >= 4
+assert "-depth -type d -empty -delete" in linux_quest_tool
+assert 'scripts/quest_tool.py" remove' in linux_remove_launcher
+assert 'scripts/quest_tool.py" collect-logs' in linux_log_launcher
+assert "pwsh" not in linux_deploy_launcher + linux_remove_launcher + linux_log_launcher
+for adb_marker in (
+    'BIGSCREEN_LINUX_ADB_VERSION="37.0.0"',
+    'platform-tools_r37.0.0-linux.zip',
+    '198ae156ab285fa555987219af237b31102fefe8b9d2bc274708a8d4f2865a07',
+    'BIGSCREEN_ADB_INSTALL_ROOT',
+    'sha256sum',
+):
+    assert adb_marker in linux_adb_common
+assert "Read-BigScreenTimedYesNo" in console_choice
+assert '"console-choice.ps1"' in adb_session_completion
+assert '"console-choice.ps1"' in log_collector
+assert "UseExistingVerifiedBuild" in copy_script
+assert "Existing native build SHA-256 matches" in copy_script
+for common_marker in (
+    'BIGSCREEN_LINUX_QPM_VERSION="1.5.11"',
+    'BIGSCREEN_LINUX_NDK_VERSION="27.3.13750724"',
+    "qpm-linux-x64-musl",
+):
+    assert common_marker in linux_build_common + linux_bootstrap
+assert "command -v pwsh" not in linux_bootstrap
+assert "command -v pwsh" not in linux_deploy_launcher
+assert "portable-pwsh" not in linux_build + linux_test + linux_bootstrap
+assert "pwsh" not in linux_build + linux_test + linux_bootstrap
+for container_marker in (
+    'BIGSCREEN_DISTROBOX_NAME="${BIGSCREEN_DISTROBOX_NAME:-bigscreen-build}"',
+    'docker.io/library/ubuntu:24.04',
+    'command -v distrobox',
+    'command -v podman',
+    'distrobox create --yes',
+    'BIGSCREEN_MANAGED_DISTROBOX=1',
+    'apt-get',
+    'dnf',
+    'pacman',
+    'zypper',
+    'rpm-ostree',
+):
+    assert container_marker in linux_host_bootstrap
+for build_stage in (
+    'test-linux.sh',
+    'BIGSCREEN_FFMPEG_VERSION=4.4.8',
+    'BIGSCREEN_FFMPEG_VERSION=9.0.1',
+    'build_pipeline.py" build-native',
+    'build_pipeline.py" package',
+):
+    assert build_stage in linux_build
+for validation_stage in (
+    'bootstrap-linux.sh',
+    'build_pipeline.py" generate-manifest',
+):
+    assert validation_stage in linux_test
+assert "pkg-config --exists libavformat libavcodec libavutil libswscale" in \
+    linux_test
+assert "BuildPipelineTests.py" in linux_test
+assert "LinuxHostBootstrapTests.sh" in linux_test
+assert "--skip-tests" not in linux_build
+for pipeline_marker in (
+    "Pinned QMOD schema, identity, target, and dependency validation passed.",
+    "Dual FFmpeg backend ELF isolation validated.",
+    "write_deterministic_zip",
+    "prepare_downloader",
+    "sync_runtime_manifest",
+    "SOURCE_DATE_EPOCH",
+):
+    assert pipeline_marker in canonical_build_pipeline
+for pipeline_test_marker in (
+    "version_satisfies",
+    "resolve_install_state",
+    "receipt_removal_action",
+    "Duplicate ZIP entries were not rejected",
+):
+    assert pipeline_test_marker in canonical_pipeline_tests
+assert linux_bootstrap.index('> "${repository_root}/ndkpath.txt"') < \
+    linux_bootstrap.index('"${qpm_executable}" restore')
+assert "ctest --test-dir" in linux_test
+
+# Windows and native Linux must package identical release bytes from the same
+# source and pinned inputs. Keep source enumeration, compiler paths/build IDs,
+# generated QPM links, runtime metadata, and both nested/outer ZIP archives
+# independent of their host OS and PowerShell runtime.
+for reproducible_compile_marker in (
+    "-ffile-prefix-map=",
+    "-fmacro-prefix-map=",
+    "-fdebug-prefix-map=",
+    "-fdebug-compilation-dir=",
+    "-Wl,--build-id=none",
+):
+    assert reproducible_compile_marker in cmake
+assert "LIST(SORT file_list)" in cmake_utils
+assert "SOURCE_DATE_EPOCH" in canonical_build_pipeline
+assert "libbeatsaber-hook.so" in cmake
+for deterministic_zip_marker in (
+    "[StringComparer]::Ordinal",
+    "build-deterministic-zip-tool.ps1",
+    "CompressorPath",
+    "Duplicate ZIP entry name",
+):
+    assert deterministic_zip_marker in deterministic_zip
+assert "CompressionLevel" not in deterministic_zip
+for compressor_build_marker in (
+    "Get-BigScreenToolSourceHash",
+    ".cache/build-tools/deterministic-zip",
+    "tools/deterministic-zip",
+    "CMake was not found",
+):
+    assert compressor_build_marker in deterministic_zip_build
+assert "Invoke-WebRequest" not in deterministic_zip_build
+assert not (root / "scripts/fetch-deterministic-zip-tool.ps1").exists()
+for compressor_source_marker in (
+    "kFixedDosDate = 0x2821",
+    "kStoredMethod = 0",
+    "kDeflateMethod = 8",
+    "tdefl_create_comp_flags_from_zip_params(9, -15, 0)",
+    "std::sort",
+    "Duplicate ZIP entry name",
+):
+    assert compressor_source_marker in deterministic_zip_main
+assert "Permission is hereby granted, free of charge" in miniz_license
+assert "write_deterministic_zip" in canonical_build_pipeline
+assert "Compress-Archive" not in canonical_build_pipeline
+assert ".python314-zip.ready" in canonical_build_pipeline
+assert 'json.dumps(manifest, separators=(",", ":"))' in canonical_build_pipeline
+assert "ConvertTo-Json -Depth 10 -Compress" in runtime_manifest_sync
+assert "qpm-restore-host.txt" in linux_bootstrap
+assert "Resetting host-specific QPM links for Linux" in linux_bootstrap
+assert '"${repository_root}/ndkpath.txt"' in linux_bootstrap
+assert linux_bootstrap.index('> "${repository_root}/ndkpath.txt"') < \
+    linux_bootstrap.index('"${qpm_executable}" restore')
+assert "BuildPipelineTests.py" in linux_test
+for deterministic_test_marker in (
+    "Source timestamps and caller order",
+    "standard DEFLATE compression",
+    "Duplicate ZIP entry name",
+):
+    assert deterministic_test_marker in deterministic_zip_tests
 for marker in (
     "GPL-3.0-only",
     "inbound MIT",
@@ -334,12 +581,26 @@ first_party_patterns = {
     root / "python": ("*.py",),
     root / "scripts": ("*.ps1", "*.sh", "*.py"),
     root / "tests": ("CMakeLists.txt", "*.c", "*.cpp", "*.h", "*.hpp", "*.py"),
-    root / "tools": ("*.c", "*.cpp", "*.h", "*.hpp", "*.py", "*.ps1", "*.sh"),
+    root / "tools": (
+        "CMakeLists.txt",
+        "*.c",
+        "*.cpp",
+        "*.h",
+        "*.hpp",
+        "*.py",
+        "*.ps1",
+        "*.sh",
+    ),
 }
 first_party_files: set[pathlib.Path] = {
     root / "CMakeLists.txt",
     root / "Build-And-Deploy.bat",
+    root / "Build-And-Deploy-Linux.sh",
+    root / "Build-QMOD.bat",
+    root / "Build-QMOD-Linux.sh",
     root / "Collect-BigScreen-Logs.bat",
+    root / "Collect-BigScreen-Logs-Linux.sh",
+    root / "Remove-BigScreen-Linux.sh",
 }
 
 # Build and deployment scripts must be portable across developer machines.
@@ -350,14 +611,30 @@ first_party_files: set[pathlib.Path] = {
 windows_absolute_path = re.compile(r"(?i)(?<![a-z0-9])[a-z]:[\\/]")
 for host_script in (
     list((root / "scripts").glob("*.ps1"))
+    + list((root / "scripts").glob("*.sh"))
     + list((root / "scripts").glob("*.py"))
-    + [root / "Build-And-Deploy.bat", root / "Collect-BigScreen-Logs.bat"]
+    + [
+        root / "Build-And-Deploy.bat",
+        root / "Build-And-Deploy-Linux.sh",
+        root / "Build-QMOD.bat",
+        root / "Build-QMOD-Linux.sh",
+        root / "Collect-BigScreen-Logs.bat",
+        root / "Collect-BigScreen-Logs-Linux.sh",
+        root / "Remove-BigScreen-Linux.sh",
+    ]
 ):
     assert not windows_absolute_path.search(
         host_script.read_text(encoding="utf-8")), host_script
 for directory, patterns in first_party_patterns.items():
     for pattern in patterns:
         first_party_files.update(directory.rglob(pattern))
+# Tracked third-party source remains under its own upstream license and must
+# never receive Big Screen's first-party GPL/SPDX header.
+deterministic_zip_vendor = root / "tools/deterministic-zip/vendor"
+first_party_files = {
+    path for path in first_party_files
+    if deterministic_zip_vendor not in path.parents
+}
 assert first_party_files
 for source_file in sorted(first_party_files):
     source_text = source_file.read_text(encoding="utf-8")
@@ -369,6 +646,7 @@ for vendored_sample in (
     root / "extern/quickjs-ng/source/quickjs.c",
     root / "extern/ffmpeg-lgpl/include/libavcodec/avcodec.h",
     root / "extern/ffmpeg-lgpl-9.0.1/include/libavcodec/avcodec.h",
+    root / "tools/deterministic-zip/vendor/miniz-3.1.2/miniz.c",
 ):
     if vendored_sample.exists():
         assert "Loud160 (AKA Whisp)" not in vendored_sample.read_text(
@@ -383,27 +661,60 @@ ndk_revision = "27.3.13750724"
 assert qpm["workspace"]["ndk"] == f"^{ndk_revision}"
 assert qpm_shared["config"]["workspace"]["ndk"] == f"^{ndk_revision}"
 workflow = (root / ".github/workflows/build-ndk.yml").read_text(encoding="utf-8")
-assert ndk_revision in workflow
+assert "bash ./Build-QMOD-Linux.sh" in workflow
+assert ndk_revision in linux_build_common + linux_bootstrap
 assert "android-ndk-r27d" in ffmpeg_build
 
-# A double-click build from a fresh source archive must prepare the generated
-# QPM/NDK inputs before CMake runs. It must also disclose network activity and
-# wait for the developer's approval instead of silently fetching gigabytes.
-assert build_launcher.index(
-    '-File "%~dp0scripts\\bootstrap-build.ps1"'
-) < build_launcher.index('-File "%~dp0scripts\\copy.ps1"')
-for launcher_disclosure in (
-    "FIRST-RUN NETWORK DOWNLOADS",
-    "choice /C YN",
-    "Quest mod headers and libraries through QPM",
-    "Android NDK r27d for Linux/WSL",
-    "FFmpeg 4.4.8 and 9.0.1",
-    "CPython 3.14.7",
-    "QuickJS-NG 0.16.1",
-    "stable yt-dlp 2026.08.19",
-    "certifi 2026.7.22",
+# A double-click build from a fresh source archive must inventory actual host
+# and cache state before asking permission. QMOD-only mode cannot require ADB
+# or touch a headset; direct deployment must retain the authoritative
+# ownership-safe copy workflow after the complete verified WSL/Linux build.
+windows_preflight = (
+    root / "scripts/windows-wsl-build-preflight.ps1"
+).read_text(encoding="utf-8")
+assert build_launcher.index("choice /C QDC") < build_launcher.index("-Mode Audit")
+assert build_launcher.index("-Mode Audit") < build_launcher.index("choice /C YN")
+assert build_launcher.index("-Mode Install") < build_launcher.index(
+    "scripts/build-linux.sh")
+assert build_launcher.index("check-quest-connection.ps1") < build_launcher.index(
+    "scripts/build-linux.sh")
+assert build_launcher.index("scripts/build-linux.sh") < build_launcher.index(
+    '-File "%~dp0scripts\\copy.ps1" -UseExistingVerifiedBuild')
+for launcher_contract in (
+    "Build and package Big Screen.qmod only",
+    "BIGSCREEN_DEPLOY_TO_QUEST",
+    "-IncludeDeployment",
+    "Only items marked",
+    "exact program requiring UAC",
+    "No Quest was accessed",
 ):
-    assert launcher_disclosure in build_launcher
+    assert launcher_contract in build_launcher
+for quest_retry_contract in (
+    "Select-BigScreenAdbTarget",
+    "Always allow from this computer",
+    "Retry the Quest connection check or cancel [R/C]?",
+    "choice.exe /C RC",
+):
+    assert quest_retry_contract in quest_connection_preflight
+for preflight_contract in (
+    'ValidateSet("Audit", "Install")',
+    "This audit is read-only",
+    "Windows Subsystem for Linux",
+    "Ubuntu 24.04 for WSL",
+    "WINDOWS UAC REQUIRED FOR:",
+    "No missing prerequisite in this audit requires Windows elevation",
+    "QPM CLI 1.5.11",
+    "Android NDK r27d",
+    "PowerShell 7 or Git for a downloaded source archive",
+    "FFmpeg 4.4.8 Android runtime",
+    "FFmpeg 9.0.1 Android runtime",
+    "CPython 3.14.7 Android ARM64",
+    "stable yt-dlp 2026.08.19",
+    "QuickJS-NG 0.16.1",
+    "ADB and Quest access (QMOD-only build selected)",
+    "Visual Studio",
+):
+    assert preflight_contract in windows_preflight
 
 # The user-facing support collector must remain portable and must preserve the
 # distinction between a current incident and whatever stale file happens to be
@@ -453,7 +764,7 @@ for adb_completion_contract in (
     "WasRunningAtStart",
     'ExistingAdbAction = "Ask"',
     "PromptTimeoutSeconds = 300",
-    'choice.exe /C YN /N /T $PromptTimeoutSeconds /D N',
+    "Read-BigScreenTimedYesNo",
     "Stopping the ADB server started by deployment",
     "ADB was left running",
 ):
@@ -467,7 +778,7 @@ for adb_bootstrap_contract in (
     'Join-Path $repoRoot "BigScreen Tools"',
     "https://developer.android.com/studio/terms",
     'choice.exe /C YN /N /T $PromptTimeoutSeconds /D N',
-    "Get-FileHash",
+    "Get-BigScreenFileSha256",
     "Get-AuthenticodeSignature",
     "O=Google LLC",
     "Move-Item",
@@ -480,61 +791,53 @@ for adb_bootstrap_contract in (
     "Installing the verified portable tools into BigScreen Tools",
 ):
     assert adb_bootstrap_contract in adb_bootstrap
-for adb_launcher_progress_contract in (
-    build_launcher,
-    log_collector_launcher,
-):
-    assert "Portable ADB download progress will be shown" in adb_launcher_progress_contract
+assert "The audit already disclosed whether a portable download is needed" in build_launcher
+assert "Portable ADB download progress will be shown" in log_collector_launcher
 assert "/BigScreen Tools/" in gitignore
 for bootstrap_contract in (
-    "Programs/QPM/qpm.exe",
     "restore",
-    "ndk resolve --download",
     "ndkpath.txt",
     "source.properties",
-    ndk_revision,
     "install-pinned-ndk.sh",
-    "requiredLinuxTools",
     "qpm-restore.sha256",
-    "Using QPM dependencies already restored for the current lockfile",
-    "Using installed Windows Android NDK r27d",
+    "Using QPM dependencies already restored for this lockfile and Linux host",
 ):
-    assert bootstrap_contract in bootstrap_build
-for cache_disclosure in (
-    "Using cached CPython",
-    "Using cached yt-dlp",
-    "Using cached certifi",
+    assert bootstrap_contract in linux_bootstrap
+for compatibility_wrapper in (
+    build_script, bootstrap_build, create_qmod, shared_test_script,
 ):
-    assert cache_disclosure in runtime_fetch
-assert "Using cached QuickJS-NG" in quickjs_fetch
-for rapidjson_restore_contract in (
-    "https://github.com/Tencent/rapidjson.git",
-    "24b5e7a8b27f42fa16b96fc70aade9106cf7102f",
-    "include/rapidjson/document.h",
-    "rev-parse HEAD",
-):
-    assert rapidjson_restore_contract in rapidjson_fetch
-assert "./scripts/fetch-rapidjson.ps1" in core_tests_workflow
+    assert "invoke-canonical-linux.ps1" in compatibility_wrapper
+assert "scripts/build-linux.sh" in build_script
+assert "scripts/bootstrap-linux.sh" in bootstrap_build
+assert "scripts/test-linux.sh" in shared_test_script
+assert "scripts/build-linux.sh" in create_qmod
+assert "scripts/test-linux.sh" in core_tests_workflow
 assert "Using cached FFmpeg" in ffmpeg_build
 assert "archive_download_path=" in ffmpeg_build
 assert "archive_is_valid" in ffmpeg_build
 assert 'mv -f "${archive_download_path}" "${archive_path}"' in ffmpeg_build
 assert "--extra-cflags='-O3 -fPIC -w'" in ffmpeg_build
-assert "CFLAGS=.*(?:^|\\s)-w(?:\\s|$)" in build_script
-assert 'bash $linuxScript --force' in build_script
+assert "CFLAGS=.*(^|[[:space:]])-w([[:space:]]|$)" in ffmpeg_build
 assert 'config_record_path=' in ffmpeg_build
-assert "(?m)^CONFIG_HEVC_DECODER=yes$" in build_script
-assert '.Contains("CONFIG_HEVC_DECODER=yes")' not in build_script
-assert "& $wslCommand.Source -e bash -c $toolProbe" in bootstrap_build
+assert "^CONFIG_HEVC_DECODER=yes$" in ffmpeg_build
+assert "! grep -q '^CONFIG_HEVC_DECODER=yes$'" in ffmpeg_build
 for path_safe_ffmpeg_marker in (
-    'native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"',
-    '--prefix="${native_install_root}"',
+    'build_recipe_revision="2"',
+    'portable_install_prefix=".bigscreen-install"',
+    'portable_toolchain_root=".bigscreen-toolchain"',
+    '--prefix="${portable_install_prefix}"',
+    '--sysroot="${portable_toolchain_root}/sysroot"',
     'cp -a "${native_install_root}/." "${install_root}/"',
+    '--label "ffmpeg-${ffmpeg_version}/original/${relative_path}"',
+    '--label "ffmpeg-${ffmpeg_version}/bigscreen/${relative_path}"',
+    'Host-specific path was embedded',
+    'Build recipe revision: ${build_recipe_revision}',
+    'sha256sum *"${build_suffix}".so',
 ):
     assert path_safe_ffmpeg_marker in ffmpeg_build
 assert "Using cached Android NDK r27d Linux archive" in ndk_install
 for documented_dependency in (
-    "Tools you install yourself",
+    "Host tools and official setup sources",
     "Automatically restored Quest packages",
     "Automatically downloaded toolchains and runtime inputs",
     "Building without the BAT launcher",
@@ -611,9 +914,9 @@ for runtime_tag in ("44", "9"):
     assert f"libswscale-bigscreen{runtime_tag}.so" in cmake
     assert f"bigscreen_ffmpeg{runtime_tag}_backend SHARED" in cmake
     assert f"libbigscreen-ffmpeg{runtime_tag}-backend.so" in (
-        root / "scripts/createqmod.ps1").read_text(encoding="utf-8")
+        canonical_build_pipeline)
 assert "TARGET_OBJECTS:bigscreen_ffmpeg" not in cmake
-assert '"validate-ffmpeg-elf.ps1"' in build_script
+assert "validate_elf(BUILD)" in canonical_build_pipeline
 assert "BIGSCREEN44_LIB" in ffmpeg_elf_audit
 assert "BIGSCREEN9_LIB" in ffmpeg_elf_audit
 assert "OtherNamespace" in ffmpeg_elf_audit
@@ -932,13 +1235,13 @@ assert 'performanceParent, "↻"' not in settings_menu_source
 assert 'diagnosticsParent, "↻"' in settings_menu_source
 assert "performanceDiagnosticsToggle_->toggle->get_transform()" in settings_menu_source
 assert "ApplyDisplaySettingsAndRefreshPreview();" in settings_menu_source
-assert workflow.count("BIGSCREEN_FFMPEG_VERSION=") == 2
+assert linux_build.count("BIGSCREEN_FFMPEG_VERSION=") == 2
 for warning in ("-Wall", "-Wextra", "-Wpedantic"):
     assert warning in cmake
 
 # CPython headers, linked SONAME, staged archive, and runtime manifest must all
 # describe the same minor/patch release.
-assert '$pythonVersion = "3.14.7"' in runtime_fetch
+assert 'PYTHON_VERSION = "3.14.7"' in canonical_build_pipeline
 assert "python-3.14.7/prefix" in cmake
 assert "libpython3.14.so" in cmake
 for python_library in (
@@ -951,11 +1254,10 @@ for python_library in (
     assert python_library in cmake
 assert "No authoritative source was found for required runtime library" in ownership_script
 assert '$packaged = Join-Path "extern/libs" $name' in ownership_script
-for installer in (copy_script, create_qmod):
-    assert "sync-runtime-manifest.ps1" in installer
-    assert "Sync-BigScreenRuntimeManifest" in installer
-assert "Write-BigScreenUtf8NoBom" in create_qmod
-assert "SetLastWriteTimeUtc" in create_qmod
+assert "sync-runtime-manifest.ps1" in copy_script
+assert "Sync-BigScreenRuntimeManifest" in copy_script
+assert "sync_runtime_manifest" in canonical_build_pipeline
+assert 'encoding="utf-8"' in canonical_build_pipeline
 assert "Write-BigScreenUtf8NoBom" in runtime_manifest_sync
 assert "System.Text.UTF8Encoding($false)" in runtime_manifest_sync
 assert "modBytes[0] -eq 0xEF" in validate_mod_json
@@ -971,8 +1273,7 @@ for clean_install_runtime in (
     assert clean_install_runtime in runtime_manifest_sync
 assert copy_script.index("Sync-BigScreenRuntimeManifest") < copy_script.index(
     '$modJson = Get-Content "./mod.json"')
-assert '$buildLibraryStage = Join-Path $repositoryRoot "build"' in runtime_fetch
-assert "-Destination $buildLibraryStage" in runtime_fetch
+assert "shutil.copyfile(source, BUILD / name)" in canonical_build_pipeline
 for required_file in (
     "lib/libpython3.14.so",
     "lib/libssl_python.so",
@@ -981,13 +1282,12 @@ for required_file in (
     "lib/python3.14/os.py",
     "include/python3.14/Python.h",
 ):
-    assert f'"{required_file}"' in runtime_fetch
+    assert f'"{required_file}"' in canonical_build_pipeline
 for runtime_only_library in (
     "libssl_python.so", "libcrypto_python.so", "libsqlite3_python.so"):
-    assert f'Join-Path $nativeLibraryStage $runtimeOnlyLibrary' in runtime_fetch
-assert "wslpath -a" in build_script
-assert "SHA256SUMS" in build_script
-assert "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON" in build_script
+    assert runtime_only_library in canonical_build_pipeline
+assert "SHA256SUMS" in ffmpeg_build
+assert "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON" in canonical_build_pipeline
 
 # Decoder shutdown changes the wait predicate under the waiter's mutex, and
 # ordinary FFmpeg EOF/EAGAIN remains distinct from a hard worker failure.
@@ -1191,10 +1491,10 @@ assert 'BundledYtDlpVersion = "2026.08.19"' in download_manager_header
 assert 'BundledYtDlpChannel = "stable"' in download_manager_header
 assert 'std::string(BundledYtDlpChannel)' in download_manager_header
 assert download_manager_source.count("BundledYtDlpChannel") >= 5
-assert '$ytDlpVersion = "2026.08.19"' in runtime_fetch
-assert '$ytDlpRepository = "yt-dlp/yt-dlp"' in runtime_fetch
+assert 'YTDLP_VERSION = "2026.08.19"' in canonical_build_pipeline
+assert "yt-dlp/yt-dlp/releases/download" in canonical_build_pipeline
 assert '1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6' in (
-    runtime_fetch
+    canonical_build_pipeline
 )
 assert '$ytDlpVersion = "2026.08.19"' in downloader_source_build
 assert '$ytDlpRepository = "yt-dlp/yt-dlp"' in downloader_source_build
@@ -2252,7 +2552,7 @@ assert "if(!showcaseGameplayActive_)" in on_gameplay_finished
 # registered as system includes so their diagnostics do not bury our output.
 assert "${EXTERN_DIR}/includes/bs-cordl/include" in cmake
 assert "target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE" in cmake
-assert '& $cmakeExe -Wno-deprecated -G "Ninja"' in build_script
+assert '"cmake", "-Wno-deprecated", "-G", "Ninja"' in canonical_build_pipeline
 
 # A missing primary manifest after an interrupted replace is a recovery case
 # when a rotating backup exists, not a first-run empty library. Managed deletes
@@ -2349,6 +2649,16 @@ screen_preview_suspend = screen_preview_source.split(
     "void ScreenPreview::Suspend()", 1
 )[1].split("void ScreenPreview::CaptureBasePlacement()", 1)[0]
 assert "MenuPreviewPreferenceChanged" not in screen_preview_suspend
+assert "followPreparedDisplay_" in screen_preview_source
+assert "PlaybackSession::Instance().PreparedConfig()" in screen_preview_source
+assert "usingPreparedDisplay ? \"prepared map\" : \"user-layout\"" in \
+    screen_preview_source
+create_world_preview = screen_preview_source.split(
+    "bool ScreenPreview::CreateWorldScreen()", 1
+)[1].split("void ScreenPreview::BeginUndockedEditing()", 1)[0]
+assert create_world_preview.index(
+    "PlaybackSession::Instance().PreparedConfig()") < \
+    create_world_preview.index("settings.ActiveLayout()")
 assert '"deactivation", deactivationStarted' in menu_flow_source
 
 # Native menu singletons outlive MenuCore's Unity hierarchy. Every retained
@@ -2548,17 +2858,23 @@ core_workflow = (root / ".github" / "workflows" / "core-tests.yml").read_text(
     encoding="utf-8"
 )
 assert "Fernthedev/qpm-action" not in build_workflow
-assert "QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip" in build_workflow
+assert "bash ./Build-QMOD-Linux.sh" in build_workflow
+assert "scripts/build.ps1" not in build_workflow
+assert "scripts/createqmod.ps1" not in build_workflow
+assert "QuestPackageManager/QPM.CLI/releases/download" in linux_bootstrap
+assert "qpm-linux-x64-musl.zip" in linux_bootstrap
 assert "permissions:\n  contents: write" in build_workflow
 assert 'library="lib${module_id}.so"' in build_workflow
-assert './build/debug/${{ steps.libname.outputs.NAME }}' in build_workflow
-assert '-S $repositoryRoot -B $buildDirectory' in build_script
-assert '& $cmakeExe --build $buildDirectory' in build_script
-assert build_script.count('if (-not $?)') >= 3
+release_files = build_workflow.split("files: |", 1)[1].split("env:", 1)[0]
+assert "Big Screen.qmod" not in release_files  # expression uses qmod_name
+assert "./build/" not in release_files
+assert '"cmake", "-Wno-deprecated", "-G", "Ninja"' in canonical_build_pipeline
+assert 'run_with_heartbeat(["cmake", "--build"' in canonical_build_pipeline
 assert "computers; please wait" not in strip_script
 assert 'draft: false' in build_workflow
-assert "4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df" in build_workflow
-assert "qpm restore" in build_workflow
+assert "4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df" in (
+    linux_build_common + linux_bootstrap)
+assert '"${qpm_executable}" restore' in linux_bootstrap
 assert "uses: seanmiddleditch/gha-setup-ninja" not in build_workflow
 assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in build_workflow
 assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in core_workflow
@@ -2704,8 +3020,10 @@ assert "Collect-DiagnosticSessions \"Menu\"" in log_collector
 assert "Collect-DiagnosticSessions \"Download\"" in log_collector
 
 # Build & Deploy and removal share one receipt/classifier implementation.
-# MBF registration is discovered by manifest id, source writes are hash
-# verified, and broad/user-data deletion is absent from the removal workflow.
+# MBF registration is discovered by manifest id and source writes remain hash
+# verified. Uninstall hashes are diagnostic only: confirmation always removes
+# exact Big Screen-exclusive paths, while shared/user-owned data stays outside
+# the removal workflow unless the user separately opts into managed videos.
 removal_script = (root / "scripts/remove-bigscreen.ps1").read_text(encoding="utf-8")
 assert "source-install.partial.json" in ownership_script
 assert "source-install.json" in ownership_script
@@ -2733,7 +3051,7 @@ for private_python_library in (
     "libsqlite3_python.so",
 ):
     assert private_python_library in ownership_script
-assert "AlreadyBaseline" in ownership_script
+assert 'return "RemoveExclusive"' in ownership_script
 assert "-Partial" in removal_script
 assert "localPath = [string]$item.LocalPath" not in ownership_script
 assert "Legacy cleanup could not remove" in ownership_script
@@ -2742,8 +3060,25 @@ assert 'BigScreen/Runtime/' in removal_script
 assert "Preserved MBF-required path" in removal_script
 assert "ReceiptUnreadable" in ownership_script
 assert "UnexpectedPhasePaths" in ownership_script
-assert "BigScreen/Videos" not in removal_script
+assert "RemoveExclusive" in ownership_script
+assert "PreserveAmbiguous" not in ownership_script.split(
+    "function Resolve-BigScreenReceiptRemovalAction", 1)[1].split(
+        "function Remove-BigScreenReceiptFiles", 1)[0]
+assert "Also remove Big Screen's downloaded videos?" in removal_script
+assert '$expectedVideosPath = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Videos"' in removal_script
+assert "BigScreen/Video Import" not in removal_script
 assert "BigScreen/Logs" not in removal_script
 assert (root / "Remove-BigScreen.bat").is_file()
+windows_qmod_launcher = (root / "Build-QMOD.bat").read_text(encoding="utf-8")
+assert 'Build-And-Deploy.bat" --qmod-only' in windows_qmod_launcher
+assert "ensure-adb.ps1" not in windows_qmod_launcher
+assert "copy.ps1" not in windows_qmod_launcher
+assert 'if /I "%~1"=="--yes"' in windows_qmod_launcher
+assert "BIGSCREEN_QMOD_ASSUME_YES" in windows_qmod_launcher
+assert "BIGSCREEN_QMOD_ASSUME_YES" in build_launcher
+assert 'if /I "%~1"=="--qmod-only"' in build_launcher
+assert "ADB and the Quest will not be accessed" in build_launcher
+assert "Build-QMOD.bat --yes" in readme
+assert "cannot enable deployment, start ADB, or access a Quest" in readme
 
 print("Repository toolchain, licensing, persistence, and deferred-work invariants passed.")

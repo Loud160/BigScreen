@@ -35,6 +35,11 @@ amalgamated source into Big Screen under its MIT license. The exact release URL
 and SHA-256 are pinned in `scripts/fetch-quickjs-ng.ps1`; none of that upstream
 engine source is represented as original Big Screen code.
 
+The source build also includes an unmodified miniz 3.1.2 source snapshot under
+`tools/deterministic-zip/vendor/miniz-3.1.2`. It retains upstream's MIT license
+and is compiled only into a host-side deterministic ZIP/DEFLATE packaging
+utility. The utility is not part of the Quest runtime or QMOD.
+
 The shipped yt-dlp stable 2026.08.19 zipimport runtime includes yt-dlp-ejs
 0.8.0. Stable 2026.08.19 contains the upstream recovery that temporarily
 required nightly 2026.08.18.122307 after stable 2026.07.04 began returning

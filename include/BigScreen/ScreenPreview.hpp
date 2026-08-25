@@ -62,6 +62,13 @@ namespace BigScreen {
         bool ApplyLibraryPreviewEditorDisplay(bool rebuildGeometry);
 
         std::optional<MapVideoConfig> baseConfig_;
+        // ActivateCurrentState follows PlaybackSession's already-resolved
+        // display configuration. That keeps Respect Mapper Settings identical
+        // between the retained menu-world preview and gameplay without
+        // duplicating Cinema geometry rules here. ActivateUserLayout clears
+        // this ownership explicitly when the song browser needs the player's
+        // neutral layout instead of the last selected map.
+        bool followPreparedDisplay_ = false;
         std::optional<MapVideoConfig> editorConfig_;
         ScreenSurface surface_;
         BSML::FloatingScreen* editorScreen_ = nullptr;

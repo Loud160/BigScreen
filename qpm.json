@@ -17,10 +17,10 @@
     "ndk": "^27.3.13750724",
     "scripts": {
       "build": [
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1"
+        "bash ./scripts/build-linux.sh"
       ],
       "clean": [
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean"
+        "bash ./scripts/build-linux.sh --clean"
       ],
       "copy": [
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1 $0:?"
@@ -29,8 +29,7 @@
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-logging.ps1"
       ],
       "qmod": [
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1",
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1"
+        "bash ./scripts/build-linux.sh"
       ],
       "restart": [
         "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/restart-game.ps1"
@@ -64,7 +63,7 @@
     },
     {
       "id": "paper2_scotland2",
-      "versionRange": "^4.6.4",
+      "versionRange": "^4.8.0",
       "additionalData": {}
     },
     {

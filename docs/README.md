@@ -19,7 +19,8 @@ This index separates ordinary player instructions from mapper and developer mate
 - [Architecture](ARCHITECTURE.md) — lifecycle, main-thread ownership, staged Unity menu prewarming, decoder/downloader workers, persistence, and failure containment. Its prewarming section is a developer-facing design pattern, not an end-user feature claim.
 - [Downloader security](DOWNLOADER_SECURITY.md) — pinned runtime, checksum verification, update activation, rejection, and rollback.
 - [Build dependencies and network downloads](DEPENDENCIES.md) — required host tools, exact automatic downloads, cache behavior, integrity checks, and equivalent manual commands.
-- [Building and packaging](BUILDING.md) — toolchain, host tests, Quest build, QMOD contents, and CI.
+- [Building and packaging](BUILDING.md) — the shared Windows/WSL and native Linux build, QMOD-only versus direct-deploy workflows, toolchain, validation, package contents, and CI.
+- [Building on Linux](BUILDING-LINUX.md) — native x86-64 QMOD builds for MBF or SideQuest, direct Quest deployment, ownership-safe removal, support-log collection, Bazzite/Distrobox setup, caches, and troubleshooting.
 - [Release checklist](RELEASE_CHECKLIST.md) — the minimum checks before publishing a build.
 - [Current development checkpoint](KNOWN_ISSUES.md) — unverified behavior and the required Quest retest matrix for the current preservation checkpoint.
 - [AI-assisted development records](ai-assisted-development/README.md) — retained prompts, implementation contracts, planning notes, and external reviews. These are historical engineering records rather than canonical runtime documentation.

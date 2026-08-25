@@ -167,10 +167,14 @@ namespace BigScreen {
 
     void ScreenPreview::ActivateCurrentState()
     {
-        // Capture the selected map before stopping its ordinary song-preview
-        // playback. This lets the settings preview use that map's real X/Y/Z,
-        // rotation, and mapper-authored base height. If no video map is
-        // selected, MapVideoConfig's documented default placement is used.
+        // PlaybackSession has already combined the selected map's immutable
+        // Cinema definition with Respect Mapper Settings. Follow that resolved
+        // configuration so this retained world preview shows the same canvas
+        // size, shape, and placement that gameplay will create. Stop destroys
+        // only the live decoder/surface and deliberately retains both configs.
+        baseConfig_.reset();
+        followPreparedDisplay_ =
+            PlaybackSession::Instance().PreparedConfig().has_value();
         CaptureBasePlacement();
         PlaybackSession::Instance().Stop();
 
@@ -189,6 +193,7 @@ namespace BigScreen {
         // with neutral geometry so CreateWorldScreen applies the user's saved
         // layout immediately on return to the song list.
         PlaybackSession::Instance().Stop();
+        followPreparedDisplay_ = false;
         baseConfig_ = MapVideoConfig{};
 
         if(Settings::Instance().ModEnabled())
@@ -206,6 +211,9 @@ namespace BigScreen {
             return;
         }
 
+        baseConfig_.reset();
+        followPreparedDisplay_ =
+            PlaybackSession::Instance().PreparedConfig().has_value();
         CaptureBasePlacement();
         PlaybackSession::Instance().Stop();
         Refresh();
@@ -244,6 +252,7 @@ namespace BigScreen {
         DestroyEditorUi();
         surface_.Destroy();
         baseConfig_.reset();
+        followPreparedDisplay_ = false;
 
         // Do not restart an old song-selection decoder from this generic
         // surface teardown. Suspend also runs when the library starts its own
@@ -268,55 +277,75 @@ namespace BigScreen {
 
         auto& settings = Settings::Instance();
         auto config = *baseConfig_;
-        // ScreenPreview owns a cached immutable mapper baseline so settings
-        // can be adjusted after playback stops. When mapper control is off,
-        // strip authored geometry before applying the selected layout; Reset
-        // Screen must therefore return to the actual back-wall defaults.
-        if(config.hasMapperPresentation &&
-           !PlaybackSession::Instance().MapperScreenPresentationActive())
-            config.ResetPresentationToDefaults();
-        const auto& layout = settings.ActiveLayout();
-        if(settings.AdvancedOptionsEnabled() && layout.undocked)
+        bool usingPreparedDisplay = false;
+        if(followPreparedDisplay_)
         {
-            config.screenPosition = {
-                layout.undockedPositionX,
-                layout.undockedPositionY,
-                layout.undockedPositionZ};
-            config.screenRotation = {
-                layout.undockedRotationX,
-                layout.undockedRotationY,
-                layout.undockedRotationZ};
-            config.screenHeight = layout.undockedHeight;
-            config.screenWidthOverride = layout.undockedWidth;
+            // RefreshDisplaySettings rebuilds this snapshot whenever the
+            // toggle or a screen control changes. Consume it directly: when
+            // Respect Mapper Settings is on it contains the mapper's exact
+            // Cinema canvas; when off it already contains the user's layout.
+            // Applying the controls again here was the bug—it compounded user
+            // offsets/scale over mapper geometry only in the menu preview.
+            const auto& prepared =
+                PlaybackSession::Instance().PreparedConfig();
+            if(prepared)
+            {
+                config = *prepared;
+                usingPreparedDisplay = true;
+            }
         }
-        else
+
+        if(!usingPreparedDisplay)
         {
-            config.screenPosition.x += settings.ScreenHorizontalOffset();
-            config.screenPosition.y += settings.ScreenVerticalOffset();
-            config.screenPosition.z += settings.ScreenDistanceOffset();
-            config.screenRotation.x += settings.ScreenTiltOffset();
+            // No selected playable map owns this retained screen (for example
+            // while browsing songs), so derive the ordinary user preview from
+            // the neutral cached baseline exactly as before.
+            if(config.hasMapperPresentation)
+                config.ResetPresentationToDefaults();
+            const auto& layout = settings.ActiveLayout();
+            if(settings.AdvancedOptionsEnabled() && layout.undocked)
+            {
+                config.screenPosition = {
+                    layout.undockedPositionX,
+                    layout.undockedPositionY,
+                    layout.undockedPositionZ};
+                config.screenRotation = {
+                    layout.undockedRotationX,
+                    layout.undockedRotationY,
+                    layout.undockedRotationZ};
+                config.screenHeight = layout.undockedHeight;
+                config.screenWidthOverride = layout.undockedWidth;
+            }
+            else
+            {
+                config.screenPosition.x += settings.ScreenHorizontalOffset();
+                config.screenPosition.y += settings.ScreenVerticalOffset();
+                config.screenPosition.z += settings.ScreenDistanceOffset();
+                config.screenRotation.x += settings.ScreenTiltOffset();
+                if(settings.AdvancedOptionsEnabled())
+                    config.screenRotation.z += settings.ScreenRoll();
+                config.screenHeight *= settings.ScreenScale();
+                config.screenWidthOverride.reset();
+            }
+            config.screenCurvature = settings.CurvedScreenEnabled()
+                ? settings.ScreenCurvature()
+                : 0.0f;
+            config.maintainAspectRatioWhenCurved =
+                settings.CurvedScreenEnabled() &&
+                settings.MaintainCurveAspectRatio();
+            config.letterboxTransparent =
+                settings.AdvancedOptionsEnabled() &&
+                settings.LetterboxTransparencyEnabled();
+            config.videoOpacity = settings.VideoOpacity();
             if(settings.AdvancedOptionsEnabled())
-                config.screenRotation.z += settings.ScreenRoll();
-            config.screenHeight *= settings.ScreenScale();
-            config.screenWidthOverride.reset();
-        }
-        config.screenCurvature = settings.CurvedScreenEnabled()
-            ? settings.ScreenCurvature()
-            : 0.0f;
-        config.maintainAspectRatioWhenCurved =
-            settings.CurvedScreenEnabled() &&
-            settings.MaintainCurveAspectRatio();
-        config.letterboxTransparent = settings.AdvancedOptionsEnabled() &&
-            settings.LetterboxTransparencyEnabled();
-        config.videoOpacity = settings.VideoOpacity();
-        if(settings.AdvancedOptionsEnabled())
-        {
-            config.videoRotation = settings.VideoRotation();
-            config.videoZoom = settings.VideoZoom();
-            config.videoOffsetX = settings.VideoOffsetX();
-            config.videoOffsetY = settings.VideoOffsetY();
-            config.videoTilt = settings.VideoTilt();
-            config.stretchVideoToFit = settings.StretchVideoToFit();
+            {
+                config.videoRotation = settings.VideoRotation();
+                config.videoZoom = settings.VideoZoom();
+                config.videoOffsetX = settings.VideoOffsetX();
+                config.videoOffsetY = settings.VideoOffsetY();
+                config.videoTilt = settings.VideoTilt();
+                config.stretchVideoToFit = settings.StretchVideoToFit();
+            }
         }
 
         const auto& pattern = PlacementPattern();
@@ -330,7 +359,8 @@ namespace BigScreen {
 
         surface_.SetVisible(true);
         PaperLogger.info(
-            "Showing full-size settings preview at ({:.2f}, {:.2f}, {:.2f}), tilt {:.1f}, height {:.2f}",
+            "Showing full-size {} preview at ({:.2f}, {:.2f}, {:.2f}), tilt {:.1f}, height {:.2f}",
+            usingPreparedDisplay ? "prepared map" : "user-layout",
             config.screenPosition.x,
             config.screenPosition.y,
             config.screenPosition.z,

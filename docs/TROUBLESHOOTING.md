@@ -1,12 +1,41 @@
 # Troubleshooting
 
+## Switching one build checkout between Windows and Linux
+
+If the same source checkout is built from both Windows and native Linux, use
+the normal launcher each time. Windows builds inside WSL, so both supported
+hosts use the Linux x86-64 NDK, but QPM still generates links containing the
+active Linux/WSL checkout and cache paths. The bootstrap detects a mismatch,
+replaces only ignored QPM output, and rewrites `ndkpath.txt` before restore. Do
+not manually copy `extern/` or an NDK path between environments. If a build was
+interrupted during that transition, rerun the normal build launcher.
+
+## Build QMOD versus Build and Deploy
+
+Use `Build-QMOD.bat` on Windows or `Build-QMOD-Linux.sh` on Linux to create the
+complete installer for MBF or SideQuest. These build-only launchers never start
+ADB, inspect a headset, or install the mod.
+
+Use `Build-And-Deploy.bat` or `Build-And-Deploy-Linux.sh` only for a direct
+source-managed development install. That path builds the same QMOD first, then
+uses ADB and refuses to overlap a Big Screen package registered by a QMOD
+manager. If deployment reports a registered package, remove it through the
+manager before trying the source deployer again.
+
+`Remove-BigScreen.bat` and `Remove-BigScreen-Linux.sh` remove source-managed
+Big Screen files even if their installed hashes have changed. They preserve
+shared dependencies, maps, logs, and library data, then ask separately whether
+to remove settings and Big Screen-managed downloaded videos; both optional
+answers default to No.
+
 ## Collecting a support bundle
 
 On Windows, double-click **`Collect-BigScreen-Logs.bat`** in the repository or
-source archive. Enter approximately how many minutes ago the problem occurred;
-pressing Enter uses 30 minutes. The collector finds ADB automatically when it
-is available through Android platform-tools, SideQuest, QPM, or the Android SDK.
-No ADB commands are required.
+source archive. On Linux, run `./Collect-BigScreen-Logs-Linux.sh`. Enter
+approximately how many minutes ago the problem occurred; pressing Enter uses
+30 minutes. Both launch the same collector, which finds ADB automatically
+through platform-tools or the Android SDK; the Windows path also detects
+SideQuest and QPM copies. No ADB commands are required.
 
 An authorized phone or tablet connected at the same time is ignored. The
 collector verifies that its target identifies as a Meta/Oculus Quest and has
@@ -49,17 +78,16 @@ to **No** after five minutes. This prevents the collector from silently ending
 another tool's established ADB session while still giving nontechnical users a
 one-key way to free the Quest for ModsBeforeFriday.
 
-When no existing ADB installation can be found, the BAT offers to download the
-pinned Google Android SDK Platform Tools 37.0.0 Windows archive. It discloses
-the official URL, Google SDK terms, approximately 7.8 MB download, approximately
-16.7 MB extracted size, and exact destination before asking. No response for
-five minutes defaults to **No**. Approved downloads are SHA-256 checked, and
-the extracted `adb.exe` must have a valid Google LLC Authenticode signature.
-Nothing is installed system-wide: the files live under `BigScreen Tools` next
-to the BAT and can be removed by deleting that folder. During an approved
-download, the BAT reports transferred megabytes and percentage and announces
-the verification, extraction, signature-checking, and installation stages so
-slow machines or connections do not appear to have stalled.
+When no existing ADB installation can be found, the platform launcher offers
+to download the pinned Google Android SDK Platform Tools 37.0.0 archive for
+Windows (approximately 7.8 MB) or Linux (approximately 8.7 MB). It discloses
+the official URL, Google SDK terms, and exact destination before asking. No
+response for five minutes defaults to **No**. Approved archives are SHA-256
+checked, and Windows additionally requires a valid Google LLC signature on the
+extracted `adb.exe`. Nothing is installed system-wide: the files live under
+`BigScreen Tools` beside the launchers and can be removed by deleting that
+folder. Download progress and every verification/extraction stage remain
+visible so slow machines or connections do not appear to have stalled.
 
 Big Screen logs to Beat Saber's standard mod log folder:
 

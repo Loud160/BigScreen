@@ -2,8 +2,10 @@
 @REM SPDX-License-Identifier: GPL-3.0-only
 @REM SPDX-FileCopyrightText: © 2026 Loud160 (AKA Whisp) and the Big Screen contributors
 @REM
-@REM Removes only receipt-owned source deployment files. It does not remove
-@REM videos, library data, thumbnails, logs, maps, or movement files.
+@REM Removes only receipt-owned source deployment files. It separately asks
+@REM whether settings and Big Screen-managed downloaded videos should also be
+@REM removed. Map-folder videos, Video Import files, library data, thumbnails,
+@REM logs, maps, and movement files remain protected.
 setlocal
 set "BIGSCREEN_ADB_WAS_RUNNING=0"
 set "BIGSCREEN_ADB_WAS_USED=0"

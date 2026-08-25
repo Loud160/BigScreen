@@ -8,6 +8,7 @@
 param(
     [switch]$ConfirmRemoval,
     [switch]$RemoveSettings,
+    [switch]$RemoveVideos,
     [switch]$NonInteractive
 )
 
@@ -16,13 +17,20 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-    $portableAdb = Join-Path $repoRoot "BigScreen Tools/platform-tools/adb.exe"
-    if (Test-Path -LiteralPath $portableAdb -PathType Leaf) {
-        $env:PATH = (Split-Path -Parent $portableAdb) + [IO.Path]::PathSeparator + $env:PATH
+    $portableCandidates = @(
+        (Join-Path $repoRoot "BigScreen Tools/platform-tools/adb"),
+        (Join-Path $repoRoot "BigScreen Tools/platform-tools/adb.exe")
+    )
+    $portableAdb = $portableCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
+    if ($portableAdb) {
+        $env:PATH = (Split-Path -Parent $portableAdb) +
+            [IO.Path]::PathSeparator + $env:PATH
     }
 }
 if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-    throw "ADB was not found. Run scripts/ensure-adb.ps1 or Build-And-Deploy.bat first."
+    throw "ADB was not found. Run the build/deploy or removal launcher for this host OS first."
 }
 
 . (Join-Path $PSScriptRoot "source-install-ownership.ps1")
@@ -53,10 +61,11 @@ if ($classification.State -eq "MIXED_OR_AMBIGUOUS" -and
 
 Write-Output ""
 Write-Output "Big Screen source installation will be removed from the connected Quest."
-Write-Output "Downloaded videos, the Video Library, thumbnails, logs, map-local videos, and other user media will NOT be removed."
+Write-Output "Settings and managed downloads are preserved unless their separate prompts are accepted."
+Write-Output "Map-folder videos, Video Import files, the Video Library, thumbnails, logs, and other user media will NOT be removed."
 if ($classification.State -eq "MIXED_OR_AMBIGUOUS") {
     Write-Host "MBF registration and a readable source receipt are both present." -ForegroundColor Yellow
-    Write-Output "Only hash-proven source files that MBF does not claim will be reconciled. MBF-owned paths will be preserved for MBF to repair."
+    Write-Output "Only exact Big Screen-exclusive source paths that MBF does not claim will be removed. MBF-owned paths will be preserved for MBF to repair."
 }
 if (-not $ConfirmRemoval) {
     if ($NonInteractive) { Write-Output "No files were changed."; exit 2 }
@@ -74,13 +83,20 @@ if (-not $NonInteractive -and -not $RemoveSettings) {
     $RemoveSettings = $settingsAnswer -match '^(?i)y(?:es)?$'
 }
 
+if (-not $NonInteractive -and -not $RemoveVideos) {
+    Write-Output ""
+    Write-Output "This removes only videos downloaded and managed by Big Screen."
+    Write-Output "Map-folder videos and files in Video Import will NOT be removed."
+    $videosAnswer = Read-Host "Also remove Big Screen's downloaded videos? [y/N]"
+    $RemoveVideos = $videosAnswer -match '^(?i)y(?:es)?$'
+}
+
 [void](Invoke-BigScreenAdb @("shell", "am force-stop '$($script:BigScreenPackage)'"))
-$ambiguous = @()
+$failed = @()
 if ($classification.State -eq "SOURCE_MANAGED") {
-    $ambiguous = @(Remove-BigScreenReceiptFiles $classification.CompleteReceipt)
+    $failed = @(Remove-BigScreenReceiptFiles $classification.CompleteReceipt)
 } elseif ($classification.State -eq "SOURCE_PARTIAL") {
-    Assert-BigScreenPartialRecoverable $classification.PartialReceipt
-    $ambiguous = @(Remove-BigScreenReceiptFiles `
+    $failed = @(Remove-BigScreenReceiptFiles `
         -Receipt $classification.PartialReceipt `
         -Partial)
     if ($classification.CompleteReceipt) {
@@ -96,7 +112,7 @@ if ($classification.State -eq "SOURCE_MANAGED") {
             Where-Object { -not $partialPaths.ContainsKey([string]$_.path) })
         if ($retiredFiles.Count -gt 0) {
             $retiredReceipt = [pscustomobject]@{ files = $retiredFiles }
-            $ambiguous += @(Remove-BigScreenReceiptFiles `
+            $failed += @(Remove-BigScreenReceiptFiles `
                 -Receipt $retiredReceipt `
                 -Partial)
         }
@@ -128,7 +144,6 @@ if ($classification.State -eq "SOURCE_MANAGED") {
         }
     }
     $receipt = if ($classification.PartialReceipt) {
-        Assert-BigScreenPartialRecoverable $classification.PartialReceipt
         $classification.PartialReceipt
     } else { $classification.CompleteReceipt }
     $sourceOnlyFiles = @($receipt.files | Where-Object {
@@ -136,7 +151,7 @@ if ($classification.State -eq "SOURCE_MANAGED") {
     })
     if ($sourceOnlyFiles.Count -gt 0) {
         $sourceOnlyReceipt = [pscustomobject]@{ files = $sourceOnlyFiles }
-        $ambiguous += @(Remove-BigScreenReceiptFiles `
+        $failed += @(Remove-BigScreenReceiptFiles `
             -Receipt $sourceOnlyReceipt `
             -Partial:([bool]$classification.PartialReceipt))
     }
@@ -155,7 +170,7 @@ if ($classification.State -eq "SOURCE_MANAGED") {
             $retiredSourceOnlyReceipt = [pscustomobject]@{
                 files = $retiredSourceOnlyFiles
             }
-            $ambiguous += @(Remove-BigScreenReceiptFiles `
+            $failed += @(Remove-BigScreenReceiptFiles `
                 -Receipt $retiredSourceOnlyReceipt `
                 -Partial)
         }
@@ -167,11 +182,17 @@ if ($classification.State -eq "SOURCE_MANAGED") {
     }
 }
 
-if ($ambiguous.Count -gt 0) {
-    Write-Host "The following files changed after source deployment and were preserved:" -ForegroundColor Yellow
-    $ambiguous | ForEach-Object { Write-Output "  $_" }
-    throw "Source removal stopped with ambiguous files preserved. The ownership receipt was retained for diagnosis."
+if ($failed.Count -gt 0) {
+    Write-Host "The following Big Screen files could not be removed:" -ForegroundColor Yellow
+    $failed | ForEach-Object { Write-Output "  $_" }
+    throw "Source removal did not complete because the Quest still reports installed Big Screen files."
 }
+
+# Receipt-owned files are removed individually so an unexpected file is never
+# deleted by a broad recursive operation. Remove only directories that are now
+# empty, preventing the next deploy from mistaking an empty Runtime tree for a
+# pre-receipt legacy installation.
+Remove-BigScreenEmptyRuntimeDirectories
 
 if ($RemoveSettings) {
     $settingsPath = "$($script:BigScreenModData)/Configs/bigscreen.json"
@@ -181,12 +202,30 @@ if ($RemoveSettings) {
     Write-Output "Big Screen settings were preserved."
 }
 
+if ($RemoveVideos) {
+    # Videos/ is exclusively owned by Big Screen's downloader. Map-folder
+    # videos and the user-managed Video Import directory are siblings and are
+    # deliberately outside this exact cleanup target.
+    $videosPath = "$($script:BigScreenModData)/BigScreen/Videos"
+    $expectedVideosPath = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Videos"
+    if ($videosPath -ne $expectedVideosPath) {
+        throw "Refusing unexpected downloaded-video cleanup target: $videosPath"
+    }
+    [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$videosPath'"))
+    if (Test-BigScreenRemoteDirectory $videosPath) {
+        throw "Big Screen's downloaded-video directory could not be removed."
+    }
+    Write-Output "Big Screen-managed downloaded videos were removed by explicit request."
+} else {
+    Write-Output "Big Screen-managed downloaded videos were preserved."
+}
+
 # This exact directory contains only source ownership receipts and their
 # baseline backups. User media and Logs are sibling paths and are untouched.
 [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$($script:SourceInstallRoot)'"))
 Write-Output ""
 Write-Output "Big Screen source installation removed."
-Write-Output "Downloaded videos, library data, thumbnails, logs, and other user data were preserved."
+Write-Output "Map-folder videos, Video Import files, library data, thumbnails, logs, and other user data were preserved."
 if ($classification.State -eq "MIXED_OR_AMBIGUOUS") {
     Write-Output "Big Screen remains registered with ModsBeforeFriday. Use MBF to repair or remove its package before another source deployment."
 } else {

@@ -29,6 +29,7 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "file-hash.ps1")
 trap {
     Write-Host "`nERROR: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
@@ -267,7 +268,7 @@ try {
     New-Item -ItemType Directory -Force -Path $archiveDirectory | Out-Null
     $archiveIsValid = $false
     if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
-        $archiveIsValid = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $platformToolsSha256
+        $archiveIsValid = (Get-BigScreenFileSha256 $archivePath) -eq $platformToolsSha256
         if (-not $archiveIsValid) {
             Write-Host "The cached Platform Tools archive failed verification and will be replaced." -ForegroundColor Yellow
             Remove-Item -LiteralPath $archivePath -Force
@@ -288,7 +289,7 @@ try {
     }
 
     Write-Host "Verifying downloaded archive SHA-256..." -ForegroundColor Cyan
-    $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-BigScreenFileSha256 $archivePath
     if ($actualHash -ne $platformToolsSha256) {
         Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
         throw "The downloaded Platform Tools SHA-256 did not match the pinned official archive. The file will not be installed."

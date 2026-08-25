@@ -39,6 +39,27 @@
       symbols and the 9 backend needs only `BIGSCREEN9_LIB*` symbols.
 - [ ] QMOD creation passes from clean staged dependencies and replaces no prior artifact until fresh-archive validation succeeds.
 - [ ] QMOD archive exactly contains the unique manifest inputs: native libraries, full downloader runtime, manifest, and license/notices.
+- [ ] Clean Windows and native Linux builds from the same release commit and
+      pinned inputs produce byte-identical QMODs with the same SHA-256.
+- [ ] `Build-QMOD.bat` and `Build-QMOD-Linux.sh` both complete without starting
+      ADB or accessing a Quest; the Windows launcher produces the same QMOD as
+      the combined launcher's QMOD-only selection. For unattended parity
+      testing, `Build-QMOD.bat --yes` and `Build-QMOD-Linux.sh --yes` produce
+      byte-identical packages without enabling deployment.
+- [ ] The tracked miniz host utility passes deterministic ZIP tests through the
+      one canonical Linux path on Windows/WSL and native Linux without relying
+      on a separately installed archive program.
+- [ ] Generated QMOD requires Paper2 `^4.8.0`, and source deployment passes on
+      complete dependencies while refusing an old or incomplete Paper2 before
+      changing any Big Screen file.
+- [ ] Windows and Linux source deployment refuse a Big Screen package
+      registered through MBF, SideQuest, or another standard QMOD manager, but
+      still allow an unmanaged/raw source-style installation.
+- [ ] Windows and Linux source removal delete all receipt-owned Big
+      Screen-exclusive files even after simulated hash drift, preserve shared
+      dependencies, and separately default settings/video deletion to No. A
+      video-removal test deletes only `BigScreen/Videos`, never map-folder or
+      Video Import files.
 - [ ] CI passes on the release commit/tag.
 
 ## Headset regression
@@ -63,6 +84,9 @@
       and results screens with both video-material methods; material creation
       must not crash after scene changes or garbage collection.
 - [ ] Respect Mapper Settings on/off is independent from Allow Chroma Override and preserves mapper media/timing in both states.
+- [ ] With Respect Mapper Settings on, a Cinema-authored screen has identical
+      size, shape, position, and rotation in Video Library/menu preview and
+      gameplay; turning it off restores the selected user layout immediately.
 - [ ] PC Cinema color correction, rectangular/elliptical vignette, color blending, opaque screen body, and end fade work on Quest; Refresh reloads an edited map/playlist file without background polling.
 - [ ] Rectangular and elliptical vignettes show no black rectangular backing; explicit black lead-in and mapper-authored opaque-body behavior remain intact.
 - [ ] Cinema additional screens share the primary video without a second decoder/upload; position, rotation, scale, curvature, and the 32-screen safety limit behave as documented.

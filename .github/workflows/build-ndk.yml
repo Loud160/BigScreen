@@ -45,21 +45,16 @@ jobs:
         submodules: true
         lfs: true
 
-    # Ubuntu's packaged Ninja avoids depending on the unmaintained
-    # gha-setup-ninja action, whose current release still embeds Node 20.
-    - name: Install native build tools
-      run: sudo apt-get update && sudo apt-get install -y ninja-build unzip
-
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
-
-    - name: Install pinned Android NDK r27d
-      run: sdkmanager "ndk;27.3.13750724"
-
-    - name: Create ndkpath.txt
+    # CI intentionally installs the same minimal host package set documented
+    # for native Linux and WSL. Project toolchains and dependencies are then
+    # restored by the same hash-verifying bootstrap used by every developer.
+    - name: Install canonical Linux host prerequisites
       run: |
-        echo "${ANDROID_SDK_ROOT}/ndk/27.3.13750724" > ${GITHUB_WORKSPACE}/ndkpath.txt
-        cat ${GITHUB_WORKSPACE}/ndkpath.txt
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential ca-certificates cmake curl ffmpeg \
+          libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+          ninja-build pkg-config python3 unzip xz-utils
 
     # get version from pushed tag
     - name: Extract version
@@ -69,40 +64,8 @@ jobs:
         echo "TAG=${GITHUB_REF#refs/tags/}" >> ${GITHUB_OUTPUT}
         echo "VERSION=${GITHUB_REF#refs/tags/v}" >> ${GITHUB_OUTPUT}
 
-    # qpm-action obtains an ephemeral artifact from QPM.CLI's main-branch
-    # workflow. When that artifact expires or is absent, CI fails before this
-    # repository is built. Install QPM's immutable official release instead,
-    # and verify the archive before executing it.
-    - name: Install QPM CLI 1.5.11
-      env:
-        QPM_ARCHIVE_SHA256: 4d1f15245b18066ba0ef7f17224521754563323c1855a5cc730d49ae6a4419df
-      run: |
-        qpm_dir="${RUNNER_TEMP}/qpm-1.5.11"
-        qpm_archive="${RUNNER_TEMP}/qpm-linux-x64-musl-1.5.11.zip"
-        curl --fail --location --retry 3 --silent --show-error \
-          --output "${qpm_archive}" \
-          "https://github.com/QuestPackageManager/QPM.CLI/releases/download/v1.5.11/qpm-linux-x64-musl.zip"
-        echo "${QPM_ARCHIVE_SHA256}  ${qpm_archive}" | sha256sum --check --strict
-        mkdir -p "${qpm_dir}"
-        unzip -q "${qpm_archive}" -d "${qpm_dir}"
-        chmod 0755 "${qpm_dir}/qpm"
-        echo "${qpm_dir}" >> "${GITHUB_PATH}"
-        "${qpm_dir}/qpm" --help >/dev/null
-
-    - name: Restore pinned Quest dependencies
-      run: qpm restore
-
-    - name: Build isolated LGPL FFmpeg runtime
-      run: |
-        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" BIGSCREEN_FFMPEG_VERSION=4.4.8 ./scripts/build-ffmpeg-lgpl.sh
-        ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/27.3.13750724" BIGSCREEN_FFMPEG_VERSION=9.0.1 ./scripts/build-ffmpeg-lgpl.sh
-
-    - name: Build & Create Qmod
-      shell: pwsh
-      run: |
-        Set-Location $env:GITHUB_WORKSPACE
-        ./scripts/build.ps1
-        ./scripts/createqmod.ps1
+    - name: Build, test, audit, and package through the canonical pipeline
+      run: bash ./Build-QMOD-Linux.sh
 
     - name: Get Library Name
       id: libname
@@ -136,8 +99,6 @@ jobs:
         draft: false
         generate_release_notes: true
         files: |
-          ./build/${{ steps.libname.outputs.NAME }}
-          ./build/debug/${{ steps.libname.outputs.NAME }}
           ./${{ env.qmod_name }}.qmod
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

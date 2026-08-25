@@ -249,9 +249,14 @@ foreach ($runtimeOnlyLibrary in @(
 
 $stdlibRoot = Join-Path $pythonLib "python3.14"
 $stdlibZip = Join-Path $stageRoot "python314.zip"
+$stdlibZipStamp = Join-Path $stageRoot ".python314-zip.ready"
+$stdlibZipFormat = "bigscreen-deterministic-deflate-miniz-3.1.2-v1|$pythonSha256"
 if ($Force -or
     -not (Test-Path -LiteralPath $stdlibZip) -or
-    (Get-Item -LiteralPath $stdlibZip).Length -lt 1024) {
+    (Get-Item -LiteralPath $stdlibZip).Length -lt 1024 -or
+    -not (Test-Path -LiteralPath $stdlibZipStamp) -or
+    (Get-Content -LiteralPath $stdlibZipStamp -Raw).Trim() -ne
+        $stdlibZipFormat) {
     if (Test-Path -LiteralPath $stdlibZip) {
         Remove-Item -LiteralPath $stdlibZip -Force
     }
@@ -266,42 +271,58 @@ if ($Force -or
         "turtledemo/",
         "venv/"
     )
-    $archive = [System.IO.Compression.ZipFile]::Open(
-        $stdlibZip,
-        [System.IO.Compression.ZipArchiveMode]::Create)
-    try {
-        foreach ($file in Get-ChildItem -LiteralPath $stdlibRoot -Recurse -File) {
-            # Windows PowerShell 5 runs on a .NET Framework version that does
-            # not expose Path.GetRelativePath. Both values are already fully
-            # resolved children of the pinned extraction root, so a checked
-            # prefix removal is deterministic on every supported host.
-            if (-not $file.FullName.StartsWith(
-                $stdlibRoot,
-                [System.StringComparison]::OrdinalIgnoreCase)) {
-                throw "Unexpected stdlib file outside $stdlibRoot`: $($file.FullName)"
-            }
-            $relative = $file.FullName.Substring($stdlibRoot.Length).TrimStart('\', '/').Replace('\', '/')
-            if ($relative.Contains('/__pycache__/') -or $relative.EndsWith('.pyc')) {
-                continue
-            }
-            $excluded = $false
-            foreach ($root in $excludedRoots) {
-                if ($relative.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    $excluded = $true
-                    break
-                }
-            }
-            if (-not $excluded) {
-                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-                    $archive,
-                    $file.FullName,
-                    $relative,
-                    [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    # ZipArchive uses the host .NET compression implementation and records
+    # host-specific creator attributes. Build the stdlib with Big Screen's
+    # tracked miniz writer instead so Windows and Linux package identical,
+    # compressed bytes from the same pinned CPython payload without requiring
+    # a separately installed archive program.
+    . (Join-Path $PSScriptRoot "deterministic-zip.ps1")
+    $stdlibSources = @()
+    $stdlibEntries = @()
+    foreach ($file in Get-ChildItem -LiteralPath $stdlibRoot -Recurse -File) {
+        # Windows PowerShell 5 runs on a .NET Framework version that does not
+        # expose Path.GetRelativePath. Both values are already fully resolved
+        # children of the pinned extraction root, so checked prefix removal is
+        # deterministic on every supported host.
+        if (-not $file.FullName.StartsWith(
+            $stdlibRoot,
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected stdlib file outside $stdlibRoot`: $($file.FullName)"
+        }
+        $relative = $file.FullName.Substring($stdlibRoot.Length).
+            TrimStart('\', '/').Replace('\', '/')
+        if ($relative.Contains('/__pycache__/') -or $relative.EndsWith('.pyc')) {
+            continue
+        }
+        $excluded = $false
+        foreach ($root in $excludedRoots) {
+            if ($relative.StartsWith(
+                $root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $excluded = $true
+                break
             }
         }
+        if (-not $excluded) {
+            $stdlibSources += $file.FullName
+            $stdlibEntries += $relative
+        }
+    }
+    $temporaryStdlibZip = $stdlibZip + ".building"
+    try {
+        Write-BigScreenDeterministicZip `
+            -DestinationPath $temporaryStdlibZip `
+            -SourcePaths $stdlibSources `
+            -EntryNames $stdlibEntries
+        Move-Item -LiteralPath $temporaryStdlibZip -Destination $stdlibZip -Force
+        [IO.File]::WriteAllText(
+            $stdlibZipStamp,
+            $stdlibZipFormat,
+            (New-Object Text.UTF8Encoding($false)))
     }
     finally {
-        $archive.Dispose()
+        if (Test-Path -LiteralPath $temporaryStdlibZip) {
+            Remove-Item -LiteralPath $temporaryStdlibZip -Force
+        }
     }
 }
 
@@ -338,7 +359,7 @@ foreach ($extension in $productionExtensions) {
     Copy-Item -LiteralPath $extension.FullName -Destination $dynamicStage -Force
 }
 
-$runtimeManifest = @{
+$runtimeManifest = [ordered]@{
     pythonVersion = $pythonVersion
     pythonSha256 = $pythonSha256
     ytDlpVersion = $ytDlpVersion
@@ -348,7 +369,7 @@ $runtimeManifest = @{
     certifiSha256 = $certifiSha256
     quickJsVersion = "0.16.1"
     nativeExtensions = @($productionExtensions | ForEach-Object Name)
-} | ConvertTo-Json
+} | ConvertTo-Json -Compress
 # Windows PowerShell 5.1's `Set-Content -Encoding UTF8` prepends a BOM.
 # DownloadManager feeds these bytes directly to RapidJSON, whose default parse
 # flags reject that prefix. Always stage plain UTF-8 so a source-built package

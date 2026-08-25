@@ -48,6 +48,11 @@ symbol_namespace="BIGSCREEN${runtime_tag}"
 ffmpeg_archive="ffmpeg-${ffmpeg_version}.tar.xz"
 ffmpeg_url="https://ffmpeg.org/releases/${ffmpeg_archive}"
 android_api="24"
+# Increment this whenever the recipe changes in a way that requires existing
+# staged FFmpeg runtimes to be rebuilt.  Revision 2 removes host-specific cache,
+# home-directory, and Android NDK paths from the configuration string compiled
+# into libavutil so Windows/WSL and native Linux produce identical libraries.
+build_recipe_revision="2"
 
 # Keep compilation in the native Linux filesystem.  Building thousands of
 # small FFmpeg objects through WSL's /mnt/c bridge is dramatically slower and
@@ -62,7 +67,12 @@ build_root="${cache_root}/build-${ffmpeg_version}-android-arm64"
 # the configure/install prefix entirely in WSL's native, path-safe cache and
 # copy the completed installation into the repository only after `make
 # install` succeeds.
-native_install_root="${cache_root}/install-${ffmpeg_version}-android-arm64"
+# Configure uses this stable path relative to build_root. FFmpeg exposes its
+# configure command through avutil_configuration(), so passing an absolute
+# prefix here would make otherwise identical builds differ by developer home.
+portable_install_prefix=".bigscreen-install"
+native_install_root="${build_root}/${portable_install_prefix}"
+portable_toolchain_root=".bigscreen-toolchain"
 portable_dependency_root="${repository_root}/.cache/dependencies"
 if [[ "${ffmpeg_version}" == "4.4.8" ]]; then
     install_root="${portable_dependency_root}/ffmpeg-lgpl"
@@ -97,12 +107,40 @@ is_complete_install() {
     [[ -f "${stamp_path}" ]] || return 1
     [[ -d "${install_root}/include" ]] || return 1
     [[ -f "${config_record_path}" ]] || return 1
+    [[ -f "${install_root}/BUILD-INFO.txt" ]] || return 1
+    grep -Fxq "Build recipe revision: ${build_recipe_revision}" \
+        "${install_root}/BUILD-INFO.txt" || return 1
     grep -Eq '^CFLAGS=.*(^|[[:space:]])-w([[:space:]]|$)' \
         "${config_record_path}" || return 1
+    [[ -f "${install_root}/SHA256SUMS" ]] || return 1
     local library
     for library in "${required_outputs[@]}"; do
         [[ -f "${install_root}/lib/${library}" ]] || return 1
+        grep -Eq "^[0-9a-fA-F]{64}[[:space:]]+.*${library}$" \
+            "${install_root}/SHA256SUMS" || return 1
     done
+    local expected_hash recorded_path recorded_name actual_hash
+    while read -r expected_hash recorded_path; do
+        recorded_name="$(basename "${recorded_path}")"
+        [[ -f "${install_root}/lib/${recorded_name}" ]] || return 1
+        actual_hash="$(sha256sum "${install_root}/lib/${recorded_name}" | awk '{print $1}')"
+        [[ "${actual_hash}" == "${expected_hash}" ]] || return 1
+    done < "${install_root}/SHA256SUMS"
+    local required_option
+    for required_option in \
+        CONFIG_H264_DECODER \
+        CONFIG_H264_MEDIACODEC_DECODER \
+        CONFIG_HEVC_MEDIACODEC_DECODER \
+        CONFIG_VP8_DECODER \
+        CONFIG_VP8_MEDIACODEC_DECODER \
+        CONFIG_VP9_DECODER \
+        CONFIG_VP9_MEDIACODEC_DECODER \
+        CONFIG_MATROSKA_DEMUXER \
+        CONFIG_MPEGTS_DEMUXER \
+        CONFIG_MP4_MUXER; do
+        grep -q "^${required_option}=yes$" "${config_record_path}" || return 1
+    done
+    ! grep -q '^CONFIG_HEVC_DECODER=yes$' "${config_record_path}" || return 1
 }
 
 if is_complete_install && [[ "${1:-}" != "--force" ]]; then
@@ -169,6 +207,10 @@ sed -i "s/^LIBAVUTIL_/${symbol_namespace}_LIBAVUTIL_/" "${source_root}/libavutil
 sed -i "s/^LIBSWSCALE_/${symbol_namespace}_LIBSWSCALE_/" "${source_root}/libswscale/libswscale.v"
 
 mkdir -p "${build_root}"
+# Expose the real NDK through a fixed build-local name. The relative compiler,
+# linker, and sysroot arguments below are deliberately part of the reproducible
+# binary interface: FFmpeg embeds their literal spellings in libavutil.
+ln -s "${toolchain_bin}/.." "${build_root}/${portable_toolchain_root}"
 cd "${build_root}"
 
 # This is intentionally a decode-and-remux-only configuration. In particular, it does
@@ -185,19 +227,19 @@ cd "${build_root}"
 # MP4 is unavailable. Keep the MPEG-TS demuxer and MP4 muxer in both private
 # FFmpeg builds so Big Screen can normalize that payload without re-encoding.
 "${source_root}/configure" \
-    --prefix="${native_install_root}" \
+    --prefix="${portable_install_prefix}" \
     --target-os=android \
     --arch=aarch64 \
     --cpu=armv8-a \
     --build-suffix="${build_suffix}" \
     --enable-cross-compile \
-    --sysroot="${toolchain_bin}/../sysroot" \
-    --cc="${toolchain_bin}/aarch64-linux-android${android_api}-clang" \
-    --cxx="${toolchain_bin}/aarch64-linux-android${android_api}-clang++" \
-    --ar="${toolchain_bin}/llvm-ar" \
-    --nm="${toolchain_bin}/llvm-nm" \
-    --ranlib="${toolchain_bin}/llvm-ranlib" \
-    --strip="${toolchain_bin}/llvm-strip" \
+    --sysroot="${portable_toolchain_root}/sysroot" \
+    --cc="${portable_toolchain_root}/bin/aarch64-linux-android${android_api}-clang" \
+    --cxx="${portable_toolchain_root}/bin/aarch64-linux-android${android_api}-clang++" \
+    --ar="${portable_toolchain_root}/bin/llvm-ar" \
+    --nm="${portable_toolchain_root}/bin/llvm-nm" \
+    --ranlib="${portable_toolchain_root}/bin/llvm-ranlib" \
+    --strip="${portable_toolchain_root}/bin/llvm-strip" \
     --enable-pic \
     --enable-shared \
     --disable-static \
@@ -302,12 +344,27 @@ cp -a "${native_install_root}/." "${install_root}/"
 # Preserve the exact build inputs needed for LGPL corresponding-source
 # releases.  The generated diff describes every change made to upstream
 # FFmpeg, while config files capture the complete detected toolchain state.
+emit_stable_diff() {
+    local relative_path="$1"
+    local diff_status=0
+    diff -u \
+        --label "ffmpeg-${ffmpeg_version}/original/${relative_path}" \
+        --label "ffmpeg-${ffmpeg_version}/bigscreen/${relative_path}" \
+        "${pristine_root}/${relative_path}" \
+        "${source_root}/${relative_path}" || diff_status=$?
+    if (( diff_status > 1 )); then
+        printf 'Could not generate the FFmpeg source-change record for %s.\n' \
+            "${relative_path}" >&2
+        return "${diff_status}"
+    fi
+}
+
 {
-    diff -u "${pristine_root}/configure" "${source_root}/configure" || true
-    diff -u "${pristine_root}/libavcodec/libavcodec.v" "${source_root}/libavcodec/libavcodec.v" || true
-    diff -u "${pristine_root}/libavformat/libavformat.v" "${source_root}/libavformat/libavformat.v" || true
-    diff -u "${pristine_root}/libavutil/libavutil.v" "${source_root}/libavutil/libavutil.v" || true
-    diff -u "${pristine_root}/libswscale/libswscale.v" "${source_root}/libswscale/libswscale.v" || true
+    emit_stable_diff "configure"
+    emit_stable_diff "libavcodec/libavcodec.v"
+    emit_stable_diff "libavformat/libavformat.v"
+    emit_stable_diff "libavutil/libavutil.v"
+    emit_stable_diff "libswscale/libswscale.v"
 } > "${install_root}/bigscreen-ffmpeg-changes.diff"
 cp "${build_root}/config.h" "${install_root}/bigscreen-ffmpeg-config.h"
 cp "${build_root}/ffbuild/config.mak" "${config_record_path}"
@@ -331,7 +388,19 @@ for library in "${required_outputs[@]}"; do
         printf 'Private FFmpeg symbol versions are missing from %s\n' "${library_path}" >&2
         exit 1
     fi
+    for host_path in "${cache_root}" "${android_ndk_root}" "${repository_root}"; do
+        if grep -aFq "${host_path}" "${library_path}"; then
+            printf 'Host-specific path was embedded in %s: %s\n' \
+                "${library_path}" "${host_path}" >&2
+            exit 1
+        fi
+    done
 done
+
+if grep -Fq "${cache_root}" "${install_root}/bigscreen-ffmpeg-changes.diff"; then
+    printf 'Host-specific cache path was written to the FFmpeg change record.\n' >&2
+    exit 1
+fi
 
 cat > "${install_root}/BUILD-INFO.txt" <<EOF
 FFmpeg version: ${ffmpeg_version}
@@ -343,8 +412,10 @@ NDK: $(basename "${android_ndk_root}")
 License configuration: LGPL-2.1-or-later; GPL and nonfree components disabled
 Third-party warning policy: compiler warnings suppressed for pinned FFmpeg sources; configure checks and compiler errors remain active
 Build script: scripts/build-ffmpeg-lgpl.sh
+Build recipe revision: ${build_recipe_revision}
 EOF
 
-sha256sum "${install_root}"/lib/*"${build_suffix}".so > "${install_root}/SHA256SUMS"
+(cd "${install_root}/lib" && \
+    sha256sum *"${build_suffix}".so) > "${install_root}/SHA256SUMS"
 printf 'FFmpeg %s LGPL runtime built successfully.\n' "${ffmpeg_version}" > "${stamp_path}"
 printf 'Staged Big Screen LGPL FFmpeg at %s\n' "${install_root}"

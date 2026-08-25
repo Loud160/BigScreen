@@ -115,10 +115,12 @@ match the Beat Saber version installed on the headset.
 
 ### Create a crash support bundle
 
-Windows users can double-click **[Collect-BigScreen-Logs.bat](Collect-BigScreen-Logs.bat)**
-after a problem. It automatically finds ADB, asks when the problem occurred,
-and creates one ZIP containing freshness-labelled Big Screen, Beat Saber, and
-Quest OS diagnostics. No ADB commands or manual file hunting are required.
+Windows users can double-click **[Collect-BigScreen-Logs.bat](Collect-BigScreen-Logs.bat)**;
+Linux users can run `./Collect-BigScreen-Logs-Linux.sh`. Both launch the same
+collector after a problem. It automatically finds ADB, asks when the problem
+occurred, and creates one ZIP containing freshness-labelled Big Screen, Beat
+Saber, and Quest OS diagnostics. No ADB commands or manual file hunting are
+required.
 When **Misc > Detailed Diagnostic Logging** is enabled (the default), the ZIP
 also includes the ten newest Menu sessions and ten newest Download sessions as
 structured JSONL. Temporary yt-dlp media URLs, cookies, authorization values,
@@ -129,11 +131,12 @@ ADB started by the collector is stopped automatically. An ADB server that was
 already running receives a five-minute **Stop ADB?** prompt that defaults to
 leaving the existing session alone.
 
-If ADB is not installed, the BAT offers to download Google's pinned Windows
-Platform Tools package after showing its source, size, destination, and SDK
-terms. The archive and extracted `adb.exe` are verified before use. The
-approximately 17 MB portable copy remains under `BigScreen Tools` beside the
-BAT; deleting that folder removes it without an uninstaller or `PATH` changes.
+If ADB is not installed, the Windows and Linux launchers offer to download the
+matching pinned Google Platform Tools package after showing its source, size,
+destination, and SDK terms. The archive is SHA-256 verified before use; Windows
+also verifies the extracted `adb.exe` Google signature. The portable copy
+remains under `BigScreen Tools` beside the launchers; deleting that folder
+removes it without an uninstaller or persistent `PATH` changes.
 The console reports transferred megabytes and percentage during the download,
 then announces archive verification, extraction, signature checking, and final
 installation so a slow first run does not look frozen.
@@ -187,165 +190,200 @@ Screen is open so the complete placement remains visible. **Show Lane Guides**
 can independently add a thin four-lane/player-position reference; neither
 setting changes gameplay environments.
 
-### Build and deploy from source on Windows
+### Build and deploy from source
 
-There are two supported Windows workflows. The standalone batch launcher is
-the simplest way to build and install Big Screen. The manual workflow below it
-exposes every preparation, build, packaging, test, and deployment command.
+Most players should install the published QMOD. The source tools below are for
+developers and testers who intentionally want to reproduce or directly deploy
+the current build.
 
-#### Method 1 — Standalone `Build-And-Deploy.bat`
+Big Screen has one canonical x86-64 Linux build implemented in Bash and Python.
+Native Linux calls it directly; Windows runs the same files inside WSL. Given
+the same commit and pinned inputs, both platforms produce the same QMOD bytes
+and SHA-256.
 
-Install [QPM CLI](https://github.com/QuestPackageManager/QPM.CLI), Visual Studio
-with **Desktop development with C++** and **C++ CMake tools for Windows**, and
-WSL 2 with Ubuntu. Enable Quest developer mode, connect the headset over USB,
-put it on, and accept the USB debugging authorization prompt.
+| Host and goal | Run | Quest accessed? |
+|---|---|---:|
+| Windows: build a QMOD for MBF or SideQuest | Double-click [`Build-QMOD.bat`](Build-QMOD.bat) | No |
+| Windows: choose QMOD-only or build-and-deploy | Double-click [`Build-And-Deploy.bat`](Build-And-Deploy.bat) | Only when **Deploy** is selected |
+| Linux: build a QMOD for MBF or SideQuest | `bash ./Build-QMOD-Linux.sh` | No |
+| Linux: build, validate, and deploy | `bash ./Build-And-Deploy-Linux.sh` | Yes |
 
-The first time Ubuntu opens, install the small Linux toolchain used to compile
-FFmpeg. The batch launcher handles the pinned Linux NDK itself:
+**Build QMOD** creates the complete `Big Screen.qmod` package for installing
+Big Screen through MBF or SideQuest. It does not require ADB, inspect a
+connected headset, or install the mod by itself; after the build finishes, load
+the generated QMOD with MBF or SideQuest.
 
-```bash
-sudo apt update
-sudo apt install -y build-essential curl xz-utils unzip
+**Build and Deploy** creates and validates that same QMOD first, then uses ADB
+to copy the verified mod and private runtime directly to a connected Quest and
+restart Beat Saber. This is a source-managed development installation, not a
+QMOD-manager installation. Do not use it over a QMOD already registered by MBF,
+SideQuest, or another installer that writes standard package metadata.
+
+Every build runs the host tests, builds both private FFmpeg runtimes, builds the
+Quest ARM64 mod with Android NDK r27d, validates the native-library boundaries
+and manifest, and creates `Big Screen.qmod` in the repository root. The
+Windows and Linux build-only launchers never look for ADB or communicate with
+a headset.
+
+#### Windows one-click workflow
+
+Clone or download the repository. For a build-only workflow matching Linux's
+`Build-QMOD-Linux.sh`, double-click:
+
+```bat
+Build-QMOD.bat
 ```
 
-Clone or download this repository, then double-click
-**[Build-And-Deploy.bat](Build-And-Deploy.bat)** in its root folder. It can also
-be launched from Command Prompt or PowerShell:
+This skips the deployment choice, excludes ADB from the audit, and cannot
+access a Quest. To choose interactively between QMOD-only and direct deployment,
+run:
 
 ```bat
 Build-And-Deploy.bat
 ```
 
-The launcher first lists the dependencies it may download and waits for
-permission. It checks what is already installed or cached and downloads only
-missing inputs. It then restores QPM packages, resolves both pinned Android NDK
-installations, builds the two private FFmpeg runtimes and embedded downloader,
-builds and validates Big Screen, creates the QMOD, removes stale copies from the
-opposite Scotland2 load phase, installs the complete runtime, and asks Beat
-Saber to restart. The console remains open and reports either success or the
-exact failed step.
+For unattended build verification, `Build-QMOD.bat --yes` approves only the
+missing prerequisites disclosed by its read-only audit. It remains QMOD-only:
+the option cannot enable deployment, start ADB, or access a Quest.
 
-Source deployment is ownership-tracked. Before the first Quest file changes,
-the script records an exact hash-based partial receipt; a successful deploy
-promotes it to `BigScreen/SourceInstall/source-install.json`. Repeated builds
-keep the original pre-source baseline. If ModsBeforeFriday has Big Screen
-registered for the active Beat Saber version, deployment refuses without
-changing Quest files—remove the package through MBF first.
+The launcher first asks whether to create the QMOD only or also deploy it. It
+then performs a read-only audit that labels every prerequisite and cached input
+as **READY** or **MISSING** before asking permission to change anything. Only
+missing items are installed or downloaded. If enabling WSL or installing
+Ubuntu requires elevation, the audit names that exact component before the UAC
+prompt. A newly enabled WSL installation may require one Windows restart.
 
-To leave source-development mode, double-click
-**[Remove-BigScreen.bat](Remove-BigScreen.bat)**. It removes or restores only
-hash-proven source-owned payload, preserves videos/library/logs, and asks
-separately before deleting settings. MBF-managed installations must still be
-removed through MBF.
+Compilation, tests, validation, and packaging all run inside x86-64 Ubuntu
+22.04 or 24.04 under WSL. Visual Studio, Git, PowerShell 7, Windows QPM, a
+Windows NDK, Docker, and 7-Zip are not required. Windows PowerShell 5.1 is used
+only by the small prerequisite and optional ADB-deployment wrapper.
 
-The deploy step also keeps the experimental embedded video shader bundle
-(`assets/bigscreen_video_shader`) current: when any source under
-`tools/video-shader/` has changed, it rebuilds the bundle automatically with
-Unity **2022.3.33f1** (the exact engine Beat Saber 1.40.8 ships) and refuses to
-deploy a stale bundle. Unity is only required when those shader sources have
-changed or appear newer than the bundle; `build.ps1`/`createqmod.ps1` use the
-committed bundle and do not launch Unity. The
-complete Unity project inputs—including `Packages`, `ProjectSettings`, and XR
-assets—are versioned so a clean clone can reproduce the bundle. After the game
-restarts, the deployment command returns immediately instead of waiting for a
-main-menu shader diagnostic. The mod still records its selected shader tier in
-normal logs for support diagnostics.
+QMOD-only mode does not check for ADB and does not access the Quest. Deploy mode
+can use an existing ADB or install a verified portable copy in `BigScreen
+Tools`. It validates the Quest, Beat Saber, dependencies, and install ownership
+before copying anything.
 
-After deployment, ADB is stopped automatically when the launcher started it.
-If ADB was already active, the launcher asks whether to stop it and defaults to
-**No** after five minutes so it cannot silently disrupt an existing session.
-When ADB is missing, this launcher uses the same disclosed, verified portable
-Platform Tools download as the crash-log collector.
+#### Linux one-click workflow
 
-The first clean run needs internet access, several gigabytes of temporary
-space, and time to compile FFmpeg. Later runs reuse hash-verified caches. The
-launcher does not upload source or telemetry.
-
-#### Method 2 — Manual build from source without the batch launcher
-
-You do not need previous Beat Saber mod-development experience, but the manual
-workflow requires the following tools:
-
-| Tool | Why Big Screen needs it |
-|---|---|
-| **Git for Windows** | Clones the repository and preserves its versioned build recipes. |
-| **Visual Studio with Desktop development with C++** | Supplies the Windows C++ compiler used by host tests. Include **C++ CMake tools for Windows**, or install CMake 3.22+ and Ninja separately. |
-| **QPM CLI** | Restores the exact Quest headers/libraries recorded in `qpm.shared.json` and downloads the Windows Android NDK. This port was validated with QPM 1.5.11. |
-| **WSL 2 with Ubuntu** | Builds Big Screen's private LGPL FFmpeg libraries in a Linux environment. |
-| **Android NDK r27d (`27.3.13750724`)** | QPM manages the Windows copy used for the mod; `scripts/install-pinned-ndk.sh` installs the matching Linux copy used by FFmpeg inside WSL. Do not substitute another revision. |
-| **Android platform-tools/ADB or SideQuest** | Required only for direct deployment to a connected Quest; it is not required to build the QMOD. |
-| **Unity Editor 2022.3.33f1** | Required only after changing the experimental shader project; ordinary clean builds use the committed bundle. |
-
-Windows PowerShell 5.1 is already included with supported Windows versions.
-Python 3 is optional but recommended because it enables the downloader and
-repository-invariant host tests. Node.js/pnpm are needed only for the separate
-yt-dlp/yt-dlp-ejs source-reproducibility audit, not for a normal mod build.
-
-Clone the repository, restore its exact Quest dependencies, and resolve the
-pinned Windows Android NDK from PowerShell:
-
-```powershell
-git clone https://github.com/Loud160/BigScreen.git
-cd BigScreen
-qpm restore
-qpm ndk resolve --download
-qpm doctor
-```
-
-If QPM was installed in its normal per-user directory but was not added to
-`PATH`, use its full environment-relative path:
-
-```powershell
-$qpm = "$env:LOCALAPPDATA\Programs\QPM\qpm.exe"
-& $qpm restore
-& $qpm ndk resolve --download
-& $qpm doctor
-```
-
-Install WSL 2 from an Administrator PowerShell window if necessary:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-After Windows completes the WSL installation, open Ubuntu and prepare the Linux
-FFmpeg toolchain:
+On x86-64 Ubuntu, Debian, or Linux Mint, the launcher checks the native package
+set before building. If anything is missing, it lists the exact packages,
+explains that `sudo` may be requested, and offers to install only those missing
+packages with `apt`. The equivalent manual package command is:
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential curl xz-utils unzip
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential ca-certificates cmake curl ffmpeg \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  ninja-build pkg-config python3 unzip xz-utils
+```
+
+Build the QMOD without accessing a Quest:
+
+```bash
+git clone https://github.com/Loud160/BigScreen.git
+cd BigScreen
+bash ./Build-QMOD-Linux.sh
+```
+
+Or connect and authorize a Quest, then build and deploy in one command:
+
+```bash
+bash ./Build-And-Deploy-Linux.sh
+```
+
+The Windows and Linux deployment launchers verify the Quest connection before
+the long build. If USB-debugging authorization is still pending, they explain
+the headset steps and let the user retry without restarting the launcher.
+
+Use `--clean` with either Linux build launcher to discard generated native
+build output before rebuilding. Both also accept `--yes` for disclosed host,
+container, and pinned dependency downloads; it never bypasses device selection,
+Quest dependency checks, or ownership protection.
+
+Immutable systems such as Bazzite and unsupported mutable distributions are
+handled automatically through a reusable Ubuntu 24.04 Distrobox. The launcher
+checks Distrobox and Podman, offers to install missing host tools through a
+recognized package manager, creates the `bigscreen-build` container, lists and
+installs only its missing Ubuntu build packages, and then continues the same
+operation inside it. Bazzite normally already includes the container tools.
+An immutable host that must layer a missing package may require one reboot
+before the launcher can continue. Linux ARM64 remains unsupported because the
+pinned QPM and Android NDK host tools are x86-64.
+
+#### Manual Windows/WSL setup
+
+The Windows BAT normally performs this setup. To prepare it manually, install
+WSL from Administrator PowerShell:
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+Install the Linux package list above inside Ubuntu. Then open the repository
+from WSL and run the same Linux build-only command:
+
+```bash
 cd /mnt/c/path/to/BigScreen
-./scripts/install-pinned-ndk.sh
+bash ./Build-QMOD-Linux.sh
 ```
 
-Replace `/mnt/c/path/to/BigScreen` with the clone's actual WSL path. The Windows
-build script invokes WSL automatically if either pinned FFmpeg runtime has not
-already been staged.
+Git is convenient for cloning and updates but is not required for a downloaded
+GitHub source archive. The build downloads and verifies only missing pinned
+project inputs, including QPM 1.5.11, Android NDK r27d, FFmpeg, QuickJS-NG, and
+the embedded downloader runtime. Valid caches are reused on later runs. The
+first clean build needs internet access, several gigabytes of free space, and
+time to compile both FFmpeg versions.
 
-Run the host tests, build the Quest libraries, and create the QMOD from
-PowerShell in the repository root:
+#### Quest dependencies and deployment protection
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
-```
+The QMOD declares these compatible runtime ranges. A compatible installer such
+as MBF or SideQuest normally installs or updates them when it processes the
+package; direct source deployment verifies that compatible registrations and
+files already exist.
 
-The resulting `Big Screen.qmod` can be installed with a compatible Quest Beat
-Saber mod manager. Building it does not require a connected headset.
+| Dependency | Compatible runtime version | Upstream project |
+|---|---:|---|
+| beatsaber-hook | `^6.4.2` | [QuestPackageManager/beatsaber-hook](https://github.com/QuestPackageManager/beatsaber-hook) |
+| Paper2 (`paper2_scotland2`) | `^4.8.0` | [Fernthedev/paperlog](https://github.com/Fernthedev/paperlog) |
+| SongCore | `^1.1.23` | [raineaeternal/Quest-SongCore](https://github.com/raineaeternal/Quest-SongCore) |
+| BSML | `^0.4.54` | [bsq-ports/Quest-BSML](https://github.com/bsq-ports/Quest-BSML) |
+| custom-types | `^0.18.3` | [QuestPackageManager/Il2CppQuestTypePatching](https://github.com/QuestPackageManager/Il2CppQuestTypePatching) |
 
-To build and deploy manually without using the batch launcher, connect and
-authorize the Quest, make sure `adb` is available, and run:
+Deployment ignores attached phones and tablets, verifies that the selected
+device is a Meta/Oculus Quest with Beat Saber installed, and asks which headset
+to use if more than one eligible Quest is connected. A Big Screen QMOD already
+registered by MBF—or another installer that writes the standard `Packages`
+metadata—is detected by `id: bigscreen` and blocks source deployment. A raw
+`.so` copied manually has no package-manager identity and is treated like an
+unmanaged/source installation.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1
-```
+Source deployment records partial and complete ownership receipts and verifies
+every copied file. Shared mod dependencies are never claimed as Big Screen
+files. If the launcher started ADB, it stops it afterward; if ADB was already
+running, it asks whether to stop it and defaults to No after five minutes.
 
-See **[Build dependencies and network downloads](docs/DEPENDENCIES.md)** for
-the complete versioned inventory, official sources, cache locations, integrity
-checks, packaged/build-only distinctions, and lower-level manual commands. See
-[Building and packaging](docs/BUILDING.md) for clean builds, host tests, QMOD
-creation, toolchain details, and troubleshooting.
+#### Removing a source-deployed copy
+
+Use [`Remove-BigScreen.bat`](Remove-BigScreen.bat) on Windows or
+`bash ./Remove-BigScreen-Linux.sh` on Linux. After one confirmation, exact Big
+Screen-exclusive files are removed even if their hashes changed after
+deployment; hash drift cannot trap an installed source build. The remover then
+asks separately whether to delete the settings file and whether to delete
+videos downloaded and managed by Big Screen. Both choices default to No.
+
+Shared dependencies, `library.json`, thumbnails, logs, maps, choreography,
+map-folder videos, and files in `Video Import` are preserved. A registered QMOD
+installation must still be removed through the installer that owns it.
+
+The ordinary build embeds the committed `assets/bigscreen_video_shader` bundle.
+Unity 2022.3.33f1 is required only when intentionally changing and rebuilding
+the tracked shader project.
+
+For full commands, downloads, cache locations, Bazzite/Distrobox instructions,
+support tools, and failure guidance, see [Building and packaging](docs/BUILDING.md),
+[Building on Linux](docs/BUILDING-LINUX.md), and
+[Build dependencies](docs/DEPENDENCIES.md).
 
 ## Recovery, storage, and privacy
 
@@ -460,6 +498,7 @@ include/BigScreen/      Public declarations and testable core logic
 src/                    Native mod, UI, playback, storage, and downloader code
 tests/                  Host-side C++ and embedded-Python tests
 scripts/                Reproducible dependency, build, deploy, and QMOD scripts
+tools/deterministic-zip Tracked host-side deterministic ZIP/DEFLATE builder
 docs/                   User, mapper, architecture, security, and build manuals
 licenses/               Redistributable third-party license texts
 .github/workflows/      Host tests and Quest/NDK package build

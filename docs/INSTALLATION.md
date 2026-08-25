@@ -4,6 +4,9 @@
 
 - Meta Quest 2 or Quest 3.
 - A modded standalone Quest installation of **Beat Saber 1.40.8 (`1.40.8_7379`)**.
+- The QMOD's declared shared dependencies: beatsaber-hook 6.4.2+, Paper2
+  4.8.0+, SongCore 1.1.23+, BSML 0.4.54+, and custom-types 0.18.3+, within
+  their declared compatible release ranges. MBF resolves these automatically.
 - Enough free internal storage for the QMOD runtime and any downloaded videos. Big Screen reserves 512 MB before beginning a new download.
 
 The current QMOD is version-specific. A newer or older Beat Saber APK can change native APIs and must use a separately tested build. Beat Saber 1.37.x users must install the QMOD built from the maintained `release/bs-1.37-alpha` branch instead.
@@ -15,6 +18,11 @@ The current QMOD is version-specific. A newer or older Beat Saber APK can change
 3. Install/import the QMOD and allow its declared dependencies to resolve.
 4. Fully restart Beat Saber.
 5. Open **Mods > Big Screen**. If the page opens and the blank placement preview appears, the native mod and UI loaded.
+
+Paper2 4.8.0 is a hard ABI requirement. Older Paper2 4.x releases do not
+provide the logging symbol used by Big Screen and cannot load the native mod.
+The package manifest requires 4.8.0 or newer so MBF upgrades an older copy
+instead of treating it as compatible.
 
 The package installs its native libraries through the mod loader and places the embedded downloader runtime under `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime`. QuickJS-NG is already compiled into Big Screen; users do not install a separate JavaScript runtime, Termux package, or executable.
 
@@ -33,9 +41,16 @@ The separate **Check yt-dlp** control updates only the embedded downloader Pytho
 ## Removing or disabling
 
 - To stop all behavior but keep the mod installed, turn off **Big Screen Enabled**. The menu remains available so it can be re-enabled.
-- To uninstall, remove Big Screen through the mod manager. ModData may intentionally remain so assignments and downloaded files survive reinstalling.
+- To uninstall a QMOD installed through MBF, SideQuest, or another compatible
+  QMOD manager, remove Big Screen through that manager. ModData may
+  intentionally remain so assignments and downloaded files survive
+  reinstalling.
 - If Big Screen was installed with this repository's Build & Deploy workflow,
-  use `Remove-BigScreen.bat` instead. It reads the source ownership receipt,
-  preserves videos/library/logs, and asks separately whether to remove settings.
-  Do not use the source remover for an MBF-managed install.
+  use `Remove-BigScreen.bat` on Windows or run
+  `./Remove-BigScreen-Linux.sh` on Linux. Both read the same source ownership
+  receipt, remove exact Big Screen-exclusive payload even when its hash has
+  changed, preserve shared dependencies and library/logs, and ask separately
+  whether to remove settings and Big Screen-managed downloads. Both choices
+  default to No; map-folder and Video Import videos are always preserved. Do
+  not use the source remover for a QMOD-managed install.
 - Before manually deleting ModData, copy out any downloaded video you want to keep. Map-folder and Video Import files are independent user-owned files.

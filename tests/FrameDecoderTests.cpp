@@ -16,6 +16,7 @@
 
 namespace {
     int failures = 0;
+    constexpr double TestPresentationIntervalSeconds = 1.0 / 60.0;
 
     void Expect(bool condition, const char* description)
     {
@@ -23,24 +24,6 @@ namespace {
             return;
         ++failures;
         std::cerr << "FAILED: " << description << '\n';
-    }
-
-    bool WaitForFrame(BigScreen::FrameDecoder& decoder, BigScreen::VideoFrame& frame)
-    {
-        const auto deadline = std::chrono::steady_clock::now() +
-            std::chrono::seconds(3);
-        while(std::chrono::steady_clock::now() < deadline)
-        {
-            if(decoder.TryTake(frame))
-                return true;
-            if(const auto error = decoder.TakeError())
-            {
-                std::cerr << "Decoder worker error: " << *error << '\n';
-                return false;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return false;
     }
 
     bool WaitForFrameAt(
@@ -84,9 +67,11 @@ namespace {
 
         for(int index = 0; index < 6; ++index)
         {
-            decoder.Request(index * 0.2);
+            const double mediaSeconds = index * 0.2;
+            decoder.Request(mediaSeconds, TestPresentationIntervalSeconds);
             BigScreen::VideoFrame frame;
-            Expect(WaitForFrame(decoder, frame), "requested frame should arrive");
+            Expect(WaitForFrameAt(decoder, mediaSeconds, frame),
+                   "requested frame should arrive");
             if(frame.rgba.empty())
                 continue;
             Expect(frame.width == expectedWidth, "decoded width should match output");
@@ -105,9 +90,9 @@ namespace {
         blackout.enabled = true;
         blackout.brightness = 0.0f;
         decoder.UpdateVisualEffects(blackout);
-        decoder.Request(0.37);
+        decoder.Request(0.37, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame blackFrame;
-        Expect(WaitForFrame(decoder, blackFrame),
+        Expect(WaitForFrameAt(decoder, 0.37, blackFrame),
                "a frame should arrive after changing live visual effects");
         if(!blackFrame.rgba.empty())
         {
@@ -128,9 +113,9 @@ namespace {
         }
 
         decoder.UpdateVisualEffects({});
-        decoder.Request(0.57);
+        decoder.Request(0.57, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame restoredFrame;
-        Expect(WaitForFrame(decoder, restoredFrame),
+        Expect(WaitForFrameAt(decoder, 0.57, restoredFrame),
                "a frame should arrive after clearing live visual effects");
         if(!restoredFrame.rgba.empty())
         {
@@ -153,9 +138,9 @@ namespace {
         ovalVignette.vignetteRadius = 0.0f;
         ovalVignette.vignetteSoftness = 0.1f;
         decoder.UpdateVisualEffects(ovalVignette);
-        decoder.Request(0.77);
+        decoder.Request(0.77, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame ovalFrame;
-        Expect(WaitForFrame(decoder, ovalFrame),
+        Expect(WaitForFrameAt(decoder, 0.77, ovalFrame),
                "an oval-vignette frame should arrive");
         if(!ovalFrame.rgba.empty())
         {
@@ -176,9 +161,9 @@ namespace {
         rectangularVignette.vignetteRadius = 0.72f;
         rectangularVignette.vignetteSoftness = 0.16f;
         decoder.UpdateVisualEffects(rectangularVignette);
-        decoder.Request(0.97);
+        decoder.Request(0.97, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame rectangularFrame;
-        Expect(WaitForFrame(decoder, rectangularFrame),
+        Expect(WaitForFrameAt(decoder, 0.97, rectangularFrame),
                "a rectangular-vignette frame should arrive");
         if(!rectangularFrame.rgba.empty())
         {
@@ -202,14 +187,16 @@ namespace {
         std::uint64_t priorRestartGeneration = 0;
         for(int loop = 0; loop < 3; ++loop)
         {
-            decoder.Request(decoder.DurationSeconds() + 0.25);
+            decoder.Request(
+                decoder.DurationSeconds() + 0.25,
+                TestPresentationIntervalSeconds);
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             const auto restartGeneration = decoder.Restart(0.1);
             Expect(restartGeneration > priorRestartGeneration,
                    "each explicit restart should create a new frame generation");
             priorRestartGeneration = restartGeneration;
             BigScreen::VideoFrame loopedFrame;
-            Expect(WaitForFrame(decoder, loopedFrame),
+            Expect(WaitForFrameAt(decoder, 0.1, loopedFrame),
                    "an explicit restart after EOF should decode a new preview loop");
             if(!loopedFrame.rgba.empty())
             {
@@ -266,9 +253,9 @@ namespace {
         // ceiling. The GPU path should publish the current picture promptly,
         // then keep a bounded set of future source pictures ready without
         // making any of them visible before their selected clock slot.
-        decoder.Request(0.2, 1.0 / 60.0);
+        decoder.Request(0.2, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame yuvFrame;
-        const bool receivedYuv = WaitForFrame(decoder, yuvFrame);
+        const bool receivedYuv = WaitForFrameAt(decoder, 0.2, yuvFrame);
         Expect(receivedYuv, "GPU transport should publish a decoded frame");
         if(receivedYuv)
         {
@@ -389,7 +376,7 @@ namespace {
                 // Unity never interprets an old atlas as separate Y/U/V data.
                 decoder.SetGpuYuvUploadLayout(
                     BigScreen::GpuYuvUploadLayout::ThreePlane);
-                decoder.Request(0.7, 1.0 / 60.0);
+                decoder.Request(0.7, TestPresentationIntervalSeconds);
                 BigScreen::VideoFrame planarFallbackFrame;
                 const bool receivedPlanarFallback =
                     WaitForFrameAt(decoder, 0.7, planarFallbackFrame);
@@ -412,9 +399,9 @@ namespace {
         // discard that mailbox and make the next output ordinary RGBA without
         // reopening FFmpeg.
         decoder.SetGpuConversionEnabled(false);
-        decoder.Request(0.8);
+        decoder.Request(0.8, TestPresentationIntervalSeconds);
         BigScreen::VideoFrame rgbaFrame;
-        const bool receivedRgba = WaitForFrame(decoder, rgbaFrame);
+        const bool receivedRgba = WaitForFrameAt(decoder, 0.8, rgbaFrame);
         Expect(receivedRgba,
                "GPU resource fallback should publish a replacement frame");
         if(receivedRgba)

@@ -1478,7 +1478,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             respectMapperSettingsToggle_,
-            "Uses screen placement, curvature, additional screens, visual effects, and Cinema environment changes supplied by the map author. Turn this off to keep the mapper's video and synchronization while using your selected Big Screen layout instead.");
+            "Uses screen placement, curvature, additional screens, visual effects, and Cinema environment changes supplied by the map author in both menu preview and gameplay. Turn this off to keep the mapper's video and synchronization while using your selected Big Screen layout instead.");
 
         allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
             screenContainer,

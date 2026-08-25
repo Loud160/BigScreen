@@ -40,9 +40,10 @@ inside a map remain map-owned and are never deleted by Big Screen.
 
 **Screen > Respect Mapper Settings** defaults on. When enabled, authored Cinema
 screen geometry, image effects, additional screens, environment selection, and
-environment modifications are applied. When disabled, media identity and
-timing remain intact, but Big Screen uses the player's selected layout and
-visual settings instead.
+environment modifications are applied. The Video Library and retained
+menu-world previews resolve the same authored screen size, shape, and placement
+as gameplay. When disabled, media identity and timing remain intact, but Big
+Screen uses the player's selected layout and visual settings instead.
 
 This is separate from **Allow Chroma Override**. Respect Mapper Settings owns
 Cinema's video presentation. Allow Chroma Override owns the broader Chroma

@@ -59,3 +59,14 @@ explain new network or storage behavior, update user-facing text and
 documentation, and report what was and was not tested on-headset. Do not commit
 generated game headers, copyrighted media, Beat Saber files, credentials,
 cookies, or private headset logs.
+
+Use the canonical build entrypoints rather than creating a second host recipe:
+
+- Windows QMOD for MBF or SideQuest: `Build-QMOD.bat`
+- Windows QMOD or direct source deployment: `Build-And-Deploy.bat`
+- Linux QMOD for MBF or SideQuest: `bash ./Build-QMOD-Linux.sh`
+- Linux direct source deployment: `bash ./Build-And-Deploy-Linux.sh`
+
+The two QMOD-only entrypoints must remain free of ADB and Quest access. Windows
+runs the same Bash/Python build inside WSL that native Linux and CI run, and
+clean builds from the same commit and pinned inputs must remain byte-identical.

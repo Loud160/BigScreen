@@ -50,6 +50,11 @@ under their own terms. None of those components is relicensed by Big Screen.
 Versions and resolved sources are recorded in `qpm.json` and
 `qpm.shared.json`.
 
+- **miniz 3.1.2** — MIT License. The tracked source under
+  `tools/deterministic-zip/vendor/miniz-3.1.2` is compiled into a host-only
+  deterministic ZIP/DEFLATE packaging utility. The utility is not included in
+  the Quest QMOD; the upstream license is preserved beside the source.
+
 - **Scotland2 0.1.7**, **SongCore 1.1.26**, and **custom-types 0.18.4** — MIT
   License in their respective upstream repositories.
 - **fmt 11.0.2** — MIT License.

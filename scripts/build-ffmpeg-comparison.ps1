@@ -15,8 +15,13 @@ New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 # captures the dual-runtime artifact and both reproducibility records.
 & (Join-Path $PSScriptRoot "build.ps1") -Clean
 if ($LASTEXITCODE -ne 0) { throw "Big Screen dual FFmpeg build failed." }
-& (Join-Path $PSScriptRoot "createqmod.ps1") -QmodName "Big Screen-ffmpeg-comparison"
-if ($LASTEXITCODE -ne 0) { throw "Big Screen comparison QMOD failed." }
+
+# build.ps1 already forwards through the one complete Linux pipeline, which
+# builds, validates, and packages both runtimes. Copy that verified package;
+# invoking createqmod.ps1 here would repeat the entire canonical build.
+$comparisonQmod = Join-Path $repositoryRoot "Big Screen-ffmpeg-comparison.qmod"
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "Big Screen.qmod") `
+    -Destination $comparisonQmod -Force
 
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "Big Screen-ffmpeg-comparison.qmod") `
     -Destination $artifactRoot -Force

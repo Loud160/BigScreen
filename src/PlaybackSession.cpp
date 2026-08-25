@@ -505,10 +505,11 @@ namespace BigScreen {
            context == PlaybackContext::None)
             return;
 
-        // Prepare() cannot know which preview owns the upcoming surface. In
-        // the Video Library, rebuild once with that context so the decoded
-        // picture is placed on the editable user canvas rather than on a
-        // mapper-authored back-wall screen.
+        // Rebuild once at the ownership boundary so a setting changed after
+        // Prepare() is reflected before any surface is created. Mapper screen
+        // ownership is deliberately context-independent: Respect Mapper
+        // Settings must resolve the same Cinema canvas in menu preview and in
+        // gameplay.
         RebuildEffectiveConfig(context);
         if(!config_)
             return;

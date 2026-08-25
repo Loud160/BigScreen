@@ -8,6 +8,7 @@
 $mod = "./mod.json"
 $modTemplate = "./mod.template.json"
 $qpmShared = "./qpm.shared.json"
+. (Join-Path $PSScriptRoot "file-hash.ps1")
 
 if (Test-Path -Path $modTemplate) {
     $update = -not (Test-Path -Path $mod)
@@ -117,7 +118,7 @@ foreach ($property in @("name", "id", "author", "version", "packageId", "package
 # except dependencies explicitly marked includeQmod=false. Validate the set so
 # an old Paper/BSML/SongCore manifest cannot accompany newer game bindings.
 if (Test-Path -LiteralPath $qpmShared) {
-    $expectedDependencyIds = @()
+    $expectedDependencies = @()
     foreach ($configured in $shared.config.dependencies) {
         $includeQmod = $true
         if ($configured.additionalData -and
@@ -141,9 +142,14 @@ if (Test-Path -LiteralPath $qpmShared) {
         } else { $null }
         if ($modLink -and
             -not [string]::IsNullOrWhiteSpace([string]$modLink.Value)) {
-            $expectedDependencyIds += [string]$configured.id
+            $expectedDependencies += [pscustomobject]@{
+                Id = [string]$configured.id
+                VersionRange = [string]$configured.versionRange
+                DownloadIfMissing = [string]$modLink.Value
+            }
         }
     }
+    $expectedDependencyIds = @($expectedDependencies | ForEach-Object { $_.Id })
     $actualDependencyIds = @($parsed.dependencies | ForEach-Object { [string]$_.id })
     $dependencyDifference = Compare-Object `
         ($expectedDependencyIds | Sort-Object -Unique) `
@@ -152,6 +158,24 @@ if (Test-Path -LiteralPath $qpmShared) {
         Write-Output "Error: mod.json dependencies do not match qpm.shared.json. Run 'qpm qmod manifest'."
         Write-Output ($dependencyDifference | Format-Table -AutoSize | Out-String)
         exit 1
+    }
+    # Dependency IDs alone are insufficient: Alpha 11 linked Paper2 4.8.0
+    # while its generated QMOD still accepted 4.6.4, allowing MBF to retain a
+    # library that lacked paper2_queue_log_bytes_ffi. Keep both the semantic
+    # range and the recovery download synchronized with QPM's locked package.
+    foreach ($expectedDependency in $expectedDependencies) {
+        $actualDependency = @($parsed.dependencies | Where-Object {
+            [string]$_.id -eq $expectedDependency.Id
+        }) | Select-Object -First 1
+        if ([string]$actualDependency.version -ne $expectedDependency.VersionRange) {
+            Write-Output "Error: mod.json dependency '$($expectedDependency.Id)' has stale version range '$($actualDependency.version)' (expected '$($expectedDependency.VersionRange)'). Run 'qpm qmod manifest'."
+            exit 1
+        }
+        if ([string]$actualDependency.downloadIfMissing -ne
+            $expectedDependency.DownloadIfMissing) {
+            Write-Output "Error: mod.json dependency '$($expectedDependency.Id)' has a stale downloadIfMissing URL. Run 'qpm qmod manifest'."
+            exit 1
+        }
     }
 }
 
@@ -173,7 +197,7 @@ if ($psVersion -ge 6) {
     else {
         Write-Output "Using cached QMOD validation schema at revision $schemaRevision."
     }
-    $actualSchemaSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $schema).Hash.ToLowerInvariant()
+    $actualSchemaSha256 = Get-BigScreenFileSha256 $schema
     if ($actualSchemaSha256 -ne $schemaSha256) {
         throw "SHA-256 mismatch for cached QMOD schema. Expected $schemaSha256, received $actualSchemaSha256."
     }
@@ -188,6 +212,6 @@ if ($psVersion -ge 6) {
     }
 }
 else {
-    Write-Output "Offline mod.json validation passed (PowerShell 7 CI also performs schema validation)."
+    Write-Output "Offline mod.json validation passed."
 }
 exit

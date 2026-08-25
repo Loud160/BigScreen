@@ -8,6 +8,7 @@
 # Shared by source deployment, source removal, and isolated policy tests.
 # It deliberately owns decisions and receipts only; callers own build UX.
 . (Join-Path $PSScriptRoot "adb-target.ps1")
+. (Join-Path $PSScriptRoot "file-hash.ps1")
 Set-StrictMode -Version 2.0
 
 $script:BigScreenPackage = "com.beatgames.beatsaber"
@@ -334,7 +335,7 @@ function New-BigScreenSourceReceipt {
     if ($PriorReceipt) { foreach ($item in @($PriorReceipt.files)) { $priorByPath[[string]$item.path] = $item } }
     $files = @()
     foreach ($item in $Plan) {
-        $localHash = (Get-FileHash -LiteralPath $item.LocalPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $localHash = Get-BigScreenFileSha256 $item.LocalPath
         $prior = $priorByPath[[string]$item.Path]
         $currentHash = Get-BigScreenRemoteHash $item.Path
         if ($prior) {
@@ -499,30 +500,14 @@ function Resolve-BigScreenReceiptRemovalAction {
     if ([string]$Item.ownership -ne "BigScreenExclusive") {
         return "PreserveShared"
     }
-    if ($CurrentSha256 -eq [string]$Item.installedSha256) {
-        return "RemoveOrRestore"
-    }
     if (-not $CurrentSha256) {
-        # A missing destination contains no source payload. During a partial
-        # install it also exactly represents an originally absent baseline.
+        # A missing destination contains no Big Screen payload to remove.
         return "AlreadyAbsent"
     }
-    if ($Partial -and [string]$Item.previousState -eq "present" -and
-        $CurrentSha256 -eq [string]$Item.previousSha256) {
-        # The planned copy never happened, or its original bytes were already
-        # restored. Treat this as successfully reconciled, not ambiguity.
-        return "AlreadyBaseline"
-    }
-    if ($Partial -and [bool](Get-BigScreenObjectProperty `
-            $Item "preDeployWasSourceOwned" $false) -and
-        $CurrentSha256 -eq [string](Get-BigScreenObjectProperty `
-            $Item "preDeploySha256" "")) {
-        # An interrupted repeated source deploy may still contain the prior
-        # source build. Its hash was proven by the preceding complete receipt,
-        # so removal may still restore the original development baseline.
-        return "RemoveOrRestore"
-    }
-    return "PreserveAmbiguous"
+    # The receipt establishes that this exact destination is private to Big
+    # Screen. Hashes remain useful deployment diagnostics, but must never make
+    # an installed mod impossible to remove after its bytes have changed.
+    return "RemoveExclusive"
 }
 
 function Remove-BigScreenReceiptFiles {
@@ -530,30 +515,25 @@ function Remove-BigScreenReceiptFiles {
         [Parameter(Mandatory=$true)]$Receipt,
         [switch]$Partial
     )
-    $ambiguous = @()
+    $failed = @()
     foreach ($item in @($Receipt.files)) {
         $current = Get-BigScreenRemoteHash ([string]$item.path)
         $action = Resolve-BigScreenReceiptRemovalAction `
             -Item $item `
             -CurrentSha256 $current `
             -Partial:$Partial
-        if ($action -eq "PreserveShared" -or
-            $action -eq "AlreadyAbsent" -or
-            $action -eq "AlreadyBaseline") { continue }
-        if ($action -eq "PreserveAmbiguous") {
-            $ambiguous += [string]$item.path
+        if ($action -eq "PreserveShared" -or $action -eq "AlreadyAbsent") {
             continue
         }
-        if ([string]$item.previousState -eq "absent") {
-            [void](Invoke-BigScreenAdb @("shell", "rm -f -- '$($item.path)'"))
-        } elseif ($item.previousBackupPath -and
-                  (Get-BigScreenRemoteHash ([string]$item.previousBackupPath)) -eq [string]$item.previousSha256) {
-            [void](Invoke-BigScreenAdb @("shell", "cp '$($item.previousBackupPath)' '$($item.path)'"))
-        } else {
-            $ambiguous += [string]$item.path
+        # A confirmed uninstall removes each exact Big Screen-exclusive path
+        # regardless of its current hash. Shared dependencies are classified
+        # above and are never passed to rm.
+        [void](Invoke-BigScreenAdb @("shell", "rm -f -- '$($item.path)'"))
+        if (Test-BigScreenRemoteFile ([string]$item.path)) {
+            $failed += [string]$item.path
         }
     }
-    return @($ambiguous)
+    return @($failed)
 }
 
 function Remove-BigScreenLegacyExclusivePayload {
@@ -585,5 +565,27 @@ function Remove-BigScreenLegacyRuntimePayload {
     [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$runtimeRoot'"))
     if (Test-BigScreenRemoteDirectory $runtimeRoot) {
         throw "Legacy cleanup could not remove Big Screen's private Runtime directory."
+    }
+}
+
+function Remove-BigScreenEmptyRuntimeDirectories {
+    # Receipt-based removal deletes only the exact files recorded as owned by
+    # Big Screen. Prune the private runtime directory tree afterward only when
+    # its directories are empty. This prevents an otherwise clean uninstall
+    # from being detected as a legacy runtime on the next deployment, while
+    # preserving any unexpected file that was not covered by the receipt.
+    $runtimeRoot = "$($script:BigScreenModData)/BigScreen/Runtime"
+    $expected = "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime"
+    if ($runtimeRoot -ne $expected) {
+        throw "Refusing unexpected runtime-directory cleanup target: $runtimeRoot"
+    }
+    if (-not (Test-BigScreenRemoteDirectory $runtimeRoot)) { return }
+
+    $result = Invoke-BigScreenAdb @(
+        "shell",
+        "find '$runtimeRoot' -depth -type d -empty -delete 2>/dev/null"
+    ) -AllowFailure
+    if ($result.ExitCode -ne 0) {
+        throw "Big Screen's empty private Runtime directories could not be pruned.`n$($result.Text)"
     }
 }

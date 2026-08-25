@@ -17,5 +17,9 @@ MACRO(RECURSE_FILES return_list filter)
     ENDFOREACH()
 
     LIST(REMOVE_DUPLICATES file_list)
+    # Filesystem enumeration order differs between NTFS and Linux filesystems.
+    # A stable ordinal source order keeps ThinLTO input and constructor layout
+    # reproducible when the same Quest target is built on either host.
+    LIST(SORT file_list)
     SET(${return_list} ${file_list})
 ENDMACRO()

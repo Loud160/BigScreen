@@ -19,6 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "console-choice.ps1")
 
 function Stop-AdbProcesses {
     param([string] $Message)
@@ -66,16 +67,9 @@ switch ($ExistingAdbAction) {
         Write-Host ""
         Write-Host "ADB was already running before deployment."
         Write-Host "Stopping it can help ModsBeforeFriday connect. If no choice is made within five minutes, ADB will be left running."
-        $choiceResult = 2
-        $priorErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            & choice.exe /C YN /N /T $PromptTimeoutSeconds /D N /M "Stop ADB now? [Y/N] "
-            $choiceResult = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $priorErrorActionPreference
-        }
-        $stopExisting = $choiceResult -eq 1
+        $stopExisting = Read-BigScreenTimedYesNo `
+            -Prompt "Stop ADB now? [Y/N] " `
+            -TimeoutSeconds $PromptTimeoutSeconds
     }
 }
 

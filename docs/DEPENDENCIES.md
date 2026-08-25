@@ -7,25 +7,65 @@ from a fresh clone or downloaded source archive. The versioned scripts and
 Big Screen's build does not upload source code, credentials, or analytics. It
 does download pinned compilers, source archives, runtimes, schemas, and Quest
 mod dependencies when they are missing from the local caches described below.
-`Build-And-Deploy.bat` displays a summary and asks for permission before it
-starts any dependency restore or build step.
+The Windows launcher performs a read-only inventory first, marking every host
+prerequisite and pinned project input as `READY` or `MISSING` before asking for
+permission. The Linux launcher audits the native or managed-container host,
+lists exact missing packages, and asks before installing them. It also discloses
+all possible project downloads.
 
-## Tools you install yourself
+## Host tools and official setup sources
 
-The bootstrap script restores project dependencies, but it does not silently
-install system applications or elevate itself. Install these tools first:
+On Windows, `Build-QMOD.bat` provides the build-only counterpart to the Linux
+QMOD launcher. `Build-And-Deploy.bat` retains the interactive QMOD/deploy
+choice. Both can install missing WSL/Ubuntu host prerequisites after the audit
+and explicit consent. If elevation is necessary, the audit names the exact WSL
+or Ubuntu component that will trigger UAC. Manual builders and native Linux
+users can use these official sources:
+
+Build QMOD is the package path for installation through MBF or SideQuest; it
+does not require ADB or touch a connected headset. Build and Deploy creates the
+same validated package first, then performs a source-managed ADB installation.
+
+The launcher selects QMOD-only or direct-deployment mode before the audit.
+QMOD-only mode excludes ADB and all Quest access. Direct deployment keeps the
+existing refusal for a registered QMOD package, mixed ownership, or another
+ambiguous Big Screen installation; dependency automation never bypasses that
+safety gate.
 
 | Tool | Required version or capability | Used for |
 |---|---|---|
-| Windows PowerShell | 5.1 or newer | Runs the portable build, fetch, package, and deployment scripts. |
-| Visual Studio C++ tools | Desktop development with C++, CMake 3.22+, and Ninja; equivalent standalone CMake/Ninja is also supported | Configures and compiles the Windows host tests and Android/Quest mod. |
-| [QPM CLI](https://github.com/QuestPackageManager/QPM.CLI) | Validated with 1.5.11 | Restores Quest headers/libraries and manages the Windows Android NDK. |
-| WSL 2 with Ubuntu or compatible Linux | `build-essential curl xz-utils unzip` | Builds the two private LGPL FFmpeg runtimes with Linux-host Android tools. |
-| Android platform-tools/ADB or SideQuest | Any version compatible with the connected Quest | Required only for direct deployment, restart, logs, and device verification. Not required to compile a QMOD. |
-| Git for Windows | Current supported release | Recommended for cloning and updating the repository. A downloaded source archive can also build. |
-| Unity Editor | 2022.3.33f1 exactly | Required only when rebuilding `assets/bigscreen_video_shader` after changing its tracked Unity project inputs. The committed bundle is sufficient for an ordinary clean QMOD build. |
+| Windows PowerShell | 5.1+ is included with supported Windows releases | Runs the audit and Windows-side deployment scripts. |
+| [WSL 2 with Ubuntu](https://learn.microsoft.com/windows/wsl/install) | x86-64 Ubuntu 22.04 or 24.04 | Hosts the supported Visual-Studio-free Windows build. Manual command: `wsl --install -d Ubuntu-24.04`. |
+| Ubuntu host packages | Install with the command below | Supplies the compiler, CMake, Ninja, FFmpeg test libraries, Python, and archive/network tools. |
+| [Android Platform Tools/ADB](https://developer.android.com/tools/releases/platform-tools) or SideQuest | Any version compatible with the connected Quest | Required only for direct deployment, restart, logs, and device verification. The launcher can instead install its pinned portable copy. |
+| [Git for Windows](https://git-scm.com/download/win) | Current supported release | Recommended for cloning and updating. A downloaded GitHub source archive does not require Git. |
+| [Unity Editor](https://unity.com/releases/editor/archive) | 2022.3.33f1 exactly | Required only after intentionally changing the shader project. The committed bundle is sufficient for an ordinary clean QMOD build. |
 
-Python 3 is optional but recommended for the Python host/invariant tests. Node
+Visual Studio, Git, PowerShell 7, Windows QPM, a Windows Android NDK, Docker,
+and 7-Zip are not required by the root Windows BAT. There is no separate
+Windows-native compile/package recipe: Windows enters the same Linux build
+used by native Linux and CI.
+
+Native x86-64 Ubuntu, Debian, and Linux Mint builds use `build-essential`,
+CMake 3.22+, Ninja, curl, XZ/unzip support, Python 3, pkg-config, and the host
+FFmpeg command/development packages. Missing Debian-family packages can be
+installed by the root launcher after explicit approval. Immutable or otherwise
+unsupported x86-64 hosts use a reusable Ubuntu 24.04 Distrobox; the launcher
+checks and can offer installation of Distrobox/Podman through `apt`, `dnf`,
+`pacman`, or `zypper`, then installs only missing packages inside the container.
+An OSTree host package change may require one reboot. Complete details and
+manual commands are documented in [Building on Linux](BUILDING-LINUX.md).
+It downloads a private, hash-verified QPM 1.5.11 binary rather than requiring a
+system-wide QPM install. Linux ARM64 is not a native supported host because the
+pinned QPM and Android NDK Linux tools are x86-64.
+
+When Linux ADB is not already present, the ADB-enabled launchers can download
+Google Platform Tools 37.0.0 for Linux to the repository's ignored
+`BigScreen Tools/platform-tools` directory. The 8.7 MB official archive is
+checked against the pinned SHA-256 before extraction and reused from its local
+cache; no system package or persistent `PATH` change is made.
+
+Python 3 is required by the canonical build and repository tests. Node
 24 and pnpm 11.16.0 are required only for the independent yt-dlp/yt-dlp-ejs
 source-reproducibility audit; neither is used by a normal Quest build.
 
@@ -34,11 +74,23 @@ The complete small Unity shader project is versioned under
 configuration. `Build`, `Library`, `Logs`, `Temp`, IDE files, and `UserSettings`
 are generated locally and intentionally ignored.
 
-Inside Ubuntu/WSL, install the required Linux commands once:
+Reproducible packaging compiles a small host utility from the tracked miniz
+3.1.2 source under `tools/deterministic-zip`. The same deterministic raw
+DEFLATE implementation, ordinal entry ordering, and fixed ZIP32 metadata are
+used on Windows and Linux. The executable is cached under
+`.cache/build-tools/deterministic-zip`, is never packaged into the QMOD, and
+does not change MBF's normal ZIP handling. It uses the C/CMake toolchain already
+required for source builds; there is no extra archive program to install or
+download.
+
+Inside Ubuntu/WSL, install the required Linux packages once:
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential curl xz-utils unzip
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential ca-certificates cmake curl ffmpeg \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  ninja-build pkg-config python3 unzip xz-utils
 ```
 
 ## Automatically restored Quest packages
@@ -63,6 +115,17 @@ and retrieves only missing or mismatched packages. The current lock contains:
 QPM resolves the package URLs and integrity metadata recorded in the lockfile.
 Restored build inputs are written beneath the ignored `extern/` directory.
 Runtime mod dependencies remain declared in the generated QMOD manifest.
+Paper2's declared runtime minimum is 4.8.0, matching the library used for the
+native link; 4.6.4 and 4.7.0 lack `paper2_queue_log_bytes_ffi` and must not be
+accepted by an installer.
+
+Direct source deployment cannot ask a QMOD manager to resolve packages. After
+the local build has passed, the Windows `scripts/copy.ps1` path and Linux
+`scripts/quest_tool.py deploy` path read the generated QMOD requirements and
+inspect the selected Quest's package registrations and payload files. Missing,
+outdated, unregistered, or incomplete shared dependencies stop deployment
+before any Big Screen file changes. Install or update the reported dependency
+through MBF, then rerun the launcher.
 
 ## Automatically downloaded toolchains and runtime inputs
 
@@ -71,23 +134,22 @@ archives are rejected if their committed checksum does not match.
 
 | Component | Pinned version | Official source | Local cache/output | Integrity and use |
 |---|---:|---|---|---|
-| Windows Android NDK | r27d (`27.3.13750724`) | QPM/Google Android repository | QPM's per-user NDK cache; selected path written to ignored `ndkpath.txt` | QPM resolves/downloads it; bootstrap verifies `source.properties` and the CMake toolchain. Build-only. |
 | Linux Android NDK | r27d (`27.3.13750724`) | `https://dl.google.com/android/repository/android-ndk-r27d-linux.zip` | `~/.cache/bigscreen-toolchains/android-ndk-r27d` inside WSL | Pinned SHA-256 in `install-pinned-ndk.sh`. Build-only. |
 | FFmpeg comparison runtime | 4.4.8 | `https://ffmpeg.org/releases/ffmpeg-4.4.8.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl` outputs | Pinned SHA-256; configured as isolated LGPL-only decoding/scaling libraries and packaged for the experimental runtime comparison toggle. |
 | FFmpeg default runtime | 9.0.1 | `https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl-9.0.1` outputs | Pinned SHA-256; configured as the default isolated LGPL-only runtime and packaged in the QMOD. |
 | CPython Android runtime | 3.14.7 ARM64 | `https://www.python.org/ftp/python/3.14.7/python-3.14.7-aarch64-linux-android.tar.gz` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 and required-file validation; runtime libraries and standard library are packaged. |
 | QuickJS-NG amalgamation | 0.16.1 | `https://github.com/quickjs-ng/quickjs/releases/download/v0.16.1/quickjs-amalgam.zip` | `.cache/dependencies/quickjs-ng` | Pinned SHA-256; compiled into Big Screen for yt-dlp's JavaScript challenge solver. |
+| miniz deterministic compressor source | 3.1.2 | Tracked snapshot from `https://github.com/richgel999/miniz/releases/tag/3.1.2` | `tools/deterministic-zip/vendor/miniz-3.1.2`; compiled utility cached under `.cache/build-tools/deterministic-zip` | MIT-licensed source and notice are included in the repository. Build-only; produces standard ZIP/DEFLATE streams for `python314.zip` and the QMOD, and is not packaged. No separate download or installation. |
 | yt-dlp | stable 2026.08.19 | `https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 plus archive-content validation. Stable 2026.08.19 contains the YouTube recovery that temporarily required nightly 2026.08.18.122307. |
 | yt-dlp-ejs | 0.8.0 | Bundled inside the verified yt-dlp release above | Inside the yt-dlp package | Version and both solver payloads are required before packaging. No separate normal-build download. |
 | certifi | 2026.7.22 | Python Package Index (`files.pythonhosted.org`) | `.cache/dependencies/downloader` and `build/downloader/certifi` | Pinned SHA-256; CA bundle packaged for HTTPS certificate validation. |
-| QMOD JSON schema | Commit `eadb8d8d21caa1f8586b61da3c950a2953ebd399` | QuestPatcher.QMod on GitHub | `.cache/qmod-schema-<revision>.json` | Revision-pinned and SHA-256-verified schema reused by PowerShell 7 validation. Build-only. |
+| QMOD JSON schema | Commit `eadb8d8d21caa1f8586b61da3c950a2953ebd399` | QuestPatcher.QMod on GitHub | `.cache/qmod-schema-<revision>.json` | Revision-pinned and SHA-256-verified; the canonical Python validator enforces every schema rule used by Big Screen's manifest shape without adding a package-manager dependency. Build-only. |
 
 The exact SHA-256 values live beside the URLs in:
 
 - `scripts/install-pinned-ndk.sh`
 - `scripts/build-ffmpeg-lgpl.sh`
-- `scripts/fetch-downloader-runtime.ps1`
-- `scripts/fetch-quickjs-ng.ps1`
+- `scripts/build_pipeline.py`
 
 Do not update a version or checksum independently. Review the upstream release,
 license, ABI, expected contents, and build configuration together.
@@ -97,45 +159,44 @@ license, ABI, expected contents, and build configuration together.
 The BAT is a convenience wrapper, not a private build path. These commands
 perform the same preparation manually from the repository root.
 
-Restore QPM dependencies and the Windows NDK:
+Install WSL and Ubuntu manually from Administrator PowerShell if needed:
 
 ```powershell
-qpm restore
-qpm ndk resolve --download
-qpm doctor
+wsl --install -d Ubuntu-24.04
 ```
 
-If QPM is installed in its standard per-user directory but is not on `PATH`:
-
-```powershell
-$qpm = "$env:LOCALAPPDATA\Programs\QPM\qpm.exe"
-& $qpm restore
-& $qpm ndk resolve --download
-& $qpm doctor
-```
-
-Install or verify the separate Linux NDK from WSL:
+Use the Ubuntu package command in the first section of this document. Then
+enter the repository through Ubuntu/WSL and run:
 
 ```bash
 cd /mnt/c/path/to/BigScreen
-./scripts/install-pinned-ndk.sh
+bash ./Build-QMOD-Linux.sh --clean
 ```
 
-Build and package a QMOD without a connected Quest:
+That wrapper downloads the pinned QPM binary from its
+[official releases](https://github.com/QuestPackageManager/QPM.CLI/releases),
+the pinned NDK from [Google's Android repository](https://developer.android.com/ndk/downloads),
+and the remaining exact artifacts from the official URLs in the table above.
+Each cache is checked first; the scripts should perform these downloads so the
+committed versions and SHA-256 values cannot be accidentally bypassed.
+
+To deploy the verified build directly from Windows, connect and authorize the
+Quest, then run:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1 -clean
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/createqmod.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/ensure-adb.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1 -UseExistingVerifiedBuild
 ```
 
-Or build and deploy after connecting and authorizing the Quest through ADB:
+The supported native Linux equivalent is:
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/copy.ps1 -clean
+```bash
+./Build-And-Deploy-Linux.sh --clean
 ```
 
-`scripts/bootstrap-build.ps1` performs only the QPM/NDK preparation used by
-the BAT. It can also be run directly before either manual build command.
+`scripts/bootstrap-linux.sh` performs the pinned Linux QPM/NDK preparation used
+by the Windows/WSL and native Linux launchers. It can also be run directly by
+advanced users after the operating-system prerequisites are present.
 
 ## Cache behavior and clean builds
 
@@ -145,7 +206,7 @@ moves with a complete working folder but remains separate from QPM's generated
 `extern/` directory. QPM may replace `extern/` during a restore; it cannot
 delete the private FFmpeg, QuickJS, CPython, yt-dlp, or certifi caches.
 
-`-clean` removes the repository's CMake build output, not the versioned
+`--clean` removes the repository's CMake build output, not the versioned
 download caches. `-Force`
 on an individual fetch script deliberately re-downloads that script's direct
 artifacts and is intended for a reviewed dependency update or cache repair.
@@ -161,28 +222,29 @@ cache makes the corresponding dependencies missing and causes the next
 approved build to retrieve or rebuild them again. Deleting `extern/` alone
 causes a QPM restore but no longer discards Big Screen's private downloads.
 
-## Expected upstream build warnings
+## Expected upstream diagnostics
 
-A clean build currently emits several warnings from pinned upstream code. They
-do not mean that Big Screen is calling a deprecated Beat Saber API:
+Pinned upstream code may contain diagnostics that do not mean Big Screen is
+calling a deprecated Beat Saber API:
 
 - Android NDK r27d's own `android.toolchain.cmake` and `flags.cmake` files warn
   that their compatibility declarations for CMake versions older than 3.10
   will be removed by a future CMake release. Big Screen itself requires CMake
   3.22 or newer. The NDK remains pinned because changing the Android compiler
   is a separate compatibility and release-validation decision.
-- FFmpeg 4.4.8 warns about its internal `child_class_next` field while that
-  legacy comparison runtime is compiled. FFmpeg 9.0.1 is Big Screen's default;
-  4.4.8 is intentionally retained only for the experimental in-game backend
-  comparison and can be removed after on-device testing is complete.
+- FFmpeg 4.4.8 contains legacy C that produces extensive warnings under NDK
+  r27d. Its third-party compile uses `-w` so those known upstream warnings do
+  not obscure Big Screen's own diagnostics. FFmpeg configure failures,
+  missing-feature checks, compiler errors, link failures, integrity checks,
+  and ELF validation remain active.
 - QPM-restored BSML, beatsaber-hook, custom-types, SongCore, and generated CORDL
   headers can emit unused-variable or inline-function warnings under the pinned
-  NDK's Clang version. Those files are third-party/generated inputs and are not
-  rewritten locally merely to suppress diagnostics.
+  NDK's Clang version. Those third-party/generated inputs are not rewritten
+  locally merely to silence a warning.
 
-These warnings are still visible rather than filtered out. A warning from a
-future dependency update therefore cannot be silently mistaken for one of the
-known messages above, and any build error still stops packaging and deployment.
+Big Screen's first-party code still builds with `-Wall`, `-Wextra`, and
+`-Wpedantic`; its warnings remain visible. Any build error still stops
+packaging and deployment.
 
 ## Checkout path compatibility
 

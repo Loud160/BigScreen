@@ -58,6 +58,27 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/strip.cmake)
 project( bigscreen
         VERSION ${CMAKE_PACKAGE_VERSION})
 
+# Keep the Quest binary reproducible across the Windows and Linux NDK hosts.
+# Beat Saber Hook and generated CORDL helpers embed __FILE__ in assertions and
+# diagnostics; without prefix maps, host-specific checkout paths enter rodata
+# and change ThinLTO layout. Debug paths also affect the linker's SHA-1 build
+# ID even though the installed library is stripped afterward. This must follow
+# project(), which is where CMake identifies the selected compilers.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang" OR
+   CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(BIGSCREEN_REPRODUCIBLE_SOURCE_ROOT "/bigscreen/source")
+        add_compile_options(
+                "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=${BIGSCREEN_REPRODUCIBLE_SOURCE_ROOT}"
+                "-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=${BIGSCREEN_REPRODUCIBLE_SOURCE_ROOT}"
+                "-fdebug-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=${BIGSCREEN_REPRODUCIBLE_SOURCE_ROOT}"
+                "-fdebug-compilation-dir=${BIGSCREEN_REPRODUCIBLE_SOURCE_ROOT}")
+        # LLD's SHA-1 build ID includes pre-strip debug/LTO details that differ
+        # by host even when every installed ELF section is otherwise identical.
+        # Crash symbols are preserved separately in build/debug; omit only the
+        # non-reproducible note from installed binaries.
+        add_link_options("-Wl,--build-id=none")
+endif()
+
 add_compile_definitions(MOD_ID="${CMAKE_PROJECT_NAME}")
 add_compile_definitions(VERSION="${PACKAGE_VERSION}")
 
@@ -211,6 +232,22 @@ target_compile_options(bigscreen_ffmpeg9_backend PRIVATE
 
 # for inline hook
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
+
+# QPM exposes link libraries through host-specific generated links. Copy the
+# only dependency intentionally carried inside Big Screen's QMOD into build/
+# while that link is valid. Packaging then reads a regular file on both hosts
+# and cannot serialize a Linux symlink or a stale Windows reparse point.
+set(BIGSCREEN_PACKAGED_HOOK_LIBRARY
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/libs/libbeatsaber-hook.so)
+if(NOT EXISTS ${BIGSCREEN_PACKAGED_HOOK_LIBRARY})
+        message(FATAL_ERROR
+                "Missing restored beatsaber-hook library: ${BIGSCREEN_PACKAGED_HOOK_LIBRARY}")
+endif()
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${BIGSCREEN_PACKAGED_HOOK_LIBRARY}
+                $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/libbeatsaber-hook.so
+        COMMENT "Stage the packaged beatsaber-hook runtime as a regular file")
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
 if(BIGSCREEN_UP_DOWN_SHOWCASE)
