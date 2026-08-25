@@ -8,6 +8,27 @@ failure history, Beat Saber scene contract, rejected approaches, recommended
 render-only proxy design, and required headset validation are recorded in the
 archived [menu environment preview planning note](ai-assisted-development/planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md).
 
+## TODO: Optionally inherit PC Cinema's default canvas for metadata-only configs
+
+Big Screen currently lets **Respect Mapper Settings** claim the physical screen
+canvas only when a Cinema file explicitly supplies screen geometry. A file such
+as Dragula's `cinema-video.json`, which contains video identity and timing but
+no placement fields, therefore keeps the player's selected Big Screen layout.
+
+PC Cinema instead fills omitted geometry with its own defaults: position
+`{x: 0, y: 12.4, z: 67.8}`, rotation `{x: -8, y: 0, z: 0}`, height `25`, one
+screen, and automatic curvature when the player's Cinema curvature setting is
+enabled. For closer PC parity, a future change may make **Respect Mapper
+Settings** apply that complete default Cinema canvas whenever mapper-supplied
+Cinema metadata is active, while leaving the present player-layout behavior
+available when the switch is off.
+
+This is deliberately deferred. Before changing it, verify the desired ownership
+rule against metadata-only maps, explicit-geometry maps, local player-assigned
+videos, and preview/gameplay parity. Do not treat `bundledConfig` by itself as
+proof that a mapper authored custom geometry; this proposal is specifically
+about emulating Cinema's documented fallback defaults.
+
 ## TODO: Split oversized source files after major behavior stabilizes
 
 This refactor is deliberately deferred until the current playback, downloader,

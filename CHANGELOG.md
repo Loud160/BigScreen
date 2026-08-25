@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.12 — Buffered playback, retained menus, and portable builds
+
+- Added bounded GPU-frame read-ahead and Quest-native YUV presentation with
+  deterministic queue cleanup across stops, seeks, restarts, preview changes,
+  and map transitions. Playback diagnostics now separate true frame-preparation
+  CPU cost from worker wait time and report session-wide averages and peaks.
+- Reworked retained menu startup and song-editor navigation so staged Unity
+  prewarming avoids the first-open construction spike, Configure Video returns
+  to the selected map, and large virtualized song lists restore correct titles
+  and thumbnails without a continuous refresh loop.
+- Unified Windows and Linux source builds around one validated Linux pipeline.
+  The one-click launchers audit and disclose missing prerequisites, produce the
+  same deterministic QMOD, and retain Quest-selection, dependency, ownership,
+  removal, and support-log safety checks on both operating systems.
+- Fixed Respect Mapper Settings so a Cinema-authored physical canvas owns
+  omitted geometry fields. A map without `screenCurvature` now remains flat
+  instead of inheriting the player's curved-screen and curve-aspect settings.
+- Fixed the Windows timed ADB-cleanup question so its prompt is visible before
+  the launcher waits for input while retaining the five-minute default to No.
+
 - Added continuous Update-tab feedback after accepting a yt-dlp update or
   stable/nightly channel switch. The existing foreground modal now remains in
   front, shows exact downloaded bytes, percentage, transfer speed, and ETA,
