@@ -411,6 +411,8 @@ for adb_marker in (
 ):
     assert adb_marker in linux_adb_common
 assert "Read-BigScreenTimedYesNo" in console_choice
+assert "Write-Host -NoNewline $Prompt" in console_choice
+assert "/M $Prompt" not in console_choice
 assert '"console-choice.ps1"' in adb_session_completion
 assert '"console-choice.ps1"' in log_collector
 assert "UseExistingVerifiedBuild" in copy_script
@@ -2659,6 +2661,14 @@ create_world_preview = screen_preview_source.split(
 assert create_world_preview.index(
     "PlaybackSession::Instance().PreparedConfig()") < \
     create_world_preview.index("settings.ActiveLayout()")
+mapper_canvas_branch = playback_source.split(
+    "if(MapperScreenPresentationActive())", 1
+)[1].split("// Turning mapper control off", 1)[0]
+assert "config_->screenCurvature = 0.0f" in mapper_canvas_branch
+assert "config_->maintainAspectRatioWhenCurved = false" in mapper_canvas_branch
+assert "settings.CurvedScreenEnabled()" not in mapper_canvas_branch
+assert "settings.ScreenCurvature()" not in mapper_canvas_branch
+assert "settings.MaintainCurveAspectRatio()" not in mapper_canvas_branch
 assert '"deactivation", deactivationStarted' in menu_flow_source
 
 # Native menu singletons outlive MenuCore's Unity hierarchy. Every retained

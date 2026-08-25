@@ -6,20 +6,27 @@
 # section 7(b)/(c) and an interoperability permission under section 7;
 # see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 
-# Cross-platform timed Y/N input for ADB cleanup. Windows retains choice.exe;
-# native Linux uses Console.ReadKey polling so a missing response can safely
+# Cross-platform timed Y/N input for ADB cleanup. On Windows, print the prompt
+# through PowerShell before starting choice.exe. Passing the prompt through
+# choice.exe while its output is piped can buffer that text until after the
+# user presses a key, making the launcher appear to be waiting without a
+# question. Native Linux uses Console.ReadKey polling; both paths safely
 # default to No without leaving a launcher blocked forever.
 function Read-BigScreenTimedYesNo(
     [string]$Prompt,
     [int]$TimeoutSeconds = 300) {
     $choiceCommand = Get-Command choice.exe -ErrorAction SilentlyContinue
     if ($choiceCommand) {
+        Write-Host -NoNewline $Prompt
         $previous = $ErrorActionPreference
         try {
             $ErrorActionPreference = "Continue"
-            & $choiceCommand.Source /C YN /N /T $TimeoutSeconds /D N /M $Prompt |
-                Out-Host
+            # /N suppresses choice.exe's generated prompt. Its output is
+            # discarded because PowerShell owns the visible, immediately
+            # flushed prompt above and echoes the resolved answer below.
+            & $choiceCommand.Source /C YN /N /T $TimeoutSeconds /D N *> $null
             $choiceExitCode = $LASTEXITCODE
+            Write-Host $(if ($choiceExitCode -eq 1) { "Y" } else { "N" })
             return $choiceExitCode -eq 1
         } finally {
             $ErrorActionPreference = $previous

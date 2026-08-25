@@ -86,7 +86,9 @@
 - [ ] Respect Mapper Settings on/off is independent from Allow Chroma Override and preserves mapper media/timing in both states.
 - [ ] With Respect Mapper Settings on, a Cinema-authored screen has identical
       size, shape, position, and rotation in Video Library/menu preview and
-      gameplay; turning it off restores the selected user layout immediately.
+      gameplay. A mapper canvas with no `screenCurvature` remains flat even
+      when the selected user layout is curved; turning mapper respect off
+      restores that selected user layout immediately.
 - [ ] PC Cinema color correction, rectangular/elliptical vignette, color blending, opaque screen body, and end fade work on Quest; Refresh reloads an edited map/playlist file without background polling.
 - [ ] Rectangular and elliptical vignettes show no black rectangular backing; explicit black lead-in and mapper-authored opaque-body behavior remain intact.
 - [ ] Cinema additional screens share the primary video without a second decoder/upload; position, rotation, scale, curvature, and the 32-screen safety limit behave as documented.

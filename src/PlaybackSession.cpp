@@ -357,14 +357,15 @@ namespace BigScreen {
                 config_->vignette.has_value() ||
                 (settings.AdvancedOptionsEnabled() &&
                  settings.LetterboxTransparencyEnabled());
-            if(!config_->cinemaCurvatureDegrees)
-            {
-                config_->screenCurvature = settings.CurvedScreenEnabled()
-                    ? settings.ScreenCurvature() : 0.0f;
-                config_->maintainAspectRatioWhenCurved =
-                    settings.CurvedScreenEnabled() &&
-                    settings.MaintainCurveAspectRatio();
-            }
+            // Mapper ownership covers the entire physical canvas, including
+            // fields the Cinema file omits. An absent screenCurvature means
+            // Cinema's flat default; it must never fall through to the
+            // player's Curved Screen or Maintain Aspect Ratio values. Cinema
+            // curvature uses cinemaCurvatureDegrees, so clear Big Screen's
+            // separate signed-bow representation in both the flat and curved
+            // mapper cases.
+            config_->screenCurvature = 0.0f;
+            config_->maintainAspectRatioWhenCurved = false;
             applyUserVideoControls(true);
             PaperLogger.info(
                 "Respect Mapper Settings is applying this map's Cinema screen presentation");

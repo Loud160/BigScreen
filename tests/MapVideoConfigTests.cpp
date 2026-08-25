@@ -188,6 +188,11 @@ int main()
            Near(cyclePhase->screenPosition.z, 42.0f) &&
            Near(cyclePhase->screenHeight, 18.0f),
            "an explicit Cinema cycle phase should preserve mapper geometry");
+    Expect(cyclePhase && cyclePhase->hasMapperScreenGeometry &&
+           !cyclePhase->cinemaCurvatureDegrees &&
+           Near(cyclePhase->screenCurvature, 0.0f) &&
+           !cyclePhase->maintainAspectRatioWhenCurved,
+           "an authored Cinema canvas without curvature should use the flat Cinema default");
 
     // Environment-only Cinema data can preserve a Chroma scene without
     // disabling the player's screen layout controls.

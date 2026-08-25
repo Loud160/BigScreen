@@ -42,8 +42,11 @@ inside a map remain map-owned and are never deleted by Big Screen.
 screen geometry, image effects, additional screens, environment selection, and
 environment modifications are applied. The Video Library and retained
 menu-world previews resolve the same authored screen size, shape, and placement
-as gameplay. When disabled, media identity and timing remain intact, but Big
-Screen uses the player's selected layout and visual settings instead.
+as gameplay. Once any screen-geometry field claims the canvas, omitted geometry
+uses Cinema defaults; for example, no `screenCurvature` means a flat screen and
+never inherits the player's Curved Screen or curve-aspect settings. When
+disabled, media identity and timing remain intact, but Big Screen uses the
+player's selected layout and visual settings instead.
 
 This is separate from **Allow Chroma Override**. Respect Mapper Settings owns
 Cinema's video presentation. Allow Chroma Override owns the broader Chroma

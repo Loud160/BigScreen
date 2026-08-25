@@ -54,7 +54,7 @@ Enables independent video framing and free screen placement for the selected lay
 
 ### Respect Mapper Settings — default: On
 
-Applies screen placement, curvature, additional screens, image effects, and explicit Cinema environment changes authored in the map's video metadata. The Video Library preview and retained menu-world screen use the same resolved Cinema canvas as gameplay, so authored size, shape, and placement can be judged before starting the map. Turn this off to keep the mapper's video identity and synchronization while using the selected Big Screen layout and visual settings. A timing/URL-only Cinema file never claims the screen. User video pan, zoom, rotation, tilt, stretch, opacity, and letterbox behavior remain available inside an authored canvas.
+Applies screen placement, curvature, additional screens, image effects, and explicit Cinema environment changes authored in the map's video metadata. Once a Cinema file supplies screen geometry, it owns the complete physical canvas: omitted geometry fields use Cinema defaults, so a missing `screenCurvature` produces a flat screen rather than inheriting the player's Curved Screen setting. The Video Library preview and retained menu-world screen use the same resolved Cinema canvas as gameplay, so authored size, shape, and placement can be judged before starting the map. Turn this off to keep the mapper's video identity and synchronization while using the selected Big Screen layout and visual settings. A timing/URL-only Cinema file never claims the screen. User video pan, zoom, rotation, tilt, stretch, opacity, and letterbox behavior remain available inside an authored canvas.
 
 ### Allow Chroma Override — default: On
 
