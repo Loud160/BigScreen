@@ -161,7 +161,7 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not create the showcase surfaces: {}",
                 exception.what());
             try { Destroy(); } catch(...) {}
@@ -169,7 +169,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not create the showcase surfaces because of an unknown native exception");
             try { Destroy(); } catch(...) {}
             return false;
@@ -221,7 +221,7 @@ namespace BigScreen {
                            songTimeSeconds,
                            realTimeSeconds))
                     {
-                        PaperLogger.error(
+                        BigScreen::BigScreenLogger.error(
                             "Unity rejected showcase deformation for panel {}",
                             index + 1);
                         return false;
@@ -235,7 +235,7 @@ namespace BigScreen {
                     // system retains its own crack/shard animation.
                     if(!panels_[index].SetOpacity(1.0f))
                     {
-                        PaperLogger.error(
+                        BigScreen::BigScreenLogger.error(
                             "Unity rejected showcase opacity for panel {}",
                             index + 1);
                         return false;
@@ -250,7 +250,7 @@ namespace BigScreen {
                         // dependency. Leave the ordinary synchronized screen
                         // visible and report the setup failure once through
                         // the existing showcase circuit breaker.
-                        PaperLogger.error(
+                        BigScreen::BigScreenLogger.error(
                             "Unity rejected showcase glass effect for panel {}",
                             index + 1);
                         return false;
@@ -263,14 +263,14 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not update the showcase surfaces: {}",
                 exception.what());
             return false;
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not update the showcase surfaces because of an unknown native exception");
             return false;
         }

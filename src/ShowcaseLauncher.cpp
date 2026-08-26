@@ -421,7 +421,7 @@ namespace BigScreen {
                     transitionFrames_ = 0;
                 if(transitionFrames_ < 12)
                     return;
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Beat Saber's main menu settled after Big Screen dismissal; presenting showcase Solo flow");
                 PresentSoloFlow();
                 return;
@@ -600,7 +600,7 @@ namespace BigScreen {
                 collection->HandleLevelCollectionViewControllerDidSelectLevel(
                     collectionView,
                     level);
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Applied native showcase row selection while Solo finished presenting");
             }
             return;
@@ -620,7 +620,7 @@ namespace BigScreen {
             lawless,
             GlobalNamespace::BeatmapDifficulty::ExpertPlus);
         detailView->set_beatmapKey(key);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Starting managed Up & Down showcase on Lawless Expert+ with session-only No Fail");
 
         auto* gameplaySetup = solo

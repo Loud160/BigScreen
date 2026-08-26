@@ -625,7 +625,7 @@ namespace BigScreen {
             source.successfulCaptureLogged = true;
             auto* visibleShader = material->get_shader().ptr();
             auto* captureShader = captureMaterial_->get_shader().ptr();
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Cinema bloom capture reached the blur pass for camera '{}' "
                 "(visible shader '{}', capture shader '{}', {}x{}, boost {:.5f})",
                 camera->get_name(),
@@ -685,7 +685,7 @@ namespace BigScreen {
                 destination,
                 destination->get_width(),
                 destination->get_height());
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Cinema bloom pixel signal: capture max={} nonblack={}/{} "
                 "rgbTotal={}; blur max={} nonblack={}/{} rgbTotal={}; "
                 "destination before max={} nonblack={}/{} rgbTotal={}; "
@@ -728,7 +728,7 @@ namespace BigScreen {
         lastFailure_ = now;
         const std::string message = detail && *detail
             ? detail : "the Beat Saber bloom renderer was unavailable";
-        PaperLogger.error(
+        BigScreen::BigScreenLogger.error(
             "PC-style Cinema bloom was skipped: {}", message);
         ErrorManager::Instance().RecordError(
             "Rendering PC-style Cinema bloom",

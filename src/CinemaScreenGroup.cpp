@@ -69,14 +69,14 @@ namespace BigScreen {
                 surface->SetVisible(false);
                 screens_.push_back(std::move(surface));
             }
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Created {} Cinema additional video screen(s) sharing one decoded texture",
                 screens_.size());
             return true;
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not create Cinema additional screens: {}",
                 exception.what());
             try { Destroy(); } catch(...) {}
@@ -84,7 +84,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not create Cinema additional screens because of an unknown native exception");
             try { Destroy(); } catch(...) {}
             return false;

@@ -176,6 +176,29 @@ option(BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM=$<BOOL:${BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM}>)
 
+# Keep Paper2 and the first-party logger independently selectable while the
+# replacement is benchmarked on Quest. DUAL is the development default so one
+# session produces directly comparable Paper2 and Big Screen-owned files. A
+# PAPER or NATIVE build removes the inactive runtime calls, which is required
+# for honest CPU/latency measurements.
+set(BIGSCREEN_LOGGER_MODE "DUAL" CACHE STRING
+        "General logger backend: PAPER, NATIVE, or DUAL")
+set_property(CACHE BIGSCREEN_LOGGER_MODE PROPERTY STRINGS PAPER NATIVE DUAL)
+string(TOUPPER "${BIGSCREEN_LOGGER_MODE}" BIGSCREEN_LOGGER_MODE_UPPER)
+if(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "PAPER")
+        set(BIGSCREEN_LOGGER_MODE_VALUE 0)
+elseif(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "NATIVE")
+        set(BIGSCREEN_LOGGER_MODE_VALUE 1)
+elseif(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "DUAL")
+        set(BIGSCREEN_LOGGER_MODE_VALUE 2)
+else()
+        message(FATAL_ERROR
+                "BIGSCREEN_LOGGER_MODE must be PAPER, NATIVE, or DUAL")
+endif()
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        BIGSCREEN_LOGGER_MODE=${BIGSCREEN_LOGGER_MODE_VALUE})
+message(STATUS "Big Screen logger comparison mode: ${BIGSCREEN_LOGGER_MODE_UPPER}")
+
 # The ordinary Unity unlit shader writes opaque video alpha into Beat Saber's
 # main render target. Beat Saber's post-processing interprets that alpha as an
 # emission weight, which turns the complete screen white whenever the game's

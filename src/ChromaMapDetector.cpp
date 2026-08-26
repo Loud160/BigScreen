@@ -218,7 +218,7 @@ namespace BigScreen {
             if(!ReadJson(path, document))
             {
 #ifdef QUEST
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Skipped unreadable or invalid map data while checking Chroma: '{}'",
                     path.string());
 #endif

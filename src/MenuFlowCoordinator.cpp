@@ -198,14 +198,14 @@ namespace BigScreen {
                         savedFoveationLevel});
                 GlobalNamespace::OVRManager::set_useDynamicFoveatedRendering(
                     savedDynamicFoveation);
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Restored menu foveation level {} with dynamic FFR {}",
                     savedFoveationLevel,
                     savedDynamicFoveation ? "enabled" : "disabled");
             }
             catch(...)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not restore Beat Saber's foveated-rendering state");
                 ErrorManager::Instance().RecordError(
                     "Restoring menu foveated rendering",
@@ -232,14 +232,14 @@ namespace BigScreen {
                 GlobalNamespace::OVRManager::set_useDynamicFoveatedRendering(false);
                 GlobalNamespace::OVRManager::set_foveatedRenderingLevel(
                     GlobalNamespace::OVRManager_FoveatedRenderingLevel::Off);
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Temporarily disabled foveated rendering for Big Screen's menu (saved level {}, dynamic {})",
                     savedFoveationLevel,
                     savedDynamicFoveation ? "enabled" : "disabled");
             }
             catch(...)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not disable foveated rendering for Big Screen's menu");
                 ErrorManager::Instance().RecordError(
                     "Disabling menu foveated rendering",
@@ -304,7 +304,7 @@ namespace BigScreen {
                     continue;
                 knownDistractionObjects.emplace_back(object);
             }
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Prewarmed {} distraction-free menu object(s) for this scene",
                 knownDistractionObjects.size());
         }
@@ -330,7 +330,7 @@ namespace BigScreen {
             const auto elapsed = std::chrono::duration_cast<
                 std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - started).count();
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Big Screen menu {} completed in {} ms{}",
                 phase,
                 elapsed,
@@ -359,7 +359,7 @@ namespace BigScreen {
                 return false;
             if(menuReentryBlocked)
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Deferred Big Screen menu entry while the prior hierarchy finishes dismissing");
                 return false;
             }
@@ -373,7 +373,7 @@ namespace BigScreen {
             activeLaunchFromSongSelection = requireSoloSelection;
             if(requireSoloSelection)
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Opening Big Screen from Solo for level '{}'",
                     pendingVideoEditorLevelId);
             }
@@ -407,18 +407,18 @@ namespace BigScreen {
             {
                 SelectionVideoToggle::Instance()
                     .BigScreenMenuClosedToSongSelection();
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Returned from Big Screen to the retained Solo song selection");
             }
             catch(const std::exception& exception)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not prepare the retained Solo video preview after closing Big Screen: {}",
                     exception.what());
             }
             catch(...)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not prepare the retained Solo video preview after closing Big Screen");
             }
         }
@@ -437,13 +437,13 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not open Big Screen from the main menu: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not open Big Screen from the main menu");
         }
         return false;
@@ -459,13 +459,13 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not open Big Screen's Solo video shortcut: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not open Big Screen's Solo video shortcut");
         }
         return false;
@@ -508,13 +508,13 @@ namespace BigScreen {
 
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not present a Big Screen dialog in front of its menu: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not present a Big Screen dialog in front of its menu");
         }
     }
@@ -548,13 +548,13 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not retain a Big Screen dialog in front of its menu: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not retain a Big Screen dialog in front of its menu");
         }
     }
@@ -618,7 +618,7 @@ namespace BigScreen {
                     true);
                 pendingFailedMenuExit = nullptr;
                 pendingFailedMenuExitFrames = 0;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Dismissed Big Screen's menu on a safe frame after an internal UI failure");
                 return;
             }
@@ -637,12 +637,12 @@ namespace BigScreen {
                 return;
 
             CompleteMenuReentryGuard();
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Big Screen menu entry recovered after an interrupted HMUI dismissal callback");
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not service Big Screen's menu transition guard: {}",
                 exception.what());
         }
@@ -687,13 +687,13 @@ namespace BigScreen {
                     true);
             if(!opened)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Big Screen opened from Solo, but level '{}' was not available to the video editor",
                     levelId);
             }
             else
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Completed Big Screen's deferred Configure Video navigation for level '{}'",
                     levelId);
             }
@@ -703,7 +703,7 @@ namespace BigScreen {
             const std::string levelId =
                 std::exchange(pendingActivatedVideoEditorLevelId, {});
             pendingVideoEditorNavigationFrames = 0;
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not complete Big Screen's deferred Solo video shortcut for '{}': {}",
                 levelId,
                 exception.what());
@@ -716,7 +716,7 @@ namespace BigScreen {
             const std::string levelId =
                 std::exchange(pendingActivatedVideoEditorLevelId, {});
             pendingVideoEditorNavigationFrames = 0;
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not complete Big Screen's deferred Solo video shortcut for '{}'",
                 levelId);
             ErrorManager::Instance().ReportInternal(
@@ -747,13 +747,13 @@ namespace BigScreen {
                 BeginMenuReentryGuard();
             pendingFailedMenuExit = coordinator;
             pendingFailedMenuExitFrames = 0;
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Queued Big Screen's failed menu for safe-frame dismissal");
             return true;
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not dismiss Big Screen's failed menu: {}",
                 exception.what());
             ErrorManager::Instance().RecordError(
@@ -762,7 +762,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not dismiss Big Screen's failed menu: unknown exception");
             ErrorManager::Instance().RecordError(
                 "Dismissing Big Screen after a menu failure",
@@ -798,13 +798,13 @@ namespace BigScreen {
                 HMUI::ViewController::AnimationDirection::Horizontal,
                 nullptr,
                 true);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Dismissed Big Screen before opening the managed showcase");
             return true;
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not dismiss Big Screen for the showcase: {}",
                 exception.what());
             ErrorManager::Instance().RecordError(
@@ -813,7 +813,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not dismiss Big Screen for the showcase: unknown exception");
             ErrorManager::Instance().RecordError(
                 "Dismissing Big Screen for the showcase",
@@ -882,7 +882,7 @@ namespace BigScreen {
             return;
 
         SetBigScreenMenuButtonInteractable(true);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Big Screen staged menu prewarming completed; first entry can reuse the retained UI");
     }
 
@@ -904,7 +904,7 @@ namespace BigScreen {
             // only Big Screen's stale navigation marker and let the enclosing
             // dismissal return ownership to Beat Saber.
             restoreCenterOnActivation = false;
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Skipped center-page restoration because HMUI's main stack was already empty");
             return;
         }
@@ -942,7 +942,7 @@ namespace BigScreen {
             }
             catch(...)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not restore one distraction-free menu object");
                 ErrorManager::Instance().RecordError(
                     "Restoring distraction-free menu objects",
@@ -950,7 +950,7 @@ namespace BigScreen {
             }
         }
         hiddenMenuObjects.clear();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Restored {} distraction-free menu objects",
             restored);
     }
@@ -977,11 +977,11 @@ namespace BigScreen {
                 continue;
             hiddenMenuObjects.emplace_back(object);
             object->SetActive(false);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Distraction Free Menu hid '{}'",
                 std::string(object->get_name()));
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Distraction Free Menu active with {} hidden objects",
             hiddenMenuObjects.size());
     }
@@ -1222,7 +1222,7 @@ namespace BigScreen {
         const auto elapsed = std::chrono::duration_cast<
             std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - stageStarted).count();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Big Screen menu prewarm stage '{}' completed in {} ms",
             stageName,
             elapsed);
@@ -1359,7 +1359,7 @@ namespace BigScreen {
                 // Never ask ReplaceTopViewController to index an empty list.
                 // Side panels can still be activated normally, and the neutral
                 // center view is intentionally blank in Big Screen's layout.
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Cleared stale Big Screen center navigation after HMUI emptied its stack");
             }
             restoreCenterOnActivation = false;
@@ -1427,7 +1427,7 @@ namespace BigScreen {
             }
             else
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Skipped disabled-menu center restoration because HMUI's main stack was empty");
             }
             restoreCenterOnActivation = false;
@@ -1462,7 +1462,7 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Video Library deactivation failed while closing Big Screen: {}",
                 exception.what());
             ErrorManager::Instance().RecordError(
@@ -1470,7 +1470,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Video Library deactivation failed while closing Big Screen");
             ErrorManager::Instance().RecordError(
                 "Closing the Video Library", "Unknown native exception");
@@ -1509,7 +1509,7 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Big Screen menu deactivation failed: {}",
                 exception.what());
             ErrorManager::Instance().RecordError(
@@ -1529,7 +1529,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error("Big Screen menu deactivation failed");
+            BigScreen::BigScreenLogger.error("Big Screen menu deactivation failed");
             ErrorManager::Instance().RecordError(
                 "Closing the Big Screen menu", "Unknown native exception");
             MenuEnvironmentVisibility::Instance().Restore();

@@ -749,7 +749,7 @@ namespace BigScreen {
                     renameError.message());
             }
             library.CommitLocalThumbnail(levelId_);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Saved a picked thumbnail frame at {:.3f}s for '{}'",
                 displayedSeconds_,
                 levelId_);

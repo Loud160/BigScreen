@@ -104,11 +104,11 @@ namespace BigScreen {
                             backend = std::move(retired_.front());
                             retired_.pop_front();
                         }
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Background decoder retirement started");
                         backend->Close();
                         backend.reset();
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Background decoder retirement finished");
                     }
                 }).detach();
@@ -138,12 +138,12 @@ namespace BigScreen {
         {
             openMilliseconds_ = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - openStarted).count();
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Decoder startup {} in {:.2f} ms",
                 success ? "completed" : "failed",
                 openMilliseconds_);
         };
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Decoder open started for '{}'",
             videoPath.filename().string());
         Close();
@@ -171,7 +171,7 @@ namespace BigScreen {
         javaVm_ = hardwareRequested_ ? ResolveJavaVm(javaVmError) : nullptr;
         if(hardwareRequested_ && !javaVm_)
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Hardware video decoding is unavailable; using software: {}",
                 javaVmError);
             ErrorManager::Instance().RecordError(
@@ -210,7 +210,7 @@ namespace BigScreen {
                 const std::string reason = fallbackReason.empty()
                     ? "MediaCodec was unavailable for this file"
                     : fallbackReason;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Hardware video decoding did not start; using software: {}",
                     reason);
                 ErrorManager::Instance().RecordError(
@@ -219,7 +219,7 @@ namespace BigScreen {
             }
             else
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Opened {} video decoder with FFmpeg {}",
                     DecodeMethodName(),
                     backend_->RuntimeVersion());
@@ -228,7 +228,7 @@ namespace BigScreen {
             return true;
         }
         CloseAndRetainBackendMetrics();
-        PaperLogger.error(
+        BigScreen::BigScreenLogger.error(
             "Decoder open failed for '{}': {}",
             videoPath.filename().string(),
             error);
@@ -341,7 +341,7 @@ namespace BigScreen {
         {
             hardwareFallbackAttempted_ = true;
             const auto reason = backend_->SoftwareFallbackBlockedReason();
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Hardware video decoding stopped and software fallback is prohibited: {}",
                 reason);
             ErrorManager::Instance().RecordError(
@@ -566,7 +566,7 @@ namespace BigScreen {
             return;
         }
 
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "Decoder teardown exceeded 4 ms; cleanup moved off Unity's thread");
         DecoderRetirementQueue::Instance().Retire(std::move(backend_));
     }
@@ -586,7 +586,7 @@ namespace BigScreen {
             gpuConversionRequested_ = false;
         CloseAndRetainBackendMetrics();
 
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "{} Reopening the same file with software decoding at {:.3f}s.",
             hardwareError,
             lastRequestedSeconds_);
@@ -615,7 +615,7 @@ namespace BigScreen {
         backend_->Request(
             lastRequestedSeconds_,
             lastPresentationIntervalSeconds_);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Recovered video playback with the software decoder at {:.3f}s",
             lastRequestedSeconds_);
         return true;

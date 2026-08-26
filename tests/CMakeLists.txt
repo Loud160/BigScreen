@@ -15,6 +15,21 @@ target_compile_features(bigscreen-core-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
 add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)
 
+find_package(Threads REQUIRED)
+add_executable(
+    bigscreen-native-logger-tests
+    NativeLoggerTests.cpp
+    ../src/NativeLogger.cpp)
+target_compile_features(bigscreen-native-logger-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-native-logger-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+target_link_libraries(bigscreen-native-logger-tests PRIVATE Threads::Threads)
+add_test(NAME bigscreen-native-logger-tests COMMAND bigscreen-native-logger-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-native-logger-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 add_executable(
     bigscreen-video-editor-notice-tests
     VideoEditorNoticeModelTests.cpp)
@@ -141,7 +156,6 @@ if(PkgConfig_FOUND)
         libavformat libavcodec libavutil libswscale)
 endif()
 if(HOST_FFMPEG_FOUND AND Python3_Interpreter_FOUND)
-    find_package(Threads REQUIRED)
     add_executable(
         bigscreen-frame-decoder-tests
         FrameDecoderTests.cpp

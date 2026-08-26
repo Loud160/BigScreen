@@ -299,7 +299,7 @@ namespace {
                     {gameObject, gameObject->get_activeSelf()});
             }
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Captured {} track-ring objects for the Up & Down visibility strobe",
             showcaseRingStates.size());
     }
@@ -399,7 +399,7 @@ namespace {
                     CaptureUniqueShowcaseObject(
                         showcaseSidePillarStates, transform->get_gameObject());
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Captured {} side-obstruction objects for the Up & Down floating section",
             showcaseSidePillarStates.size());
     }
@@ -445,7 +445,7 @@ namespace {
                 showcaseBackgroundRenderers.push_back(
                     {renderer, renderer->get_enabled()});
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Captured {} environment renderers for the Up & Down floating and corkscrew sections",
             showcaseBackgroundRenderers.size());
     }
@@ -702,7 +702,7 @@ namespace {
         int disabled = 0;
         disabled += DisableLoadedComponents<GlobalNamespace::TrackLaneRingsRotationEffect>();
         disabled += DisableLoadedComponents<GlobalNamespace::Rotate>();
-        PaperLogger.info("Disabled {} rotating or moving environment components", disabled);
+        BigScreen::BigScreenLogger.info("Disabled {} rotating or moving environment components", disabled);
     }
 
     void HideTrackLaneRings()
@@ -724,7 +724,7 @@ namespace {
                 ++hidden;
             }
         }
-        PaperLogger.info("Hidden {} track-lane ring objects for video gameplay", hidden);
+        BigScreen::BigScreenLogger.info("Hidden {} track-lane ring objects for video gameplay", hidden);
     }
 
     void HideSideBars()
@@ -753,7 +753,7 @@ namespace {
             gameObject->SetActive(false);
             ++hidden;
         }
-        PaperLogger.info("Hidden {} Big Mirror side-bar structures for video gameplay", hidden);
+        BigScreen::BigScreenLogger.info("Hidden {} Big Mirror side-bar structures for video gameplay", hidden);
     }
 
     void HideSpectrogramBars()
@@ -852,7 +852,7 @@ namespace {
             gameObject->SetActive(false);
             ++hidden;
         }
-        PaperLogger.info("Hidden {} spectrogram-bar objects for video gameplay", hidden);
+        BigScreen::BigScreenLogger.info("Hidden {} spectrogram-bar objects for video gameplay", hidden);
     }
 
     void HideSideLaserGeometry()
@@ -889,7 +889,7 @@ namespace {
             gameObject->SetActive(false);
             ++hidden;
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Hidden {} Big Mirror side-laser geometry roots for video gameplay",
             hidden);
     }
@@ -939,7 +939,7 @@ namespace {
         animatedLightingDisabled += DisableLoadedComponents<GlobalNamespace::Spectrogram>();
         animatedLightingDisabled += DisableLoadedComponents<GlobalNamespace::TransformSpectrogram>();
 
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Map lighting scene shutdown blackened {} managed lights, disabled {} renderer lights, and stopped {} animated lights",
             blackenedAndDisabled,
             rendererLightsDisabled,
@@ -979,7 +979,7 @@ namespace {
             ++blackenedAndDisabled;
         }
 
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Blackened and disabled {} lights in selected legacy channel groups",
             blackenedAndDisabled);
     }
@@ -1046,7 +1046,7 @@ namespace {
                loggedInstances.end())
             {
                 loggedInstances.push_back(self);
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Observed BloomPrePass instance {} with mode {}",
                     static_cast<void*>(self),
                     self->__cordl_internal_get__mode().value__);
@@ -1257,13 +1257,13 @@ namespace {
                         playback.RequestedEnvironment();
                     if(!mapperEnvironment)
                     {
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Allow Chroma Override retained the map's intended environment");
                         return;
                     }
                     if(!environmentsListModel)
                     {
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Beat Saber's environment list was unavailable; retaining the map environment");
                         BigScreen::ErrorManager::Instance().RecordError(
                             "Applying the mapper environment",
@@ -1284,13 +1284,13 @@ namespace {
                         // Chroma-aware fallback behavior.
                         self->set_targetEnvironmentInfo(environment);
                         self->set_usingOverrideEnvironment(true);
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Allow Chroma Override loaded mapper environment '{}'",
                             *mapperEnvironment);
                     }
                     else
                     {
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Mapper environment '{}' is unavailable; keeping the map environment",
                             *mapperEnvironment);
                     }
@@ -1302,7 +1302,7 @@ namespace {
                 {
                     if(playback.HasPreparedVideo())
                     {
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Environment overrides disabled; using the map's intended environment");
                     }
                     return;
@@ -1312,7 +1312,7 @@ namespace {
                     return;
                 if(!environmentsListModel)
                 {
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Beat Saber's environment list was unavailable; retaining the map environment");
                     BigScreen::ErrorManager::Instance().RecordError(
                         "Applying the video environment",
@@ -1339,7 +1339,7 @@ namespace {
                     // preserved original environment.
                     self->set_targetEnvironmentInfo(environment);
                     self->set_usingOverrideEnvironment(true);
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Forced {} environment for video gameplay",
                         settings.GlassDesertOverrideEnabled()
                             ? "Glass Desert"
@@ -1347,7 +1347,7 @@ namespace {
                 }
                 else
                 {
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Requested {} environment is unavailable; keeping the map environment",
                         requestedName);
                     BigScreen::ErrorManager::Instance().RecordError(
@@ -1398,7 +1398,7 @@ namespace {
                     effectiveSettings = playerSpecificSettings->CopyWith(
                         {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
                         {}, {}, {}, {}, {}, {}, {}, noEffects, noEffects, {});
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Map light show disabled for this video level");
                 }
             });
@@ -1648,7 +1648,7 @@ namespace {
                 // the retained decoder/session now; Stop deliberately keeps
                 // the prepared map configuration, allowing Start below to
                 // create a fresh screen synchronized to the restarted song.
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Detected gameplay restart; rebuilding the video session");
                 playback.Stop();
             }
@@ -1770,7 +1770,7 @@ namespace {
             // eligible for Video Available/Download and Configure Video as
             // soon as SongCore publishes its completed refresh.
             BigScreen::VideoLibraryMenu::Instance().RequestCatalogRefresh();
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Invalidated Big Screen's retained catalog after SongCore loaded new map data");
         }
         if(BigScreen::IsBigScreenMenuActive())
@@ -1976,7 +1976,7 @@ namespace {
 MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
 {
     *info = modInfo.to_c();
-    Paper::Logger::RegisterFileContextId(PaperLogger.tag);
+    BigScreen::BigScreenLogger.Initialize(VERSION);
 
     // CustomTypes 0.18.4 installs optional liveness-diagnostic hooks that read
     // Unity's liveness-state filter class from the wrong structure offset on
@@ -1993,18 +1993,18 @@ MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept
     // after the corrected CustomTypes build is available for this game/toolchain
     // generation and has passed campaign-exit regression testing.
     if(::setenv("CT_DISABLE_LIVENESS_CHECKS", "1", 1) != 0)
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "Could not disable CustomTypes' incompatible liveness diagnostics; "
             "campaign asset cleanup may remain unstable");
     else
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Disabled CustomTypes 0.18.4 liveness diagnostics for Beat Saber 1.40.8");
 
     BigScreen::ErrorManager::Instance().InitializePersistentLog();
     BigScreen::ErrorManager::Instance().Guard("loading settings", []() {
         BigScreen::Settings::Instance().Load();
     });
-    PaperLogger.info("Big Screen {} initialized", VERSION);
+    BigScreen::BigScreenLogger.info("Big Screen {} initialized", VERSION);
 }
 
 MOD_EXTERN_FUNC void late_load() noexcept
@@ -2018,7 +2018,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
         std::string downloaderError;
         if(!BigScreen::DownloadManager::Instance().Initialize(downloaderError))
         {
-            PaperLogger.error("Downloader unavailable: {}", downloaderError);
+            BigScreen::BigScreenLogger.error("Downloader unavailable: {}", downloaderError);
             BigScreen::ErrorManager::Instance().RecordError(
                 "Initializing downloader",
                 downloaderError);
@@ -2047,18 +2047,18 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // Hooks stay on public Beat Saber lifecycle and clock APIs: selection view
     // visibility owns menu preview lifetime, scene transition owns gameplay
     // setup, and Beat Saber's audio clocks remain authoritative for sync.
-    INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
-    INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
-    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData);
-    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel);
-    INSTALL_HOOK(PaperLogger, StandardLevelRestartController_RestartLevel);
-    INSTALL_HOOK(PaperLogger, MissionLevelRestartController_RestartLevel);
-    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_Awake);
-    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnEnable);
-    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDisable);
-    INSTALL_HOOK(PaperLogger, StandardLevelDetailView_OnDestroy);
-    INSTALL_HOOK(PaperLogger, MissionLevelDetailViewController_DidActivate);
-    INSTALL_HOOK(PaperLogger, MissionSelectionNavigationController_DidDeactivate);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelRestartController_RestartLevel);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelRestartController_RestartLevel);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelDetailView_Awake);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelDetailView_OnEnable);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelDetailView_OnDisable);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelDetailView_OnDestroy);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelDetailViewController_DidActivate);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionSelectionNavigationController_DidDeactivate);
     // Do not install pause-menu UI hooks on Beat Saber 1.40.8. The attempted
     // BSML IncrementSetting/ToggleSetting controls never rendered in the pause
     // menu, and destroying their hidden hierarchy left an invalid
@@ -2069,24 +2069,24 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // custom-setting hierarchy.
     // BLOOM EXPERIMENT DISABLED (2026-08-18): see the preserved hook above.
 #if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
-    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, BloomPrePass_OnPreRender);
 #endif
-    INSTALL_HOOK(PaperLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
-    INSTALL_HOOK(PaperLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
-    INSTALL_HOOK(PaperLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
-    INSTALL_HOOK(PaperLogger, BeatmapObjectSpawnController_Start);
-    INSTALL_HOOK(PaperLogger, AudioTimeSyncController_StartSong);
-    INSTALL_HOOK(PaperLogger, AudioTimeSyncController_Update);
-    INSTALL_HOOK(PaperLogger, SongPreviewPlayer_Update);
-    INSTALL_HOOK(PaperLogger, Application_InvokeFocusChanged);
-    INSTALL_HOOK(PaperLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
-    INSTALL_HOOK(PaperLogger, MissionLevelScenesTransitionSetupDataSO_Finish);
-    INSTALL_HOOK(PaperLogger, ResultsViewController_DidActivate);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapObjectSpawnController_Start);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, AudioTimeSyncController_StartSong);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, AudioTimeSyncController_Update);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, SongPreviewPlayer_Update);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, Application_InvokeFocusChanged);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_Finish);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, ResultsViewController_DidActivate);
     // SongCore publishes selections after its custom-level details are ready,
     // including WIP songs. A plain native callback keeps this path independent
     // of Beat Saber's private view-controller field layout.
     SongCore::API::LevelSelect::GetLevelWasSelectedEvent().addCallback(HandleLevelWasSelected);
     SongCore::API::Loading::GetSongsLoadedEvent().addCallback(HandleSongsLoaded);
     BigScreen::SettingsMenu::Instance().Register();
-    PaperLogger.info("Big Screen hooks installed");
+    BigScreen::BigScreenLogger.info("Big Screen hooks installed");
 }

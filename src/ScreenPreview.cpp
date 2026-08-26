@@ -239,7 +239,7 @@ namespace BigScreen {
         CaptureBasePlacement();
         if(!CreateWorldScreen())
         {
-            PaperLogger.error("Could not create the full-size settings screen preview");
+            BigScreen::BigScreenLogger.error("Could not create the full-size settings screen preview");
             ErrorManager::Instance().RecordError(
                 "Creating the settings screen preview",
                 "Unity could not create the full-size preview surface");
@@ -358,7 +358,7 @@ namespace BigScreen {
         }
 
         surface_.SetVisible(true);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Showing full-size {} preview at ({:.2f}, {:.2f}, {:.2f}), tilt {:.1f}, height {:.2f}",
             usingPreparedDisplay ? "prepared map" : "user-layout",
             config.screenPosition.x,
@@ -437,7 +437,7 @@ namespace BigScreen {
         surface_.SetVisible(false);
         if(!CreateEditorUi())
         {
-            PaperLogger.error("Could not create the undocked screen editor");
+            BigScreen::BigScreenLogger.error("Could not create the undocked screen editor");
             ErrorManager::Instance().RecordError(
                 "Creating the undocked screen editor",
                 "Unity could not create the screen editor controls");
@@ -453,12 +453,12 @@ namespace BigScreen {
         {
             if(!ApplyLibraryPreviewEditorDisplay(true))
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not attach the active library preview to the screen editor");
             }
         }
         SettingsMenu::Instance().RefreshControls();
-        PaperLogger.info("Started undocked editor for Layout {}",
+        BigScreen::BigScreenLogger.info("Started undocked editor for Layout {}",
             settings.ActiveScreenLayout() + 1);
     }
 
@@ -850,7 +850,7 @@ namespace BigScreen {
         else
             Refresh();
         SettingsMenu::Instance().RefreshControls();
-        PaperLogger.info("Saved undocked screen placement");
+        BigScreen::BigScreenLogger.info("Saved undocked screen placement");
     }
 
     void ScreenPreview::CancelUndockedEditing()
@@ -866,7 +866,7 @@ namespace BigScreen {
         else
             Refresh();
         SettingsMenu::Instance().RefreshControls();
-        PaperLogger.info("Cancelled unsaved undocked screen placement");
+        BigScreen::BigScreenLogger.info("Cancelled unsaved undocked screen placement");
     }
 
     void ScreenPreview::StageCurrentUndockedPlacement()

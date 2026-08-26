@@ -326,7 +326,7 @@ namespace BigScreen {
                 if(sink.stream.is_open()) sink.stream.close();
             }
             if(warn)
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Detailed diagnostic session could not start: {}",
                     exception.what());
         }
@@ -401,7 +401,7 @@ namespace BigScreen {
             // Never call Paper while the sink mutex is held. Diagnostics do
             // not participate in another subsystem's lock ordering.
             if(reportFailure)
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Detailed diagnostic session stopped after a write failure");
         }
         catch(...)

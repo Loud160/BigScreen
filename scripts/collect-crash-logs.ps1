@@ -350,7 +350,7 @@ function Get-LatestTimestampedEntry([string] $RemotePath) {
     $tail = Invoke-AdbShell "if [ -f '$RemotePath' ]; then tail -n 500 '$RemotePath'; fi" -AllowFailure
     if ($tail.ExitCode -ne 0) { return $null }
     $latest = $null
-    foreach ($match in [regex]::Matches($tail.Text, '(?m)^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]')) {
+    foreach ($match in [regex]::Matches($tail.Text, '(?m)^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d{3})?\]')) {
         $parsed = Convert-DeviceTimestampToEpoch $match.Groups[1].Value
         if ($null -ne $parsed -and ($null -eq $latest -or $parsed -gt $latest)) {
             $latest = $parsed
@@ -494,6 +494,23 @@ try {
     Write-Utf8File (Join-Path $script:StageRoot "DEVICE-AND-GAME.txt") ($metadata + "`r`n")
 
     Write-Host "Collecting Big Screen diagnostics..." -ForegroundColor Cyan
+    # During the first-party logger comparison, these are Big Screen's owned
+    # general logs. Pull them before Paper so support reports naturally point
+    # at the backend that will remain after Paper2 is removed. A missing native
+    # log is still valid for an older or explicitly Paper-only development
+    # build, so the collector continues with every independent evidence layer.
+    $nativeGeneralPath = "$($script:BigScreenLogRoot)/bigscreen-native.log"
+    $nativeGeneralEpoch = Get-LatestTimestampedEntry $nativeGeneralPath
+    $nativeGeneralClassificationEpoch = if ($null -ne $nativeGeneralEpoch) { $nativeGeneralEpoch } else { 0L }
+    $pulledNativeGeneral = Pull-RemoteArtifact "Big-Screen" $nativeGeneralPath $nativeGeneralClassificationEpoch "bigscreen-native.log" "Big Screen's first-party asynchronous general log; primary during the Paper2 comparison."
+    if (-not $pulledNativeGeneral) {
+        Add-MissingMarker "Big-Screen" "NO_BIG_SCREEN_NATIVE_LOG.txt" "The first-party Big Screen general log was not present. This is expected on older or Paper-only comparison builds."
+    }
+    $nativePreviousPath = "$($script:BigScreenLogRoot)/bigscreen-native.previous.log"
+    $nativePreviousEpoch = Get-LatestTimestampedEntry $nativePreviousPath
+    $nativePreviousClassificationEpoch = if ($null -ne $nativePreviousEpoch) { $nativePreviousEpoch } else { 0L }
+    [void](Pull-RemoteArtifact "Big-Screen" $nativePreviousPath $nativePreviousClassificationEpoch "bigscreen-native.previous.log" "One retained rotation of Big Screen's first-party general log.")
+
     $bigScreenCurrent = "$($script:BigScreenLogRoot)/error-history.log"
     $bigScreenEntryEpoch = Get-LatestTimestampedEntry $bigScreenCurrent
     # A zero evidence time intentionally classifies a session-header-only file
@@ -517,9 +534,9 @@ try {
 
     Write-Host "Collecting Beat Saber logs and process-exit evidence..." -ForegroundColor Cyan
     # The legacy Paper 3 files stopped being written when the project moved to
-    # paper2_scotland2; they are kept only as historical context. The paper2
-    # directory candidates cover the current file sink, including Big Screen's
-    # own per-context log registered through RegisterFileContextId.
+    # paper2_scotland2; they are kept only as historical context. Paper2 files
+    # remain useful secondary evidence while dual comparison builds are being
+    # tested, but the native Big Screen files above are now collected first.
     foreach ($logName in @("PaperLog.log", "beatsaber-hook.log")) {
         $remote = "$($script:ModDataRoot)/logs/$logName"
         [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) "legacy-$logName" "LEGACY pre-paper2 log location; expected to be stale. Kept for historical comparison only.")
@@ -527,14 +544,12 @@ try {
     foreach ($paper2Dir in @("$($script:ModDataRoot)/logs/paper2", "$($script:ModDataRoot)/logs2")) {
         foreach ($logName in @("PaperLog.log", "BigScreen.log")) {
             $remote = "$paper2Dir/$logName"
-            [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) ("paper2-" + ($paper2Dir -split '/')[-1] + "-$logName") "Current paper2 mod log candidate. This is where Big Screen's live log lines (including shader selection) are written.")
+            [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) ("paper2-" + ($paper2Dir -split '/')[-1] + "-$logName") "Paper2 comparison/third-party log candidate; retained while the first-party logger is validated.")
         }
     }
 
-    # Paper2 mirrors every mod log line to Android's logcat, which is the one
-    # source that is always fresh regardless of file-sink location or state.
-    # Capture the recent buffer so a support ZIP always contains the mod's
-    # live lines (shader selection, screen creation, decoder startup).
+    # Both logger backends can emit to Android logcat. Capture the recent buffer
+    # so a support ZIP still has live process context if either file sink fails.
     Write-Host "Capturing recent logcat buffer..." -ForegroundColor Cyan
     $logcatDump = Invoke-Adb -Arguments @("logcat", "-d", "-t", "6000") -AllowFailure
     if ($logcatDump -and $logcatDump.ExitCode -eq 0 -and
@@ -591,7 +606,7 @@ try {
 
     $targetedLogcat = Invoke-Adb -Arguments @(
         "logcat", "-d", "-v", "epoch",
-        "AndroidRuntime:E", "DEBUG:F", "libc:F", "ActivityManager:I", "Unity:D", "bigscreen:V", "*:S"
+        "AndroidRuntime:E", "DEBUG:F", "libc:F", "ActivityManager:I", "Unity:D", "bigscreen:V", "BigScreen:V", "*:S"
     ) -AllowFailure
     $targetedRecords = Select-EpochLogRecords $targetedLogcat.Text
     if ($targetedRecords.Fresh) {

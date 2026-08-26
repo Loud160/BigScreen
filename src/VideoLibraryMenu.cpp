@@ -811,7 +811,7 @@ namespace BigScreen {
             : nullptr;
         if(!list_)
         {
-            PaperLogger.error("Could not construct the native video library list");
+            BigScreen::BigScreenLogger.error("Could not construct the native video library list");
             ErrorManager::Instance().RecordError(
                 "Creating the Video Library song list",
                 "Beat Saber did not create the native list control");
@@ -2023,7 +2023,7 @@ namespace BigScreen {
         std::array<int, 4> groupCounts{};
         for(const auto& item : catalog_)
             ++groupCounts[static_cast<int>(item.group)];
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Video library catalog rebuilt in {} ms: {} total ({} custom, {} WIP, {} OST, {} DLC)",
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - rebuildStarted).count(),
@@ -2065,13 +2065,13 @@ namespace BigScreen {
             }
             catch(const std::exception& exception)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Skipped one video-library descriptor during incremental catalog preparation: {}",
                     exception.what());
             }
             catch(...)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Skipped one video-library descriptor during incremental catalog preparation");
             }
         }
@@ -2083,7 +2083,7 @@ namespace BigScreen {
         catalogPrewarmIndex_ = 0;
         const auto rowsStarted = std::chrono::steady_clock::now();
         RebuildVisibleRows();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Video library catalog prewarming completed; retained rows finalized in {} ms",
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - rowsStarted).count());
@@ -2237,7 +2237,7 @@ namespace BigScreen {
             });
         if(item == catalog_.end())
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not deep-link Big Screen's video editor: level '{}' was not in the installed-song catalog",
                 std::string(levelId));
             return false;
@@ -2276,7 +2276,7 @@ namespace BigScreen {
                     ? std::string(selected_->levelID) : ""},
                 {"songName", selected_ && selected_->songName
                     ? std::string(selected_->songName) : "Unknown Song"}});
-        PaperLogger.debug(
+        BigScreen::BigScreenLogger.debug(
             "Opening video editor for '{}' ({})",
             selected_ && selected_->songName
                 ? std::string(selected_->songName) : std::string("Unknown Song"),
@@ -2635,7 +2635,7 @@ namespace BigScreen {
         request.requestedHeight = height;
         request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
         std::string error;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Download {}p button pressed for {}",
             height,
             selectedLevelId);
@@ -2650,7 +2650,7 @@ namespace BigScreen {
                 ? "The download could not be started."
                 : error;
             terminalDownloadProgressLevelId_.clear();
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not start download for {}: {}",
                 selectedLevelId,
                 failureMessage);
@@ -2716,7 +2716,7 @@ namespace BigScreen {
         }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Could not read the Quest clipboard: {}", error.what());
+            BigScreen::BigScreenLogger.error("Could not read the Quest clipboard: {}", error.what());
             ErrorManager::Instance().RecordError(
                 "Reading the Quest clipboard",
                 error.what());
@@ -2854,7 +2854,7 @@ namespace BigScreen {
             uri->Dispose();
             uriClass->Dispose();
             terminalDownloadProgressLevelId_.clear();
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Opened YouTube search for '{}'",
                 query);
             PublishEditorNotice("Opened YouTube search in Quest Browser.");
@@ -2862,7 +2862,7 @@ namespace BigScreen {
         catch(const std::exception& error)
         {
             terminalDownloadProgressLevelId_.clear();
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not launch YouTube search '{}': {}",
                 url,
                 error.what());
@@ -2874,7 +2874,7 @@ namespace BigScreen {
         catch(...)
         {
             terminalDownloadProgressLevelId_.clear();
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not launch YouTube search '{}'",
                 url);
             ErrorManager::Instance().RecordError(
@@ -3134,7 +3134,7 @@ namespace BigScreen {
             std::filesystem::remove(download.thumbnailPath, thumbnailError);
             if(thumbnailError)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not delete removed video's thumbnail '{}': {}",
                     download.thumbnailPath,
                     thumbnailError.message());
@@ -3318,7 +3318,7 @@ namespace BigScreen {
                 catch(const std::exception& error)
                 {
                     FailedVideoThumbnailLoads.emplace(path);
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Could not display video thumbnail '{}': {}",
                         path,
                         error.what());
@@ -3688,7 +3688,7 @@ namespace BigScreen {
             // Native state and the cached pointer were already cleared above.
             // A scene transition may have destroyed the Unity object first;
             // never let that prevent the remainder of menu teardown.
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Status-label surface was already unavailable during map exit");
         }
     }
@@ -3900,7 +3900,7 @@ namespace BigScreen {
             }
             catch(const std::exception& error)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not display the video thumbnail: {}",
                     error.what());
             }
@@ -4251,7 +4251,7 @@ namespace BigScreen {
                     // is not itself a user operation. Keep a fresh editor's
                     // notice blank; the Play action publishes a loading notice
                     // if this task has not completed by the time it is needed.
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Loading full official song audio for Video Library preview: '{}'",
                         levelId);
                 }
@@ -4263,7 +4263,7 @@ namespace BigScreen {
                 terminalDownloadProgressLevelId_.clear();
                 PublishPreviewNotice(
                     "Beat Saber could not load this song's full audio.");
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not start full official-song audio load for '{}': {}",
                     levelId,
                     error.what());
@@ -4316,7 +4316,7 @@ namespace BigScreen {
             // Audio teardown is best-effort and must never strand the player
             // inside the mod menu merely because Beat Saber already discarded
             // a level-data object during a scene transition.
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not release official full-song preview audio: {}",
                 error.what());
         }
@@ -4524,7 +4524,7 @@ namespace BigScreen {
         }
         catch(const std::exception& error)
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not resolve Beat Saber's preview loudness for '{}': {}",
                 std::string(selected_->levelID),
                 error.what());
@@ -4593,7 +4593,7 @@ namespace BigScreen {
         StartPreviewAudio();
         DiagnosticSessionLogger::Instance().MenuEvent(
             "preview_looped", "SystemNormalization");
-        PaperLogger.info("Looped Video Library preview to the beginning");
+        BigScreen::BigScreenLogger.info("Looped Video Library preview to the beginning");
     }
 
     void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)
@@ -4629,7 +4629,7 @@ namespace BigScreen {
             // Teardown must never prevent PlaybackSession::Stop() from joining
             // the FFmpeg worker. Logging is sufficient because the menu is
             // already leaving and showing another dialog here would be unsafe.
-            PaperLogger.warn("Could not restore menu music during preview teardown: {}", error.what());
+            BigScreen::BigScreenLogger.warn("Could not restore menu music during preview teardown: {}", error.what());
         }
 
         // Release only after SongPreviewPlayer has relinquished the active
@@ -4642,7 +4642,7 @@ namespace BigScreen {
             try { RefreshPlaybackControls(); }
             catch(const std::exception& error)
             {
-                PaperLogger.warn("Could not refresh stopped preview controls: {}", error.what());
+                BigScreen::BigScreenLogger.warn("Could not refresh stopped preview controls: {}", error.what());
             }
         }
     }
@@ -4667,7 +4667,7 @@ namespace BigScreen {
         PublishPreviewNotice(shouldResume
             ? "Beat Saber replaced the preview audio. Reloading it..."
             : "Beat Saber replaced the preview audio. Press Play to reload.");
-        PaperLogger.warn("Recovered invalid menu preview audio during {}", context);
+        BigScreen::BigScreenLogger.warn("Recovered invalid menu preview audio during {}", context);
         ErrorManager::Instance().RecordError(
             "Recovering menu preview audio",
             std::string(context) +
@@ -4712,7 +4712,7 @@ namespace BigScreen {
             0.0,
             static_cast<double>(clipEnd))));
         songPreviewPlayer_->PauseCurrentChannel();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Restored Big Screen's paused audio-preview state after the audio channel resumed");
     }
 
@@ -4949,7 +4949,7 @@ namespace BigScreen {
                 }
                 else
                 {
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Official full-song level-data load failed for '{}': "
                         "resultError={}, levelDataPresent={}",
                         audioLoadLevelId_,
@@ -4964,7 +4964,7 @@ namespace BigScreen {
             }
             else if(selectionStillMatches)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Official full-song level-data task failed for '{}': "
                     "completedSuccessfully={}, canceled={}, faulted={}",
                     audioLoadLevelId_,
@@ -5001,7 +5001,7 @@ namespace BigScreen {
                 }
                 else
                 {
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Video Library audio ready for '{}' ({:.2f}s clip, {:.2f}s song)",
                         audioLoadLevelId_,
                         previewAudioClip_->get_length(),
@@ -5129,7 +5129,7 @@ namespace BigScreen {
             // subsequent generated property call. Contain that narrow race in
             // the preview transport: keep the video decoder/menu alive and
             // let the next Tick request a fresh Beat Saber audio clip.
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Recovered IL2CPP audio-preview race: {}", error.what());
             RecoverInvalidPreviewAudio("an audio property call");
             return;
@@ -5224,7 +5224,7 @@ namespace BigScreen {
         try { StopPreviewAudio(true); }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Preview audio teardown failed during deactivation: {}", error.what());
+            BigScreen::BigScreenLogger.error("Preview audio teardown failed during deactivation: {}", error.what());
         }
         // Downloads are owned by the process-wide manager, not this retained
         // view. Let a transfer finish after the player closes Big Screen; the
@@ -5238,7 +5238,7 @@ namespace BigScreen {
         }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Video decoder teardown failed during deactivation: {}", error.what());
+            BigScreen::BigScreenLogger.error("Video decoder teardown failed during deactivation: {}", error.what());
         }
         // Release ownership only after the decoder and prepared selection have
         // been cleared. A new ordinary song-menu preview may start on the next
@@ -5268,7 +5268,7 @@ namespace BigScreen {
         try { StopPreviewAudio(true); }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Preview audio teardown failed while leaving the library: {}", error.what());
+            BigScreen::BigScreenLogger.error("Preview audio teardown failed while leaving the library: {}", error.what());
         }
         try
         {
@@ -5277,12 +5277,12 @@ namespace BigScreen {
         }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Video decoder teardown failed while leaving the library: {}", error.what());
+            BigScreen::BigScreenLogger.error("Video decoder teardown failed while leaving the library: {}", error.what());
         }
         try { ScreenPreview::Instance().ActivateUserLayout(); }
         catch(const std::exception& error)
         {
-            PaperLogger.error("Could not restore the settings preview: {}", error.what());
+            BigScreen::BigScreenLogger.error("Could not restore the settings preview: {}", error.what());
         }
     }
 }

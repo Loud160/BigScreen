@@ -177,7 +177,7 @@ namespace BigScreen {
             knownFloorRenderers_.emplace_back(renderer);
         }
         floorCacheInitialized_ = true;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Prewarmed {} compatible menu-floor renderer(s) for this scene",
             knownFloorRenderers_.size());
     }
@@ -201,11 +201,11 @@ namespace BigScreen {
             // scripts, and scene hierarchy retain their normal lifetime.
             hiddenFloorRenderers_.emplace_back(renderer);
             renderer->set_enabled(false);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Show Menu Environment off: hid menu-floor renderer '{}'",
                 std::string(renderer->get_gameObject()->get_name()));
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Show Menu Environment off: hid {} newly visible menu-floor renderers ({} total cached)",
             hiddenFloorRenderers_.size() - originalCount,
             hiddenFloorRenderers_.size());
@@ -329,7 +329,7 @@ namespace BigScreen {
             // pass without forgetting renderers that are still hidden.
             if(!HideCompatibleMenuFloorRenderers() && firstApplication)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Show Menu Environment is off, but no compatible menu-floor renderer was found");
             }
         }
@@ -369,7 +369,7 @@ namespace BigScreen {
             }
             catch(...)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not restore one Show Menu Environment floor renderer");
                 ErrorManager::Instance().RecordError(
                     "Restoring the menu floor",
@@ -388,7 +388,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error("Could not destroy the menu placement guide");
+            BigScreen::BigScreenLogger.error("Could not destroy the menu placement guide");
         }
         guideRoot_ = nullptr;
         try
@@ -398,7 +398,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not destroy the menu placement guide mesh");
         }
         guideMesh_ = nullptr;
@@ -409,7 +409,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not destroy the menu placement guide material");
         }
         guideMaterial_ = nullptr;

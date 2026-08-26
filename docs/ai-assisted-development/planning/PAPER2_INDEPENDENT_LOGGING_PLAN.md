@@ -1,8 +1,9 @@
 # Paper2-Independent Logging Plan
 
-Status: proposed; no runtime changes have been made from this plan
+Status: implementation and dual-backend comparison in progress on
+`codex/first-party-logger`; Paper2 has not yet been removed
 
-Last reviewed: August 25, 2026
+Last reviewed: August 26, 2026
 
 ## Purpose
 
@@ -11,8 +12,48 @@ logging dependency with a small first-party logger, what that logger must do,
 and how the migration should be implemented and verified without weakening
 crash diagnostics or affecting video performance.
 
-This is a planning record, not a statement that Paper2 has already been
-removed.
+This remains the migration and verification record. The first-party backend is
+now implemented, but Paper2 deliberately remains packaged while both sinks are
+compared on Quest. Its removal is gated on the on-device matrix below.
+
+## Current implementation checkpoint
+
+All Big Screen call sites now use one `BigScreenLogger` facade. An internal
+build mode selects Paper-only, native-only, or dual delivery; ordinary
+development builds currently default to dual. The message is formatted once,
+then the same severity, source location, and text are handed to both backends.
+This keeps the comparison about backend overhead and reliability rather than
+different formatting work.
+
+The native backend currently provides:
+
+- Android logcat output in native-only builds (Paper supplies it in dual mode);
+- one owned asynchronous writer thread and no detached workers;
+- a 1 MiB/2,048-record ordinary queue with a reserved warning/error margin;
+- a 5 MiB active log and one 5 MiB previous rotation;
+- a 250 ms normal flush interval and bounded critical-error flush request;
+- retry after directory/open/write failures while logcat remains available;
+- dropped-record accounting and a later warning summary;
+- source filename, line, severity, timestamp, and producer-thread identity;
+- host tests for lifecycle, rotation, bounded overflow, and concurrent writers.
+
+The active files are:
+
+```text
+/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.log
+/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.previous.log
+```
+
+The Windows and Linux support collectors include these files. Host tests and
+the ARM64 Quest build/package pass. A dual-backend build was also exercised on
+a Quest 2 on August 26, 2026: the support collector retrieved the native and
+Paper2 files while Beat Saber was still running, and both contained the same
+complete Big Screen event set through the same final message. The native file
+also contained its own session header and preserved one embedded newline as a
+multiline record, while Paper2 prefixed the resulting lines separately. No
+native dropped-record or file-failure marker was present. Clean shutdown,
+forced-crash tail retention, native-only performance, and Paper-free packaging
+remain part of the matrix below.
 
 ## Why this change is being considered
 
@@ -68,7 +109,7 @@ Screen actually needs.
 ## Current Big Screen usage
 
 The Paper dependency is broad in call count but narrow in API surface. The
-current source contains approximately 348 ordinary calls through the shared
+pre-migration source contained approximately 348 ordinary calls through the shared
 `PaperLogger` object across 26 files:
 
 | Method | Approximate calls |
@@ -78,9 +119,10 @@ current source contains approximately 348 ordinary calls through the shared
 | `warn` | 80 |
 | `debug` | 5 |
 
-Outside those calls, Big Screen creates one constant logger context and
-registers that context for a per-mod file during `setup()`. It does not use
-Paper's profiler, backtraces, custom sinks, or other advanced features.
+Outside those calls, Big Screen created one constant logger context and
+registered that context for a per-mod file during `setup()`. It did not use
+Paper's profiler, backtraces, custom sinks, or other advanced features. The
+current facade preserves that narrow surface while comparison is underway.
 
 This makes a compatibility-shaped replacement practical. The existing format
 strings and arguments can remain unchanged while the logger object and backend
@@ -124,7 +166,7 @@ Every accepted message should be sent to Android logcat through Quest's system
 The first-party file sink should write to a Big Screen-owned path such as:
 
 ```text
-/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen.log
+/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.log
 ```
 
 Each record should include at least:
@@ -168,8 +210,9 @@ while holding their own important locks.
 
 ### Rotation and retention
 
-Set a conservative maximum size for `bigscreen.log`, for example 2 MiB, and
-retain one previous file. Rotation must be atomic enough that a failed rename
+The comparison implementation uses a 5 MiB maximum for
+`bigscreen-native.log` and retains one previous 5 MiB file, matching the
+approved 10 MiB total budget. Rotation must be robust enough that a failed rename
 or storage error leaves at least one readable log. File creation, rotation, and
 append failures should fall back to logcat.
 
@@ -185,7 +228,7 @@ general logger during this migration.
 
 ## Implementation sequence
 
-### 1. Establish behavior with host tests
+### 1. Establish behavior with host tests — implemented
 
 Add a logger header, implementation, and focused host tests before altering all
 call sites. Tests should cover:
@@ -204,7 +247,7 @@ call sites. Tests should cover:
 The file sink should be injectable or otherwise redirectable in host tests so
 tests never write into a real Quest path.
 
-### 2. Replace the logger boundary
+### 2. Replace the logger boundary — implemented behind comparison modes
 
 Replace the Paper include and constant context in `include/main.hpp` with the
 first-party logger. Mechanically rename `PaperLogger` call sites to
@@ -215,7 +258,7 @@ Remove `Paper::Logger::RegisterFileContextId(...)` from `setup()` and initialize
 the Big Screen logger through its own idempotent lifecycle. Do not use this
 migration as an opportunity to rewrite unrelated messages or subsystem logic.
 
-### 3. Remove build and packaging dependencies
+### 3. Remove build and packaging dependencies — deliberately deferred
 
 Remove `paper2_scotland2` from:
 
@@ -228,7 +271,7 @@ Remove `paper2_scotland2` from:
 The finished `libbigscreen.so` must have no undefined `paper2_*` symbols, and
 the generated QMOD must neither contain Paper nor request it as a dependency.
 
-### 4. Update diagnostics and documentation
+### 4. Update diagnostics and documentation — comparison phase implemented
 
 Update the support-log collector to treat the new Big Screen-owned log as the
 primary general mod log. It may retain Paper log collection as optional
@@ -244,7 +287,7 @@ Update at least:
 - repository invariant tests that validate the QMOD dependency list;
 - source-install and removal documentation if log preservation paths change.
 
-### 5. Verify on Quest
+### 5. Verify on Quest — dual comparison started; removal matrix pending
 
 Build and test on the current Beat Saber 1.40.8 target with Paper2 completely
 removed from the headset. Verification must include:

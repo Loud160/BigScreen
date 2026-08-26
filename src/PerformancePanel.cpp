@@ -367,7 +367,7 @@ namespace BigScreen {
             if(!rowFailureLogged_)
             {
                 rowFailureLogged_ = true;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Unity rejected a performance-panel text update");
                 ErrorManager::Instance().RecordError(
                     "Updating the performance panel",
@@ -415,7 +415,7 @@ namespace BigScreen {
             if(!interactionFailureLogged_)
             {
                 interactionFailureLogged_ = true;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Unity rejected performance-panel interaction during a transition");
                 ErrorManager::Instance().RecordError(
                     "Moving the performance panel",

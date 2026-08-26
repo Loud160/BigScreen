@@ -107,7 +107,7 @@ namespace BigScreen {
                     root = root->get_parent();
                 if(root)
                 {
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Resolved Beat Saber 1.40.8 menu environment through BasicMenuGround root '{}'",
                         std::string(root->get_gameObject()->get_name()));
                     return root;
@@ -147,7 +147,7 @@ namespace BigScreen {
         if(!root)
         {
             cacheInitialized_ = false;
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not prewarm the menu-environment cache because no compatible hierarchy was found");
             return;
         }
@@ -197,7 +197,7 @@ namespace BigScreen {
         CacheEnvironmentLights<GlobalNamespace::LightWithIdMonoBehaviour>(
             root, knownLights_);
         cacheInitialized_ = true;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Prewarmed {} menu-environment renderers and {} lighting components for this scene",
             knownRenderers_.size(),
             knownLights_.size());
@@ -222,7 +222,7 @@ namespace BigScreen {
            !UnityW<UnityEngine::Transform>::isAlive(
                environmentRoot_.unsafePtr()))
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Show Menu Environment is off, but no compatible menu-environment hierarchy was found");
             return;
         }
@@ -253,7 +253,7 @@ namespace BigScreen {
             ++lightsDisabled;
         }
 
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Show Menu Environment off: disabled {} environment renderers and {} lighting components",
             renderersDisabled,
             lightsDisabled);
@@ -305,7 +305,7 @@ namespace BigScreen {
         }
         hiddenLights_.clear();
 
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Restored {} menu-environment renderers and {} lighting components",
             renderersRestored,
             lightsRestored);

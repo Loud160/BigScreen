@@ -1916,7 +1916,7 @@ os.replace(temporary, job['destination'])
                 SetCurrentYtDlpIdentity(
                     std::string(BundledYtDlpVersion),
                     std::string(BundledYtDlpChannel));
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Replaced obsolete active yt-dlp {} with shipped baseline {}",
                     activeVersion,
                     BundledYtDlpVersion);
@@ -2088,7 +2088,7 @@ os.replace(temporary, job['destination'])
                 std::scoped_lock lock(mutex_);
                 updateNotice_ =
                     "The new yt-dlp package could not load on this Quest. Big Screen automatically restored the previous working downloader and marked the update as rejected.";
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Rejected yt-dlp candidate '{}' and restored the previous package",
                     candidateVersion);
             }
@@ -2178,7 +2178,7 @@ os.replace(temporary, job['destination'])
                     exception.what());
         }
         initialized_ = true;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Embedded CPython downloader initialized with QuickJS-NG {} and CA bundle '{}'",
             QuickJsVersion,
             certificateBundle.string());
@@ -2303,7 +2303,7 @@ os.replace(temporary, job['destination'])
                         "Several YouTube downloads failed",
                         "This may not be a problem with Big Screen or the video address. YouTube sometimes changes how videos are delivered. Open the Update tab and check yt-dlp for updates. If stable is current and downloads still fail, a nightly release may contain an early compatibility fix."};
                 }
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Could not run the post-failure yt-dlp check: {}", error);
             }
         }
@@ -2391,7 +2391,7 @@ os.replace(temporary, job['destination'])
             lastUnknownSizeDiagnostic_ = {};
             lastDownloaderDiagnostic_.clear();
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
             request.levelId);
@@ -2466,7 +2466,7 @@ os.replace(temporary, job['destination'])
             snapshot_.levelId = "__showcase_map__";
             snapshot_.message = "Finding exact BeatSaver map revision";
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Starting managed BeatSaver map download for key '{}' revision '{}'",
             request.mapKey,
             request.expectedHash);
@@ -2532,7 +2532,7 @@ os.replace(temporary, job['destination'])
             snapshot_.message = "Checking YouTube URL";
             snapshot_.metadataOnly = true;
         }
-        PaperLogger.info("Checking a YouTube URL for {}", levelId);
+        BigScreen::BigScreenLogger.info("Checking a YouTube URL for {}", levelId);
         if(!QueueOperation([
                 this,
                 levelId = std::move(levelId),
@@ -2602,7 +2602,7 @@ os.replace(temporary, job['destination'])
         std::string error;
         const bool installedNightly = CurrentYtDlpChannel() == "nightly";
         if(!StartYtDlpReleaseCheck(installedNightly, true, error))
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Automatic yt-dlp release check was not started: {}", error);
     }
 
@@ -2749,7 +2749,7 @@ os.replace(temporary, job['destination'])
 
         std::string error;
         if(!StartModReleaseCheck(true, error))
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Automatic Big Screen release check was not started: {}",
                 error);
     }
@@ -2964,7 +2964,7 @@ os.replace(temporary, job['destination'])
                 pendingOperation_ = {};
             }
 
-            PaperLogger.info("Downloader background operation started");
+            BigScreen::BigScreenLogger.info("Downloader background operation started");
             try
             {
                 operation();
@@ -2983,7 +2983,7 @@ os.replace(temporary, job['destination'])
             // before returning. Clear busy last so a new UI action can never
             // overlap final file promotion or manifest persistence.
             operationBusy_ = false;
-            PaperLogger.info("Downloader background operation finished");
+            BigScreen::BigScreenLogger.info("Downloader background operation finished");
         }
     }
 
@@ -3030,7 +3030,7 @@ os.replace(temporary, job['destination'])
                     snapshot_.message =
                         "Could not request downloader cancellation.";
             }
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not write downloader cancellation marker '{}'.",
                 cancelPath.string());
             ErrorManager::Instance().RecordError(
@@ -3039,7 +3039,7 @@ os.replace(temporary, job['destination'])
                     cancelPath.string());
             return;
         }
-        PaperLogger.info("Downloader cancellation requested for {}", levelId);
+        BigScreen::BigScreenLogger.info("Downloader cancellation requested for {}", levelId);
     }
 
     DownloadSnapshot DownloadManager::Snapshot()
@@ -3214,7 +3214,7 @@ os.replace(temporary, job['destination'])
                         }
                         else
                         {
-                            PaperLogger.error(
+                            BigScreen::BigScreenLogger.error(
                                 "Could not restore the previous yt-dlp package: {}",
                                 fileError.message());
                             ErrorManager::Instance().RecordError(
@@ -3234,7 +3234,7 @@ os.replace(temporary, job['destination'])
             }
             if(runtimeFailed)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded downloader Python failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -3360,7 +3360,7 @@ os.replace(temporary, job['destination'])
                         preparedVideoPath, incomingVideoPath);
                     preparedReplacement.Promote();
                     preparedReplacement.Commit();
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Normalized downloaded MPEG-TS into a seek-safe MP4");
                 }
                 else if(normalization.state ==
@@ -3368,7 +3368,7 @@ os.replace(temporary, job['destination'])
                 {
                     softwareDecoderRequired = true;
                     terminalSnapshot.diagnostic = normalization.detail;
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Downloaded video could not be remuxed; verified software playback remains available: {}",
                         normalization.detail);
                     ErrorManager::Instance().RecordError(
@@ -3430,7 +3430,7 @@ os.replace(temporary, job['destination'])
                 // Promote only after yt-dlp has published a complete, probed
                 // file. The transactions roll back automatically if either
                 // filesystem publication or the manifest update throws.
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Publishing downloaded video file for {}",
                     request.levelId);
                 StagedFileReplacement videoReplacement(
@@ -3452,7 +3452,7 @@ os.replace(temporary, job['destination'])
                     request.songAuthor,
                     request.origin,
                     std::move(stored));
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Committed downloaded video manifest for {}",
                     request.levelId);
                 videoReplacement.Commit();
@@ -3464,7 +3464,7 @@ os.replace(temporary, job['destination'])
                         : std::string{};
                 const auto diagnostic = ReadString(status, "diagnostic");
                 if(!diagnostic.empty())
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Video download completed with a non-fatal warning: {}",
                         diagnostic);
 
@@ -3513,7 +3513,7 @@ os.replace(temporary, job['destination'])
                     "download_failed", "DownloadManager", terminalFields);
                 diagnostics.EndDownloadSession("failed", terminalFields);
             }
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Downloader finished for {} with state '{}': {}",
                 request.levelId,
                 StateName(terminalSnapshot.state),
@@ -3598,7 +3598,7 @@ os.replace(temporary, job['destination'])
             }
             if(runtimeFailed)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded showcase-map Python failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -3632,7 +3632,7 @@ os.replace(temporary, job['destination'])
                     code.empty() ? "Showcase map download" : code,
                     detail.empty() ? terminalSnapshot.message : detail);
             }
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Showcase map downloader finished with state '{}': {}",
                 StateName(terminalSnapshot.state),
                 terminalSnapshot.message);
@@ -3689,7 +3689,7 @@ os.replace(temporary, job['destination'])
             }
             if(runtimeFailed)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded URL probe Python failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -3736,7 +3736,7 @@ os.replace(temporary, job['destination'])
                 DiagnosticSessionLogger::Instance().EndDownloadSession(
                     "cancelled_before_transfer");
             }
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "URL check finished for {} with state '{}': {}",
                 levelId,
                 StateName(terminalSnapshot.state),
@@ -3806,7 +3806,7 @@ os.replace(temporary, job['destination'])
             }
             if(runtimeFailed)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded updater Python failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -3916,7 +3916,7 @@ os.replace(temporary, job['destination'])
             }
             if(!pythonFailure.empty())
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded yt-dlp release-check failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -3963,7 +3963,7 @@ os.replace(temporary, job['destination'])
         {
             outcome.message =
                 "Could not check yt-dlp releases. Try again later.";
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "yt-dlp release check stopped: {}", exception.what());
             ErrorManager::Instance().RecordError(
                 "Checking yt-dlp releases", exception.what());
@@ -4066,7 +4066,7 @@ os.replace(temporary, job['destination'])
 
             if(!pythonFailure.empty())
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Embedded Big Screen release-check failure:\n{}",
                     pythonFailure);
                 ErrorManager::Instance().RecordError(
@@ -4127,7 +4127,7 @@ os.replace(temporary, job['destination'])
         {
             outcome.message =
                 "Could not check Big Screen releases. Try again later.";
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Big Screen release check stopped: {}", exception.what());
             ErrorManager::Instance().RecordError(
                 "Checking Big Screen releases", exception.what());
@@ -4207,14 +4207,14 @@ os.replace(temporary, job['destination'])
                     if(!globals || !result)
                     {
                         const auto detail = TakePythonExceptionText();
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Could not fetch video thumbnail for {}: {}",
                             request.levelId,
                             detail);
                     }
                     else
                     {
-                        PaperLogger.debug(
+                        BigScreen::BigScreenLogger.debug(
                             "Cached video thumbnail for {}",
                             request.levelId);
                     }
@@ -4222,14 +4222,14 @@ os.replace(temporary, job['destination'])
             }
             catch(const std::exception& error)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Video thumbnail worker failed for {}: {}",
                     request.levelId,
                     error.what());
             }
             catch(...)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Video thumbnail worker failed for {} because of an unexpected internal error",
                     request.levelId);
             }
@@ -4419,12 +4419,12 @@ os.replace(temporary, job['destination'])
                 const std::string cleanupDetail =
                     "Could not remove stale downloader status '" +
                     statusPath.string() + "': " + removeError.message();
-                PaperLogger.warn("{}", cleanupDetail);
+                BigScreen::BigScreenLogger.warn("{}", cleanupDetail);
                 ErrorManager::Instance().RecordError(
                     "Cleaning downloader status", cleanupDetail);
             }
         }
-        PaperLogger.error("{}", message);
+        BigScreen::BigScreenLogger.error("{}", message);
         ErrorManager::Instance().RecordError(
             "Downloader operation",
             message);

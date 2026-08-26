@@ -437,7 +437,7 @@ namespace BigScreen {
         if(!generalContainer || !screenContainer ||
            !environmentContainer || !updateContainer || !storageContainer)
         {
-            PaperLogger.error("Could not create all Big Screen settings tabs");
+            BigScreen::BigScreenLogger.error("Could not create all Big Screen settings tabs");
             ErrorManager::Instance().RecordError(
                 "Creating Big Screen settings tabs",
                 "Beat Saber did not create every tab scroll container");
@@ -1008,7 +1008,7 @@ namespace BigScreen {
             []()
             {
                 PerformancePanel::Instance().ResetPlacement();
-                PaperLogger.info("Reset performance panel placement to defaults");
+                BigScreen::BigScreenLogger.info("Reset performance panel placement to defaults");
             });
         BSML::Lite::SetButtonTextSize(
             performancePanelResetButton_, ResetGlyphTextSize);
@@ -1148,7 +1148,7 @@ namespace BigScreen {
                 PerformancePanel::Instance().SetEnabled(
                     enabled && Settings::Instance().PerformanceDiagnosticsEnabled());
                 RefreshControls();
-                PaperLogger.info("Big Screen switched {}", enabled ? "on" : "off");
+                BigScreen::BigScreenLogger.info("Big Screen switched {}", enabled ? "on" : "off");
             });
         BSML::Lite::AddHoverHint(
             modEnabledToggle_,
@@ -1332,7 +1332,7 @@ namespace BigScreen {
                     defaults.UndockedScreenEnabled());
                 ApplyDisplaySettingsAndRefreshPreview();
                 RefreshControls();
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Reset screen layout {} to defaults",
                     Settings::Instance().ActiveScreenLayout() + 1);
             });
@@ -2410,7 +2410,7 @@ namespace BigScreen {
                         {
                             Settings::Instance().Flush();
                         });
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Closing Beat Saber after a staged yt-dlp update");
                     UnityEngine::Application::Quit(0);
                     return;
@@ -3613,7 +3613,7 @@ namespace BigScreen {
                 MenuEnvironmentVisibility::Instance().Apply();
             });
         RefreshControls();
-        PaperLogger.info("Reset all Big Screen settings to defaults");
+        BigScreen::BigScreenLogger.info("Reset all Big Screen settings to defaults");
     }
 
     void SettingsMenu::RefreshDownloaderStatus()

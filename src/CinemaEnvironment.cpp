@@ -207,7 +207,7 @@ namespace BigScreen::CinemaEnvironment {
         }
         if(!preparedClones.empty())
         {
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Prepared {} Cinema environment clone(s) before Chroma prop grouping ({})",
                 preparedClones.size(),
                 config.mergePropGroups ? "groups merged" : "groups isolated");
@@ -249,7 +249,7 @@ namespace BigScreen::CinemaEnvironment {
             if(targets.empty())
             {
                 ++missing;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Cinema environment object '{}' was not found in the loaded scene",
                     modification.cloneFrom.value_or(modification.name));
                 continue;
@@ -271,7 +271,7 @@ namespace BigScreen::CinemaEnvironment {
                 ++changed;
             }
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Applied mapper Cinema environment presentation to {} objects ({} cloned, {} entries unmatched)",
             changed,
             cloned,

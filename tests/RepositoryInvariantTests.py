@@ -122,6 +122,15 @@ frame_decoder_source = (root / "src/FrameDecoder.cpp").read_text(
     encoding="utf-8")
 frame_decoder_facade = (root / "src/FrameDecoderFacade.cpp").read_text(
     encoding="utf-8")
+logger_header = (root / "include/BigScreen/Logger.hpp").read_text(
+    encoding="utf-8")
+native_logger_header = (root / "include/BigScreen/NativeLogger.hpp").read_text(
+    encoding="utf-8")
+logger_source = (root / "src/Logger.cpp").read_text(encoding="utf-8")
+native_logger_source = (root / "src/NativeLogger.cpp").read_text(
+    encoding="utf-8")
+native_logger_tests = (root / "tests/NativeLoggerTests.cpp").read_text(
+    encoding="utf-8")
 error_manager_source = (root / "src/ErrorManager.cpp").read_text(
     encoding="utf-8")
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
@@ -327,6 +336,39 @@ for dependency_ranges in (
     configured_dependencies, shared_dependencies, manifest_dependencies,
 ):
     assert dependency_ranges["paper2_scotland2"] == "^4.8.0"
+
+# Paper remains a declared dependency only for the explicit comparison phase.
+# Runtime call sites must use Big Screen's own boundary so the dependency can
+# later be removed without another repository-wide behavioral rewrite.
+assert 'set(BIGSCREEN_LOGGER_MODE "DUAL"' in cmake
+assert "BIGSCREEN_LOGGER_MODE_VALUE" in cmake
+assert 'environment.get("BIGSCREEN_LOGGER_MODE", "DUAL")' in canonical_build_pipeline
+for logger_mode in ("PAPER", "NATIVE", "DUAL"):
+    assert logger_mode in canonical_build_pipeline
+assert "enum class LoggerBackendMode" in logger_header
+assert "PaperOnly" in logger_header
+assert "NativeOnly" in logger_header
+assert "Dual" in logger_header
+assert "fmt::format(" in logger_header
+assert "std::source_location" in logger_header
+assert "paper2_queue_log_bytes_ffi" in logger_source
+assert "NativeLogger::Instance().Log" in logger_source
+assert "bigscreen-native.log" in logger_source
+assert "5u * 1024u * 1024u" in native_logger_header
+assert "1024u * 1024u" in native_logger_header
+assert "2048u" in native_logger_header
+assert "std::condition_variable" in native_logger_source
+assert "std::deque<Record>" in native_logger_source
+assert "writer.join()" in native_logger_source
+assert "droppedSinceNotice" in native_logger_source
+assert "TestConcurrentProducers" in native_logger_tests
+assert "TestRotationKeepsOnePreviousFile" in native_logger_tests
+assert "TestUnavailableStorageFallsOpen" in native_logger_tests
+assert "bigscreen-native-logger-tests" in host_test_cmake
+for runtime_source_path in list((root / "src").glob("*.cpp")) + list(
+        (root / "include").rglob("*.hpp")):
+    assert "PaperLogger" not in runtime_source_path.read_text(
+        encoding="utf-8"), runtime_source_path
 for packaging_guard in (
     "Programs/QPM/qpm.exe",
     '"packageVersion"',
@@ -742,14 +784,16 @@ for collector_contract in (
     "AdbWasRunningAtStart",
     "AdbPromptTimeoutSeconds = 300",
     "Stopping the ADB server started by this collector",
-    # The legacy pre-paper2 file locations went stale when the project moved
-    # to paper2_scotland2, which silently blinded support ZIPs to the mod's
-    # live log lines. The collector must label the legacy files as legacy,
-    # attempt the current paper2 locations, and always capture the recent
-    # logcat buffer, which paper2 mirrors regardless of file-sink state.
+    # The collector must prefer Big Screen's owned current/previous general
+    # logs, retain Paper locations for comparison and third-party context, and
+    # always capture logcat as an independent fallback evidence layer.
+    "bigscreen-native.log",
+    "bigscreen-native.previous.log",
+    "NO_BIG_SCREEN_NATIVE_LOG.txt",
     "legacy-$logName",
     "logs/paper2",
     '"logcat", "-d", "-t", "6000"',
+    '"bigscreen:V", "BigScreen:V"',
     "logcat-recent.txt",
     "NO_LOGCAT_BUFFER.txt",
 ):
@@ -1031,9 +1075,11 @@ capture_block = cinema_bloom_source.split(
     'Capture the visible picture through a dedicated mono-safe', 1)[1]
 assert 'if(!material->SetPass(0))' not in capture_block
 assert '"SmoothCamera"' in cinema_bloom_source
-assert 'INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);' in main_source
+assert ('INSTALL_HOOK(BigScreen::BigScreenLogger, '
+        'BloomPrePass_OnPreRender);') in main_source
 assert ('#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM\n'
-        '    INSTALL_HOOK(PaperLogger, BloomPrePass_OnPreRender);\n#endif') \
+        '    INSTALL_HOOK(BigScreen::BigScreenLogger, '
+        'BloomPrePass_OnPreRender);\n#endif') \
     in main_source
 bloom_hook = main_source.split('BloomPrePass_OnPreRender,', 1)[1]
 assert bloom_hook.index('BloomPrePass_OnPreRender(self);') < \
@@ -2133,7 +2179,8 @@ for campaign_lifecycle_hook in (
     "MissionLevelRestartController_RestartLevel",
     "StandardLevelRestartController_RestartLevel",
 ):
-    assert f"INSTALL_HOOK(PaperLogger, {campaign_lifecycle_hook})" in main_source
+    assert (f"INSTALL_HOOK(BigScreen::BigScreenLogger, "
+            f"{campaign_lifecycle_hook})") in main_source
 assert '"preparing campaign video"' in main_source
 assert '"stopping campaign gameplay video"' in main_source
 assert "ClearPreparedPreviewForLevel" in playback_header
@@ -2526,7 +2573,7 @@ assert created_toggle_fields == refreshed_toggle_fields, (
 # reset so the currently visible Screen tab updates before any later redraw.
 screen_reset_block = settings_menu_source.split(
     "Settings::Instance().ResetActiveScreenLayout();", 1
-)[1].split("PaperLogger.info(", 1)[0]
+)[1].split("BigScreen::BigScreenLogger.info(", 1)[0]
 for screen_layout_toggle in (
     "curvedScreenToggle_",
     "maintainCurveAspectToggle_",
@@ -2970,7 +3017,8 @@ for campaign_ui_hook in (
     "MissionLevelDetailViewController_DidActivate",
     "MissionSelectionNavigationController_DidDeactivate",
 ):
-    assert f"INSTALL_HOOK(PaperLogger, {campaign_ui_hook})" in main_source
+    assert (f"INSTALL_HOOK(BigScreen::BigScreenLogger, "
+            f"{campaign_ui_hook})") in main_source
 
 # The playback transport keeps its established edge padding while the visible
 # gray rail is thin and the thumb occupies 80 percent of that rail.

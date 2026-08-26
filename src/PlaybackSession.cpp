@@ -204,7 +204,7 @@ namespace BigScreen {
                     levelDirectory_, chromaReason);
                 if(chromaMapDetected_)
                 {
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Allow Chroma Override detected map-wide Chroma use: {}",
                         chromaReason);
                 }
@@ -218,14 +218,14 @@ namespace BigScreen {
             const std::string preparedKind = environmentOnlySession_
                 ? "Cinema environment-only presentation"
                 : "video '" + config_->videoPath.filename().string() + "'";
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Prepared {} from '{}'",
                 preparedKind,
                 config_->metadataPath.filename().string());
         }
         else
         {
-            PaperLogger.debug("No playable video for selected level '{}'", levelId);
+            BigScreen::BigScreenLogger.debug("No playable video for selected level '{}'", levelId);
         }
     }
 
@@ -243,7 +243,7 @@ namespace BigScreen {
             preparedDifficulty_);
         if(showcaseEligible_)
         {
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Activated private Up & Down showcase for level '{}', characteristic '{}', difficulty {}",
                 preparedLevelId_,
                 preparedCharacteristic_,
@@ -367,7 +367,7 @@ namespace BigScreen {
             config_->screenCurvature = 0.0f;
             config_->maintainAspectRatioWhenCurved = false;
             applyUserVideoControls(true);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Respect Mapper Settings is applying this map's Cinema screen presentation");
             return;
         }
@@ -454,7 +454,7 @@ namespace BigScreen {
             return false;
         }
 
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Applied Screen Layout {} to the paused gameplay video without restarting playback",
             Settings::Instance().ActiveScreenLayout() + 1);
         return true;
@@ -484,7 +484,7 @@ namespace BigScreen {
             cinemaScreens_.SetVisible(false);
             showcase_.SetVisible(false);
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Paused gameplay Video Screen changed to {} for the current map",
             enabled ? "On" : "Off");
     }
@@ -529,7 +529,7 @@ namespace BigScreen {
             context_ = context;
             mapperEnvironmentApplyCountdown_ =
                 MapperEnvironmentPresentationActive() ? 3 : 0;
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Started Cinema environment-only gameplay presentation");
             return;
         }
@@ -548,7 +548,7 @@ namespace BigScreen {
         if(!(context == PlaybackContext::Gameplay && gameplayDecoderPrewarmed_) &&
            !OpenDecoder(error))
         {
-            PaperLogger.error("Could not start video playback: {}", error);
+            BigScreen::BigScreenLogger.error("Could not start video playback: {}", error);
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback error",
                 "Big Screen could not open this video's stream. " + error);
@@ -567,7 +567,7 @@ namespace BigScreen {
                decoder_.Height(),
                gpuConversionRequested))
         {
-            PaperLogger.error("Could not create the Unity video screen");
+            BigScreen::BigScreenLogger.error("Could not create the Unity video screen");
             ErrorManager::Instance().ReportInternal(
                 "creating video screen", "Unity could not create the screen surface");
             decoder_.Close();
@@ -586,7 +586,7 @@ namespace BigScreen {
             // Additional panels are presentation enhancement, not a reason to
             // interrupt a playable map. The primary screen remains available
             // and the failure is retained in the diagnostic log.
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Cinema additional screens could not be created; continuing with the primary screen");
         }
 
@@ -610,7 +610,7 @@ namespace BigScreen {
             {
                 // This optional spectacle must never cost the player a map.
                 // Ordinary playback remains live on the primary surface.
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Up & Down showcase panel creation failed; continuing with the ordinary single screen");
             }
             else
@@ -705,7 +705,7 @@ namespace BigScreen {
                 initialSongTime * fpsLimit + 0.000001));
             lastTickSongTime_ = initialSongTime;
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Started {}x{} {} video screen at no more than {} FPS (duration {:.3f}s, FFmpeg {})",
             decoder_.Width(),
             decoder_.Height(),
@@ -732,7 +732,7 @@ namespace BigScreen {
             // queue, while the ownership flag remains set across that cleanup.
             Stop();
         }
-        PaperLogger.debug(
+        BigScreen::BigScreenLogger.debug(
             "Video Library preview ownership changed to {}",
             active ? "active" : "inactive");
     }
@@ -770,7 +770,7 @@ namespace BigScreen {
         ResetAutomaticPerformanceController(songTimeSeconds);
         diagnosticsFrameCounter_ = 0;
         decoder_.ResetPreparationDiagnostics();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Started Video Library performance measurement after decoder prewarm");
     }
 
@@ -814,7 +814,7 @@ namespace BigScreen {
         ResetAutomaticPerformanceController(songTimeSeconds);
         libraryPreviewRestartGeneration_ = decoder_.Restart(
             std::max(0.0, mediaTime));
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Restarting Video Library decoder at media time {:.3f}; audio will wait for the new opening frame",
             std::max(0.0, mediaTime));
         return true;
@@ -828,7 +828,7 @@ namespace BigScreen {
             playbackFailed_ = true;
             surface_.SetVisible(false);
             cinemaScreens_.SetVisible(false);
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Video Library decoder could not recover after EOF: {}",
                 error);
             ErrorManager::Instance().ReportUserVisible(
@@ -849,7 +849,7 @@ namespace BigScreen {
             std::max(0.0, mediaTime));
         libraryPreviewRestartStarted_ = std::chrono::steady_clock::now();
         libraryPreviewRestartReopenAttempted_ = true;
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "Reopened the Video Library decoder after its EOF seek produced no frame");
         return true;
     }
@@ -881,7 +881,7 @@ namespace BigScreen {
 
         if(auto fallback = surface_.TakeGpuYuvUploadFallback())
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Consolidated YUV upload was unavailable; active presentation is GPU YUV 3-Plane: {}",
                 *fallback);
             ErrorManager::Instance().RecordError(
@@ -891,7 +891,7 @@ namespace BigScreen {
         if(gpuConversionRequested && !surface_.GpuConversionActive())
         {
             gpuConversionDisabledForSession_ = true;
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Experimental GPU video conversion could not start; playback retained the CPU RGBA path");
         }
     }
@@ -947,7 +947,7 @@ namespace BigScreen {
                 levelDirectory_, levelDirectory_ / fileName.str(), error);
             if(!phase || !phase->HasLocalVideo())
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Cinema compatibility cycle phase {} could not be loaded: {}",
                     index + 1,
                     error.empty() ? "its local MP4 was missing" : error);
@@ -956,7 +956,7 @@ namespace BigScreen {
             }
             cinemaCompatibilityCycleConfigs_.push_back(std::move(*phase));
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Prepared {} Cinema compatibility phases at {:.0f} seconds each",
             cinemaCompatibilityCycleConfigs_.size(),
             CinemaCyclePhaseSeconds);
@@ -996,7 +996,7 @@ namespace BigScreen {
             // phase, exactly matching its expected absence of a screen.
             cinemaCompatibilityCycleScreenHidden_ = true;
             surface_.SetVisible(false);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Cinema compatibility phase {}/{}: environment-only screen hidden",
                 phaseIndex + 1,
                 CinemaCyclePhaseCount);
@@ -1014,7 +1014,7 @@ namespace BigScreen {
                decoder_.Height(),
                gpuConversionRequested))
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Cinema compatibility phase {} could not rebuild the primary screen",
                 phaseIndex + 1);
             return false;
@@ -1024,7 +1024,7 @@ namespace BigScreen {
            !cinemaScreens_.Create(
                *config_, decoder_.Width(), decoder_.Height(), surface_.Texture()))
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Cinema compatibility phase {} could not create its additional screens",
                 phaseIndex + 1);
         }
@@ -1034,7 +1034,7 @@ namespace BigScreen {
                 decoder_.SourceFramesPerSecond(),
                 config_->playbackRate,
                 std::max(1, effectiveFpsLimit_)));
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Cinema compatibility phase {}/{} applied from '{}'",
             phaseIndex + 1,
             CinemaCyclePhaseCount,
@@ -1053,7 +1053,7 @@ namespace BigScreen {
         {
             gameplayPrewarmFailed_ = true;
             gameplayPrewarmError_ = error;
-            PaperLogger.error("Could not prewarm gameplay video: {}", error);
+            BigScreen::BigScreenLogger.error("Could not prewarm gameplay video: {}", error);
             // Start() reports this after AudioTimeSyncController has marked
             // gameplay active. ErrorManager can then defer the dialog until
             // the map ends instead of interrupting the scene transition.
@@ -1070,7 +1070,7 @@ namespace BigScreen {
                     config_->playbackRate,
                     std::max(1, effectiveFpsLimit_)));
         }
-        PaperLogger.info("Prewarmed gameplay video decoder before scene activation");
+        BigScreen::BigScreenLogger.info("Prewarmed gameplay video decoder before scene activation");
     }
 
     void PlaybackSession::Tick(double songTimeSeconds)
@@ -1175,7 +1175,7 @@ namespace BigScreen {
             // several megabytes for the remainder of a map whose video can no
             // longer recover. The Unity/gameplay clock remains untouched.
             decoder_.Close();
-            PaperLogger.error("Video decoder stopped safely: {}", *decoderError);
+            BigScreen::BigScreenLogger.error("Video decoder stopped safely: {}", *decoderError);
             ErrorManager::Instance().ReportUserVisible(
                 "Video playback stopped",
                 "Big Screen stopped this video's screen, but the map will continue normally. " +
@@ -1212,7 +1212,7 @@ namespace BigScreen {
                 showcase_.Destroy();
                 surface_.SetVisible(firstFrameUploaded_);
                 cinemaScreens_.SetVisible(firstFrameUploaded_);
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Up & Down showcase update failed; restored ordinary video playback");
             }
             else if(showcase_.TimelineActive())
@@ -1263,7 +1263,7 @@ namespace BigScreen {
             if(!surface_.SetOpacity(opacity) ||
                !cinemaScreens_.SetOpacity(opacity))
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Cinema end fade could not update the video material");
             }
             appliedMapperEndFade_ = endFade;
@@ -1495,7 +1495,7 @@ namespace BigScreen {
                 // the main thread posted Restart. Its generation cannot unlock
                 // synchronized audio or replace the opening frame requested
                 // for the new loop.
-                PaperLogger.debug(
+                BigScreen::BigScreenLogger.debug(
                     "Discarded stale Video Library frame from generation {}; waiting for generation {}",
                     frame.generation,
                     libraryPreviewRestartGeneration_);
@@ -1537,7 +1537,7 @@ namespace BigScreen {
                         decoder_.SetGpuYuvUploadLayout(
                             surface_.ActiveGpuYuvUploadLayout());
                         presentationMethod_ = "GPU YUV 3-Plane";
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Consolidated YUV upload fell back during playback; active presentation is GPU YUV 3-Plane: {}",
                             *fallback);
                         ErrorManager::Instance().RecordError(
@@ -1553,7 +1553,7 @@ namespace BigScreen {
                         auto reason = decoder_.GpuConversionFallbackReason();
                         if(reason.empty())
                             reason = "the decoded frame layout required the CPU RGBA path";
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "GPU video conversion fell back for this playback session: {}",
                             reason);
                         ErrorManager::Instance().RecordError(
@@ -1572,7 +1572,7 @@ namespace BigScreen {
                     if(libraryPreviewRestartPending_)
                     {
                         libraryPreviewRestartPending_ = false;
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Video Library restart frame reached the Unity texture");
                     }
                     if(showcase_.IsCreated() && showcase_.TimelineActive())
@@ -1586,7 +1586,7 @@ namespace BigScreen {
                             showcase_.Destroy();
                             surface_.SetVisible(true);
                             cinemaScreens_.SetVisible(true);
-                            PaperLogger.error(
+                            BigScreen::BigScreenLogger.error(
                                 "Up & Down showcase activation failed after first frame; restored ordinary playback");
                         }
                         else
@@ -1623,7 +1623,7 @@ namespace BigScreen {
                             decoder_.SetGpuYuvUploadLayout(
                                 surface_.ActiveGpuYuvUploadLayout());
                             presentationMethod_ = "GPU YUV 3-Plane";
-                            PaperLogger.warn(
+                            BigScreen::BigScreenLogger.warn(
                                 "Consolidated YUV upload fell back during playback; active presentation is GPU YUV 3-Plane: {}",
                                 *fallback);
                             ErrorManager::Instance().RecordError(
@@ -1643,7 +1643,7 @@ namespace BigScreen {
                             gpuConversionDisabledForSession_ = true;
                             presentationMethod_ = "CPU RGBA fallback";
                             gpuConversionFallbackLogged_ = true;
-                            PaperLogger.warn(
+                            BigScreen::BigScreenLogger.warn(
                                 "GPU video conversion failed while presenting a frame; permanently using CPU RGBA for this playback session");
                             ErrorManager::Instance().RecordError(
                                 "Falling back from GPU video conversion",
@@ -1659,7 +1659,7 @@ namespace BigScreen {
                         // unsafe on IL2CPP.
                         playbackFailed_ = true;
                         uploadFailed = true;
-                        PaperLogger.error(
+                        BigScreen::BigScreenLogger.error(
                             "Video frame upload stopped because the Unity screen is no longer valid");
                         ErrorManager::Instance().ReportInternal(
                             "uploading a decoded video frame",
@@ -1734,7 +1734,7 @@ namespace BigScreen {
         // deadline from the prior cap must not leak across that boundary.
         expectedPresentationFraction_ = 0.0;
         diagnosticsFrameCounter_ = 29;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Applied live video frame-rate cap: {} FPS",
             effectiveFpsLimit_);
     }
@@ -1756,7 +1756,7 @@ namespace BigScreen {
                 // One safe-boundary line makes menu-preview testing useful
                 // even though only completed gameplay is appended to the
                 // dedicated performance-history file.
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "GPU read-ahead summary: {} MiB, capacity {}, peak {}, final {}, low events {}, empty events {}, catch-up presentations {}, forced late drops {}, peak due backlog {}",
                     readAhead.byteBudget / (1024u * 1024u),
                     readAhead.frameCapacity,
@@ -1835,7 +1835,7 @@ namespace BigScreen {
         // after Stop has joined any active decoder worker and destroyed its
         // Unity surface. Do not duplicate only part of that state here.
         Prepare(nullptr);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Cleared Video Library preview state while leaving Big Screen");
     }
 
@@ -1845,7 +1845,7 @@ namespace BigScreen {
             return;
         gameplayLastNoteTime_ = songTimeSeconds;
         gameplayFrameSamplingFinished_ = false;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Gameplay FPS sampling will stop after the final note at {:.3f} seconds",
             songTimeSeconds);
     }
@@ -1881,7 +1881,7 @@ namespace BigScreen {
                    settings.AutomaticPerformanceOscillationLimit())
                 {
                     automaticPerformanceRecoveryPinned_ = true;
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Automatic Performance pinned recovery at {} FPS after {} failed {}<->{} FPS cycles",
                         nextFps,
                         automaticPerformanceFailedRecoveries_,
@@ -1904,14 +1904,14 @@ namespace BigScreen {
             // A one-FPS ladder can contain forty-five reductions. Refuse an
             // unrecorded extra step if a future policy exceeds that invariant;
             // exact reverse recovery is more important than one more drop.
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Automatic Performance reduction history is full at {} FPS",
                 effectiveFpsLimit_);
             return false;
         }
         ApplyAutomaticPerformanceFpsLimit(nextFps);
         ++automaticReductions_;
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "Automatic Performance reduced the video frame-rate limit to {} FPS",
             effectiveFpsLimit_);
         return true;
@@ -1936,7 +1936,7 @@ namespace BigScreen {
             lastAutomaticRecoveryLowFps_ = lowerFps;
             lastAutomaticRecoveryHighFps_ = effectiveFpsLimit_;
         }
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Automatic Performance restored the video frame-rate limit to {} FPS after {:.1f} seconds below the missed-frame threshold",
             effectiveFpsLimit_,
             settings.AutomaticPerformanceReleaseSeconds());

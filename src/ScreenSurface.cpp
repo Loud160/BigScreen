@@ -235,7 +235,7 @@ namespace BigScreen {
                 // later preview remains eligible after the transition settles.
                 resources.nextRecoveryAttempt = now +
                     std::chrono::seconds(1);
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "The cached Big Screen video shader was invalidated; "
                     "reloading it before creating the next screen");
                 resources.shader.clear();
@@ -253,7 +253,7 @@ namespace BigScreen {
                            recovered && RetainVideoShader(
                                resources, resources.bundle.ptr(), recovered))
                         {
-                            PaperLogger.info(
+                            BigScreen::BigScreenLogger.info(
                                 "Recovered Big Screen's cached video shader "
                                 "from its retained bundle ({})",
                                 recovered->get_name());
@@ -262,14 +262,14 @@ namespace BigScreen {
                     }
                     catch(const std::exception& exception)
                     {
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Could not recover the video shader from its "
                             "retained bundle: {}",
                             exception.what());
                     }
                     catch(...)
                     {
-                        PaperLogger.warn(
+                        BigScreen::BigScreenLogger.warn(
                             "Could not recover the video shader from its "
                             "retained bundle");
                     }
@@ -297,7 +297,7 @@ namespace BigScreen {
                 const auto* end = _binary_bigscreen_video_shader_end;
                 if(end <= begin)
                 {
-                    PaperLogger.error("Embedded Big Screen video shader is empty");
+                    BigScreen::BigScreenLogger.error("Embedded Big Screen video shader is empty");
                     return nullptr;
                 }
 
@@ -310,7 +310,7 @@ namespace BigScreen {
                         "UnityEngine.AssetBundle::LoadFromMemory_Internal"));
                 if(!loadFromMemory)
                 {
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Unity AssetBundle LoadFromMemory entry point is unavailable");
                     return nullptr;
                 }
@@ -318,7 +318,7 @@ namespace BigScreen {
                 bundle = loadFromMemory(bundleBytes, 0);
                 if(!bundle)
                 {
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Unity rejected Big Screen's embedded Android video shader bundle");
                     return nullptr;
                 }
@@ -328,7 +328,7 @@ namespace BigScreen {
                 {
                     bundle->Unload(true);
                     bundle = nullptr;
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Big Screen's embedded bundle did not contain its video shader");
                     return nullptr;
                 }
@@ -343,13 +343,13 @@ namespace BigScreen {
                 {
                     bundle->Unload(true);
                     bundle = nullptr;
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Unity invalidated Big Screen's embedded video "
                         "shader while it was being retained");
                     return nullptr;
                 }
 
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Loaded Big Screen's bloom-compatible video material ({})",
                     loaded->get_name());
                 return resources.shader.ptr();
@@ -364,7 +364,7 @@ namespace BigScreen {
                 resources.shader.clear();
                 resources.yuvConversionShader.clear();
                 resources.packedYuvConversionShader.clear();
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not load Big Screen's embedded video shader: {}",
                     exception.what());
                 return nullptr;
@@ -379,7 +379,7 @@ namespace BigScreen {
                 resources.shader.clear();
                 resources.yuvConversionShader.clear();
                 resources.packedYuvConversionShader.clear();
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not load Big Screen's embedded video shader");
                 return nullptr;
             }
@@ -468,7 +468,7 @@ namespace BigScreen {
                 if(announcedFamily != MissingRequiredShader)
                 {
                     announcedFamily = MissingRequiredShader;
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "The embedded BigScreen/Video shader is unavailable; "
                         "a safe video screen cannot be created");
                     ErrorManager::Instance().RecordError(
@@ -486,7 +486,7 @@ namespace BigScreen {
                 {
                     announcedFamily =
                         static_cast<int>(VideoShaderFamily::BloomSafe);
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Using the embedded BigScreen/Video shader "
                         "selected in settings");
                 }
@@ -500,7 +500,7 @@ namespace BigScreen {
                 {
                     announcedFamily =
                         static_cast<int>(VideoShaderFamily::UiMasked);
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Using Unity's UI/Default RGB-only video material "
                         "path (default selection)");
                 }
@@ -516,7 +516,7 @@ namespace BigScreen {
                 {
                     announcedFamily =
                         static_cast<int>(VideoShaderFamily::BloomSafe);
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "UI/Default was unexpectedly missing; using the "
                         "experimental embedded video shader instead.");
                     ErrorManager::Instance().RecordError(
@@ -532,7 +532,7 @@ namespace BigScreen {
             {
                 announcedFamily =
                     static_cast<int>(VideoShaderFamily::LegacyUnlit);
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Falling back to Unity's stock unlit video shaders; the "
                     "picture will wash out while Beat Saber's Bloom setting "
                     "is enabled. UI/Default was unexpectedly missing.");
@@ -573,7 +573,7 @@ namespace BigScreen {
                     resources.bundle.ptr());
                 if(!shader)
                 {
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "The embedded shader bundle does not contain the "
                         "experimental YUV conversion shader");
                     return nullptr;
@@ -585,21 +585,21 @@ namespace BigScreen {
                 shader->set_hideFlags(UnityEngine::HideFlags{
                     existingFlags | retainFlag});
                 resources.yuvConversionShader = shader;
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Loaded Big Screen's experimental GPU YUV conversion shader ({})",
                     shader->get_name());
                 return shader;
             }
             catch(const std::exception& exception)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not load the GPU YUV conversion shader: {}",
                     exception.what());
                 return nullptr;
             }
             catch(...)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not load the GPU YUV conversion shader");
                 return nullptr;
             }
@@ -619,7 +619,7 @@ namespace BigScreen {
                     resources.bundle.ptr());
                 if(!shader)
                 {
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "The embedded shader bundle does not contain the "
                         "experimental packed YUV conversion shader");
                     return nullptr;
@@ -631,21 +631,21 @@ namespace BigScreen {
                 shader->set_hideFlags(UnityEngine::HideFlags{
                     existingFlags | retainFlag});
                 resources.packedYuvConversionShader = shader;
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Loaded Big Screen's experimental packed GPU YUV conversion shader ({})",
                     shader->get_name());
                 return shader;
             }
             catch(const std::exception& exception)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not load the packed GPU YUV conversion shader: {}",
                     exception.what());
                 return nullptr;
             }
             catch(...)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not load the packed GPU YUV conversion shader");
                 return nullptr;
             }
@@ -996,17 +996,17 @@ namespace BigScreen {
             }
             // This exact prefix is matched by the deploy pipeline's post-
             // install logcat check; keep it stable.
-            PaperLogger.info("Video shader tier: {}", tier);
+            BigScreen::BigScreenLogger.info("Video shader tier: {}", tier);
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Video shader tier: resolution failed: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error("Video shader tier: resolution failed");
+            BigScreen::BigScreenLogger.error("Video shader tier: resolution failed");
         }
     }
 
@@ -1791,7 +1791,7 @@ namespace BigScreen {
             // Do not create a screen that can bloom white. The embedded bundle
             // is a packaged runtime requirement even when UI/Default draws the
             // visible picture because this guard enforces zero emission.
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "UI/Default video alpha guard is unavailable because the "
                 "embedded BigScreen/Video shader did not load");
             return false;
@@ -1918,7 +1918,7 @@ namespace BigScreen {
             UnityEngine::RenderTextureFormat::ARGB32);
         if(!gpuTexture_ || !gpuTexture_->Create())
         {
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Unity could not create the GPU video conversion resources; using CPU RGBA conversion");
             if(UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_))
             {
@@ -1942,7 +1942,7 @@ namespace BigScreen {
                !FallbackToThreePlaneYuv(
                    "the packed YUV conversion shader was unavailable"))
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "GPU video conversion was requested, but its shader was unavailable; using CPU RGBA conversion");
                 if(gpuTexture_->IsCreated())
                     gpuTexture_->Release();
@@ -1951,7 +1951,7 @@ namespace BigScreen {
             }
         }
         texture_ = gpuTexture_;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Experimental GPU video conversion prepared at {}x{} using {}",
             width,
             height,
@@ -1986,7 +1986,7 @@ namespace BigScreen {
         if(!CreateGpuConversionMaterial(GpuYuvUploadLayout::ThreePlane))
             return false;
         gpuYuvUploadFallback_ = std::move(reason);
-        PaperLogger.warn(
+        BigScreen::BigScreenLogger.warn(
             "Packed GPU YUV upload fell back to the 3-plane method: {}",
             *gpuYuvUploadFallback_);
         return true;

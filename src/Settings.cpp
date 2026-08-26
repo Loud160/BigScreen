@@ -113,7 +113,7 @@ namespace BigScreen {
                         // migration is recorded, a user may turn it off again.
                         Replace(document, "gpuVideoConversionEnabled", true);
                         version = 1;
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Applied settings migration 1: enabled GPU Video Conversion");
                         break;
                     case 1:
@@ -124,7 +124,7 @@ namespace BigScreen {
                         // a user's later choice.
                         Replace(document, "embeddedVideoShaderEnabled", true);
                         version = 2;
-                        PaperLogger.info(
+                        BigScreen::BigScreenLogger.info(
                             "Applied settings migration 2: enabled Embedded Video Shader");
                         break;
                     default:
@@ -132,7 +132,7 @@ namespace BigScreen {
                         // known version has an explicit case. Never risk a
                         // startup loop if a future edit increments the current
                         // version before adding its migration body.
-                        PaperLogger.error(
+                        BigScreen::BigScreenLogger.error(
                             "No migration exists for Big Screen settings version {}",
                             version);
                         version = CurrentSettingsMigrationVersion;
@@ -231,11 +231,11 @@ namespace BigScreen {
                     ".corrupt-" + std::to_string(stamp);
                 std::filesystem::rename(configPath, quarantine, fileError);
                 if(fileError)
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Big Screen settings were invalid and could not be quarantined: {}",
                         fileError.message());
                 else
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Quarantined invalid Big Screen settings as '{}' before restoring defaults",
                         quarantine);
                 ErrorManager::Instance().RecordError(
@@ -1281,14 +1281,14 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error("Could not save Big Screen settings: {}", exception.what());
+            BigScreen::BigScreenLogger.error("Could not save Big Screen settings: {}", exception.what());
             ErrorManager::Instance().ReportUserVisible(
                 "Settings were not saved",
                 "Big Screen could not write its settings file. Your changes will remain active until Beat Saber closes. Check the Big Screen log for details.");
         }
         catch(...)
         {
-            PaperLogger.error("Could not save Big Screen settings: unknown write error");
+            BigScreen::BigScreenLogger.error("Could not save Big Screen settings: unknown write error");
             ErrorManager::Instance().ReportUserVisible(
                 "Settings were not saved",
                 "Big Screen could not write its settings file. Your changes will remain active until Beat Saber closes. Check the Big Screen log for details.");

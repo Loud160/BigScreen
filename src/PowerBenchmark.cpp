@@ -133,7 +133,7 @@ namespace BigScreen {
                         throw std::runtime_error(
                             "Could not preserve the previous benchmark CSV schema: " +
                             error.message());
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Archived older power benchmark schema as '{}'",
                         archived.filename().string());
                     needsHeader = true;
@@ -251,7 +251,7 @@ namespace BigScreen {
                     startedUtc_.time_since_epoch()).count();
             sessionId_ = std::to_string(epochMilliseconds) + "-" + levelId_;
             CaptureSample(0.0, diagnostics);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Power benchmark started for '{}' (video {})",
                 songName_,
                 videoActive_ ? "on" : "off");
@@ -305,14 +305,14 @@ namespace BigScreen {
                 samples_.empty() ? 0.0 : samples_.back().songTimeSeconds,
                 finalDiagnostics);
             AppendFiles(results);
-            PaperLogger.info(
+            BigScreen::BigScreenLogger.info(
                 "Power benchmark saved to '{}' and '{}'",
                 SummaryPath,
                 SamplesPath);
         }
         catch(const std::exception& exception)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not save the power benchmark: {}",
                 exception.what());
             ErrorManager::Instance().ReportUserVisible(
@@ -322,7 +322,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not save the power benchmark because of an unknown native exception");
             ErrorManager::Instance().ReportUserVisible(
                 "Power benchmark was not saved",
@@ -360,7 +360,7 @@ namespace BigScreen {
             battery.charging.has_value();
         if(!hasAnyProperty)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Quest battery probe completed without any readable properties");
             return;
         }
@@ -368,7 +368,7 @@ namespace BigScreen {
         // Log the raw units supplied by Android. Unsupported optional
         // properties are deliberately blank instead of being invented or
         // reported as zero, which could invalidate a power comparison.
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Quest battery probe succeeded: charge_uah='{}', current_now_ua='{}', current_average_ua='{}', energy_nwh='{}', capacity_percent='{}', status='{}', charging='{}'",
             OptionalNumber(battery.chargeMicroampHours),
             OptionalNumber(battery.currentNowMicroamps),
@@ -449,7 +449,7 @@ namespace BigScreen {
             if(!batteryWarningLogged_)
             {
                 batteryWarningLogged_ = true;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Quest battery properties are unavailable for this benchmark: {}",
                     exception.what());
             }
@@ -459,7 +459,7 @@ namespace BigScreen {
             if(!batteryWarningLogged_)
             {
                 batteryWarningLogged_ = true;
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Quest battery properties are unavailable for this benchmark");
             }
         }
@@ -643,7 +643,7 @@ namespace BigScreen {
 
     void PowerBenchmark::DisableCurrentSession(const char* operation) noexcept
     {
-        PaperLogger.error(
+        BigScreen::BigScreenLogger.error(
             "Power benchmark stopped while {}; gameplay will continue",
             operation ? operation : "processing a sample");
         ErrorManager::Instance().RecordError(

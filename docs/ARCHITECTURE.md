@@ -273,6 +273,31 @@ only during gameplay teardown. Unsupported Quest fuel-gauge properties remain
 empty optionals all the way to disk, preventing unavailable readings from being
 mistaken for zero consumption.
 
+General logging also has a strict real-time boundary. Every call site targets
+the project-owned `BigScreenLogger` facade, which formats a record once and can
+route it to Paper2, Big Screen's native backend, or both through an internal
+build option. The current development default is dual delivery so the new
+implementation can be compared without removing the established diagnostic
+path. This is not a player-facing setting.
+
+The native backend writes logcat directly only when Paper is not already doing
+so, then moves file work to one owned writer thread. Producers take a short
+queue lock and never open, rotate, append, or flush a file themselves. Both
+bytes and entries are bounded; warnings and errors have a reserved margin and
+may evict older lower-severity records under pressure. Dropped records are
+counted and summarized by the writer rather than recursively logging a logger
+failure. The active general log is limited to 5 MiB with one previous 5 MiB
+rotation. File failures leave logcat available and are retried after a bounded
+backoff. Critical errors request a short bounded flush, while the synchronous
+`error-history.log` remains the durable path for user-visible failures.
+
+The writer is joinable and its state has process lifetime. Reinitialization
+first stops and joins the old writer; shutdown stops acceptance, drains queued
+records, flushes, closes the file, and joins before owned state can disappear.
+Late calls fail open and do not touch destroyed state. Quest validation must
+still confirm shutdown behavior and measure native-only versus Paper-only
+overhead before the external Paper dependency is removed.
+
 Frame-preparation timing uses cumulative session counters, not an exponential
 moving average. Each prepared picture records decoder-worker thread CPU time
 separately from elapsed wall time not charged to that thread. The live panel

@@ -147,7 +147,7 @@ namespace BigScreen {
             }
             if(!entries.empty())
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Indexed {} Cinema playlist video configuration(s) from {} playlist file(s)",
                     entries.size(),
                     scannedFiles);
@@ -374,7 +374,7 @@ namespace BigScreen {
             if(relative.empty() || relative.is_absolute() ||
                relative.filename() != relative)
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Refused to remove unsafe managed video path '{}'",
                     fileName);
                 ErrorManager::Instance().RecordError(
@@ -386,7 +386,7 @@ namespace BigScreen {
             const bool removed = std::filesystem::remove(
                 videoDirectory / relative, error);
             if(error)
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Could not remove managed video '{}': {}",
                     fileName,
                     error.message());
@@ -657,16 +657,16 @@ namespace BigScreen {
         const bool removedObsoleteNotice =
             std::filesystem::remove(obsoleteGplNotice, obsoleteNoticeError);
         if(removedObsoleteNotice)
-            PaperLogger.info("Removed the obsolete pre-LGPL FFmpeg license notice");
+            BigScreen::BigScreenLogger.info("Removed the obsolete pre-LGPL FFmpeg license notice");
         else if(obsoleteNoticeError)
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not remove obsolete FFmpeg notice '{}': {}",
                 obsoleteGplNotice.string(),
                 obsoleteNoticeError.message());
 
         LoadLocked();
         persistedRecords_ = records_;
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Video library ready at '{}' with {} saved level entries",
             rootPath_.string(),
             records_.size());
@@ -710,7 +710,7 @@ namespace BigScreen {
                 error);
             if(!error.empty())
             {
-                PaperLogger.error("Video metadata rejected for '{}': {}", descriptor.levelId, error);
+                BigScreen::BigScreenLogger.error("Video metadata rejected for '{}': {}", descriptor.levelId, error);
                 ErrorManager::Instance().RecordError(
                     "Reading video metadata for " + descriptor.levelId,
                     error);
@@ -732,7 +732,7 @@ namespace BigScreen {
                 playlistError);
             if(!playlistError.empty())
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Playlist Cinema metadata rejected for '{}': {}",
                     descriptor.levelId,
                     playlistError);
@@ -854,7 +854,7 @@ namespace BigScreen {
             descriptorCache_.clear();
         else
             descriptorCache_.erase(levelId);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Refreshed Cinema playlist metadata and invalidated cached mapper settings for '{}'",
             levelId.empty() ? std::string("all songs") : levelId);
     }
@@ -919,7 +919,7 @@ namespace BigScreen {
         found->second.localThumbnail =
             LocalThumbnailPath(levelId).filename().string();
         SaveLocked();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Recorded picked thumbnail '{}' for '{}'",
             found->second.localThumbnail,
             levelId);
@@ -942,12 +942,12 @@ namespace BigScreen {
             // Still forget the reference: Storage Maintenance then reports
             // the leftover PNG as an unused thumbnail instead of it silently
             // surviving as this map's artwork after its video was deleted.
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Could not delete picked thumbnail for '{}': {}",
                 levelId,
                 removeError.message());
         }
-        PaperLogger.info("Removed picked thumbnail for '{}'", levelId);
+        BigScreen::BigScreenLogger.info("Removed picked thumbnail for '{}'", levelId);
         return true;
     }
 
@@ -1129,7 +1129,7 @@ namespace BigScreen {
             RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Assigned local video '{}' to '{}' from '{}'",
             probe.fileName,
             levelId,
@@ -1215,7 +1215,7 @@ namespace BigScreen {
             RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Assigned local map video '{}' to '{}'",
             probe.fileName,
             levelId);
@@ -1294,7 +1294,7 @@ namespace BigScreen {
             RemoveManagedFile(videoPath_, previous->fileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
-        PaperLogger.info("Assigned imported video '{}' to '{}'", probe.fileName, levelId);
+        BigScreen::BigScreenLogger.info("Assigned imported video '{}' to '{}'", probe.fileName, levelId);
         return true;
     }
 
@@ -1330,7 +1330,7 @@ namespace BigScreen {
         // the map/user and may be relinked later through Show File Browser.
         found->second.mapperLocalSuppressed = true;
         SaveLocked();
-        PaperLogger.info("Unlinked mapper-local video for '{}'", levelId);
+        BigScreen::BigScreenLogger.info("Unlinked mapper-local video for '{}'", levelId);
         return true;
     }
 
@@ -1399,7 +1399,7 @@ namespace BigScreen {
                 : "Quest did not delete the local video.";
             return false;
         }
-        PaperLogger.info("Deleted user-selected local video '{}'", path.string());
+        BigScreen::BigScreenLogger.info("Deleted user-selected local video '{}'", path.string());
         return true;
     }
 
@@ -1450,7 +1450,7 @@ namespace BigScreen {
             return false;
         }
         SaveLocked();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Saved {} video timing for '{}': offset {:.2f}s, speed {:.4f}x, fit {}, lead-in {}",
             origin == VideoOrigin::User ? "user" : "mapper",
             levelId,
@@ -1607,7 +1607,7 @@ namespace BigScreen {
             std::filesystem::rename(manifestPath_, quarantine, error);
             if(error)
             {
-                PaperLogger.error("Could not quarantine invalid library manifest: {}", error.message());
+                BigScreen::BigScreenLogger.error("Could not quarantine invalid library manifest: {}", error.message());
                 ErrorManager::Instance().RecordError(
                     "Quarantining an invalid video library",
                     error.message());
@@ -1645,7 +1645,7 @@ namespace BigScreen {
                     "Backup " + std::to_string(recovery.backupIndex + 1) +
                     " was loaded in memory, but library.json could not be restored: " +
                     recovery.error;
-                PaperLogger.error("{}", detail);
+                BigScreen::BigScreenLogger.error("{}", detail);
                 ErrorManager::Instance().RecordError(
                     "Restoring the video library backup", detail);
                 recoveryNotice_ =
@@ -1656,7 +1656,7 @@ namespace BigScreen {
                 recoveryNotice_ = primaryExists
                     ? "Big Screen detected a damaged video library and restored the most recent known-good backup. Your video assignments were preserved."
                     : "Big Screen found that the main video library was missing and restored the most recent known-good backup. Your video assignments were preserved.";
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Recovered video library from backup {}",
                     recovery.backupIndex + 1);
             }
@@ -1669,7 +1669,7 @@ namespace BigScreen {
         recoveryScanNeeded_ = true;
         recoveryNotice_ =
             "Big Screen could not read the video library or either backup. It will rebuild every recoverable downloaded-video assignment after the song library finishes loading.";
-        PaperLogger.error("Video library and both known-good backups are invalid");
+        BigScreen::BigScreenLogger.error("Video library and both known-good backups are invalid");
         ErrorManager::Instance().RecordError(
             "Recovering the video library",
             "The primary library and both known-good backups were invalid");
@@ -1779,11 +1779,11 @@ namespace BigScreen {
             [](int from, int to, const std::string& detail)
             {
                 if(from == 1 && to == 2)
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Could not rotate video library backup 1 to backup 2: {}",
                         detail);
                 else
-                    PaperLogger.warn(
+                    BigScreen::BigScreenLogger.warn(
                         "Could not refresh video library backup 1: {}", detail);
             });
 
@@ -1919,7 +1919,7 @@ namespace BigScreen {
         recoveryNotice_ = "Big Screen rebuilt " + std::to_string(recovered) +
             " downloaded-video assignment" + (recovered == 1 ? "." : "s.") +
             " Timing was reset to safe defaults because the damaged manifest could not be read.";
-        PaperLogger.warn("Rebuilt {} video library entries from managed files", recovered);
+        BigScreen::BigScreenLogger.warn("Rebuilt {} video library entries from managed files", recovered);
     }
 
     std::string VideoLibrary::StableKey(const std::string& levelId)

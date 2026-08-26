@@ -801,10 +801,17 @@ def build_native(clean: bool = False) -> None:
     prepare_downloader()
     environment = os.environ.copy()
     environment["SOURCE_DATE_EPOCH"] = "946684800"
+    logger_mode = environment.get("BIGSCREEN_LOGGER_MODE", "DUAL").upper()
+    if logger_mode not in {"PAPER", "NATIVE", "DUAL"}:
+        raise BuildError(
+            "BIGSCREEN_LOGGER_MODE must be PAPER, NATIVE, or DUAL, "
+            f"not {logger_mode!r}."
+        )
     subprocess.run(
         [
             "cmake", "-Wno-deprecated", "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON",
+            f"-DBIGSCREEN_LOGGER_MODE={logger_mode}",
             "-S", str(ROOT), "-B", str(BUILD),
         ],
         cwd=ROOT, env=environment, check=True,

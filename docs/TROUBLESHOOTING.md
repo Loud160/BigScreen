@@ -89,9 +89,17 @@ extracted `adb.exe`. Nothing is installed system-wide: the files live under
 folder. Download progress and every verification/extraction stage remain
 visible so slow machines or connections do not appear to have stalled.
 
-Big Screen logs to Beat Saber's standard mod log folder:
+The first-party logger comparison writes Big Screen's current and previous
+general logs to:
 
-`/sdcard/ModData/com.beatgames.beatsaber/logs`
+- `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.log`
+- `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.previous.log`
+
+Development builds currently also retain Paper2 output under Beat Saber's
+standard mod log folders so both backends can be compared. The support
+collector pulls the Big Screen-owned files first, then any Paper2 candidates
+and Android logcat. Users should run the collector rather than manually decide
+which one file is relevant.
 
 Power benchmark CSV files are separate from the normal mod log:
 

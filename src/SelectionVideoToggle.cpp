@@ -314,7 +314,7 @@ namespace BigScreen {
             true);
         if(!controlsScreen_)
         {
-            PaperLogger.error("Could not create the song-selection controls canvas");
+            BigScreen::BigScreenLogger.error("Could not create the song-selection controls canvas");
             ErrorManager::Instance().RecordError(
                 "Creating song-selection video controls",
                 "BSML could not create the floating controls canvas");
@@ -373,7 +373,7 @@ namespace BigScreen {
 
         if(!previewUi_ || !inMapUi_ || !layoutUi_)
         {
-            PaperLogger.error("Could not create all top-row video controls");
+            BigScreen::BigScreenLogger.error("Could not create all top-row video controls");
             ErrorManager::Instance().RecordError(
                 "Creating song-selection video controls",
                 "Beat Saber did not create all three top-row controls");
@@ -397,7 +397,7 @@ namespace BigScreen {
             "Selects Layout 1 through 5 for video previews and gameplay. The choice applies to every song unless a map is allowed to use its own Cinema or Chroma placement.");
         RefreshUi();
         BringHeaderControlsToFront();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Created shared top-row Preview Video, Video In Map, and Screen Layout controls");
     }
 
@@ -502,7 +502,7 @@ namespace BigScreen {
             // A game update renamed the stock hierarchy. Keep the workflow
             // usable with a fixed placement and record the mismatch so it
             // appears in logs and reports.
-            PaperLogger.warn(
+            BigScreen::BigScreenLogger.warn(
                 "Stock level-detail rows were not found; using fallback download row placement");
             ErrorManager::Instance().RecordError(
                 "Placing the download row",
@@ -776,7 +776,7 @@ namespace BigScreen {
             auto detailTransform = controlsAnchor_->get_transform();
             if(!detailTransform)
             {
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Song controls row could not be positioned: no usable anchor");
                 return;
             }
@@ -791,7 +791,7 @@ namespace BigScreen {
         controlsPositionPending_ = false;
         controlsScreen_->get_gameObject()->SetActive(
             controlsVisibleRequested_);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Positioned song controls row at ({:.2f}, {:.2f}, {:.2f}) from {}",
             rowCenter.x,
             rowCenter.y,
@@ -865,7 +865,7 @@ namespace BigScreen {
         // during the transition into gameplay, and a late disable callback
         // must never tear down a gameplay or Replay-owned screen.
         playback.Stop();
-        PaperLogger.info("Stopped video preview because song selection was hidden");
+        BigScreen::BigScreenLogger.info("Stopped video preview because song selection was hidden");
     }
 
     void SelectionVideoToggle::LevelSelected(
@@ -1040,7 +1040,7 @@ namespace BigScreen {
                     std::max(0.0f, selectedLevel_->previewStartTime),
                     std::max(0.0f, selectedLevel_->previewDuration),
                     nullptr);
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Restarted Beat Saber's retained selected-song preview after closing Big Screen");
             }
         }
@@ -1061,7 +1061,7 @@ namespace BigScreen {
             {
                 if(!resumeWaitReported_)
                 {
-                    PaperLogger.info(
+                    BigScreen::BigScreenLogger.info(
                         "Waiting for Beat Saber song-preview audio before resuming the menu video");
                     resumeWaitReported_ = true;
                 }
@@ -1073,7 +1073,7 @@ namespace BigScreen {
             resumeWaitReported_ = false;
             if(playback.IsMenuPreviewActive())
             {
-                PaperLogger.info(
+                BigScreen::BigScreenLogger.info(
                     "Resumed menu video with Beat Saber's song-preview audio");
             }
             else
@@ -1081,7 +1081,7 @@ namespace BigScreen {
                 // Start reports the actionable surface/decoder error. Do not
                 // follow it with a false success line that sends support-log
                 // diagnosis in the wrong direction.
-                PaperLogger.warn(
+                BigScreen::BigScreenLogger.warn(
                     "Menu video did not resume after song-preview audio started");
             }
         }
@@ -1608,7 +1608,7 @@ namespace BigScreen {
     void SelectionVideoToggle::PreviewToggleChanged(bool enabled)
     {
         Settings::Instance().SetMenuPreviewEnabled(enabled);
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Song-selection video preview changed to {}",
             Settings::Instance().MenuPreviewEnabled() ? "on" : "off");
 
@@ -1626,7 +1626,7 @@ namespace BigScreen {
         inMapEnabled_ = Settings::Instance().VideoEnabled();
         RefreshUi();
         SettingsMenu::Instance().RefreshControls();
-        PaperLogger.info(
+        BigScreen::BigScreenLogger.info(
             "Video-in-map switch changed to {}",
             inMapEnabled_ ? "on" : "off");
 

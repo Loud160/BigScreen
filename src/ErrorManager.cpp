@@ -255,7 +255,7 @@ namespace BigScreen {
                 rotationError.clear();
                 std::filesystem::rename(logPath, previous, rotationError);
                 if(rotationError)
-                    PaperLogger.error(
+                    BigScreen::BigScreenLogger.error(
                         "Could not rotate persistent Big Screen error history: {}",
                         rotationError.message());
             }
@@ -270,13 +270,13 @@ namespace BigScreen {
         {
             // PaperLog is the only remaining sink if external storage is not
             // writable. Never let diagnostics prevent the mod from starting.
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not initialize persistent Big Screen error history: {}",
                 exception.what());
         }
         catch(...)
         {
-            PaperLogger.error(
+            BigScreen::BigScreenLogger.error(
                 "Could not initialize persistent Big Screen error history");
         }
     }
@@ -378,7 +378,7 @@ namespace BigScreen {
     {
         try
         {
-            PaperLogger.error("{}: {}", title, detail);
+            BigScreen::BigScreenLogger.error("{}: {}", title, detail);
             const auto correlationId = RecordError(title, detail);
             DiagnosticSessionLogger::Instance().MenuEvent(
                 "dialog_opened", "ErrorManager", {
@@ -407,7 +407,7 @@ namespace BigScreen {
     {
         try
         {
-            PaperLogger.error("Internal failure in {}: {}", context, detail);
+            BigScreen::BigScreenLogger.error("Internal failure in {}: {}", context, detail);
             RecordError("Internal failure in " + context, detail);
             const auto now = std::chrono::steady_clock::now();
             const auto signature = context + ": " + detail;
@@ -487,7 +487,7 @@ namespace BigScreen {
         {
             try
             {
-                PaperLogger.error(
+                BigScreen::BigScreenLogger.error(
                     "Could not update Big Screen's error dialog: {}",
                     detail);
             }
