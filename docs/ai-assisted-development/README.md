@@ -35,6 +35,12 @@ this archive were changed, deferred, rejected, or superseded after testing.
 - [GPU video 60 FPS optimization plan](planning/GPU_VIDEO_60FPS_OPTIMIZATION_PLAN.md) —
   Quest 2 checkpoint measurements and the recommended read-ahead, NV12, upload,
   and presentation-profiling sequence for improving 60 FPS delivery.
+- [Paper2-independent logging plan](planning/PAPER2_INDEPENDENT_LOGGING_PLAN.md) —
+  proposed first-party logging architecture and migration plan for eliminating
+  Paper ABI, packaging, and licensing conflicts without weakening diagnostics.
+- [In-process WebPO/BotGuard token-minter plan](planning/IN_PROCESS_WEBPO_BOTGUARD_TOKEN_MINTER_PLAN.md) —
+  deferred design for a guest-session yt-dlp PO-token provider built on Big
+  Screen's existing embedded Python and constrained QuickJS runtimes.
 - [Deferred menu environment preview](planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md) —
   failed approaches, crash evidence, and requirements for a future safe design.
 
