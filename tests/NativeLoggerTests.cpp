@@ -44,10 +44,24 @@ namespace {
         BigScreen::NativeLoggerOptions options;
         options.activePath = root / "bigscreen-native.log";
         options.previousPath = root / "bigscreen-native.previous.log";
-        options.flushInterval = 10ms;
         options.reopenInterval = 100ms;
         options.emitToLogcat = false;
         return options;
+    }
+
+    bool WaitForFileMessages(
+        BigScreen::NativeLogger& logger,
+        std::uint64_t expected,
+        std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while(std::chrono::steady_clock::now() < deadline)
+        {
+            if(logger.Statistics().fileMessages >= expected)
+                return true;
+            std::this_thread::sleep_for(2ms);
+        }
+        return logger.Statistics().fileMessages >= expected;
     }
 
     void TestBasicWriteAndLifecycle()
@@ -105,6 +119,32 @@ namespace {
         assert(std::filesystem::file_size(options.activePath) <= 1200u);
         assert(std::filesystem::file_size(options.previousPath) <= 1200u);
         assert(logger.Statistics().rotations > 0);
+        std::filesystem::remove_all(root);
+    }
+
+    void TestCompletedBatchIsReadableBeforeShutdown()
+    {
+        auto& logger = BigScreen::NativeLogger::Instance();
+        logger.Shutdown();
+        const auto root = NewTestRoot("crash-tail");
+        auto options = OptionsFor(root);
+        // No periodic flush exists. The record must become readable because
+        // the completed writer batch itself is flushed, not because explicit
+        // Flush or Shutdown happened to run.
+        assert(logger.Initialize(options, "crash-tail session"));
+        logger.Log(
+            BigScreen::LogSeverity::Info,
+            "ordinary record visible before logger shutdown");
+        assert(WaitForFileMessages(logger, 2, 2s));
+
+        const std::string liveContents = ReadAll(options.activePath);
+        assert(
+            liveContents.find(
+                "ordinary record visible before logger shutdown") !=
+            std::string::npos);
+        assert(logger.IsInitialized());
+
+        logger.Shutdown();
         std::filesystem::remove_all(root);
     }
 
@@ -235,6 +275,7 @@ int main()
 {
     TestBasicWriteAndLifecycle();
     TestRotationKeepsOnePreviousFile();
+    TestCompletedBatchIsReadableBeforeShutdown();
     TestConcurrentProducers();
     TestBoundedQueueDropsWithoutThrowing();
     TestCallsOutsideInitializedLifetimeAreSafe();

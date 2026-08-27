@@ -61,8 +61,8 @@ Versions and resolved sources are recorded in `qpm.json` and
 - **RapidJSON** — MIT License for the core library, with upstream third-party
   components retaining the notices in RapidJSON's own `license.txt`.
 - **tinyxml2 10.0.0** — zlib License.
-- **BSML 0.4.55**, **Paper2 Scotland2 4.8.0**, and generated **bs-cordl
-  4008.0.0** game
+- **BSML 0.4.55**, transitive **Paper2 Scotland2 4.8.0**, and generated
+  **bs-cordl 4008.0.0** game
   bindings — separately distributed Quest build/runtime interfaces. The
   resolved upstream repositories did not publish a root license file at the
   revisions inspected for this audit, so this notice deliberately makes no

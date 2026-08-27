@@ -264,23 +264,86 @@ def package_manifests(adb: Adb, game_version: str) -> list[tuple[str, dict]]:
     return packages
 
 
-def assert_dependencies(adb: Adb, current: dict) -> None:
+def dependency_statuses(adb: Adb, current: dict) -> list[dict]:
     packages = package_manifests(adb, current["packageVersion"])
-    failures: list[str] = []
+    statuses: list[dict] = []
     for requirement in current.get("dependencies", []):
         matches = [package for _, package in packages if package.get("id") == requirement["id"]]
         compatible = [package for package in matches if version_satisfies(package.get("version", ""), requirement["version"])]
         complete = [package for package in compatible if all(adb.file_exists(path) for path in required_paths(package))]
         if complete:
+            statuses.append({
+                "id": requirement["id"], "range": requirement["version"],
+                "installed": complete[0].get("version", "unknown"),
+                "satisfied": True, "message": "",
+            })
             continue
         if compatible:
-            failures.append(f"{requirement['id']} has a compatible registration but an incomplete payload")
+            message = "a compatible registration exists, but one or more required files are missing"
         elif matches:
-            failures.append(
-                f"{requirement['id']} {matches[0].get('version', 'unknown')} does not satisfy {requirement['version']}"
+            message = (
+                f"installed version {matches[0].get('version', 'unknown')} does not satisfy "
+                f"{requirement['version']}"
             )
         else:
-            failures.append(f"{requirement['id']} {requirement['version']} is not registered")
+            message = "it is not installed or registered for this Beat Saber version"
+        statuses.append({
+            "id": requirement["id"], "range": requirement["version"],
+            "installed": matches[0].get("version", "") if matches else "",
+            "satisfied": False, "message": message,
+        })
+    return statuses
+
+
+def dependency_diagnosis(adb: Adb, current: dict) -> tuple[str, bool]:
+    statuses = dependency_statuses(adb, current)
+    failures = [status for status in statuses if not status["satisfied"]]
+    lines = [
+        "BIG SCREEN DEPENDENCY DIAGNOSIS",
+        "================================",
+        "",
+        (
+            "RESULT: All dependencies declared by this Big Screen build are registered, "
+            "compatible, and complete."
+            if not failures else
+            "RESULT: Big Screen may have been prevented from loading by the dependency "
+            "problem(s) below."
+        ),
+        "",
+    ]
+    for status in statuses:
+        if status["satisfied"]:
+            lines.append(
+                f"OK: {status['id']} {status['installed']} satisfies required range "
+                f"{status['range']}."
+            )
+        else:
+            lines.append(
+                f"PROBLEM: {status['id']} requires {status['range']}; {status['message']}."
+            )
+    if failures:
+        lines += [
+            "",
+            "Recommended action: Open ModsBeforeFriday and update or reinstall the "
+            "dependencies marked PROBLEM. Do not replace one shared library manually "
+            "because other mods may depend on it too.",
+        ]
+    lines += [
+        "",
+        "This snapshot is produced by the external support collector. It remains "
+        "available even when Big Screen could not start its own logger or show an "
+        "in-game popup.",
+        "",
+    ]
+    return "\n".join(lines), bool(failures)
+
+
+def assert_dependencies(adb: Adb, current: dict) -> None:
+    statuses = dependency_statuses(adb, current)
+    failures = [
+        f"{status['id']} {status['range']}: {status['message']}"
+        for status in statuses if not status["satisfied"]
+    ]
     if failures:
         raise QuestToolError(
             "Quest dependencies are not ready; install/update them through MBF before source deployment:\n  - "
@@ -582,6 +645,14 @@ def collect_logs(since_minutes: int, output_root: pathlib.Path) -> pathlib.Path:
     for name, command in commands.items():
         result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         (folder / name).write_text(result.stdout, encoding="utf-8", errors="replace")
+    try:
+        diagnosis_text, dependency_failure = dependency_diagnosis(adb, manifest())
+    except (OSError, ValueError, KeyError, QuestToolError, subprocess.CalledProcessError) as error:
+        diagnosis_text = f"The collector could not complete the dependency audit: {error}\n"
+        dependency_failure = False
+    (folder / "DEPENDENCY-DIAGNOSIS.txt").write_text(
+        diagnosis_text, encoding="utf-8"
+    )
     remote_roots = (
         f"{MOD_DATA}/BigScreen/Logs",
         f"/sdcard/Android/data/{PACKAGE}/files",
@@ -601,12 +672,19 @@ def collect_logs(since_minutes: int, output_root: pathlib.Path) -> pathlib.Path:
             result = adb.run("pull", remote, str(local), check=False, capture=True)
             if result.returncode == 0 and local.is_file():
                 pulled.append(remote)
+    dependency_summary = (
+        "DEPENDENCY PROBLEM FOUND: Review DEPENDENCY-DIAGNOSIS.txt first.\n\n"
+        if dependency_failure else
+        "Dependency snapshot: review DEPENDENCY-DIAGNOSIS.txt.\n\n"
+    )
     report = (
         "Big Screen support bundle\n"
         f"Collected: {now.isoformat()}\n"
         f"Requested incident window: last {since_minutes} minutes\n"
         f"Selected Quest: {adb.serial}\n"
         f"Fresh device files pulled: {len(pulled)}\n\n"
+        + dependency_summary
+        +
         "The logcat, crash-buffer, exit-info, and Dropbox snapshots are current command output.\n"
         "Files under recent-files passed the requested freshness window; absence is recorded rather than replaced with stale data.\n"
     )

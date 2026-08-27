@@ -328,26 +328,14 @@ worker, timestamps, scaling, shutdown, reusable RGBA/YUV plane buffers, normaliz
 plane transport, and live fallback from YUV transport to RGBA. Host tests do
 not replace an ARM64 Quest build or VR regression testing.
 
-### Logger comparison builds
+### First-party logger
 
-The Paper2-removal branch has one internal logger boundary with three compile
-modes. Normal development builds currently use `DUAL`: each message is
-formatted once, then sent to Paper2 and Big Screen's first-party asynchronous
-file sink. This is intentionally not exposed in the headset UI.
-
-Advanced Linux/WSL validation can select a backend for an otherwise identical
-build by setting `BIGSCREEN_LOGGER_MODE` to `PAPER`, `NATIVE`, or `DUAL` before
-the canonical Linux build:
-
-```bash
-BIGSCREEN_LOGGER_MODE=NATIVE bash ./scripts/build-linux.sh
-```
-
-Use separate Paper-only and native-only runs of the same map, headset state,
-and diagnostic workload for performance comparison. Do not remove Paper2 from
-QPM or the QMOD based on a successful compile alone; that dependency remains
-until the documented Quest lifecycle, support-collector, AudioLink-conflict,
-and performance matrix passes.
+Every build uses Big Screen's private asynchronous logger. Paper2 can still be
+restored transitively because beatsaber-hook and other shared dependencies use
+it, but `libbigscreen.so` does not link to Paper2 and the generated QMOD does
+not declare it as a Big Screen dependency. The canonical ELF validation rejects
+a build that regains a Paper2 `DT_NEEDED` entry or exposes the private
+beatsaber-hook abort bridge.
 
 ## QMOD contents
 

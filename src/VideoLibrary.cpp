@@ -710,7 +710,19 @@ namespace BigScreen {
                 error);
             if(!error.empty())
             {
-                BigScreen::BigScreenLogger.error("Video metadata rejected for '{}': {}", descriptor.levelId, error);
+                descriptor.mapperMetadataIssue = error;
+                descriptor.mapperMetadataRecovered =
+                    descriptor.mapperDefinition.has_value();
+                if(descriptor.mapperMetadataRecovered)
+                    BigScreen::BigScreenLogger.warn(
+                        "Video metadata recovered for '{}': {}",
+                        descriptor.levelId,
+                        error);
+                else
+                    BigScreen::BigScreenLogger.error(
+                        "Video metadata rejected for '{}': {}",
+                        descriptor.levelId,
+                        error);
                 ErrorManager::Instance().RecordError(
                     "Reading video metadata for " + descriptor.levelId,
                     error);
@@ -732,10 +744,19 @@ namespace BigScreen {
                 playlistError);
             if(!playlistError.empty())
             {
-                BigScreen::BigScreenLogger.error(
-                    "Playlist Cinema metadata rejected for '{}': {}",
-                    descriptor.levelId,
-                    playlistError);
+                descriptor.mapperMetadataIssue = playlistError;
+                descriptor.mapperMetadataRecovered =
+                    descriptor.mapperDefinition.has_value();
+                if(descriptor.mapperMetadataRecovered)
+                    BigScreen::BigScreenLogger.warn(
+                        "Playlist Cinema metadata recovered for '{}': {}",
+                        descriptor.levelId,
+                        playlistError);
+                else
+                    BigScreen::BigScreenLogger.error(
+                        "Playlist Cinema metadata rejected for '{}': {}",
+                        descriptor.levelId,
+                        playlistError);
                 ErrorManager::Instance().RecordError(
                     "Reading playlist Cinema metadata for " + descriptor.levelId,
                     playlistError);

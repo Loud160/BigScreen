@@ -121,6 +121,13 @@ namespace BigScreen {
         void PasteUrlFromClipboard();
         void SearchSelectedSongOnYouTube();
         void RefreshSelectedMapperMetadata();
+        void ShowBrowserMapperMetadataIssues();
+        void ShowMapperMetadataIssueForRow(int row);
+        void ShowMapperMetadataIssue(
+            GlobalNamespace::BeatmapLevel* level);
+        void PresentBrowserMetadataDialog(
+            std::string title,
+            std::string detail);
         void RefreshLocalVideoStatus();
         /// Handles the two explicit confirmation choices. Unlinking always
         /// removes the assignment only; deletion additionally removes the
@@ -261,6 +268,13 @@ namespace BigScreen {
         std::vector<UnityEngine::GameObject*> videoOnlyRows_;
         UnityEngine::UI::Button* filterPreviousButton_ = nullptr;
         UnityEngine::UI::Button* filterNextButton_ = nullptr;
+        UnityEngine::UI::Button* browserMetadataErrorButton_ = nullptr;
+        // Cinema metadata belongs to the song browser, so its explanations use
+        // a modal owned by that same right-side controller. Routing these
+        // actions through SettingsMenu's left-panel error surface can leave a
+        // perfectly valid click with no visible result on the active page.
+        BSML::ModalView* browserMetadataModal_ = nullptr;
+        TMPro::TextMeshProUGUI* browserMetadataModalText_ = nullptr;
         UnityEngine::UI::Button* backToListButton_ = nullptr;
         UnityEngine::UI::Button* mapperRefreshButton_ = nullptr;
         UnityEngine::UI::Button* searchYouTubeButton_ = nullptr;

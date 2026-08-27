@@ -4,7 +4,7 @@
   "name": "${mod_name}",
   "id": "${mod_id}",
   "author": "Loud160 (AKA Whisp)",
-  "version": "0.7.0-alpha.12",
+  "version": "0.7.0-alpha.13",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.40.8_7379",
   "description": "Add synchronized video playback to OST, DLC, custom, and WIP Beat Saber maps with advanced flat or curved screen placement, built-in YouTube downloads, local H.264 MP4 support, timing controls, and performance tuning.",

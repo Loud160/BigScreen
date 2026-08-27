@@ -252,6 +252,37 @@ int main()
     Expect(!untrustedUrl && error.find("HTTPS YouTube") != std::string::npos,
            "mapper metadata must not turn the downloader into an arbitrary URL fetcher");
 
+    // Older PC Cinema maps sometimes shipped a trailing comma that strict
+    // JSON rejects. Recover only the complete document using RapidJSON's
+    // explicit compatibility flag and retain an actionable warning.
+    {
+        std::ofstream output(metadata, std::ios::trunc);
+        output << R"({
+            "videoID":"6swmTBVI83k",
+            "offset":1100,
+            "vignette":{"type":"elliptical","radius":0.5,}
+        })";
+    }
+    const auto recovered = BigScreen::MapVideoConfig::LoadDefinitionFromLevel(
+        root, error);
+    Expect(recovered && recovered->videoId &&
+           *recovered->videoId == "6swmTBVI83k" &&
+           recovered->vignette && Near(recovered->vignette->radius, 0.5f),
+           "a complete Cinema object with a trailing comma should recover its supported fields");
+    Expect(!error.empty() &&
+           error.find("non-standard syntax") != std::string::npos,
+           "recovered Cinema JSON should retain a user-visible warning");
+
+    // Recovery must not invent fields across genuinely truncated JSON.
+    {
+        std::ofstream output(metadata, std::ios::trunc);
+        output << R"({"videoID":"6swmTBVI83k","vignette":{"radius":0.5)";
+    }
+    const auto truncated = BigScreen::MapVideoConfig::LoadDefinitionFromLevel(
+        root, error);
+    Expect(!truncated && error.find("Invalid Cinema JSON at byte") != std::string::npos,
+           "truncated Cinema JSON must remain rejected with its parse location");
+
     // A user-downloaded or locally assigned video has no reason to modify the
     // map files. Detect Chroma independently so those videos still yield the
     // environment to Chroma when Allow Chroma Override is enabled.

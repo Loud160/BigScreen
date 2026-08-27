@@ -24,6 +24,7 @@ gitignore = (root / ".gitignore").read_text(encoding="utf-8")
 cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
 build_script = (root / "scripts/build.ps1").read_text(encoding="utf-8")
 cmake_utils = (root / "cmake/utils.cmake").read_text(encoding="utf-8")
+qpm_cmake = (root / "cmake/qpm.cmake").read_text(encoding="utf-8")
 strip_script = (root / "cmake" / "strip.cmake").read_text(encoding="utf-8")
 bootstrap_build = (root / "scripts/bootstrap-build.ps1").read_text(
     encoding="utf-8")
@@ -131,6 +132,15 @@ native_logger_source = (root / "src/NativeLogger.cpp").read_text(
     encoding="utf-8")
 native_logger_tests = (root / "tests/NativeLoggerTests.cpp").read_text(
     encoding="utf-8")
+dependency_diagnostics_source = (
+    root / "src/DependencyDiagnostics.cpp"
+).read_text(encoding="utf-8")
+dependency_version_source = (
+    root / "src/DependencyVersion.cpp"
+).read_text(encoding="utf-8")
+dependency_version_tests = (
+    root / "tests/DependencyVersionTests.cpp"
+).read_text(encoding="utf-8")
 error_manager_source = (root / "src/ErrorManager.cpp").read_text(
     encoding="utf-8")
 settings_header = (root / "include/BigScreen/Settings.hpp").read_text(encoding="utf-8")
@@ -335,23 +345,35 @@ manifest_dependencies = {
 for dependency_ranges in (
     configured_dependencies, shared_dependencies, manifest_dependencies,
 ):
-    assert dependency_ranges["paper2_scotland2"] == "^4.8.0"
+    assert "paper2_scotland2" not in dependency_ranges
 
-# Paper remains a declared dependency only for the explicit comparison phase.
-# Runtime call sites must use Big Screen's own boundary so the dependency can
-# later be removed without another repository-wide behavioral rewrite.
-assert 'set(BIGSCREEN_LOGGER_MODE "DUAL"' in cmake
-assert "BIGSCREEN_LOGGER_MODE_VALUE" in cmake
-assert 'environment.get("BIGSCREEN_LOGGER_MODE", "DUAL")' in canonical_build_pipeline
-for logger_mode in ("PAPER", "NATIVE", "DUAL"):
-    assert logger_mode in canonical_build_pipeline
-assert "enum class LoggerBackendMode" in logger_header
-assert "PaperOnly" in logger_header
-assert "NativeOnly" in logger_header
-assert "Dual" in logger_header
+# Paper2 remains in QPM's restored lock only because Big Screen's other direct
+# dependencies use it. Big Screen itself has one native backend, no selectable
+# Paper mode, no direct manifest requirement, and no ELF dependency on Paper.
+assert "BIGSCREEN_LOGGER_MODE" not in cmake
+assert "BIGSCREEN_LOGGER_MODE" not in canonical_build_pipeline
+assert "BIGSCREEN_LOGGER_MODE" not in logger_header
+assert "BIGSCREEN_ENABLE_LOGGER_CRASH_TEST" in cmake
+assert '"BIGSCREEN_ENABLE_LOGGER_CRASH_TEST", "OFF"' in canonical_build_pipeline
+assert "LOGGER_CRASH_TEST_FINAL" in settings_menu_source
+assert "std::abort();" in settings_menu_source
+assert "ShowModalInFront(loggerCrashTestModal_)" in settings_menu_source
+assert "libpaper2_scotland2" in qpm_cmake
+assert "BIGSCREEN_QPM_LINK_LIBRARIES" in qpm_cmake
+native_hook_bridge = (root / "src/NativeHookLoggerBridge.cpp").read_text(
+    encoding="utf-8")
+assert "--wrap=paper2_queue_log_bytes_ffi" in cmake
+assert "--wrap=paper2_wait_for_flush" in cmake
+assert "__wrap_paper2_queue_log_bytes_ffi" in native_hook_bridge
+assert "__wrap_paper2_wait_for_flush" in native_hook_bridge
+assert 'visibility("hidden")' in native_hook_bridge
+assert "Other mods keep using the real Paper2 supplied for their own declared" in cmake
+assert "Big Screen still declares Paper2 in DT_NEEDED" in canonical_build_pipeline
+assert "Big Screen exposes a Paper compatibility symbol" in canonical_build_pipeline
 assert "fmt::format(" in logger_header
 assert "std::source_location" in logger_header
-assert "paper2_queue_log_bytes_ffi" in logger_source
+assert "paper2_scotland2/shared/paperlog.hpp" not in logger_source
+assert "Paper::" not in logger_source
 assert "NativeLogger::Instance().Log" in logger_source
 assert "bigscreen-native.log" in logger_source
 assert "5u * 1024u * 1024u" in native_logger_header
@@ -363,8 +385,45 @@ assert "writer.join()" in native_logger_source
 assert "droppedSinceNotice" in native_logger_source
 assert "TestConcurrentProducers" in native_logger_tests
 assert "TestRotationKeepsOnePreviousFile" in native_logger_tests
+assert "TestCompletedBatchIsReadableBeforeShutdown" in native_logger_tests
 assert "TestUnavailableStorageFallsOpen" in native_logger_tests
 assert "bigscreen-native-logger-tests" in host_test_cmake
+
+# Startup diagnostics are deliberately one-shot. They may queue a visible
+# warning only for a present dependency below its minimum; missing, malformed,
+# incomplete, and future-major failures remain log/support-bundle evidence.
+for dependency_id, version_range in manifest_dependencies.items():
+    assert f'Requirement{{"{dependency_id}",' in dependency_diagnostics_source
+    assert f'"{version_range}"}}' in dependency_diagnostics_source
+assert "modloader_get_loaded()" in dependency_diagnostics_source
+assert "modloader_free_results" in dependency_diagnostics_source
+assert "if(!late_mods_opened)" in dependency_diagnostics_source
+assert "FindPackagedVersion" in dependency_diagnostics_source
+assert "BIGSCREEN_GAME_VERSION" in dependency_diagnostics_source
+assert "BIGSCREEN_GAME_VERSION" in cmake
+assert "VersionIsBelowRangeMinimum" in dependency_diagnostics_source
+assert '"Big Screen dependency update required"' in dependency_diagnostics_source
+assert "if(installedVersion.empty())" in dependency_diagnostics_source
+assert "if(outdatedCount > 0)" in dependency_diagnostics_source
+assert dependency_diagnostics_source.index(
+    "if(outdatedCount > 0)") < dependency_diagnostics_source.index(
+        "ReportUserVisible(")
+assert "never block mod" in dependency_diagnostics_source
+assert main_source.index(
+    "DependencyDiagnostics::CheckLoadedDependencies()") < main_source.index(
+        "ErrorManager::Instance().TickMainThread()")
+assert "VersionIsBelowRangeMinimum" in dependency_version_source
+assert "future major mismatch must not be mislabelled" in dependency_version_tests
+assert "bigscreen-dependency-version-tests" in host_test_cmake
+assert "JSON ISSUES (" in library_menu_source
+assert "ShowBrowserMapperMetadataIssues" in library_menu_source
+assert "ShowMapperMetadataIssueForRow" in library_menu_source
+assert "BigScreenMapperMetadataIssueButton" in library_menu_source
+assert "PresentBrowserMetadataDialog" in library_menu_source
+assert "ShowModalInFront(browserMetadataModal_)" in library_menu_source
+assert "Cinema JSON recovered" in library_menu_source
+assert "coverImage->get_gameObject()->SetActive(hasVideo)" in library_menu_source
+assert "hasMetadataIssue && hasVideo ? -22.5f" in library_menu_source
 for runtime_source_path in list((root / "src").glob("*.cpp")) + list(
         (root / "include").rglob("*.hpp")):
     assert "PaperLogger" not in runtime_source_path.read_text(
@@ -393,7 +452,15 @@ assert "Assert-BigScreenQuestDependencies" in copy_script
 assert "before any Big Screen files changed" in quest_dependency_check
 assert "Get-BigScreenQuestDependencyPackages" in quest_dependency_check
 assert "Test-BigScreenSemanticVersionRange" in quest_dependency_check
-assert "paper2_queue_log_bytes_ffi" in dependency_guide
+assert "Get-BigScreenDependencyDiagnosticReport" in quest_dependency_check
+assert "-AdbCommand $script:Adb" in log_collector.split(
+    "Checking Big Screen dependency versions", 1)[1]
+for dependency_collector in (log_collector, linux_quest_tool):
+    assert "DEPENDENCY-DIAGNOSIS.txt" in dependency_collector
+assert "Big Screen could not start its own logger" in quest_dependency_check
+assert "Big Screen could not start its own logger" in linux_quest_tool
+assert "It is not a direct `qpm.json` dependency" in dependency_guide
+assert "hidden link-time bridge" in dependency_guide
 assert "$env:ANDROID_SERIAL = $selected.Serial" in adb_target_script
 assert "Get-BigScreenQuestCandidates" in adb_target_script
 assert "com.beatgames.beatsaber" in adb_target_script
@@ -785,7 +852,7 @@ for collector_contract in (
     "AdbPromptTimeoutSeconds = 300",
     "Stopping the ADB server started by this collector",
     # The collector must prefer Big Screen's owned current/previous general
-    # logs, retain Paper locations for comparison and third-party context, and
+    # logs, retain Paper locations for historical and third-party context, and
     # always capture logcat as an independent fallback evidence layer.
     "bigscreen-native.log",
     "bigscreen-native.previous.log",

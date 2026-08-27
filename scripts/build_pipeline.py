@@ -716,6 +716,24 @@ def readelf(build_directory: pathlib.Path, file: pathlib.Path, *arguments: str) 
 
 def validate_elf(build_directory: pathlib.Path = BUILD) -> None:
     main_dynamic = readelf(build_directory, build_directory / "libbigscreen.so", "-d")
+    main_symbols = readelf(
+        build_directory, build_directory / "libbigscreen.so",
+        "--dyn-syms", "--wide",
+    )
+    if "libpaper2_scotland2.so" in main_dynamic:
+        raise BuildError(
+            "Big Screen still declares Paper2 in DT_NEEDED."
+        )
+    for paper_symbol in (
+        "paper2_queue_log_bytes_ffi", "paper2_wait_for_flush",
+        "__wrap_paper2_queue_log_bytes_ffi",
+        "__wrap_paper2_wait_for_flush",
+    ):
+        if paper_symbol in main_symbols:
+            raise BuildError(
+                "Big Screen exposes a Paper compatibility symbol: "
+                f"{paper_symbol}."
+            )
     for backend in ("libbigscreen-ffmpeg44-backend.so", "libbigscreen-ffmpeg9-backend.so"):
         if backend not in main_dynamic:
             raise BuildError(f"libbigscreen.so does not require {backend}.")
@@ -801,17 +819,20 @@ def build_native(clean: bool = False) -> None:
     prepare_downloader()
     environment = os.environ.copy()
     environment["SOURCE_DATE_EPOCH"] = "946684800"
-    logger_mode = environment.get("BIGSCREEN_LOGGER_MODE", "DUAL").upper()
-    if logger_mode not in {"PAPER", "NATIVE", "DUAL"}:
+    crash_test_value = environment.get(
+        "BIGSCREEN_ENABLE_LOGGER_CRASH_TEST", "OFF").upper()
+    if crash_test_value not in {"0", "1", "OFF", "ON", "FALSE", "TRUE"}:
         raise BuildError(
-            "BIGSCREEN_LOGGER_MODE must be PAPER, NATIVE, or DUAL, "
-            f"not {logger_mode!r}."
+            "BIGSCREEN_ENABLE_LOGGER_CRASH_TEST must be ON or OFF, "
+            f"not {crash_test_value!r}."
         )
+    crash_test_enabled = crash_test_value in {"1", "ON", "TRUE"}
     subprocess.run(
         [
             "cmake", "-Wno-deprecated", "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DBIGSCREEN_UP_DOWN_SHOWCASE=ON",
-            f"-DBIGSCREEN_LOGGER_MODE={logger_mode}",
+            "-DBIGSCREEN_ENABLE_LOGGER_CRASH_TEST=" +
+                ("ON" if crash_test_enabled else "OFF"),
             "-S", str(ROOT), "-B", str(BUILD),
         ],
         cwd=ROOT, env=environment, check=True,

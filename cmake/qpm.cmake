@@ -45,4 +45,18 @@ set(SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${SHARED_DIR_NAME})
 cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL _setup_qpm_project())
 function(_setup_qpm_project)
     include(${CMAKE_CURRENT_SOURCE_DIR}/extern.cmake)
+
+    # QPM's generated extern.cmake links every restored shared library,
+    # including Paper2 restored transitively for beatsaber-hook, BSML,
+    # SongCore, and Custom Types. Big Screen's own logger is independent, so
+    # remove only libbigscreen.so's Paper link. The library remains available
+    # to those other dependencies and their own QMOD manifests remain intact.
+    get_target_property(BIGSCREEN_QPM_LINK_LIBRARIES
+                        ${COMPILE_ID} LINK_LIBRARIES)
+    if(BIGSCREEN_QPM_LINK_LIBRARIES)
+        list(FILTER BIGSCREEN_QPM_LINK_LIBRARIES EXCLUDE REGEX
+             "(^|[/\\\\])libpaper2_scotland2\\.so$")
+        set_property(TARGET ${COMPILE_ID} PROPERTY LINK_LIBRARIES
+                     "${BIGSCREEN_QPM_LINK_LIBRARIES}")
+    endif()
 endfunction(_setup_qpm_project)

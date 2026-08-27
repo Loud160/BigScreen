@@ -18,28 +18,7 @@
 #include <type_traits>
 #include <utility>
 
-#ifndef BIGSCREEN_LOGGER_MODE
-// Development builds intentionally compare the existing Paper2 sink with the
-// first-party sink. Release promotion will change this default only after the
-// native logger passes the documented Quest performance and lifecycle tests.
-#define BIGSCREEN_LOGGER_MODE 2
-#endif
-
 namespace BigScreen {
-    enum class LoggerBackendMode : int {
-        PaperOnly = 0,
-        NativeOnly = 1,
-        Dual = 2,
-    };
-
-    inline constexpr LoggerBackendMode ActiveLoggerBackendMode =
-        static_cast<LoggerBackendMode>(BIGSCREEN_LOGGER_MODE);
-    static_assert(
-        ActiveLoggerBackendMode == LoggerBackendMode::PaperOnly ||
-            ActiveLoggerBackendMode == LoggerBackendMode::NativeOnly ||
-            ActiveLoggerBackendMode == LoggerBackendMode::Dual,
-        "BIGSCREEN_LOGGER_MODE must be 0 (Paper), 1 (native), or 2 (dual)");
-
     template<typename... Args>
     struct LogFormatString {
         fmt::format_string<Args...> format;
@@ -57,9 +36,8 @@ namespace BigScreen {
         {}
     };
 
-    /// Compatibility-shaped logging façade used by all Big Screen call sites.
-    /// It formats once and routes the identical payload to Paper2, the private
-    /// native sink, or both according to the internal build mode.
+    /// Stable logging façade used by every Big Screen call site. It formats
+    /// each record once and routes it only to Big Screen's private native sink.
     class LoggerFacade final {
       public:
         static constexpr std::string_view tag = "bigscreen";

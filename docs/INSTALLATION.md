@@ -4,8 +4,8 @@
 
 - Meta Quest 2 or Quest 3.
 - A modded standalone Quest installation of **Beat Saber 1.40.8 (`1.40.8_7379`)**.
-- The QMOD's declared shared dependencies: beatsaber-hook 6.4.2+, Paper2
-  4.8.0+, SongCore 1.1.23+, BSML 0.4.54+, and custom-types 0.18.3+, within
+- The QMOD's declared shared dependencies: beatsaber-hook 6.4.2+, SongCore
+  1.1.23+, BSML 0.4.54+, and custom-types 0.18.3+, within
   their declared compatible release ranges. MBF resolves these automatically.
 - Enough free internal storage for the QMOD runtime and any downloaded videos. Big Screen reserves 512 MB before beginning a new download.
 
@@ -19,10 +19,9 @@ The current QMOD is version-specific. A newer or older Beat Saber APK can change
 4. Fully restart Beat Saber.
 5. Open **Mods > Big Screen**. If the page opens and the blank placement preview appears, the native mod and UI loaded.
 
-Paper2 4.8.0 is a hard ABI requirement. Older Paper2 4.x releases do not
-provide the logging symbol used by Big Screen and cannot load the native mod.
-The package manifest requires 4.8.0 or newer so MBF upgrades an older copy
-instead of treating it as compatible.
+Big Screen's first-party logger has no Paper2 runtime dependency. Other shared
+dependencies may still install and use Paper2 according to their own manifests;
+Big Screen does not change or intercept their logger.
 
 The package installs its native libraries through the mod loader and places the embedded downloader runtime under `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime`. QuickJS-NG is already compiled into Big Screen; users do not install a separate JavaScript runtime, Termux package, or executable.
 

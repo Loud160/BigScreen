@@ -36,6 +36,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "adb-target.ps1")
 . (Join-Path $PSScriptRoot "console-choice.ps1")
+. (Join-Path $PSScriptRoot "quest-dependency-check.ps1")
 
 $script:PackageName = "com.beatgames.beatsaber"
 $script:ModDataRoot = "/sdcard/ModData/$($script:PackageName)"
@@ -493,18 +494,59 @@ try {
     ) -join "`r`n"
     Write-Utf8File (Join-Path $script:StageRoot "DEVICE-AND-GAME.txt") ($metadata + "`r`n")
 
+    Write-Host "Checking Big Screen dependency versions..." -ForegroundColor Cyan
+    try {
+        # Hard loader failures happen before libbigscreen.so can initialize its
+        # private logger or create a dialog. Re-run the same manifest and
+        # payload audit used by source deployment here so the support ZIP still
+        # explains an old, missing, or incomplete shared dependency plainly.
+        $manifestPath = Join-Path $repoRoot "mod.json"
+        $localManifest = Get-Content -LiteralPath $manifestPath -Raw |
+            ConvertFrom-Json -ErrorAction Stop
+        $requirements = @(Get-BigScreenDependencyRequirements $manifestPath)
+        $packages = @(Get-BigScreenQuestDependencyPackages `
+            ([string]$localManifest.packageVersion) `
+            -AdbCommand $script:Adb)
+        $dependencyDiagnosis = Get-BigScreenDependencyDiagnosticReport `
+            $requirements $packages
+        $dependencyPath = Join-Path $script:StageRoot "DEPENDENCY-DIAGNOSIS.txt"
+        Write-Utf8File $dependencyPath $dependencyDiagnosis.Text
+        Add-ManifestEntry "Dependencies" "DEPENDENCY-DIAGNOSIS.txt" "FRESH" `
+            "Quest package registrations and payload files" `
+            ([Nullable[long]]$script:DeviceNowEpoch) `
+            "DEPENDENCY-DIAGNOSIS.txt" `
+            "Plain-language compatibility audit that does not require Big Screen to load."
+        Add-ReportLine "DEPENDENCY CHECK"
+        Add-ReportLine "----------------"
+        if ($dependencyDiagnosis.HasFailures) {
+            Add-ReportLine "PROBLEM FOUND: Review DEPENDENCY-DIAGNOSIS.txt first. An incompatible, missing, or incomplete shared dependency may have prevented Big Screen from loading."
+        }
+        else {
+            Add-ReportLine "All dependencies declared by this Big Screen build are registered, compatible, and complete."
+        }
+        Add-ReportLine ""
+    }
+    catch {
+        $dependencyFailure = "The collector could not complete the dependency audit: $($_.Exception.Message)"
+        Write-Utf8File (Join-Path $script:StageRoot "DEPENDENCY-DIAGNOSIS.txt") `
+            ($dependencyFailure + "`r`n")
+        Add-ReportLine "DEPENDENCY CHECK"
+        Add-ReportLine "----------------"
+        Add-ReportLine $dependencyFailure
+        Add-ReportLine ""
+    }
+
     Write-Host "Collecting Big Screen diagnostics..." -ForegroundColor Cyan
-    # During the first-party logger comparison, these are Big Screen's owned
-    # general logs. Pull them before Paper so support reports naturally point
-    # at the backend that will remain after Paper2 is removed. A missing native
-    # log is still valid for an older or explicitly Paper-only development
-    # build, so the collector continues with every independent evidence layer.
+    # These are Big Screen's owned general logs. Pull them before third-party
+    # logs so the support report naturally points at the authoritative source.
+    # A missing native log can still be valid for an older Big Screen build, so
+    # the collector continues with every independent evidence layer.
     $nativeGeneralPath = "$($script:BigScreenLogRoot)/bigscreen-native.log"
     $nativeGeneralEpoch = Get-LatestTimestampedEntry $nativeGeneralPath
     $nativeGeneralClassificationEpoch = if ($null -ne $nativeGeneralEpoch) { $nativeGeneralEpoch } else { 0L }
-    $pulledNativeGeneral = Pull-RemoteArtifact "Big-Screen" $nativeGeneralPath $nativeGeneralClassificationEpoch "bigscreen-native.log" "Big Screen's first-party asynchronous general log; primary during the Paper2 comparison."
+    $pulledNativeGeneral = Pull-RemoteArtifact "Big-Screen" $nativeGeneralPath $nativeGeneralClassificationEpoch "bigscreen-native.log" "Big Screen's authoritative first-party asynchronous general log."
     if (-not $pulledNativeGeneral) {
-        Add-MissingMarker "Big-Screen" "NO_BIG_SCREEN_NATIVE_LOG.txt" "The first-party Big Screen general log was not present. This is expected on older or Paper-only comparison builds."
+        Add-MissingMarker "Big-Screen" "NO_BIG_SCREEN_NATIVE_LOG.txt" "The first-party Big Screen general log was not present. This can be expected on older builds."
     }
     $nativePreviousPath = "$($script:BigScreenLogRoot)/bigscreen-native.previous.log"
     $nativePreviousEpoch = Get-LatestTimestampedEntry $nativePreviousPath
@@ -533,10 +575,10 @@ try {
     Add-ReportLine "Detailed diagnostic sessions collected: $menuSessionCount Menu, $downloadSessionCount Download."
 
     Write-Host "Collecting Beat Saber logs and process-exit evidence..." -ForegroundColor Cyan
-    # The legacy Paper 3 files stopped being written when the project moved to
-    # paper2_scotland2; they are kept only as historical context. Paper2 files
-    # remain useful secondary evidence while dual comparison builds are being
-    # tested, but the native Big Screen files above are now collected first.
+    # Legacy Paper files remain useful historical or third-party context even
+    # though current Big Screen builds no longer emit through Paper2. Other
+    # dependencies may still use Paper normally, so collect these independently
+    # without presenting them as Big Screen's authoritative log.
     foreach ($logName in @("PaperLog.log", "beatsaber-hook.log")) {
         $remote = "$($script:ModDataRoot)/logs/$logName"
         [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) "legacy-$logName" "LEGACY pre-paper2 log location; expected to be stale. Kept for historical comparison only.")
@@ -544,7 +586,7 @@ try {
     foreach ($paper2Dir in @("$($script:ModDataRoot)/logs/paper2", "$($script:ModDataRoot)/logs2")) {
         foreach ($logName in @("PaperLog.log", "BigScreen.log")) {
             $remote = "$paper2Dir/$logName"
-            [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) ("paper2-" + ($paper2Dir -split '/')[-1] + "-$logName") "Paper2 comparison/third-party log candidate; retained while the first-party logger is validated.")
+            [void](Pull-RemoteArtifact "Beat-Saber" $remote ([Nullable[long]]$null) ("paper2-" + ($paper2Dir -split '/')[-1] + "-$logName") "Optional Paper2 third-party or historical log; current Big Screen builds use the first-party log above.")
         }
     }
 

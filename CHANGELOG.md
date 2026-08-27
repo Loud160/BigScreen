@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.13 — First-party logging and dependency resilience
+
+- Replaced Big Screen's direct Paper2 logging dependency with a private,
+  bounded asynchronous logger that retains crash-tail records, logcat output,
+  rotation, and support-bundle collection without changing Paper2 usage by
+  BSML, SongCore, beatsaber-hook, Custom Types, or other mods.
+- Added one-shot runtime dependency diagnostics and external support-tool
+  checks that explain missing, outdated, or incomplete packages without
+  polling or adding playback overhead.
+- Added recoverable Cinema JSON diagnostics to the song browser so malformed
+  mapper metadata can be reported without unnecessarily preventing an
+  otherwise usable video from being assigned and played.
+- Hardened the Windows support collector for stable semantic versions and
+  portable ADB paths, and removed the completed logger-test map fixture.
+
 ## 0.7.0-alpha.12 — Buffered playback, retained menus, and portable builds
 
 - Added bounded GPU-frame read-ahead and Quest-native YUV presentation with

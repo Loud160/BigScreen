@@ -15,6 +15,21 @@ target_compile_features(bigscreen-core-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
 add_test(NAME bigscreen-core-tests COMMAND bigscreen-core-tests)
 
+add_executable(
+    bigscreen-dependency-version-tests
+    DependencyVersionTests.cpp
+    ../src/DependencyVersion.cpp)
+target_compile_features(bigscreen-dependency-version-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-dependency-version-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(
+    NAME bigscreen-dependency-version-tests
+    COMMAND bigscreen-dependency-version-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-dependency-version-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 find_package(Threads REQUIRED)
 add_executable(
     bigscreen-native-logger-tests

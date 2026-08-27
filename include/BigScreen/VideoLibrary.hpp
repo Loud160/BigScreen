@@ -105,6 +105,13 @@ namespace BigScreen {
         bool userOverrideIsImported = false;
         bool userOverrideIsExternal = false;
         std::optional<std::string> activeMapFileName;
+        // A malformed Cinema file belongs to the map, not the downloader or
+        // the user's assigned video. Retain the parser's actionable detail so
+        // the library UI can expose it without preventing a recoverable
+        // mapper URL or an independently assigned local/downloaded video from
+        // playing.
+        std::optional<std::string> mapperMetadataIssue;
+        bool mapperMetadataRecovered = false;
 
         bool CanDownload() const { return downloadUrl.has_value(); }
         bool CanPlay() const { return playableConfig.has_value(); }

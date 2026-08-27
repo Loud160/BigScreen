@@ -24,7 +24,8 @@ namespace BigScreen {
         static ErrorManager& Instance();
 
         /// Creates the persistent, append-only error history before any other
-        /// subsystem loads. Unlike PaperLog, this file survives game restarts.
+        /// subsystem loads. Unlike the per-session general log, this history
+        /// survives game restarts.
         void InitializePersistentLog() noexcept;
         /// Records an expected or handled failure that does not need to count
         /// toward the internal-error circuit breaker.

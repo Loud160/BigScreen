@@ -45,7 +45,15 @@ used before reading any logs.
 
 The resulting `BigScreen-Support-<date>-<time>.zip` is saved beneath
 `BigScreen Support Logs`. Send the complete ZIP when reporting a problem. Its
-`REPORT.txt` separates each source into:
+top-level `DEPENDENCY-DIAGNOSIS.txt` compares Big Screen's declared version
+ranges with the Quest's registered packages and required payload files. Read
+that file first when Big Screen never appeared in the Mods menu: this external
+check still runs when an old, missing, or incomplete dependency prevented
+`libbigscreen.so` from starting its own logger. It names each dependency,
+installed version, required range, and the recommended MBF repair in plain
+language.
+
+The `REPORT.txt` file separates each remaining source into:
 
 - **FRESH** — timestamped inside the selected incident window;
 - **OLDER CONTEXT** — useful for comparison, but not evidence of this crash;
@@ -89,17 +97,29 @@ extracted `adb.exe`. Nothing is installed system-wide: the files live under
 folder. Download progress and every verification/extraction stage remain
 visible so slow machines or connections do not appear to have stalled.
 
-The first-party logger comparison writes Big Screen's current and previous
-general logs to:
+The first-party logger writes Big Screen's current and previous general logs
+to:
 
 - `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.log`
 - `/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/bigscreen-native.previous.log`
 
-Development builds currently also retain Paper2 output under Beat Saber's
-standard mod log folders so both backends can be compared. The support
-collector pulls the Big Screen-owned files first, then any Paper2 candidates
-and Android logcat. Users should run the collector rather than manually decide
-which one file is relevant.
+The support collector pulls the Big Screen-owned files first, then Android
+logcat, tombstones, and optional Paper2 files belonging to other dependencies
+or older Big Screen builds. A stale Paper2 `bigscreen.log` is historical
+context, not evidence that the current Big Screen build still uses Paper2.
+Users should run the collector rather than manually decide which one file is
+relevant.
+
+Big Screen also audits dependency versions exactly once on the first stable
+menu update after Scotland2 finishes loading ordinary mods. Live registered
+mod identities are preferred; QMOD package manifests supply the versions of
+anonymous library-phase dependencies. The successful snapshot is written to
+the normal log. If a dependency is present but older than Big Screen's declared
+minimum, the same plain-language explanation is queued for Beat Saber's
+frontmost stable dialog. Missing dependencies, unreadable package metadata,
+and incompatible future-major versions are logged but do not create that popup.
+A failure severe enough to stop native loading cannot show any Big Screen
+dialog; use `DEPENDENCY-DIAGNOSIS.txt` for that case.
 
 Power benchmark CSV files are separate from the normal mod log:
 
@@ -161,6 +181,22 @@ the Update tab; YouTube sometimes changes video delivery before a stable yt-dlp
 fix is published, and the optional nightly channel may receive that fix first.
 The notice does not mean every failed URL is an updater problem—private,
 restricted, removed, or region-limited videos can still fail independently.
+
+Malformed map Cinema JSON is kept separate from the user's video assignment.
+The Video Library places a red **JSON ERROR** or amber **JSON WARNING** button
+directly on every affected song row. That button opens the complete parser
+explanation without first entering the map's editor. The **JSON ISSUES (x)**
+button at the top of the song list opens a summary naming every affected map.
+If an affected map also has an assigned video, its JSON button appears directly
+to the left of the video thumbnail; the warning does not replace or hide the
+thumbnail.
+Both dialogs belong to the song browser and are kept in front of that panel so
+their message and **OK** button cannot be trapped behind another menu. Big
+Screen safely recovers complete Cinema objects that
+only use supported non-standard syntax such as comments or trailing commas;
+video IDs, timing, placement, and effects remain available. Truncated or
+structurally damaged JSON is not guessed through, but the user can still paste
+a replacement YouTube URL or assign a compatible local video to that map.
 
 Some YouTube clients provide an H.264 tier as fragmented HLS/MPEG-TS rather
 than a normal MP4. After the transfer, **Preparing video for playback** copies

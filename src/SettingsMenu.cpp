@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -111,6 +113,58 @@ namespace BigScreen {
         {
             return std::to_string(fps) + " FPS";
         }
+
+#if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
+        constexpr std::string_view LoggerBackendTestName() noexcept
+        {
+            switch(ActiveLoggerBackendMode)
+            {
+                case LoggerBackendMode::PaperOnly:
+                    return "PAPER";
+                case LoggerBackendMode::NativeOnly:
+                    return "NATIVE";
+                case LoggerBackendMode::Dual:
+                    return "DUAL";
+            }
+            return "INVALID";
+        }
+
+        [[noreturn]] void RunDeliberateLoggerCrashTest() noexcept
+        {
+            const auto token = std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                                   .count();
+            const auto backend = LoggerBackendTestName();
+
+            // Establish a known durable prefix in both active sinks. The three
+            // records after this flush are the actual crash-tail test: no
+            // orderly logger shutdown runs before SIGABRT terminates the game.
+            BigScreenLogger.info(
+                "LOGGER_CRASH_TEST_BEGIN token={} backend={} expected deliberate SIGABRT",
+                token,
+                backend);
+            BigScreenLogger.info(
+                "LOGGER_CRASH_TEST_MULTILINE token={} line=1\nline=2 confirms embedded-newline retention",
+                token);
+            BigScreenLogger.Flush();
+
+            BigScreenLogger.info(
+                "LOGGER_CRASH_TEST_TAIL token={} record=1 severity=INFO",
+                token);
+            BigScreenLogger.warn(
+                "LOGGER_CRASH_TEST_TAIL token={} record=2 severity=WARNING",
+                token);
+            BigScreenLogger.critical(
+                "LOGGER_CRASH_TEST_FINAL token={} record=3 severity=CRITICAL immediate SIGABRT follows",
+                token);
+
+            // This must remain an abrupt process failure. Application::Quit or
+            // an explicit final Flush would test clean shutdown instead of the
+            // final-record retention needed for real native crashes.
+            std::abort();
+        }
+#endif
 
         int PlaybackFpsValue(StringW label)
         {
@@ -287,6 +341,10 @@ namespace BigScreen {
         ytDlpInstallProgressVisible_ = false;
         localVideoInstructionsModal_ = nullptr;
         resetConfirmationModal_ = nullptr;
+#if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
+        loggerCrashTestButton_ = nullptr;
+        loggerCrashTestModal_ = nullptr;
+#endif
         advancedWarningModal_ = nullptr;
         advancedWarningText_ = nullptr;
         undockWarningModal_ = nullptr;
@@ -2642,6 +2700,75 @@ namespace BigScreen {
             DownloadManager::Instance().CurrentYtDlpChannel() == "nightly");
         updaterStatus_ = BSML::Lite::CreateText(updateContainer, "", 2.5f);
         configureUpdateText(updaterStatus_, 8.0f, 1.9f, 2.5f);
+
+#if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
+        auto* loggerTestSpacer = BSML::Lite::CreateText(
+            updateContainer, "", 1.0f, {0.0f, 0.0f}, {48.0f, 2.0f});
+        if(auto* layout = loggerTestSpacer->get_gameObject()
+               ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            layout->set_preferredHeight(2.0f);
+        createUpdateSectionTitle("Logger Validation Build");
+        auto* loggerTestStatus = BSML::Lite::CreateText(
+            updateContainer,
+            "Active backend: " + std::string(LoggerBackendTestName()) +
+                "\nDevelopment control; never included in normal builds.",
+            2.5f);
+        configureUpdateText(loggerTestStatus, 7.0f, 1.9f, 2.5f);
+        loggerCrashTestButton_ = BSML::Lite::CreateUIButton(
+            updateContainer,
+            "TEST LOGGER CRASH",
+            {0.0f, 0.0f},
+            {42.0f, 8.0f},
+            [this]()
+            {
+                if(loggerCrashTestModal_)
+                    ShowModalInFront(loggerCrashTestModal_);
+            });
+        BSML::Lite::SetButtonTextSize(loggerCrashTestButton_, 2.7f);
+        if(auto* label = loggerCrashTestButton_->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            label->set_color({1.0f, 0.28f, 0.28f, 1.0f});
+        BSML::Lite::AddHoverHint(
+            loggerCrashTestButton_,
+            "Development test only. After confirmation, writes identifiable logger records and deliberately crashes Beat Saber.");
+
+        loggerCrashTestModal_ = BSML::Lite::CreateModal(
+            viewController, {72.0f, 42.0f}, nullptr, true);
+        auto* loggerCrashText = BSML::Lite::CreateText(
+            loggerCrashTestModal_,
+            "<b>Deliberately crash Beat Saber?</b>\n\n"
+            "This validation test writes identifiable final records to the active logger backend, then immediately terminates the game. After it closes, leave Beat Saber stopped and collect the support logs before restarting it.\n\n"
+            "Do not continue if another mod or game screen has unsaved changes.",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 3.0f},
+            {66.0f, 29.0f});
+        loggerCrashText->set_enableWordWrapping(true);
+        loggerCrashText->set_enableAutoSizing(true);
+        loggerCrashText->set_fontSizeMin(2.15f);
+        loggerCrashText->set_fontSizeMax(3.0f);
+        loggerCrashText->set_overflowMode(TMPro::TextOverflowModes::Ellipsis);
+        loggerCrashText->set_alignment(TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            loggerCrashTestModal_->get_transform(),
+            "Cancel",
+            {20.0f, -35.0f},
+            {20.0f, 7.0f},
+            [this]()
+            {
+                if(loggerCrashTestModal_)
+                    loggerCrashTestModal_->Hide();
+            });
+        auto* confirmLoggerCrash = BSML::Lite::CreateUIButton(
+            loggerCrashTestModal_->get_transform(),
+            "CRASH NOW",
+            {52.0f, -35.0f},
+            {24.0f, 7.0f},
+            []() { RunDeliberateLoggerCrashTest(); });
+        if(auto* label = confirmLoggerCrash->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+            label->set_color({1.0f, 0.2f, 0.2f, 1.0f});
+#endif
 
         localVideoInstructionsModal_ = BSML::Lite::CreateModal(
             viewController,

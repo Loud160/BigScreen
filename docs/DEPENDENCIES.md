@@ -115,9 +115,14 @@ and retrieves only missing or mismatched packages. The current lock contains:
 QPM resolves the package URLs and integrity metadata recorded in the lockfile.
 Restored build inputs are written beneath the ignored `extern/` directory.
 Runtime mod dependencies remain declared in the generated QMOD manifest.
-Paper2's declared runtime minimum is 4.8.0, matching the library used for the
-native link; 4.6.4 and 4.7.0 lack `paper2_queue_log_bytes_ffi` and must not be
-accepted by an installer.
+Paper2 4.8.0 remains in the resolved build lock only because beatsaber-hook,
+BSML, SongCore, and Custom Types consume Paper headers or runtime logging under
+their own dependency contracts. It is not a direct `qpm.json` dependency and
+does not appear in Big Screen's generated QMOD manifest. The final link removes
+Paper2 from `libbigscreen.so` while a hidden link-time bridge redirects only
+beatsaber-hook abort-helper references originating inside Big Screen to the
+first-party logger. Other shared objects continue using the real Paper2
+library selected by their manifests.
 
 Direct source deployment cannot ask a QMOD manager to resolve packages. After
 the local build has passed, the Windows `scripts/copy.ps1` path and Linux
@@ -126,6 +131,23 @@ inspect the selected Quest's package registrations and payload files. Missing,
 outdated, unregistered, or incomplete shared dependencies stop deployment
 before any Big Screen file changes. Install or update the reported dependency
 through MBF, then rerun the launcher.
+
+At runtime, Big Screen performs one dependency audit on the first stable menu
+update after Scotland2 finishes its late-mod phase. Registered mods use their
+live Scotland2 identity; anonymous library-phase dependencies use the QMOD
+manifest installed for this Beat Saber version. This is startup-only work with
+no polling or ongoing frame-path cost. A dependency that is present but below
+the QMOD's minimum is recorded in plain language and queued as an in-game
+dialog. The audit reads installed dependency manifests, not Big Screen's QMOD
+archive, so direct `.bat`/`.sh` source deployments use the same runtime path.
+An unavailable manifest is diagnostic evidence only: it never blocks startup
+or creates a false downgrade dialog. The direct deployment scripts separately
+require compatible package registrations before copying any Big Screen file.
+If dependency resolution or Android's dynamic linker prevents Big
+Screen from loading at all, no code inside the mod can create that dialog.
+Both support-log launchers therefore generate a top-level
+`DEPENDENCY-DIAGNOSIS.txt` independently from the Quest package registrations
+and payload files.
 
 ## Automatically downloaded toolchains and runtime inputs
 

@@ -203,7 +203,6 @@ namespace BigScreen {
         std::ofstream stream;
         std::size_t currentFileBytes = 0;
         std::chrono::steady_clock::time_point nextOpenAttempt{};
-        std::chrono::steady_clock::time_point lastFlush{};
 
         std::atomic<std::uint64_t> acceptedMessages{0};
         std::atomic<std::uint64_t> fileMessages{0};
@@ -296,7 +295,6 @@ namespace BigScreen {
                     return false;
                 }
                 nextOpenAttempt = {};
-                lastFlush = std::chrono::steady_clock::now();
                 return true;
             }
             catch(...)
@@ -476,7 +474,6 @@ namespace BigScreen {
                 ReportFileFailure("flushing the active log");
                 stream.close();
             }
-            lastFlush = std::chrono::steady_clock::now();
         }
 
         void WriteDroppedNotice(std::uint64_t count) noexcept
@@ -518,7 +515,12 @@ namespace BigScreen {
                     bool shouldStop = false;
                     {
                         std::unique_lock lock(mutex);
-                        wake.wait_for(lock, options.flushInterval, [&]() {
+                        // There is no periodic timer. The worker remains
+                        // asleep while idle and wakes only for real work or a
+                        // lifecycle request. Every completed file batch is
+                        // flushed below, so timed idle flushes would only add
+                        // needless Quest CPU wakeups.
+                        wake.wait(lock, [&]() {
                             return stopping || flushRequested ||
                                    !queue.empty() || droppedSinceNotice > 0;
                         });
@@ -530,14 +532,13 @@ namespace BigScreen {
                     }
 
                     WriteDroppedNotice(droppedNotice);
-                    bool urgent = false;
                     std::uint64_t lastSequence = 0;
+                    bool wroteFileRecord = false;
                     for(const auto& record : batch)
                     {
-                        urgent = urgent ||
-                                 record.severity >= LogSeverity::Error;
                         if(WriteLine(FormatRecord(record)))
                         {
+                            wroteFileRecord = true;
                             fileMessages.fetch_add(
                                 1,
                                 std::memory_order_relaxed);
@@ -546,11 +547,18 @@ namespace BigScreen {
                     }
                     batch.clear();
 
-                    const auto now = std::chrono::steady_clock::now();
-                    const bool periodicFlush =
-                        now - lastFlush >= options.flushInterval;
+                    // Once the writer has consumed a batch, push the C++
+                    // stream buffer into the kernel before acknowledging its
+                    // sequences. This retains the asynchronous producer path
+                    // and does not fsync flash storage, but it removes the
+                    // former window where an abrupt process crash could lose
+                    // records that the writer had already processed. Explicit
+                    // Flush still supplies a bounded completion barrier to
+                    // callers, and shutdown drains the queue before closing.
+                    const bool completedBatch =
+                        wroteFileRecord || droppedNotice > 0;
                     const bool performedFlush =
-                        requestedFlush || urgent || periodicFlush || shouldStop;
+                        completedBatch || requestedFlush || shouldStop;
                     if(performedFlush)
                         FlushStream();
 
@@ -635,9 +643,6 @@ namespace BigScreen {
             options.maxFileBytes = std::max<std::size_t>(
                 options.maxFileBytes,
                 1024u);
-            options.flushInterval = std::max(
-                options.flushInterval,
-                std::chrono::milliseconds(10));
             options.reopenInterval = std::max(
                 options.reopenInterval,
                 std::chrono::milliseconds(100));
@@ -663,7 +668,6 @@ namespace BigScreen {
                 impl_->flushRequested = false;
                 impl_->currentFileBytes = 0;
                 impl_->nextOpenAttempt = {};
-                impl_->lastFlush = std::chrono::steady_clock::now();
                 impl_->ResetStatistics();
                 impl_->initialized = true;
             }

@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.schema.json",
-  "version": "0.7.0-alpha.12",
+  "version": "0.7.0-alpha.13",
   "sharedDir": "shared",
   "dependenciesDir": "extern",
   "info": {
     "name": "Big Screen",
     "id": "bigscreen",
-    "version": "0.7.0-alpha.12",
+    "version": "0.7.0-alpha.13",
     "url": "https://github.com/Loud160/BigScreen",
     "additionalData": {
       "overrideSoName": "libbigscreen.so",
@@ -60,11 +60,6 @@
       "additionalData": {
         "includeQmod": false
       }
-    },
-    {
-      "id": "paper2_scotland2",
-      "versionRange": "^4.8.0",
-      "additionalData": {}
     },
     {
       "id": "bs-cordl",

@@ -17,6 +17,7 @@
 #include <string_view>
 
 #include "rapidjson/document.h"
+#include "rapidjson/error/en.h"
 
 namespace BigScreen {
     namespace {
@@ -243,9 +244,40 @@ namespace BigScreen {
             std::istreambuf_iterator<char>()};
         rapidjson::Document document;
         document.Parse(json.data(), json.size());
-        if(document.HasParseError() || !document.IsObject())
+        if(document.HasParseError())
         {
-            error = "Invalid JSON in " + normalizedMetadata.string();
+            const auto strictError = document.GetParseError();
+            const auto strictOffset = document.GetErrorOffset();
+
+            // Several older PC Cinema maps were published with harmless JSON
+            // extensions accepted by desktop serializers, most commonly a
+            // trailing comma before `}`. Reparse only with RapidJSON's two
+            // explicit compatibility flags. This recovers a complete object;
+            // it never guesses across truncated strings, missing braces, or
+            // arbitrary damaged data.
+            document.Parse<
+                rapidjson::kParseCommentsFlag |
+                rapidjson::kParseTrailingCommasFlag>(
+                    json.data(), json.size());
+            if(document.HasParseError() || !document.IsObject())
+            {
+                error = "Invalid Cinema JSON at byte " +
+                    std::to_string(strictOffset) + ": " +
+                    rapidjson::GetParseError_En(strictError) + " (" +
+                    normalizedMetadata.string() + ")";
+                return std::nullopt;
+            }
+
+            error = "Cinema JSON uses non-standard syntax at byte " +
+                std::to_string(strictOffset) + ": " +
+                rapidjson::GetParseError_En(strictError) +
+                ". Big Screen recovered the supported fields, but the map "
+                "author should correct " + normalizedMetadata.string();
+        }
+        else if(!document.IsObject())
+        {
+            error = "Cinema JSON must contain one object (" +
+                normalizedMetadata.string() + ")";
             return std::nullopt;
         }
 

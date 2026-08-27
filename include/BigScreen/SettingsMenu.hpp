@@ -172,6 +172,10 @@ namespace BigScreen {
         UnityEngine::UI::Button* ytDlpUpdateActionButton_ = nullptr;
         BSML::ModalView* localVideoInstructionsModal_ = nullptr;
         BSML::ModalView* resetConfirmationModal_ = nullptr;
+#if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
+        UnityEngine::UI::Button* loggerCrashTestButton_ = nullptr;
+        BSML::ModalView* loggerCrashTestModal_ = nullptr;
+#endif
         BSML::ModalView* advancedWarningModal_ = nullptr;
         TMPro::TextMeshProUGUI* advancedWarningText_ = nullptr;
         BSML::ModalView* undockWarningModal_ = nullptr;

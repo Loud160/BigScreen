@@ -180,6 +180,14 @@ namespace BigScreen {
         };
         std::unordered_map<std::string, RowVideoThumbnail> RowVideoThumbnails;
 
+        struct RowMapperMetadataIssue {
+            bool recovered = false;
+        };
+        std::unordered_map<std::string, RowMapperMetadataIssue>
+            RowMapperMetadataIssues;
+        constexpr std::string_view MapperMetadataRowButtonName =
+            "BigScreenMapperMetadataIssueButton";
+
         /// Supplies the timing values that a Video Library download should
         /// inherit. A playable user/mapper assignment is authoritative while
         /// it exists. With no MP4 present, retain the mapper's Cinema timing
@@ -689,6 +697,7 @@ namespace BigScreen {
         VideoThumbnailSprites.clear();
         FailedVideoThumbnailLoads.clear();
         RowVideoThumbnails.clear();
+        RowMapperMetadataIssues.clear();
         VideoThumbnailUseCounter = 0;
         try
         {
@@ -729,8 +738,36 @@ namespace BigScreen {
         browserRoot->set_childForceExpandWidth(true);
         StretchToPanel(browserRoot->get_rectTransform());
 
-        browserTitle_ = BSML::Lite::CreateText(browserRoot, "Video Library", 4.8f);
-        ConfigureLayout(browserTitle_, -1.0f, 5.8f, 1.0f);
+        auto* browserTitleRow = BSML::Lite::CreateHorizontalLayoutGroup(browserRoot);
+        ConfigureGroup(browserTitleRow);
+        browserTitleRow->set_spacing(0.7f);
+        ConfigureLayout(browserTitleRow, 54.0f, 5.8f, 1.0f);
+        browserTitle_ = BSML::Lite::CreateText(
+            browserTitleRow, "Video Library", 4.8f);
+        ConfigureLayout(browserTitle_, 0.0f, 5.8f, 1.0f);
+        browserMetadataErrorButton_ = BSML::Lite::CreateUIButton(
+            browserTitleRow,
+            "<color=#FF4B4B>JSON ERRORS</color>",
+            {0.0f, 0.0f},
+            {18.5f, 5.7f},
+            [this]() { ShowBrowserMapperMetadataIssues(); });
+        ConfigureLayout(browserMetadataErrorButton_, 18.5f, 5.7f, 0.0f);
+        SetBrightButtonLabel(browserMetadataErrorButton_, 2.1f);
+        if(auto* errorText = browserMetadataErrorButton_->get_gameObject()
+               ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+        {
+            errorText->set_richText(true);
+            errorText->set_enableWordWrapping(false);
+            errorText->set_enableAutoSizing(true);
+            errorText->set_fontSizeMin(1.65f);
+            errorText->set_fontSizeMax(2.1f);
+            errorText->set_overflowMode(TMPro::TextOverflowModes::Masking);
+            errorText->set_maxVisibleLines(1);
+        }
+        BSML::Lite::AddHoverHint(
+            browserMetadataErrorButton_,
+            "Lists every installed map whose Cinema JSON has a parsing problem.");
+        browserMetadataErrorButton_->get_gameObject()->SetActive(false);
         browserStorage_ = BSML::Lite::CreateText(browserRoot, "", 2.35f);
         ConfigureLayout(browserStorage_, -1.0f, 3.8f, 1.0f);
         searchInput_ = BSML::Lite::CreateStringSetting(
@@ -831,10 +868,11 @@ namespace BigScreen {
         {
             list_->set_listStyle(BSML::CustomListTableData::ListStyle::List);
             list_->expandCell = false;
-            // Alphabet rail + spacing + 42-unit list matches the full-width
-            // filter control above. The list's own right edge still contains
-            // Beat Saber's native scrollbar and page arrows.
-            ConfigureLayout(list_, 42.0f, 50.0f, 0.0f, 1.0f);
+            // Alphabet rail + spacing + 45.5-unit list uses the available
+            // panel width without pushing the native right-edge scrollbar or
+            // page arrows outside the browser panel. The extra row width lets
+            // a metadata warning and assigned-video thumbnail coexist.
+            ConfigureLayout(list_, 45.5f, 50.0f, 0.0f, 1.0f);
             if(list_->tableView)
             {
                 // The browser controller is disabled while its child editor
@@ -872,6 +910,34 @@ namespace BigScreen {
                         })));
             }
         }
+
+        // This shared modal belongs to the song browser itself. Both the
+        // summary action and the per-row JSON buttons present through it, so
+        // ShowModalInFront can keep the visible surface and its input blocker
+        // above the same controller that received the click.
+        browserMetadataModal_ = BSML::Lite::CreateModal(
+            browserController, {78.0f, 50.0f}, nullptr, true);
+        browserMetadataModalText_ = BSML::Lite::CreateText(
+            browserMetadataModal_, "", TMPro::FontStyles::Normal, 3.0f,
+            {0.0f, 3.0f}, {72.0f, 38.0f});
+        browserMetadataModalText_->set_enableWordWrapping(true);
+        browserMetadataModalText_->set_enableAutoSizing(true);
+        browserMetadataModalText_->set_fontSizeMin(1.7f);
+        browserMetadataModalText_->set_fontSizeMax(3.0f);
+        browserMetadataModalText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        browserMetadataModalText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            browserMetadataModal_->get_transform(),
+            "OK",
+            {39.0f, -42.0f},
+            {20.0f, 7.0f},
+            [this]()
+            {
+                if(browserMetadataModal_)
+                    browserMetadataModal_->Hide();
+            });
 
         auto* editorRoot = BSML::Lite::CreateVerticalLayoutGroup(editorController);
         ConfigureGroup(editorRoot);
@@ -974,6 +1040,7 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             searchYouTubeButton_,
             "Opens YouTube in the Quest browser and searches for this song and artist.");
+
         auto* titleBottomSpacer = BSML::Lite::CreateText(editorBody, "", 1.0f);
         ConfigureLayout(titleBottomSpacer, -1.0f, 0.3f, 1.0f);
 
@@ -2122,6 +2189,8 @@ namespace BigScreen {
         if(!list_) return;
         list_->data->Clear();
         RowVideoThumbnails.clear();
+        RowMapperMetadataIssues.clear();
+        std::size_t mapperMetadataIssueCount = 0;
         const auto query = Lower(search_);
         for(auto& item : catalog_)
         {
@@ -2130,13 +2199,21 @@ namespace BigScreen {
             const auto author = level->songAuthorName
                 ? std::string(level->songAuthorName) : std::string{};
             const auto descriptor = VideoLibrary::Instance().Describe(level);
+            if(descriptor.mapperMetadataIssue)
+                ++mapperMetadataIssueCount;
             if(!MatchesFilter(filter_, item, descriptor) ||
                (!query.empty() && Lower(name + " " + author).find(query) == std::string::npos))
                 continue;
             visible_.push_back(&item);
-            const std::string videoState = descriptor.hasUserOverride ? "User video" :
+            std::string videoState = descriptor.hasUserOverride ? "User video" :
                 descriptor.CanPlay() ? "Video ready" :
                 descriptor.CanDownload() ? "Download available" : "No video";
+            if(descriptor.mapperMetadataIssue)
+            {
+                videoState = descriptor.mapperMetadataRecovered
+                    ? "JSON warning | " + videoState
+                    : "JSON error | select for details";
+            }
 
             UnityEngine::Sprite* videoThumbnail = nullptr;
             if(level->levelID)
@@ -2145,6 +2222,11 @@ namespace BigScreen {
                     descriptor.CanPlay() || descriptor.CanDownload(),
                     descriptor.downloadUrl,
                     descriptor.thumbnailPath};
+                if(descriptor.mapperMetadataIssue)
+                {
+                    RowMapperMetadataIssues[std::string(level->levelID)] = {
+                        descriptor.mapperMetadataRecovered};
+                }
             }
             if((descriptor.CanPlay() || descriptor.CanDownload()) &&
                descriptor.thumbnailPath)
@@ -2159,6 +2241,19 @@ namespace BigScreen {
         }
         if(browserTitle_)
             browserTitle_->set_text("Video Library");
+        if(browserMetadataErrorButton_)
+        {
+            browserMetadataErrorButton_->get_gameObject()->SetActive(
+                mapperMetadataIssueCount > 0);
+            if(mapperMetadataIssueCount > 0)
+            {
+                BSML::Lite::SetButtonText(
+                    browserMetadataErrorButton_,
+                    "<color=#FF4B4B>JSON ISSUES (" +
+                        std::to_string(mapperMetadataIssueCount) +
+                        ")</color>");
+            }
+        }
         if(browserStorage_)
             browserStorage_->set_text(BrowserSummary(
                 DistinctSongCount(visible_),
@@ -2770,9 +2865,110 @@ namespace BigScreen {
         StartSelectedPreview();
         RefreshDetails();
         RefreshPlaybackControls();
-        PublishEditorNotice(descriptor.mapperDefinition
-            ? "Mapper video settings refreshed."
-            : "This song has no Cinema mapper settings.");
+        PublishEditorNotice(descriptor.mapperMetadataIssue
+            ? (descriptor.mapperMetadataRecovered
+                ? "Mapper settings were recovered with a Cinema JSON warning."
+                : "Cinema JSON could not be read. Return to the song list and use its JSON ERROR button for details.")
+            : descriptor.mapperDefinition
+                ? "Mapper video settings refreshed."
+                : "This song has no Cinema mapper settings.");
+    }
+
+    void VideoLibraryMenu::ShowBrowserMapperMetadataIssues()
+    {
+        std::ostringstream message;
+        std::size_t issueCount = 0;
+        for(const auto& item : catalog_)
+        {
+            if(!item.level)
+                continue;
+            const auto descriptor =
+                VideoLibrary::Instance().Describe(item.level);
+            if(!descriptor.mapperMetadataIssue)
+                continue;
+
+            ++issueCount;
+            if(message.tellp() == 0)
+                message << "Maps with Cinema JSON problems:\n\n";
+            else
+                message << "\n";
+            message << "• " << (item.level->songName
+                    ? std::string(item.level->songName)
+                    : std::string("Unknown Song"))
+                << (descriptor.mapperMetadataRecovered
+                    ? " — recovered warning"
+                    : " — JSON error");
+        }
+
+        if(issueCount == 0)
+            return;
+        message << "\n\nUse the red or amber button on a song row for that "
+                   "map's complete parser explanation.";
+        PresentBrowserMetadataDialog(
+            "Cinema JSON issues (" + std::to_string(issueCount) + ")",
+            message.str());
+    }
+
+    void VideoLibraryMenu::ShowMapperMetadataIssueForRow(int row)
+    {
+        if(row < 0 || row >= static_cast<int>(visible_.size()) ||
+           !visible_[row])
+            return;
+        ShowMapperMetadataIssue(visible_[row]->level);
+    }
+
+    void VideoLibraryMenu::ShowMapperMetadataIssue(
+        GlobalNamespace::BeatmapLevel* level)
+    {
+        if(!level)
+            return;
+        const auto descriptor = VideoLibrary::Instance().Describe(level);
+        if(!descriptor.mapperMetadataIssue)
+            return;
+
+        const std::string songName = level->songName
+            ? std::string(level->songName)
+            : std::string("Unknown Song");
+
+        if(descriptor.mapperMetadataRecovered)
+        {
+            PresentBrowserMetadataDialog(
+                "Cinema JSON recovered",
+                "<b>" + songName + "</b>\n\n"
+                "This map's Cinema file is not strict JSON, but Big Screen "
+                "recovered its supported video, timing, and presentation "
+                "fields. Video download and playback can continue. The map "
+                "author should still correct the file.\n\n" +
+                *descriptor.mapperMetadataIssue);
+        }
+        else
+        {
+            PresentBrowserMetadataDialog(
+                "Cinema JSON could not be read",
+                "<b>" + songName + "</b>\n\n"
+                "Big Screen could not safely recover this map's Cinema "
+                "settings. Mapper-authored timing and placement cannot be "
+                "used, but you can still paste another YouTube link or assign "
+                "a compatible local video for this map.\n\n" +
+                *descriptor.mapperMetadataIssue);
+        }
+    }
+
+    void VideoLibraryMenu::PresentBrowserMetadataDialog(
+        std::string title,
+        std::string detail)
+    {
+        if(!browserMetadataModal_ || !browserMetadataModalText_)
+        {
+            // Retain an actionable explanation if the browser hierarchy was
+            // replaced unexpectedly. Normal Video Library actions never use
+            // this fallback; their live controller owns the modal above.
+            ErrorManager::Instance().ReportUserVisible(title, detail);
+            return;
+        }
+        browserMetadataModalText_->set_text(
+            "<b>" + std::move(title) + "</b>\n\n" + std::move(detail));
+        ShowModalInFront(browserMetadataModal_);
     }
 
     void VideoLibraryMenu::SearchSelectedSongOnYouTube()
@@ -3246,7 +3442,77 @@ namespace BigScreen {
             const auto metadata = RowVideoThumbnails.find(levelId);
             const bool hasVideo = metadata != RowVideoThumbnails.end() &&
                 metadata->second.hasVideo;
+            const auto issueMetadata = RowMapperMetadataIssues.find(levelId);
+            const bool hasMetadataIssue =
+                issueMetadata != RowMapperMetadataIssues.end();
             auto coverImage = levelCell->__cordl_internal_get__coverImage();
+
+            auto issueButtonTransform = levelCell->get_transform()->Find(
+                StringW(MapperMetadataRowButtonName));
+            auto* issueButton = issueButtonTransform
+                ? issueButtonTransform->get_gameObject()
+                    ->GetComponent<UnityEngine::UI::Button*>()
+                : nullptr;
+            if(!issueButton)
+            {
+                // LevelListTableCells are virtualized and reused. One child
+                // button follows the cell's current idx, so no per-song Unity
+                // object is created even for libraries containing thousands of
+                // maps. Refreshing a recycled cell only changes visibility and
+                // label; the callback resolves the row at click time.
+                issueButton = BSML::Lite::CreateUIButton(
+                    levelCell->get_transform(),
+                    "JSON ERROR",
+                    {0.0f, 0.0f},
+                    {11.8f, 5.2f},
+                    [this, levelCell]() mutable
+                    {
+                        if(UnityW<GlobalNamespace::LevelListTableCell>::isAlive(
+                               levelCell))
+                            ShowMapperMetadataIssueForRow(levelCell->get_idx());
+                    });
+                issueButton->get_gameObject()->set_name(
+                    StringW(MapperMetadataRowButtonName));
+                auto issueRect = issueButton->get_transform()
+                    .cast<UnityEngine::RectTransform>();
+                issueRect->set_anchorMin({1.0f, 0.5f});
+                issueRect->set_anchorMax({1.0f, 0.5f});
+                issueRect->set_pivot({1.0f, 0.5f});
+                issueRect->set_anchoredPosition({-0.4f, 0.0f});
+                issueRect->set_sizeDelta({11.8f, 5.2f});
+                issueRect->SetAsLastSibling();
+                SetBrightButtonLabel(issueButton, 1.7f);
+                if(auto* issueText = issueButton->get_gameObject()
+                       ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
+                {
+                    issueText->set_richText(true);
+                    issueText->set_enableWordWrapping(false);
+                    issueText->set_overflowMode(
+                        TMPro::TextOverflowModes::Masking);
+                    issueText->set_maxVisibleLines(1);
+                }
+                BSML::Lite::AddHoverHint(
+                    issueButton,
+                    "Shows what is wrong with this map's Cinema JSON.");
+            }
+            issueButton->get_gameObject()->SetActive(hasMetadataIssue);
+            if(hasMetadataIssue)
+            {
+                // Preserve the thumbnail at the row's right edge. When both
+                // indicators exist, place the JSON button immediately to its
+                // left; virtualized cells must update this on every reuse.
+                auto issueRect = issueButton->get_transform()
+                    .cast<UnityEngine::RectTransform>();
+                issueRect->set_anchoredPosition({
+                    hasVideo ? -8.8f : -0.4f,
+                    0.0f});
+                issueRect->SetAsLastSibling();
+                BSML::Lite::SetButtonText(
+                    issueButton,
+                    issueMetadata->second.recovered
+                        ? "<color=#FFB52E>JSON WARNING</color>"
+                        : "<color=#FF4B4B>JSON ERROR</color>");
+            }
 
             // Reused Beat Saber cells may still contain the icon from a prior
             // row. Hide that image object completely for songs without video,
@@ -3265,6 +3531,11 @@ namespace BigScreen {
                     BSML::Utilities::ImageResources::GetBlankSprite());
                 coverImage->set_color({1.0f, 1.0f, 1.0f, 0.0f});
             }
+            const float rowTextRightInset =
+                hasMetadataIssue && hasVideo ? -22.5f :
+                hasMetadataIssue ? -14.0f :
+                hasVideo ? -11.0f :
+                -2.0f;
             if(auto nameText = levelCell->__cordl_internal_get__songNameText())
             {
                 // CustomListTableData normally assigns text only when HMUI
@@ -3280,7 +3551,7 @@ namespace BigScreen {
                 rect->set_anchorMax({1.0f, 0.5f});
                 rect->set_pivot({0.0f, 0.5f});
                 rect->set_anchoredPosition({1.2f, 1.7f});
-                rect->set_sizeDelta({hasVideo ? -11.0f : -2.0f, 3.5f});
+                rect->set_sizeDelta({rowTextRightInset, 3.5f});
             }
             if(auto authorText = levelCell->__cordl_internal_get__songAuthorText())
             {
@@ -3291,7 +3562,7 @@ namespace BigScreen {
                 rect->set_anchorMax({1.0f, 0.5f});
                 rect->set_pivot({0.0f, 0.5f});
                 rect->set_anchoredPosition({1.2f, -1.8f});
-                rect->set_sizeDelta({hasVideo ? -11.0f : -2.0f, 3.0f});
+                rect->set_sizeDelta({rowTextRightInset, 3.0f});
             }
 
             if(!hasVideo || !metadata->second.path)

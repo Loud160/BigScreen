@@ -273,12 +273,22 @@ only during gameplay teardown. Unsupported Quest fuel-gauge properties remain
 empty optionals all the way to disk, preventing unavailable readings from being
 mistaken for zero consumption.
 
+Shared dependency diagnosis is deliberately outside every recurring runtime
+path. Scotland2's already-loaded package versions are inspected once at the
+start of `late_load`, before Big Screen calls BSML, SongCore, or Custom Types.
+Compatible versions produce one compact version snapshot in the log. A present
+version below Big Screen's declared minimum produces a plain-language error
+and queues the existing frontmost Beat Saber dialog; other mismatch classes
+remain log-only. If Android or Scotland2 rejects the dependency chain before
+`libbigscreen.so` reaches `setup`, an in-process logger or dialog is impossible.
+The Windows and Linux support collectors independently re-evaluate package
+registrations and payload files and write `DEPENDENCY-DIAGNOSIS.txt` for that
+hard-failure boundary.
+
 General logging also has a strict real-time boundary. Every call site targets
-the project-owned `BigScreenLogger` facade, which formats a record once and can
-route it to Paper2, Big Screen's native backend, or both through an internal
-build option. The current development default is dual delivery so the new
-implementation can be compared without removing the established diagnostic
-path. This is not a player-facing setting.
+the project-owned `BigScreenLogger` facade, which formats a record once and
+routes it to Big Screen's private native backend. Paper2 may remain loaded for
+other shared dependencies, but Big Screen neither initializes nor calls it.
 
 The native backend writes logcat directly only when Paper is not already doing
 so, then moves file work to one owned writer thread. Producers take a short
@@ -288,8 +298,14 @@ may evict older lower-severity records under pressure. Dropped records are
 counted and summarized by the writer rather than recursively logging a logger
 failure. The active general log is limited to 5 MiB with one previous 5 MiB
 rotation. File failures leave logcat available and are retried after a bounded
-backoff. Critical errors request a short bounded flush, while the synchronous
-`error-history.log` remains the durable path for user-visible failures.
+backoff. Every completed writer batch is flushed from the C++ stream into the
+OS before its sequences are acknowledged; this is deliberately not an
+`fsync()`, so it improves abrupt-process crash-tail retention without forcing
+Quest flash storage for every batch. The writer has no periodic idle timer: it
+blocks until a record, explicit flush, dropped-record notice, or shutdown gives
+it work. Critical errors request a short bounded completion barrier, while the
+synchronous `error-history.log` remains the durable path for user-visible
+failures.
 
 The writer is joinable and its state has process lifetime. Reinitialization
 first stops and joins the old writer; shutdown stops acceptance, drains queued

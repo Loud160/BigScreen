@@ -27,11 +27,22 @@ function ConvertTo-BigScreenSemanticVersion([string]$Text) {
     if ($value -notmatch '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?<prerelease>[0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$') {
         throw "Unsupported semantic version '$Text'."
     }
+    # PowerShell omits an unmatched optional named capture from $Matches.
+    # Property-style access to that missing key throws under StrictMode, which
+    # is enabled by the support collector. Indexing a verified key keeps stable
+    # releases (the common case) valid in both interactive deployment and the
+    # stricter support-log path.
+    $prerelease = if ($Matches.ContainsKey("prerelease")) {
+        [string]$Matches["prerelease"]
+    }
+    else {
+        ""
+    }
     return [pscustomobject]@{
         Major = [UInt64]$Matches.major
         Minor = [UInt64]$Matches.minor
         Patch = [UInt64]$Matches.patch
-        Prerelease = [string]$Matches.prerelease
+        Prerelease = $prerelease
         Original = $Text
     }
 }
@@ -102,7 +113,8 @@ function Get-BigScreenDependencyRequirements([string]$ManifestPath) {
 function Invoke-BigScreenDependencyAdb {
     param(
         [Parameter(Mandatory=$true)][string[]]$Arguments,
-        [switch]$AllowFailure
+        [switch]$AllowFailure,
+        [string]$AdbCommand = "adb"
     )
     if ([string]::IsNullOrWhiteSpace($env:ANDROID_SERIAL)) {
         throw "No Quest serial was selected before the dependency check."
@@ -110,7 +122,7 @@ function Invoke-BigScreenDependencyAdb {
     $previous = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $output = & adb -s $env:ANDROID_SERIAL @Arguments 2>&1
+        $output = & $AdbCommand -s $env:ANDROID_SERIAL @Arguments 2>&1
         $code = $LASTEXITCODE
     }
     finally {
@@ -134,31 +146,40 @@ function Assert-BigScreenDependencyRemotePath([string]$Path) {
     }
 }
 
-function Test-BigScreenDependencyRemoteFile([string]$Path) {
+function Test-BigScreenDependencyRemoteFile(
+    [string]$Path,
+    [string]$AdbCommand = "adb") {
     Assert-BigScreenDependencyRemotePath $Path
-    $result = Invoke-BigScreenDependencyAdb @("shell", "test -f '$Path'") -AllowFailure
+    $result = Invoke-BigScreenDependencyAdb `
+        @("shell", "test -f '$Path'") -AllowFailure -AdbCommand $AdbCommand
     if ($result.ExitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($result.Text)) {
         throw "ADB could not inspect Quest dependency file $Path.`n$($result.Text)"
     }
     return $result.ExitCode -eq 0
 }
 
-function Get-BigScreenQuestDependencyPackages([string]$GameVersion) {
+function Get-BigScreenQuestDependencyPackages(
+    [string]$GameVersion,
+    [string]$AdbCommand = "adb") {
     if ($GameVersion -notmatch '^[0-9A-Za-z._-]+$') {
         throw "Unsafe Beat Saber package version: $GameVersion"
     }
     $modData = "/sdcard/ModData/com.beatgames.beatsaber"
     $packageRoot = "$modData/Packages/$GameVersion"
-    $rootProbe = Invoke-BigScreenDependencyAdb @("shell", "test -d '$packageRoot'") -AllowFailure
+    $rootProbe = Invoke-BigScreenDependencyAdb `
+        @("shell", "test -d '$packageRoot'") -AllowFailure `
+        -AdbCommand $AdbCommand
     if ($rootProbe.ExitCode -ne 0) { return @() }
     $listing = Invoke-BigScreenDependencyAdb @(
-        "shell", "find '$packageRoot' -type f -name mod.json -print 2>/dev/null")
+        "shell", "find '$packageRoot' -type f -name mod.json -print 2>/dev/null") `
+        -AdbCommand $AdbCommand
     $packages = @()
     foreach ($manifestPath in ($listing.Text -split "`r?`n")) {
         $manifestPath = $manifestPath.Trim()
         if (-not $manifestPath) { continue }
         Assert-BigScreenDependencyRemotePath $manifestPath
-        $raw = Invoke-BigScreenDependencyAdb @("exec-out", "cat", $manifestPath)
+        $raw = Invoke-BigScreenDependencyAdb `
+            @("exec-out", "cat", $manifestPath) -AdbCommand $AdbCommand
         try {
             $manifest = $raw.Text | ConvertFrom-Json -ErrorAction Stop
         }
@@ -197,7 +218,7 @@ function Get-BigScreenQuestDependencyPackages([string]$GameVersion) {
             }
         }
         $missingFiles = @($requiredFiles | Sort-Object -Unique | Where-Object {
-            -not (Test-BigScreenDependencyRemoteFile $_)
+            -not (Test-BigScreenDependencyRemoteFile $_ $AdbCommand)
         })
         $packages += [pscustomobject]@{
             Id = $id
@@ -255,13 +276,52 @@ function Get-BigScreenDependencyStatuses($Requirements, $Packages) {
     return @($statuses)
 }
 
+function Get-BigScreenDependencyDiagnosticReport($Requirements, $Packages) {
+    $statuses = @(Get-BigScreenDependencyStatuses $Requirements $Packages)
+    $failures = @($statuses | Where-Object { -not $_.Satisfied })
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("BIG SCREEN DEPENDENCY DIAGNOSIS")
+    $lines.Add("================================")
+    $lines.Add("")
+    if ($failures.Count -eq 0) {
+        $lines.Add("RESULT: All dependencies declared by this Big Screen build are registered, compatible, and complete.")
+    }
+    else {
+        $lines.Add("RESULT: Big Screen may have been prevented from loading by the dependency problem(s) below.")
+    }
+    $lines.Add("")
+    foreach ($status in $statuses) {
+        if ($status.Satisfied) {
+            $lines.Add(("OK: {0} {1} satisfies required range {2}." -f
+                $status.Id, $status.InstalledVersion, $status.VersionRange))
+        }
+        else {
+            $lines.Add(("PROBLEM: {0} requires {1}; {2}." -f
+                $status.Id, $status.VersionRange, $status.Message))
+        }
+    }
+    if ($failures.Count -gt 0) {
+        $lines.Add("")
+        $lines.Add("Recommended action: Open ModsBeforeFriday and update or reinstall the dependencies marked PROBLEM. Do not replace one shared library manually because other mods may depend on it too.")
+    }
+    $lines.Add("")
+    $lines.Add("This snapshot is produced by the external support collector. It remains available even when Big Screen could not start its own logger or show an in-game popup.")
+    return [pscustomobject]@{
+        Text = (($lines -join "`r`n") + "`r`n")
+        HasFailures = $failures.Count -gt 0
+        Statuses = [object[]]$statuses
+    }
+}
+
 function Assert-BigScreenQuestDependencies(
     [string]$ManifestPath,
-    [string]$GameVersion) {
+    [string]$GameVersion,
+    [string]$AdbCommand = "adb") {
     Write-Output ""
     Write-Output "Checking required Quest mod dependencies before building or deploying Big Screen..."
     $requirements = @(Get-BigScreenDependencyRequirements $ManifestPath)
-    $packages = @(Get-BigScreenQuestDependencyPackages $GameVersion)
+    $packages = @(Get-BigScreenQuestDependencyPackages `
+        $GameVersion -AdbCommand $AdbCommand)
     $statuses = @(Get-BigScreenDependencyStatuses $requirements $packages)
     foreach ($status in $statuses | Where-Object Satisfied) {
         Write-Host ("  OK  {0} {1} (requires {2})" -f

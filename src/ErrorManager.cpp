@@ -268,8 +268,9 @@ namespace BigScreen {
         }
         catch(const std::exception& exception)
         {
-            // PaperLog is the only remaining sink if external storage is not
-            // writable. Never let diagnostics prevent the mod from starting.
+            // The general native logger still mirrors to logcat if Big
+            // Screen's external-storage files are unavailable. Never let
+            // diagnostics prevent the mod from starting.
             BigScreen::BigScreenLogger.error(
                 "Could not initialize persistent Big Screen error history: {}",
                 exception.what());

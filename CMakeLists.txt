@@ -81,6 +81,13 @@ endif()
 
 add_compile_definitions(MOD_ID="${CMAKE_PROJECT_NAME}")
 add_compile_definitions(VERSION="${PACKAGE_VERSION}")
+# Runtime dependency diagnostics inspect the package manifests installed by
+# MBF/QuestPatcher for the exact Beat Saber build this binary targets. Derive
+# that directory from the tracked QMOD template instead of embedding a second
+# manually maintained game-version string in C++.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/mod.template.json BIGSCREEN_MOD_TEMPLATE)
+string(JSON BIGSCREEN_GAME_VERSION GET ${BIGSCREEN_MOD_TEMPLATE} packageVersion)
+add_compile_definitions(BIGSCREEN_GAME_VERSION="${BIGSCREEN_GAME_VERSION}")
 
 # Set COMPILE_ID for qpm purposes
 set(COMPILE_ID ${CMAKE_PROJECT_NAME})
@@ -176,28 +183,27 @@ option(BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM=$<BOOL:${BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM}>)
 
-# Keep Paper2 and the first-party logger independently selectable while the
-# replacement is benchmarked on Quest. DUAL is the development default so one
-# session produces directly comparable Paper2 and Big Screen-owned files. A
-# PAPER or NATIVE build removes the inactive runtime calls, which is required
-# for honest CPU/latency measurements.
-set(BIGSCREEN_LOGGER_MODE "DUAL" CACHE STRING
-        "General logger backend: PAPER, NATIVE, or DUAL")
-set_property(CACHE BIGSCREEN_LOGGER_MODE PROPERTY STRINGS PAPER NATIVE DUAL)
-string(TOUPPER "${BIGSCREEN_LOGGER_MODE}" BIGSCREEN_LOGGER_MODE_UPPER)
-if(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "PAPER")
-        set(BIGSCREEN_LOGGER_MODE_VALUE 0)
-elseif(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "NATIVE")
-        set(BIGSCREEN_LOGGER_MODE_VALUE 1)
-elseif(BIGSCREEN_LOGGER_MODE_UPPER STREQUAL "DUAL")
-        set(BIGSCREEN_LOGGER_MODE_VALUE 2)
-else()
-        message(FATAL_ERROR
-                "BIGSCREEN_LOGGER_MODE must be PAPER, NATIVE, or DUAL")
-endif()
+# beatsaber-hook's inline abort helpers currently issue two Paper2 C-ABI calls.
+# Redirect just libbigscreen.so's references to a hidden first-party bridge,
+# then remove QPM's transitive Paper library link in the deferred dependency
+# setup. Other mods keep using the real Paper2 supplied for their own declared
+# dependencies; Big Screen neither exports replacement symbols nor interposes
+# on calls made by another shared object.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+        "-Wl,--wrap=paper2_queue_log_bytes_ffi"
+        "-Wl,--wrap=paper2_wait_for_flush")
+
+# Deliberately crashing Beat Saber is useful only while validating the private
+# logger's crash-tail persistence. Keep the control absent from every ordinary
+# build; a developer must opt into a dedicated validation package explicitly.
+option(BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
+        "Expose the development-only logger crash validation control" OFF)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-        BIGSCREEN_LOGGER_MODE=${BIGSCREEN_LOGGER_MODE_VALUE})
-message(STATUS "Big Screen logger comparison mode: ${BIGSCREEN_LOGGER_MODE_UPPER}")
+        BIGSCREEN_ENABLE_LOGGER_CRASH_TEST=$<BOOL:${BIGSCREEN_ENABLE_LOGGER_CRASH_TEST}>)
+if(BIGSCREEN_ENABLE_LOGGER_CRASH_TEST)
+        message(WARNING
+                "LOGGER CRASH TEST CONTROL ENABLED: this build can deliberately abort Beat Saber")
+endif()
 
 # The ordinary Unity unlit shader writes opaque video alpha into Beat Saber's
 # main render target. Beat Saber's post-processing interprets that alpha as an

@@ -1,7 +1,7 @@
 # Paper2-Independent Logging Plan
 
-Status: implementation and dual-backend comparison in progress on
-`codex/first-party-logger`; Paper2 has not yet been removed
+Status: native logger cutover completed on `codex/first-party-logger`; Big
+Screen's direct Paper2 dependency has been removed
 
 Last reviewed: August 26, 2026
 
@@ -12,18 +12,19 @@ logging dependency with a small first-party logger, what that logger must do,
 and how the migration should be implemented and verified without weakening
 crash diagnostics or affecting video performance.
 
-This remains the migration and verification record. The first-party backend is
-now implemented, but Paper2 deliberately remains packaged while both sinks are
-compared on Quest. Its removal is gated on the on-device matrix below.
+This remains the migration and verification record. Big Screen now emits only
+through its first-party backend and no longer declares, links, initializes, or
+globally intercepts Paper2. Paper2 can still appear in the QPM restored lock
+and on the headset because beatsaber-hook, BSML, SongCore, and Custom Types use
+it independently.
 
 ## Current implementation checkpoint
 
-All Big Screen call sites now use one `BigScreenLogger` facade. An internal
-build mode selects Paper-only, native-only, or dual delivery; ordinary
-development builds currently default to dual. The message is formatted once,
-then the same severity, source location, and text are handed to both backends.
-This keeps the comparison about backend overhead and reliability rather than
-different formatting work.
+All Big Screen call sites use one `BigScreenLogger` facade backed only by the
+first-party native logger. The earlier Paper-only/native-only/dual comparison
+modes were removed after the dual and native-only tests described below. This
+prevents a later build option or stale environment variable from accidentally
+restoring Big Screen's Paper dependency.
 
 The native backend currently provides:
 
@@ -31,7 +32,8 @@ The native backend currently provides:
 - one owned asynchronous writer thread and no detached workers;
 - a 1 MiB/2,048-record ordinary queue with a reserved warning/error margin;
 - a 5 MiB active log and one 5 MiB previous rotation;
-- a 250 ms normal flush interval and bounded critical-error flush request;
+- immediate completed-batch flushing into the OS, no periodic idle wakeup,
+  and a bounded critical-error completion request;
 - retry after directory/open/write failures while logcat remains available;
 - dropped-record accounting and a later warning summary;
 - source filename, line, severity, timestamp, and producer-thread identity;
@@ -51,11 +53,40 @@ Paper2 files while Beat Saber was still running, and both contained the same
 complete Big Screen event set through the same final message. The native file
 also contained its own session header and preserved one embedded newline as a
 multiline record, while Paper2 prefixed the resulting lines separately. No
-native dropped-record or file-failure marker was present. Clean shutdown,
-forced-crash tail retention, native-only performance, and Paper-free packaging
-remain part of the matrix below.
+native dropped-record or file-failure marker was present. A host test now also
+verifies that an ordinary record is readable before explicit flush or shutdown,
+proving completed-batch crash-tail persistence without relying on a periodic
+timer. A controlled dual-backend crash test on August 26, 2026 then confirmed
+that both sinks retained the identical multiline baseline, INFO tail, WARNING
+tail, and final CRITICAL record immediately before the deliberate `SIGABRT`.
+Android logcat and the Quest tombstone independently confirmed that the abort
+originated in Big Screen's test harness. A subsequent native-only build was
+tested through normal menu and video-preview use, then the same deliberate
+crash harness. Its unique crash-tail token appeared in the first-party log and
+not in Paper logs, with no native dropped-record or write-failure marker. The
+installed ELF matched the tested build, contained no Paper2 `DT_NEEDED` entry,
+and exposed no Paper compatibility symbol.
 
-## Why this change is being considered
+A development-only crash harness is compiled only when
+`BIGSCREEN_ENABLE_LOGGER_CRASH_TEST=ON`. It adds a red **TEST LOGGER CRASH**
+control to the Update tab and requires a second confirmation before doing
+anything destructive. The harness writes a flushed baseline followed by INFO,
+WARNING, and CRITICAL tail records carrying one unique token, then calls
+`SIGABRT` through `std::abort()` without orderly logger shutdown. Normal builds
+default the option to `OFF`, so this button and its deliberate crash path cannot
+enter an ordinary QMOD accidentally.
+
+The final build removes QPM's unconditional Paper2 link from `libbigscreen.so`.
+Current
+beatsaber-hook inline abort helpers still emit through two Paper2-named C-ABI
+functions, so the native build uses link-time `--wrap` only for references made
+inside `libbigscreen.so` and routes those rare fatal-path records into the
+first-party logger. The bridge symbols are hidden and are verified absent from
+the dynamic symbol table; they cannot replace or intercept Paper2 for BSML,
+SongCore, or another mod. The build pipeline rejects a native package if
+`libbigscreen.so` retains Paper2 in `DT_NEEDED` or exposes a bridge symbol.
+
+## Why this change was made
 
 Big Screen 0.7.0-alpha.12 is linked against `paper2_scotland2` 4.8.0 and its
 generated QMOD requires version `^4.8.0`. Paper2 4.8.0 introduced the
@@ -122,7 +153,8 @@ pre-migration source contained approximately 348 ordinary calls through the shar
 Outside those calls, Big Screen created one constant logger context and
 registered that context for a per-mod file during `setup()`. It did not use
 Paper's profiler, backtraces, custom sinks, or other advanced features. The
-current facade preserves that narrow surface while comparison is underway.
+current facade preserves that narrow surface without retaining Paper as a Big
+Screen backend.
 
 This makes a compatibility-shaped replacement practical. The existing format
 strings and arguments can remain unchanged while the logger object and backend
@@ -210,7 +242,7 @@ while holding their own important locks.
 
 ### Rotation and retention
 
-The comparison implementation uses a 5 MiB maximum for
+The native implementation uses a 5 MiB maximum for
 `bigscreen-native.log` and retains one previous 5 MiB file, matching the
 approved 10 MiB total budget. Rotation must be robust enough that a failed rename
 or storage error leaves at least one readable log. File creation, rotation, and
@@ -247,7 +279,7 @@ call sites. Tests should cover:
 The file sink should be injectable or otherwise redirectable in host tests so
 tests never write into a real Quest path.
 
-### 2. Replace the logger boundary — implemented behind comparison modes
+### 2. Replace the logger boundary — completed
 
 Replace the Paper include and constant context in `include/main.hpp` with the
 first-party logger. Mechanically rename `PaperLogger` call sites to
@@ -258,20 +290,24 @@ Remove `Paper::Logger::RegisterFileContextId(...)` from `setup()` and initialize
 the Big Screen logger through its own idempotent lifecycle. Do not use this
 migration as an opportunity to rewrite unrelated messages or subsystem logic.
 
-### 3. Remove build and packaging dependencies — deliberately deferred
+### 3. Remove build and packaging dependencies — completed
 
-Remove `paper2_scotland2` from:
+`paper2_scotland2` was removed from Big Screen's direct dependency lists in:
 
-- `qpm.json` and `qpm.shared.json`;
+- `qpm.json` and the `qpm.shared.json` configured dependency list;
 - generated `mod.json` dependency rules;
 - dependency-manifest generation and validation;
-- Windows/WSL and native Linux preflight checks;
-- any build-cache readiness checks that require the Paper binary or headers.
+- dependency checks and user-facing minimum-version diagnostics.
+
+The QPM restored dependency lock can still contain Paper2 transitively because
+other direct dependencies compile against and require it. Their requirements
+were not altered. CMake filters that transitive library only from
+`libbigscreen.so`'s link set.
 
 The finished `libbigscreen.so` must have no undefined `paper2_*` symbols, and
 the generated QMOD must neither contain Paper nor request it as a dependency.
 
-### 4. Update diagnostics and documentation — comparison phase implemented
+### 4. Update diagnostics and documentation — completed
 
 Update the support-log collector to treat the new Big Screen-owned log as the
 primary general mod log. It may retain Paper log collection as optional
@@ -287,10 +323,15 @@ Update at least:
 - repository invariant tests that validate the QMOD dependency list;
 - source-install and removal documentation if log preservation paths change.
 
-### 5. Verify on Quest — dual comparison started; removal matrix pending
+### 5. Verify on Quest — native cutover validated; ecosystem matrix remains
 
-Build and test on the current Beat Saber 1.40.8 target with Paper2 completely
-removed from the headset. Verification must include:
+The native-only QMOD was installed through MBF on the current Beat Saber
+1.40.8 Quest 2 target. Big Screen menu and preview operations created the
+first-party log, and the deliberate crash test retained the same final records
+proved during dual-backend comparison. Support-log collection successfully
+retrieved the native file and independent Android crash evidence.
+
+Remaining broader release-candidate verification should include:
 
 - Big Screen loads and its main menu opens;
 - the new log is created and contains a session header;
@@ -304,9 +345,10 @@ removed from the headset. Verification must include:
 - comparison of gameplay and decoder performance before and after migration.
 
 Then install the Beat Saber 1.40.8 AudioLink QMOD that pins Paper2 4.7.0 and
-repeat Big Screen startup, preview, and gameplay checks. Big Screen must load
-regardless of whether Paper2 4.7.0, Paper2 4.8.0, or no Paper2 library is
-installed.
+repeat Big Screen startup, preview, and gameplay checks. Big Screen itself must
+remain independent of the Paper version selected for its other dependencies.
+A headset with this dependency set cannot be expected to have no Paper library
+at all because those other mods still require it.
 
 ## Risks and safeguards
 
@@ -360,11 +402,13 @@ avoidable symbol, initialization, file-ownership, and package-removal risks.
 
 ## Recommended decision
 
-Implement a small first-party logger directly inside Big Screen rather than
-creating another generally distributed shared logging library. Preserve the
-existing call shape, keep routine file I/O on one bounded background worker,
-retain logcat and all purpose-specific diagnostic files, and remove Paper from
-the build and QMOD dependency graph only after host and Quest validation pass.
+The selected design is a small first-party logger directly inside Big Screen,
+not another generally distributed shared logging library. It preserves the
+existing call shape, keeps routine file I/O on one bounded background worker,
+and retains logcat and all purpose-specific diagnostic files. Paper has been
+removed from Big Screen's direct runtime, link, and QMOD dependency graph after
+dual and native-only Quest validation; transitive dependency metadata remains
+where other libraries legitimately require it.
 
 This provides the durable outcome sought by the change: Big Screen can no
 longer fail to load because another QMOD installed a different Paper2 version,

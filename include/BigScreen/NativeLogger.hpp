@@ -41,7 +41,6 @@ namespace BigScreen {
         std::size_t maxQueueEntries = 2048u;
         std::size_t urgentReserveBytes = 128u * 1024u;
         std::size_t urgentReserveEntries = 128u;
-        std::chrono::milliseconds flushInterval{250};
         std::chrono::milliseconds reopenInterval{5000};
         bool emitToLogcat = true;
     };

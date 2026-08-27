@@ -49,9 +49,9 @@
 - [ ] The tracked miniz host utility passes deterministic ZIP tests through the
       one canonical Linux path on Windows/WSL and native Linux without relying
       on a separately installed archive program.
-- [ ] Generated QMOD requires Paper2 `^4.8.0`, and source deployment passes on
-      complete dependencies while refusing an old or incomplete Paper2 before
-      changing any Big Screen file.
+- [ ] Generated QMOD does not declare Paper2 directly, `libbigscreen.so` has no
+      Paper2 `DT_NEEDED` entry or exported bridge symbols, and dependencies that
+      use Paper2 retain their own unmodified manifests.
 - [ ] Windows and Linux source deployment refuse a Big Screen package
       registered through MBF, SideQuest, or another standard QMOD manager, but
       still allow an unmanaged/raw source-style installation.

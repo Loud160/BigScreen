@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/DependencyDiagnostics.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ExperimentalFeatures.hpp"
@@ -1751,6 +1752,11 @@ namespace {
         BigScreen::TickPendingMenuNavigation();
         // Error dialogs remain available after the circuit breaker disables
         // the mod; all other Big Screen menu work stays behind the master flag.
+        // Big Screen itself is loaded in Scotland2's early-mod phase, so its
+        // late_load callback cannot inspect the final dependency registry.
+        // This first stable Unity update occurs after late_mods_opened and the
+        // diagnostic internally guarantees a single completed audit.
+        BigScreen::DependencyDiagnostics::CheckLoadedDependencies();
         BigScreen::ErrorManager::Instance().TickMainThread();
         // Unity and BSML objects must be created on this thread. Build only
         // one retained menu page per stable startup frame instead of moving

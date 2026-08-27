@@ -345,10 +345,13 @@ files already exist.
 | Dependency | Compatible runtime version | Upstream project |
 |---|---:|---|
 | beatsaber-hook | `^6.4.2` | [QuestPackageManager/beatsaber-hook](https://github.com/QuestPackageManager/beatsaber-hook) |
-| Paper2 (`paper2_scotland2`) | `^4.8.0` | [Fernthedev/paperlog](https://github.com/Fernthedev/paperlog) |
 | SongCore | `^1.1.23` | [raineaeternal/Quest-SongCore](https://github.com/raineaeternal/Quest-SongCore) |
 | BSML | `^0.4.54` | [bsq-ports/Quest-BSML](https://github.com/bsq-ports/Quest-BSML) |
 | custom-types | `^0.18.3` | [QuestPackageManager/Il2CppQuestTypePatching](https://github.com/QuestPackageManager/Il2CppQuestTypePatching) |
+
+Those projects may install and use Paper2 through their own dependency
+manifests. Big Screen uses its private first-party logger and does not declare,
+link, initialize, replace, or globally intercept Paper2.
 
 Deployment ignores attached phones and tablets, verifies that the selected
 device is a Meta/Oculus Quest with Beat Saber installed, and asks which headset
