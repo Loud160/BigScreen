@@ -152,9 +152,10 @@ namespace BigScreen {
         /// True when the showcase owns its authored canvas or Respect Mapper
         /// Settings is enabled and Cinema metadata authors screen geometry.
         bool MapperScreenPresentationActive() const;
-        /// True when Cinema's explicit environment data is respected or an
-        /// actually detected Chroma map is allowed to retain its environment.
-        /// This intentionally does not imply ownership of the video canvas.
+        /// True only for Big Screen's bundled showcase/compatibility paths,
+        /// whose choreography owns its environment. User-facing Cinema and
+        /// Chroma switches own the video canvas only; Environment-tab choices
+        /// remain authoritative for normal maps.
         bool MapperEnvironmentPresentationActive() const;
         bool IsMenuPreviewActive() const { return context_ == PlaybackContext::MenuPreview; }
         bool IsLibraryPreviewActive() const { return context_ == PlaybackContext::LibraryPreview; }

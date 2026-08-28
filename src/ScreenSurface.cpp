@@ -28,6 +28,7 @@
 #include "BigScreen/FrameDecoder.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/MenuGameplayEnvironmentHost.hpp"
 #include "BigScreen/Settings.hpp"
 #include "main.hpp"
 #include "TMPro/TextAlignmentOptions.hpp"
@@ -1072,10 +1073,15 @@ namespace BigScreen {
         // GameCore and is invisible to Chroma's CinemaScreen$ lookup. Move the
         // root into the loaded environment scene before Chroma's delayed scan;
         // no parenting is needed, so the mapper's world coordinates stay exact.
-        if(auto environmentRoot = UnityEngine::GameObject::Find("/Environment"))
+        if(!MenuGameplayEnvironmentHost::Instance()
+                .MoveObjectIntoHostedEnvironment(gameObject_))
         {
-            UnityEngine::SceneManagement::SceneManager::MoveGameObjectToScene(
-                gameObject_, environmentRoot->get_scene());
+            if(auto environmentRoot =
+                   UnityEngine::GameObject::Find("/Environment"))
+            {
+                UnityEngine::SceneManagement::SceneManager::MoveGameObjectToScene(
+                    gameObject_, environmentRoot->get_scene());
+            }
         }
 
         // Match Beat Saber's environment geometry so the normal VR cameras see

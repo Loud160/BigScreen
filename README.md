@@ -41,6 +41,7 @@ video part of the map's visual presentation instead of a passive background.
 | **Blend it into the map** | Control video opacity and letterbox transparency, retain map lighting, or hide environmental objects and light groups that obstruct large screens. |
 | **Save five layouts** | Keep five independent screen configurations and switch layouts from Big Screen or song selection. Beat Saber 1.40.8 does not currently expose Big Screen pause-menu controls. |
 | **Respect authored visuals** | The current development tree can parse Cinema-authored placement, curvature, additional screens, color correction, vignette, environment selection, and object changes—or retain only mapper media/timing. This new compatibility path still requires complete on-device regression testing. |
+| **Preview the map around it** | Choose no scenery, the stock menu, the selected map's full environment, or that environment driven by the preview song's lightshow while you configure the video. |
 
 ### A proof of concept for animated video choreography
 

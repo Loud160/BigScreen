@@ -87,6 +87,14 @@ namespace BigScreen {
         bool OpenEditorForLevelId(
             std::string_view levelId,
             bool navigateToEditor = true);
+        /// Supplies a stable level solely to let Beat Saber's standard scene
+        /// setup construct a persistent forced environment before the player
+        /// selects a song. Prefer an OST level so merely opening Big Screen
+        /// never invokes a custom map's optional gameplay dependencies.
+        GlobalNamespace::BeatmapLevel* EnvironmentBootstrapLevel() const;
+        /// Reports which retained right-side child must be restored after the
+        /// optional gameplay-environment scene transition reparents the flow.
+        bool EditorVisible() const { return editorVisible_; }
         /// Synchronizes the existing child editor after the center-screen file
         /// browser has committed a new user-owned video assignment.
         void LocalVideoAssignmentChanged(const std::string& fileName);
@@ -94,6 +102,13 @@ namespace BigScreen {
         /// the map's PNG in place. The sprite cache is keyed by path, so the
         /// stale decode must be evicted before the same path is shown again.
         void LocalThumbnailChanged(const std::string& thumbnailPath);
+        /// Completes a selected-map preview that was deliberately deferred
+        /// while the optional gameplay environment host changed scenes.
+        void EnvironmentHostReady(std::string_view levelId);
+        /// Stops Unity video uploads before ReplaceScenes destroys the current
+        /// world screen, while retaining the selected map, song time, and
+        /// whether playback should resume when the replacement is ready.
+        void EnvironmentHostTransitionStarting();
 
     private:
         enum class EditorTransferKind { None, Probe, Download };
@@ -342,6 +357,8 @@ namespace BigScreen {
         // that is already advancing and the diagnostics correctly report the
         // resulting media-timestamp gaps as skipped frames.
         bool playWhenVideoReady_ = false;
+        bool environmentTransitionPending_ = false;
+        bool resumeAfterEnvironmentTransition_ = false;
         // Initial Play and every automatic loop wait briefly before releasing
         // audio. This is deliberately menu-preview state rather than decoder
         // state: gameplay already prewarms during its scene transition.

@@ -12,6 +12,7 @@
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/LocalVideoBrowserMenu.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
+#include "BigScreen/MenuGameplayEnvironmentHost.hpp"
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/PerformancePanel.hpp"
 #include "BigScreen/ScreenPreview.hpp"
@@ -66,6 +67,10 @@ namespace BigScreen {
         // tear down the same controls.
         UnityW<MenuFlowCoordinator> retainedMenuFlow = nullptr;
         UnityW<MenuFlowCoordinator> activeMenuFlow = nullptr;
+        // Beat Saber temporarily deactivates retained flows while changing
+        // scene sets. This marker restores the same child page on the matching
+        // reactivation without treating it as an ordinary menu re-entry.
+        bool resumingAfterEnvironmentTransition = false;
         bool activeLaunchFromSongSelection = false;
         std::string pendingVideoEditorLevelId;
         // A retained FlowCoordinator receives DidActivate while HMUI is still
@@ -422,11 +427,82 @@ namespace BigScreen {
                     "Could not prepare the retained Solo video preview after closing Big Screen");
             }
         }
+
+        void PrimeMenuGameplayEnvironment()
+        {
+            if(!Settings::Instance().ModEnabled())
+                return;
+
+            auto* bootstrap =
+                VideoLibraryMenu::Instance().EnvironmentBootstrapLevel();
+            if(!bootstrap)
+            {
+                BigScreen::BigScreenLogger.warn(
+                    "Could not prime the menu gameplay environment because no installed level was available");
+                return;
+            }
+
+            // SelectLevel records this safe OST seed even while Game
+            // Environment mode is currently off. If the user enables that
+            // mode later, ApplyMode can therefore load Big Mirror immediately
+            // without waiting for a song row or Play/Practice action. This is
+            // deliberately called only after HMUI has attached Big Screen's
+            // view controllers; PushScenes during DidActivate construction
+            // can otherwise tear down the pointer and unfinished menu panels.
+            MenuGameplayEnvironmentHost::Instance().SelectLevel(bootstrap);
+        }
     }
 
     bool IsBigScreenMenuActive()
     {
         return activeMenuFlow;
+    }
+
+    bool RestoreBigScreenMenuAfterEnvironmentTransition() noexcept
+    {
+        try
+        {
+            if(!activeMenuFlow.isAlive())
+                return false;
+            auto* coordinator = activeMenuFlow.ptr();
+            auto* mainFlow = BSML::Helpers::GetMainFlowCoordinator();
+            auto parentHandle = mainFlow
+                ? mainFlow->YoungestChildFlowCoordinatorOrSelf()
+                : UnityW<HMUI::FlowCoordinator>{nullptr};
+            auto* parent = parentHandle.isAlive()
+                ? parentHandle.ptr() : nullptr;
+            if(!coordinator || !parent)
+                return false;
+            if(parent->IsFlowCoordinatorInHierarchy(coordinator))
+                return true;
+            if(parent->get_isInTransition())
+            {
+                BigScreen::BigScreenLogger.warn(
+                    "Map environment loaded while Beat Saber's menu flow was still transitioning");
+                return false;
+            }
+            parent->PresentFlowCoordinator(
+                coordinator,
+                nullptr,
+                HMUI::ViewController::AnimationDirection::Horizontal,
+                true,
+                false);
+            BigScreen::BigScreenLogger.info(
+                "Reattached Big Screen after the map environment transition");
+            return true;
+        }
+        catch(const std::exception& exception)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not reattach Big Screen after the map environment transition: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not reattach Big Screen after the map environment transition");
+        }
+        return false;
     }
 
     bool OpenBigScreenMenu() noexcept
@@ -611,6 +687,7 @@ namespace BigScreen {
                     throw std::runtime_error(
                         "Big Screen's failed menu hierarchy was unavailable");
 
+                MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
                 parent->DismissFlowCoordinator(
                     coordinator,
                     HMUI::ViewController::AnimationDirection::Horizontal,
@@ -793,6 +870,7 @@ namespace BigScreen {
                 throw std::runtime_error(
                     "Big Screen's parent menu flow was unavailable");
             BeginMenuReentryGuard();
+            MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
             parent->DismissFlowCoordinator(
                 coordinator,
                 HMUI::ViewController::AnimationDirection::Horizontal,
@@ -1235,6 +1313,8 @@ namespace BigScreen {
         bool screenSystemEnabling)
     {
         const auto activationStarted = std::chrono::steady_clock::now();
+        const bool environmentTransitionResume =
+            std::exchange(resumingAfterEnvironmentTransition, false);
         const std::string requestedEditorLevelId =
             std::exchange(pendingVideoEditorLevelId, {});
         try
@@ -1249,8 +1329,8 @@ namespace BigScreen {
                     ? "true" : "false"},
                 {"activeLayout", std::to_string(
                     Settings::Instance().ActiveScreenLayout() + 1)},
-                {"menuEnvironment", Settings::Instance().ShowMenuEnvironment()
-                    ? "visible" : "hidden"}});
+                {"menuEnvironmentMode", std::to_string(static_cast<int>(
+                    Settings::Instance().MenuEnvironment()))}});
         }
         // Do not call HMUI::FlowCoordinator::DidActivate from a custom-types
         // override. The generated CORDL wrapper performs virtual dispatch, so
@@ -1270,6 +1350,10 @@ namespace BigScreen {
         // Apply the environment last so its Off state remains authoritative
         // even if the positive floor toggle restored a renderer moments ago.
         MenuEnvironmentVisibility::Instance().Apply();
+        // Map environment modes must be active before a Configure Video
+        // deep-link selects its level below. This host persists across the
+        // browser/editor child navigation and unloads only with this flow.
+        MenuGameplayEnvironmentHost::Instance().ActivateMenu();
 
         // The standard title and Back strip spans the center screen and partly
         // covers the world-space placement preview. SettingsMenu recreates both
@@ -1319,8 +1403,33 @@ namespace BigScreen {
             // exception. ApplyModEnabledUi is reserved for later live changes.
             ScreenPreview::Instance().ActivateCurrentState();
             PerformancePanel::Instance().ActivateMenu();
+            PrimeMenuGameplayEnvironment();
             LogMenuLifecycleDuration(
                 "activation", activationStarted, firstActivation);
+            return;
+        }
+
+        if(environmentTransitionResume)
+        {
+            // Push/Replace/Pop temporarily deactivated this retained flow; it
+            // did not close the Video Library. Restore the exact right-hand
+            // child page without rebuilding the catalog or resetting editor
+            // state, and leave the retained center stack untouched.
+            SettingsMenu::Instance().RefreshControls();
+            const bool modEnabled = Settings::Instance().ModEnabled();
+            SetRightScreenViewController(
+                modEnabled
+                    ? (VideoLibraryMenu::Instance().EditorVisible()
+                        ? libraryEditorViewController
+                        : libraryBrowserViewController)
+                    : nullptr,
+                HMUI::ViewController::AnimationType::None);
+            ScreenPreview::Instance().ActivateCurrentState();
+            PerformancePanel::Instance().ActivateMenu();
+            LogMenuLifecycleDuration(
+                "environment-transition reactivation",
+                activationStarted,
+                firstActivation);
             return;
         }
 
@@ -1436,13 +1545,30 @@ namespace BigScreen {
             enabled ? libraryBrowserViewController : nullptr,
             HMUI::ViewController::AnimationType::None);
         if(enabled)
+        {
             VideoLibraryMenu::Instance().Refresh();
+            PrimeMenuGameplayEnvironment();
+        }
     }
 
     void MenuFlowCoordinator::DidDeactivate(
         bool removedFromHierarchy,
         bool screenSystemDisabling)
     {
+        if(MenuGameplayEnvironmentHost::Instance()
+               .RetainsMenuDuringSceneTransition())
+        {
+            // Push/Replace/Pop can temporarily remove this retained flow from
+            // HMUI's active hierarchy. It is not a user dismissal: preserve
+            // the editor, decoder, modal ownership, and menu-session state so
+            // the host completion callback can present this same coordinator
+            // over the newly active scene set. Explicit exits deactivate the
+            // host before asking HMUI to dismiss, so they never take this path.
+            BigScreen::BigScreenLogger.debug(
+                "Retaining Big Screen across a menu-environment scene transition");
+            resumingAfterEnvironmentTransition = true;
+            return;
+        }
         const auto deactivationStarted = std::chrono::steady_clock::now();
         const bool returnToSongSelection =
             activeMenuFlow.ptr() == this && activeLaunchFromSongSelection;
@@ -1458,6 +1584,7 @@ namespace BigScreen {
         // native strings/tokens and map-owned TMP surface from being retired.
         try
         {
+            MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
             VideoLibraryMenu::Instance().Deactivate();
         }
         catch(const std::exception& exception)
@@ -1516,6 +1643,7 @@ namespace BigScreen {
                 "Closing the Big Screen menu", exception.what());
             // These restorations are individually fail-safe and must still be
             // attempted if another teardown action threw first.
+            MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
             MenuEnvironmentVisibility::Instance().Restore();
             MenuPlacementGuide::Instance().Suspend();
             RestoreDistractionFreeMenu();
@@ -1532,6 +1660,7 @@ namespace BigScreen {
             BigScreen::BigScreenLogger.error("Big Screen menu deactivation failed");
             ErrorManager::Instance().RecordError(
                 "Closing the Big Screen menu", "Unknown native exception");
+            MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
             MenuEnvironmentVisibility::Instance().Restore();
             MenuPlacementGuide::Instance().Suspend();
             RestoreDistractionFreeMenu();
@@ -1572,6 +1701,7 @@ namespace BigScreen {
             PrepareForDismissal();
             if(!activeLaunchFromSongSelection)
                 BeginMenuReentryGuard();
+            MenuGameplayEnvironmentHost::Instance().DeactivateMenu();
             parent->DismissFlowCoordinator(
                 this,
                 HMUI::ViewController::AnimationDirection::Horizontal,

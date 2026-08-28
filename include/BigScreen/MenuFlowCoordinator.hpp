@@ -21,6 +21,10 @@ namespace BigScreen {
     void RestoreDistractionFreeMenu();
     /// True only while Big Screen's own flow is the active menu hierarchy.
     bool IsBigScreenMenuActive();
+    /// A complete gameplay-scene push temporarily changes Beat Saber's
+    /// youngest flow even though MenuCore is retained. Reattaches the existing
+    /// Big Screen coordinator after the optional environment host is ready.
+    bool RestoreBigScreenMenuAfterEnvironmentTransition() noexcept;
     /// Services deferred error dismissal and a fail-safe for an interrupted
     /// HMUI close. Normal re-entry is released directly by DidDeactivate; this
     /// update path never polls destroyed parent coordinators or gates prewarming.

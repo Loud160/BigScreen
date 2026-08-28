@@ -211,6 +211,12 @@ video_shader_build = (root / "scripts/build-video-shader.ps1").read_text(
 menu_flow_source = (root / "src/MenuFlowCoordinator.cpp").read_text(
     encoding="utf-8"
 )
+menu_environment_host_header = (
+    root / "include/BigScreen/MenuGameplayEnvironmentHost.hpp"
+).read_text(encoding="utf-8")
+menu_environment_host_source = (
+    root / "src/MenuGameplayEnvironmentHost.cpp"
+).read_text(encoding="utf-8")
 menu_placement_guide_source = (
     root / "src/MenuPlacementGuide.cpp"
 ).read_text(encoding="utf-8")
@@ -1270,25 +1276,148 @@ assert 'build-video-shader.ps1' in copy_script
 assert 'Deploying with a stale shader bundle is refused' in copy_script
 assert 'Waiting for Beat Saber to report the active video shader tier' not in copy_script
 assert 'Start-Sleep -Seconds 3' not in copy_script
-assert "bool showMenuEnvironment_ = true;" in settings_header
-assert '"showMenuEnvironment",\n            true' in settings_source
-assert 'Replace(document, "showMenuEnvironment", showMenuEnvironment_)' in settings_source
+assert "enum class MenuEnvironmentMode : int" in settings_header
+assert "MenuEnvironmentMode::MenuEnvironment;" in settings_header
+assert '"menuEnvironmentMode"' in settings_source
+assert 'document, "showMenuEnvironment", true' in settings_source
+assert 'Replace(\n            document,\n            "menuEnvironmentMode"' in settings_source
+assert 'document.RemoveMember("showMenuEnvironment")' in settings_source
 assert 'document.RemoveMember("showMenuFloor")' in settings_source
 assert 'document.RemoveMember("menuPlacementGuideEnabled")' in settings_source
-assert '"Show Menu Environment"' in settings_menu_source
+for environment_choice in (
+    "No Environment",
+    "Menu Environment",
+    "Map Environment",
+    "Map Environment + Lightshow",
+):
+    assert f'"{environment_choice}"' in settings_menu_source
 assert '"Show Menu Floor"' not in settings_menu_source
-assert "bool ShowMenuFloor() const { return showMenuEnvironment_; }" in settings_header
+assert "bool ShowMenuFloor() const { return ShowMenuEnvironment(); }" in settings_header
+assert "menuEnvironmentMode_ !=\n                MenuEnvironmentMode::NoEnvironment" in (
+    settings_header)
 assert "bool showLaneGuidesEnabled_ = false;" in settings_header
 assert '"showLaneGuidesEnabled",\n            legacyOpenFloorPlacement' in settings_source
 assert 'Replace(document, "showLaneGuidesEnabled", showLaneGuidesEnabled_)' in settings_source
 assert '"Show Lane Guides"' in settings_menu_source
 assert "Settings::Instance().SetShowLaneGuidesEnabled(enabled);" in settings_menu_source
-assert "MenuPlacementGuide::Instance().Apply();" in settings_menu_source
+assert "bool showMenuGameplayHud_ = false;" in settings_header
+assert '"showMenuGameplayHud",\n            false' in settings_source
+assert 'Replace(document, "showMenuGameplayHud", showMenuGameplayHud_)' in settings_source
+assert '"Show Gameplay HUD"' in settings_menu_source
+assert "Settings::Instance().SetShowMenuGameplayHud(enabled);" in settings_menu_source
+assert "mode == MenuEnvironmentMode::MapEnvironment ||" in settings_menu_source
+assert "MenuGameplayEnvironmentHost::Instance().ApplyMode();" in (
+    settings_menu_source)
+assert "MenuPlacementGuide::Instance().Apply();" in menu_environment_host_source
 assert "MenuPlacementGuide::Instance().Apply();" in menu_flow_source
 assert menu_flow_source.count("MenuPlacementGuide::Instance().Suspend();") >= 3
-assert "MenuEnvironmentVisibility::Instance().Apply();" in settings_menu_source
+assert "MenuEnvironmentVisibility::Instance().Apply();" in (
+    menu_environment_host_source)
 assert "MenuEnvironmentVisibility::Instance().Apply();" in menu_flow_source
 assert menu_flow_source.count("MenuEnvironmentVisibility::Instance().Restore();") >= 3
+assert "class MenuGameplayEnvironmentHost final" in menu_environment_host_header
+assert "manager->PushScenes(setup" in menu_environment_host_source
+assert "manager->ReplaceScenes(setup" not in menu_environment_host_source
+assert "manager->PopScenes(" in menu_environment_host_source
+assert '__cordl_internal_get__neverUnloadScenes()->Add("MenuCore")' in (
+    menu_environment_host_source)
+assert 'DisableAllButDirectChildren(gameplay->get_transform()' in (
+    menu_environment_host_source)
+assert "callbacksUpdater_->set_enabled(false);" in menu_environment_host_source
+assert "callbacksController_->ManualUpdate(" in menu_environment_host_source
+assert "CurrentInputModule()" in menu_environment_host_source
+assert "FindGameplayInputModule(menuInput_)" in menu_environment_host_source
+assert "FindObjectsOfType<\n                VRUIControls::VRInputModule*>" not in (
+    menu_environment_host_source)
+assert "GlobalNamespace::VRRenderingParamsSetup*" in menu_environment_host_source
+assert "GlobalNamespace::SceneType::Menu" in menu_environment_host_source
+assert "RestoreTemporaryPlayerSettings();" in menu_environment_host_source
+assert "settings.ShowMenuGameplayHud()" in menu_environment_host_source
+assert "ApplyEnvironmentControls();" in menu_environment_host_source
+assert "CapturePreviewSceneControls(hostedEnvironmentRoot_.ptr());" in (
+    menu_environment_host_source)
+assert "RestorePreviewSceneControls();" in menu_environment_host_source
+assert "GlobalNamespace::CoreGameHUDController" in menu_environment_host_source
+assert "controller->set_alpha(showHud ? 1.0f : 0.0f);" in (
+    menu_environment_host_source)
+assert "loadedShowGameplayHud_ !=" not in menu_environment_host_source
+assert "playerSpecificSettings\n                    ->__cordl_internal_set__noTextsAndHuds(false);" in (
+    menu_environment_host_source)
+assert settings_menu_source.count(
+    ".ApplyEnvironmentControls();") >= 8
+assert "restoreMenuEnvironmentAfterUnload_ = true;" in (
+    menu_environment_host_source)
+assert "MenuGameplayEnvironmentHost::Instance().SelectLevel(selected_)" in (
+    library_menu_source)
+assert "EnvironmentHostReady(loadedLevelId_)" in menu_environment_host_source
+assert "EnvironmentHostTransitionStarting();" in menu_environment_host_source
+serialized_host_reload = menu_environment_host_source.split(
+    "bool MenuGameplayEnvironmentHost::ReloadLevel", 1)[1].split(
+        "bool MenuGameplayEnvironmentHost::BeginLoad", 1)[0]
+assert serialized_host_reload.index(
+    "EnvironmentHostTransitionStarting();"
+) < serialized_host_reload.index("BeginUnload(false);")
+assert "audioController_->set_enabled(false);" in menu_environment_host_source
+assert "self->set_enabled(false);" in main_source
+assert "environmentTransitionPending_ = false;" in library_menu_source
+assert "resumeAfterEnvironmentTransition_ = false;" in library_menu_source
+assert "MenuGameplayEnvironmentHost::Instance().ActivateMenu();" in (
+    menu_flow_source)
+assert "MenuGameplayEnvironmentHost::Instance().DeactivateMenu();" in (
+    menu_flow_source)
+assert "RetainsMenuDuringSceneTransition()" in menu_flow_source
+assert "resumingAfterEnvironmentTransition = true;" in menu_flow_source
+assert "VideoLibraryMenu::Instance().EditorVisible()" in menu_flow_source
+assert menu_flow_source.count(
+    "MenuGameplayEnvironmentHost::Instance().DeactivateMenu();") >= 6
+host_audio_update = main_source.split(
+    "AudioTimeSyncController_Update,", 1)[1].split(
+        "GameplayCoreSceneSetup_OnDestroy,", 1)[0]
+assert host_audio_update.index("OwnsAudioController(self)") < (
+    host_audio_update.index("AudioTimeSyncController_Update(self);")
+)
+assert "state_ == State::Loading || state_ == State::Unloading" in (
+    menu_environment_host_source)
+assert "state_ == State::Unloading" in menu_environment_host_source
+assert "state_ == State::Ready && Alive(audioController_)" in (
+    menu_environment_host_source)
+assert "setup && Alive(transitionSetup_)" in menu_environment_host_source
+assert "auto* manager = Alive(gameScenesManager_)" in menu_environment_host_source
+assert "ResolveHostedEnvironment" in menu_environment_host_source
+assert "settings.RespectMapperSettings();" not in menu_environment_host_source
+assert '"BigMirrorEnvironment"' in menu_environment_host_source
+assert '"GlassDesertEnvironment"' in menu_environment_host_source
+assert "descriptor.CanPlay()" not in menu_environment_host_source
+assert "EnvironmentBootstrapLevel()" in library_menu_source
+assert "item.group == SongLibraryGroup::Ost" in library_menu_source
+assert "PrimeMenuGameplayEnvironment" in menu_flow_source
+assert "EnvironmentBootstrapLevel()" in menu_flow_source
+assert "MenuGameplayEnvironmentHost::Instance().SelectLevel(bootstrap);" in (
+    menu_flow_source)
+assert "MenuGameplayEnvironmentHost::Instance().ApplyMode();" not in (
+    library_menu_source)
+assert "!environmentChoice.useOverride" in menu_environment_host_source
+assert "loadedLevelId_ == selectedLevelId_" in menu_environment_host_source
+assert "ChromaMapDetector::UsesChroma" not in menu_environment_host_source
+assert "object->get_scene().get_handle()" in menu_environment_host_source
+assert "setup->set_targetEnvironmentInfo(requested);" in (
+    menu_environment_host_source)
+assert "ResolveEnvironmentAnchorInScene" in menu_environment_host_source
+assert "PreviewControls.renderers" in menu_environment_host_source
+assert "renderer->set_enabled(showHosted && state.enabled);" in (
+    menu_environment_host_source)
+assert "hostedEnvironmentRoot_->SetActive(showHosted);" not in (
+    menu_environment_host_source)
+assert "loadedEnvironmentSceneName_" in menu_environment_host_source
+assert "MoveObjectIntoHostedEnvironment(gameObject_)" in screen_surface_source
+non_map_mode_reconciliation = menu_environment_host_source.split(
+    "if(!MapModeRequested())", 1)[1].split(
+        "// Map modes intentionally hide", 1)[0]
+assert "BeginUnload(" not in non_map_mode_reconciliation
+assert "ReconcileEnvironmentPresentation();" in non_map_mode_reconciliation
+assert "if(!activeMenuFlow.isAlive())" in menu_flow_source
+assert "RestoreBigScreenMenuAfterEnvironmentTransition();" in (
+    menu_environment_host_source)
 assert "LooksLikeHorizontalFloor" in menu_placement_guide_source
 assert "renderer->set_enabled(false);" in menu_placement_guide_source
 assert "renderer->set_enabled(true);" in menu_placement_guide_source
@@ -1455,6 +1584,13 @@ assert "bool PlaybackSession::MapperScreenPresentationActive() const" in playbac
 assert "Settings::Instance().RespectMapperSettings()" in playback_source
 assert "baseConfig_->hasMapperScreenGeometry" in playback_source
 assert "bool PlaybackSession::MapperEnvironmentPresentationActive() const" in playback_source
+mapper_environment_ownership = playback_source.split(
+    "bool PlaybackSession::MapperEnvironmentPresentationActive() const", 1
+)[1].split("PlaybackDiagnostics PlaybackSession::Diagnostics() const", 1)[0]
+assert "RespectMapperSettings" not in mapper_environment_ownership
+assert "AllowChromaOverride" not in mapper_environment_ownership
+assert "return showcaseEligible_ || cinemaCompatibilityCycleEligible_;" in (
+    mapper_environment_ownership)
 assert "CinemaEnvironment::Prepare(*config_)" in playback_source
 assert "cinemaScreens_.Create(" in playback_source
 assert "ApplyVisualEffects(destination)" in frame_decoder_source
@@ -2654,8 +2790,8 @@ screen_controls = settings_menu_source.split(
     '"Curved Screen"', 1)[1].split('"Video Opacity"', 1)[0]
 assert screen_controls.index('"Screen Curve"') < screen_controls.index(
     '"Maintain Aspect Ratio"')
-assert "showMenuEnvironmentToggle_, settings.ShowMenuEnvironment()" in (
-    settings_menu_source)
+assert "menuEnvironmentDropdown_->index = index;" in settings_menu_source
+assert "settings.MenuEnvironment()" in settings_menu_source
 assert "performanceDiagnosticsToggle_" in settings_menu_source
 
 # Normal level completion must not cancel a retained showcase preparation.

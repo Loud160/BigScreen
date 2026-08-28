@@ -63,24 +63,20 @@ namespace BigScreen {
         // even if the user's global Chroma override preference is off, so Big
         // Screen cannot force Big Mirror or remove lighting/side geometry.
         return showcaseEligible_ || cinemaCompatibilityCycleEligible_ ||
-               (Settings::Instance().RespectMapperSettings() &&
-                baseConfig_ &&
-                baseConfig_->hasMapperScreenGeometry);
+               (baseConfig_ && baseConfig_->hasMapperScreenGeometry &&
+                (Settings::Instance().RespectMapperSettings() ||
+                 (Settings::Instance().AllowChromaOverride() &&
+                  chromaMapDetected_)));
     }
 
     bool PlaybackSession::MapperEnvironmentPresentationActive() const
     {
-        // Cinema environment instructions and Chroma environment ownership
-        // are separate interoperability decisions. Respect Mapper Settings
-        // applies Cinema's explicit environmentName/environment array even on
-        // a Cinema-only map. Allow Chroma Override yields the broader scene to
-        // Chroma only when map-wide detection confirms actual Chroma use.
-        return showcaseEligible_ || cinemaCompatibilityCycleEligible_ ||
-               (baseConfig_ &&
-                ((Settings::Instance().RespectMapperSettings() &&
-                  baseConfig_->hasMapperEnvironmentPresentation) ||
-                 (Settings::Instance().AllowChromaOverride() &&
-                  chromaMapDetected_)));
+        // User-facing mapper/Chroma preferences own only the video canvas.
+        // Environment-tab settings remain authoritative for scenery, motion,
+        // and lighting. The two bundled diagnostic/showcase paths are the
+        // narrow exception because their choreography is part of Big Screen
+        // itself rather than a user preference crossing subsystem ownership.
+        return showcaseEligible_ || cinemaCompatibilityCycleEligible_;
     }
 
     PlaybackDiagnostics PlaybackSession::Diagnostics() const

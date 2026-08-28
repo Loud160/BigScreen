@@ -41,8 +41,8 @@ this archive were changed, deferred, rejected, or superseded after testing.
 - [In-process WebPO/BotGuard token-minter plan](planning/IN_PROCESS_WEBPO_BOTGUARD_TOKEN_MINTER_PLAN.md) —
   deferred design for a guest-session yt-dlp PO-token provider built on Big
   Screen's existing embedded Python and constrained QuickJS runtimes.
-- [Deferred menu environment preview](planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md) —
-  failed approaches, crash evidence, and requirements for a future safe design.
+- [Menu environment preview implementation record](planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md) —
+  failed partial-host approaches, the later Qounters-informed complete-transition design, and its lifecycle safeguards.
 
 ## Independent reviews
 

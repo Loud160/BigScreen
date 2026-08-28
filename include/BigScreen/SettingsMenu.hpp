@@ -91,7 +91,8 @@ namespace BigScreen {
         int selectedTab_ = 0;
         BSML::ToggleSetting* modEnabledToggle_ = nullptr;
         BSML::ToggleSetting* distractionFreeMenuToggle_ = nullptr;
-        BSML::ToggleSetting* showMenuEnvironmentToggle_ = nullptr;
+        BSML::DropdownListSetting* menuEnvironmentDropdown_ = nullptr;
+        BSML::ToggleSetting* showMenuGameplayHudToggle_ = nullptr;
         BSML::ToggleSetting* showLaneGuidesToggle_ = nullptr;
         BSML::ToggleSetting* advancedOptionsToggle_ = nullptr;
         BSML::ToggleSetting* videoEnabledToggle_ = nullptr;

@@ -236,6 +236,56 @@ tempt a mod to create Unity objects from an unsafe worker. Other Quest mods
 with substantial first-open UI should measure their own construction stages
 and apply the pattern only after their normal menu hierarchy is stable.
 
+### Persistent gameplay-environment host in the menu
+
+The optional Map Environment modes reuse Beat Saber's supported complete
+standard-level transition instead of loading an environment decorator with an
+incomplete dependency container. `MenuGameplayEnvironmentHost` retains
+`MenuCore`, pushes the environment/StandardGameplay/GameCore set, then disables
+the gameplay camera, player, object spawning, automatic beatmap updater, and
+private gameplay audio. Existing transition/audio hooks compare exact host
+pointers and bypass normal Big Screen gameplay startup and teardown.
+
+The host is persistent across the Video Library's browser/editor navigation.
+When the independent Big Mirror override is enabled, the retained catalog
+provides a safe OST bootstrap level so Big Mirror is constructed when the menu
+opens instead of waiting for song selection or playback. The override removes
+map identity from scene residency: every later song reuses the same Big Mirror
+platform, lane, and environment hierarchy. A stale controller is never advanced
+after the selected level ID changes. With the override off, static mode reloads
+only when the resolved environment changes and map-specific Lightshow hosts are
+serialized Pop-then-Push operations rather than an overlapping ReplaceScenes
+call, because third-party mods can retain update hooks against the outgoing
+GameCore. Video-screen creation waits for a genuine environment reload to
+finish, and a matching lightshow controller advances from
+`VideoLibraryMenu::previewSongTime_`.
+The host captures the EventSystem's active menu input before the transition and
+accepts only the new EventSystem's active VR input afterward; it never activates
+an arbitrary retained module from another mod. It reapplies Beat Saber's menu
+VR-rendering profile to the hosted scene so the retained MenuCore camera renders
+the gameplay environment. The private transition always permits HUD installers
+to construct their hierarchy, temporarily overriding and immediately restoring
+the player's saved no-HUD preference only when necessary. The default-off menu
+setting then changes `CoreGameHUDController` alpha and compatible detached HUD
+roots in place. It never replaces GameCore just to change HUD visibility; this
+avoids third-party update callbacks observing a retiring audio controller.
+
+At host readiness, Big Screen captures the active motion, lighting, and named
+obstruction objects across the complete Unity scene containing the loaded
+`Environment` root. Environment-tab
+changes first restore that baseline, replay the selected map's callbacks at the
+current preview time, and then apply the requested exclusions. This makes every
+cleanup switch reversible without rescanning or replacing the scene. Mapper or
+detected Chroma screen ownership never bypasses those user exclusions. The
+capture is discarded before Pop so Unity
+objects can never leak into the next environment host.
+All GameScenesManager operations are serialized: mode changes, focus loss, and
+menu close during Push record a pending unload that is honored only at
+that transition's completion callback. Pop restores the stock menu environment,
+input module, keyboard routing, and retained flow. Any host load/configuration
+failure follows the same restoration path and explicitly falls back to Beat
+Saber's normal menu environment.
+
 Menu-controller singletons do not own an IL2CPP hierarchy. A MenuCore flow
 recreation calls each menu's `ForgetUi` boundary before new controllers are
 created, and the active coordinator is retained through `UnityW`. Per-frame UI

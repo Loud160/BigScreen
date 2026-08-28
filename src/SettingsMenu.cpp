@@ -22,6 +22,7 @@
 #include "fmt/format.h"
 
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/MenuGameplayEnvironmentHost.hpp"
 #include "BigScreen/MenuEnvironmentVisibility.hpp"
 #include "BigScreen/MenuPlacementGuide.hpp"
 #include "BigScreen/NestedHoverHintOverride.hpp"
@@ -93,6 +94,13 @@ namespace BigScreen {
             "General", "Screen", "Environment", "Misc", "Update"
         };
 
+        std::array<std::string_view, 4> MenuEnvironmentChoices{
+            "No Environment",
+            "Menu Environment",
+            "Map Environment",
+            "Map Environment + Lightshow"
+        };
+
         // Reset controls intentionally share one compact visual contract. The
         // glyph may be enlarged for readability, but the fixed button footprint
         // must remain unchanged so neither settings row is pushed or clipped.
@@ -112,6 +120,24 @@ namespace BigScreen {
         std::string PlaybackFpsLabel(int fps)
         {
             return std::to_string(fps) + " FPS";
+        }
+
+        std::string MenuEnvironmentLabel(MenuEnvironmentMode mode)
+        {
+            const int index = std::clamp(
+                static_cast<int>(mode), 0,
+                static_cast<int>(MenuEnvironmentChoices.size()) - 1);
+            return std::string(MenuEnvironmentChoices[index]);
+        }
+
+        MenuEnvironmentMode MenuEnvironmentValue(StringW value)
+        {
+            const std::string label(value);
+            for(std::size_t index = 0;
+                index < MenuEnvironmentChoices.size(); ++index)
+                if(label == MenuEnvironmentChoices[index])
+                    return static_cast<MenuEnvironmentMode>(index);
+            return MenuEnvironmentMode::MenuEnvironment;
         }
 
 #if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
@@ -260,7 +286,8 @@ namespace BigScreen {
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         distractionFreeMenuToggle_ = nullptr;
-        showMenuEnvironmentToggle_ = nullptr;
+        menuEnvironmentDropdown_ = nullptr;
+        showMenuGameplayHudToggle_ = nullptr;
         showLaneGuidesToggle_ = nullptr;
         advancedOptionsToggle_ = nullptr;
         videoEnabledToggle_ = nullptr;
@@ -1195,8 +1222,7 @@ namespace BigScreen {
                 ErrorManager::Instance().Guard(
                     "updating menu placement visuals after master toggle", []()
                     {
-                        MenuPlacementGuide::Instance().Apply();
-                        MenuEnvironmentVisibility::Instance().Apply();
+                        MenuGameplayEnvironmentHost::Instance().ApplyMode();
                     });
 
                 // Hooks remain installed so the menu stays reachable, but
@@ -1242,27 +1268,46 @@ namespace BigScreen {
             distractionFreeMenuToggle_,
             "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
 
-        showMenuEnvironmentToggle_ = BSML::Lite::CreateToggle(
+        menuEnvironmentDropdown_ = BSML::Lite::CreateDropdown(
             generalContainer,
-            "Show Menu Environment",
-            settings.ShowMenuEnvironment(),
-            [](bool enabled)
+            "Menu Environment",
+            MenuEnvironmentLabel(settings.MenuEnvironment()),
+            MenuEnvironmentChoices,
+            [this](StringW value)
             {
-                Settings::Instance().SetShowMenuEnvironment(enabled);
+                Settings::Instance().SetMenuEnvironmentMode(
+                    MenuEnvironmentValue(value));
                 ErrorManager::Instance().Guard(
-                    "updating Show Menu Environment", []()
+                    "updating the menu environment mode", []()
                     {
-                        // The one switch owns scenery, lighting, and floor.
-                        // The focused floor scan catches compatible geometry
-                        // outside Beat Saber's resolved environment root.
-                        MenuEnvironmentVisibility::Instance().Apply();
-                        MenuPlacementGuide::Instance().Apply();
-                        MenuEnvironmentVisibility::Instance().Apply();
+                        MenuGameplayEnvironmentHost::Instance().ApplyMode();
                     });
+                RefreshEnabledState();
             });
         BSML::Lite::AddHoverHint(
-            showMenuEnvironmentToggle_,
-            "Shows Beat Saber's normal menu scenery, lighting, and floor behind Big Screen. Turn this off for an unlit, unobstructed placement space that also keeps screens visible below floor height. Big Screen's menus, video screen, lane guides, and controller input remain active, and the environment is restored when you leave.");
+            menuEnvironmentDropdown_,
+            "Chooses the space behind Big Screen: no scenery, Beat Saber's normal menu, the selected map's environment, or that environment animated by the map lightshow and preview song time. Environment-tab switches remain independent of mapper and Chroma screen settings. The hosted scene stays loaded when it can be safely reused and unloads when Big Screen closes.");
+
+        showMenuGameplayHudToggle_ = BSML::Lite::CreateToggle(
+            generalContainer,
+            "Show Gameplay HUD",
+            settings.ShowMenuGameplayHud(),
+            [this](bool enabled)
+            {
+                Settings::Instance().SetShowMenuGameplayHud(enabled);
+                ErrorManager::Instance().Guard(
+                    "updating the menu gameplay HUD", []()
+                    {
+                        // HUD installers run as the private gameplay scene is
+                        // constructed once. Visibility then changes in place;
+                        // no gameplay-scene replacement is required.
+                        MenuGameplayEnvironmentHost::Instance().ApplyMode();
+                    });
+                RefreshEnabledState();
+            });
+        BSML::Lite::AddHoverHint(
+            showMenuGameplayHudToggle_,
+            "Shows the gameplay HUD while previewing a map environment so screen placement can be judged against it. This can include HUDs from other mods. It applies only to Map Environment modes and updates immediately.");
 
         showLaneGuidesToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -1536,7 +1581,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             respectMapperSettingsToggle_,
-            "Uses screen placement, curvature, additional screens, visual effects, and Cinema environment changes supplied by the map author in both menu preview and gameplay. Turn this off to keep the mapper's video and synchronization while using your selected Big Screen layout instead.");
+            "Uses screen placement, curvature, additional screens, and visual effects supplied by the map author in both menu preview and gameplay. This affects only the video canvas; Environment-tab choices remain independent. Turn this off to keep the mapper's video and synchronization while using your selected Big Screen layout instead.");
 
         allowChromaOverrideToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -1552,7 +1597,7 @@ namespace BigScreen {
             });
         BSML::Lite::AddHoverHint(
             allowChromaOverrideToggle_,
-            "Lets a map that actually uses Chroma keep its authored environment instead of Big Screen's environment override. Cinema screen placement is controlled separately by Respect Mapper Settings.");
+            "Lets a map that actually uses Chroma keep its authored video-screen presentation. This affects only the screen; it never bypasses Big Screen's Environment-tab scenery, lighting, or motion choices.");
 
         distanceSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -1992,6 +2037,8 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetMapLightShowEnabled(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
                 SettingsMenu::Instance().RefreshControls();
             });
         BSML::Lite::AddHoverHint(
@@ -2005,10 +2052,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideBackWallLights(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         hideBackWallLightsHint_ = BSML::Lite::AddHoverHint(
             hideBackWallLightsToggle_,
-            "Hides the back-wall and center-lane light groups that most often shine across the video. Other map lighting remains active. Takes effect when the next map starts.");
+            "Hides the back-wall and center-lane light groups that most often shine across the video. Other map lighting remains active. Updates the current map preview immediately and applies when gameplay starts.");
 
         hideRingLightsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2017,10 +2066,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideRingLights(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         hideRingLightsHint_ = BSML::Lite::AddHoverHint(
             hideRingLightsToggle_,
-            "Hides the map's ring-light group while leaving the remaining light show active. Takes effect when the next map starts.");
+            "Hides the map's ring-light group while leaving the remaining light show active. Updates the current map preview immediately and applies when gameplay starts.");
 
         hideSideLaserLightsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2029,10 +2080,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideSideLaserLights(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         hideSideLaserLightsHint_ = BSML::Lite::AddHoverHint(
             hideSideLaserLightsToggle_,
-            "Hides the left and right laser-light groups when their beams cross the video. Takes effect when the next map starts.");
+            "Hides the left and right laser-light groups when their beams cross the video. Updates the current map preview immediately and applies when gameplay starts.");
 
         environmentOverrideToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2041,10 +2094,11 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetEnvironmentOverrideEnabled(enabled);
+                MenuGameplayEnvironmentHost::Instance().ApplyMode();
             });
         BSML::Lite::AddHoverHint(
             environmentOverrideToggle_,
-            "Uses Big Mirror as the background for video maps. Turn this off to keep each map's intended environment, which may contain objects that block part of the screen. Takes effect when the next map starts.");
+            "Keeps Big Mirror loaded as the Game Environment throughout the Big Screen menu, including before a song is selected. Turn this off to use each map's intended environment, which may contain objects that block part of the screen.");
 
         // The experimental Glass Desert override is intentionally absent from
         // the public menu. Its persisted setting and gameplay implementation
@@ -2058,10 +2112,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetDisableEnvironmentMotion(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         BSML::Lite::AddHoverHint(
             disableEnvironmentMotionToggle_,
-            "When enabled, stops rotating and moving background scenery in video maps. Takes effect when the next map starts.");
+            "When enabled, stops rotating and moving background scenery in video maps. Updates the current map preview immediately and applies when gameplay starts.");
 
         hideTrackRingsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2070,10 +2126,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideTrackRings(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         BSML::Lite::AddHoverHint(
             hideTrackRingsToggle_,
-            "Hides the overhead ring and arch geometry that can cross in front of the video screen. Takes effect when the next map starts.");
+            "Hides the overhead ring and arch geometry that can cross in front of the video screen. Updates the current map preview immediately and applies when gameplay starts.");
 
         hideSideBarsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2082,10 +2140,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideSideBars(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         BSML::Lite::AddHoverHint(
             hideSideBarsToggle_,
-            "Hides Big Mirror's paired near-building structures when they obstruct the sides of the video. Takes effect when the next map starts.");
+            "Hides Big Mirror's paired near-building structures when they obstruct the sides of the video. Updates the current map preview immediately and applies when gameplay starts.");
 
         hideSpectrogramBarsToggle_ = BSML::Lite::CreateToggle(
             environmentContainer,
@@ -2094,10 +2154,12 @@ namespace BigScreen {
             [](bool enabled)
             {
                 Settings::Instance().SetHideSpectrogramBars(enabled);
+                MenuGameplayEnvironmentHost::Instance()
+                    .ApplyEnvironmentControls();
             });
         hideSpectrogramBarsHint_ = BSML::Lite::AddHoverHint(
             hideSpectrogramBarsToggle_,
-            "Hides the audio-reactive spectrogram bars along the sides of the lanes. Takes effect when the next map starts.");
+            "Hides the audio-reactive spectrogram bars along the sides of the lanes. Updates the current map preview immediately and applies when gameplay starts.");
 
         highFrameRateWarningModal_ = BSML::Lite::CreateModal(
             viewController, {72.0f, 38.0f}, nullptr, false);
@@ -3008,10 +3070,19 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             distractionFreeMenuToggle_,
             settings.DistractionFreeMenu());
-        SetToggleWithoutNotification(
-            showMenuEnvironmentToggle_, settings.ShowMenuEnvironment());
+        if(menuEnvironmentDropdown_)
+        {
+            const int index = std::clamp(
+                static_cast<int>(settings.MenuEnvironment()), 0, 3);
+            menuEnvironmentDropdown_->index = index;
+            if(menuEnvironmentDropdown_->dropdown)
+                menuEnvironmentDropdown_->dropdown->SelectCellWithIdx(index);
+            menuEnvironmentDropdown_->UpdateState();
+        }
         SetToggleWithoutNotification(
             showLaneGuidesToggle_, settings.ShowLaneGuidesEnabled());
+        SetToggleWithoutNotification(
+            showMenuGameplayHudToggle_, settings.ShowMenuGameplayHud());
         SetToggleWithoutNotification(
             advancedOptionsToggle_, settings.AdvancedOptionsEnabled());
         SetToggleWithoutNotification(videoEnabledToggle_, settings.VideoEnabled());
@@ -3153,8 +3224,17 @@ namespace BigScreen {
         // affecting Beat Saber is explicitly locked while the mod is off.
         if(distractionFreeMenuToggle_)
             distractionFreeMenuToggle_->set_interactable(enabled);
-        if(showMenuEnvironmentToggle_)
-            showMenuEnvironmentToggle_->set_interactable(enabled);
+        if(menuEnvironmentDropdown_)
+            menuEnvironmentDropdown_->set_interactable(enabled);
+        if(showMenuGameplayHudToggle_)
+        {
+            const auto mode = settings.MenuEnvironment();
+            const bool mapEnvironmentMode =
+                mode == MenuEnvironmentMode::MapEnvironment ||
+                mode == MenuEnvironmentMode::MapEnvironmentAndLightshow;
+            showMenuGameplayHudToggle_->set_interactable(
+                enabled && mapEnvironmentMode);
+        }
         if(showLaneGuidesToggle_)
             showLaneGuidesToggle_->set_interactable(enabled);
         if(advancedOptionsToggle_)
@@ -3736,8 +3816,7 @@ namespace BigScreen {
         ErrorManager::Instance().Guard(
             "resetting menu placement visuals", []()
             {
-                MenuPlacementGuide::Instance().Apply();
-                MenuEnvironmentVisibility::Instance().Apply();
+                MenuGameplayEnvironmentHost::Instance().ApplyMode();
             });
         RefreshControls();
         BigScreen::BigScreenLogger.info("Reset all Big Screen settings to defaults");

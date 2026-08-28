@@ -11,6 +11,16 @@
 #include <chrono>
 
 namespace BigScreen {
+    /// Selects which world Big Screen keeps behind its menu. The two map modes
+    /// share the same persistent gameplay-scene host; only the latter advances
+    /// the selected map's lighting callbacks from preview song time.
+    enum class MenuEnvironmentMode : int {
+        NoEnvironment = 0,
+        MenuEnvironment = 1,
+        MapEnvironment = 2,
+        MapEnvironmentAndLightshow = 3
+    };
+
     /// One complete screen geometry preset. Keeping geometry together prevents
     /// a profile switch from briefly mixing values from two layouts.
     struct ScreenLayoutProfile {
@@ -80,11 +90,21 @@ namespace BigScreen {
 
         bool ModEnabled() const { return modEnabled_; }
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
-        bool ShowMenuEnvironment() const { return showMenuEnvironment_; }
+        MenuEnvironmentMode MenuEnvironment() const {
+            return menuEnvironmentMode_;
+        }
+        // Compatibility view for the renderer-visibility helpers: only the
+        // explicit No Environment mode hides scenery. The host uses the enum
+        // itself to distinguish stock menu scenery from either map mode.
+        bool ShowMenuEnvironment() const {
+            return menuEnvironmentMode_ !=
+                MenuEnvironmentMode::NoEnvironment;
+        }
         // Scenery, lighting, and floor visibility share one user preference.
         // Keep this accessor so the focused floor-discovery component remains
         // decoupled from the settings representation.
-        bool ShowMenuFloor() const { return showMenuEnvironment_; }
+        bool ShowMenuFloor() const { return ShowMenuEnvironment(); }
+        bool ShowMenuGameplayHud() const { return showMenuGameplayHud_; }
         bool ShowLaneGuidesEnabled() const { return showLaneGuidesEnabled_; }
         bool VideoEnabled() const { return videoEnabled_; }
         bool MenuPreviewEnabled() const { return menuPreviewEnabled_; }
@@ -175,7 +195,11 @@ namespace BigScreen {
 
         void SetModEnabled(bool value);
         void SetDistractionFreeMenu(bool value);
+        void SetMenuEnvironmentMode(MenuEnvironmentMode value);
+        /// Compatibility entry point for older callers. New UI should use the
+        /// four-state setter above so map-preview modes are not collapsed.
         void SetShowMenuEnvironment(bool value);
+        void SetShowMenuGameplayHud(bool value);
         void SetShowLaneGuidesEnabled(bool value);
         void SetVideoEnabled(bool value);
         void SetMenuPreviewEnabled(bool value);
@@ -258,10 +282,15 @@ namespace BigScreen {
         // world. This affects only Big Screen's own menu lifetime and restores
         // every stock or optional-mod object when the player leaves.
         bool distractionFreeMenu_ = true;
-        // This positive-logic switch describes what remains visible. The
-        // environment implementation disables only visual/light components;
-        // the menu hierarchy, input systems, and Big Screen surfaces stay live.
-        bool showMenuEnvironment_ = true;
+        // Fresh installs retain Beat Saber's familiar menu environment. The
+        // other modes are explicit user choices because loading a complete map
+        // environment has a larger memory and scene-lifecycle cost.
+        MenuEnvironmentMode menuEnvironmentMode_ =
+            MenuEnvironmentMode::MenuEnvironment;
+        // Gameplay HUDs can help judge screen placement, but they also add
+        // clutter and can include third-party HUD mods. Keep them opt-in and
+        // apply them only to the two hosted map-environment modes.
+        bool showMenuGameplayHud_ = false;
         // Lane guides remain independent from environment and floor visibility.
         bool showLaneGuidesEnabled_ = false;
         bool videoEnabled_ = true;

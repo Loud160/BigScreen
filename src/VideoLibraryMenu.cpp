@@ -30,6 +30,7 @@
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/MenuGameplayEnvironmentHost.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
@@ -2342,6 +2343,25 @@ namespace BigScreen {
         return true;
     }
 
+    GlobalNamespace::BeatmapLevel*
+    VideoLibraryMenu::EnvironmentBootstrapLevel() const
+    {
+        // Environment hosting still enters through Beat Saber's supported
+        // StandardLevelScenesTransitionSetupDataSO path, which requires a
+        // valid BeatmapLevel even when Big Mirror—not that map's environment—
+        // is the requested scene. An OST level is the least surprising seed:
+        // it is always local and cannot require Chroma/Noodle extensions.
+        const auto official = std::find_if(
+            catalog_.begin(), catalog_.end(),
+            [](const SongLibraryItem& item)
+            {
+                return item.group == SongLibraryGroup::Ost && item.level;
+            });
+        if(official != catalog_.end())
+            return official->level;
+        return catalog_.empty() ? nullptr : catalog_.front().level;
+    }
+
     void VideoLibraryMenu::SelectLevel(
         GlobalNamespace::BeatmapLevel* level,
         bool navigateToEditor)
@@ -2365,6 +2385,8 @@ namespace BigScreen {
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         selected_ = level;
+        const bool deferPreviewForEnvironment =
+            MenuGameplayEnvironmentHost::Instance().SelectLevel(selected_);
         DiagnosticSessionLogger::Instance().MenuEvent(
             "song_selected", "VideoLibraryMenu", {
                 {"levelId", selected_ && selected_->levelID
@@ -2425,14 +2447,94 @@ namespace BigScreen {
             BeginUrlProbe();
         else
             RefreshDetails();
-        StartSelectedPreview();
+        if(!deferPreviewForEnvironment)
+            StartSelectedPreview();
         RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::EnvironmentHostReady(std::string_view levelId)
+    {
+        if(!active_ || !editorVisible_ || !selected_ || !selected_->levelID ||
+           std::string(selected_->levelID) != levelId)
+            return;
+
+        const bool resumeAfterReplacement =
+            environmentTransitionPending_ &&
+            resumeAfterEnvironmentTransition_;
+        environmentTransitionPending_ = false;
+        resumeAfterEnvironmentTransition_ = false;
+
+        // Environment replacement destroys every Unity object in the prior
+        // Environment scene, including Big Screen's world-space preview.
+        // Build the selected preview only after Beat Saber's transition has
+        // completed so the screen belongs to the retained map environment.
+        // StartSelectedPreview uses previewPlaying_ as its explicit resume
+        // request and waits for the first synchronized video frame before it
+        // releases the retained audio channel.
+        if(resumeAfterReplacement)
+            previewPlaying_ = true;
+        StartSelectedPreview();
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Tick(previewSongTime_);
+        RefreshPlaybackControls();
+    }
+
+    void VideoLibraryMenu::EnvironmentHostTransitionStarting()
+    {
+        if(environmentTransitionPending_)
+            return;
+
+        environmentTransitionPending_ = true;
+        resumeAfterEnvironmentTransition_ =
+            previewPlaying_ || playWhenAudioReady_ || playWhenVideoReady_;
+
+        // Pause only Big Screen's current audition channel. Do not release the
+        // clip or reset previewSongTime_: the replacement should be invisible
+        // to the transport apart from the short scene-transition pause.
+        try
+        {
+            if(IsAlive(songPreviewPlayer_) && IsAlive(previewAudioClip_) &&
+               ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
+                songPreviewPlayer_->PauseCurrentChannel();
+        }
+        catch(const std::exception& error)
+        {
+            BigScreen::BigScreenLogger.warn(
+                "Could not pause preview audio before environment replacement: {}",
+                error.what());
+        }
+
+        previewPlaying_ = false;
+        if(resumeAfterEnvironmentTransition_)
+            previewPaused_ = true;
+        playWhenAudioReady_ = false;
+        playWhenVideoReady_ = false;
+        ClearPreviewPreRoll();
+        previewClockValid_ = false;
+        previewMeasurementStarted_ = false;
+
+        // This is the critical lifetime boundary. Stop joins the decoder and
+        // releases its ScreenSurface before ReplaceScenes can destroy the same
+        // Unity objects. A normal EnvironmentHostReady callback creates the new
+        // surface and optionally resumes playback afterward.
+        if(PlaybackSession::Instance().IsLibraryPreviewActive())
+            PlaybackSession::Instance().Stop();
+        ScreenPreview::Instance().Suspend();
+
+        BigScreen::BigScreenLogger.info(
+            "Suspended Video Library preview for map-environment replacement (resume={})",
+            resumeAfterEnvironmentTransition_);
     }
 
     void VideoLibraryMenu::ShowBrowser()
     {
         CloseEditorNotice();
         editorVisible_ = false;
+        // A scene replacement can still complete after the player presses
+        // Back. Relinquish its retained transport intent now so the completion
+        // callback cannot restart the map that the player just left.
+        environmentTransitionPending_ = false;
+        resumeAfterEnvironmentTransition_ = false;
         pendingDownloadRefreshLevelId_.clear();
         terminalDownloadProgressLevelId_.clear();
         StopPreviewAudio(true);
@@ -3163,6 +3265,8 @@ namespace BigScreen {
                 {"fileName", fileName},
                 {"origin", "local"}});
         previewSongTime_ = 0.0;
+        MenuGameplayEnvironmentHost::Instance().SetPreviewSongTime(
+            previewSongTime_);
         playWhenAudioReady_ = true;
         RefreshLocalVideoStatus();
         RequestSelectedAudio();
@@ -4843,6 +4947,8 @@ namespace BigScreen {
         // leaving the scrubber at 100 percent if the new channel starts later
         // in this Unity update.
         previewSongTime_ = 0.0;
+        MenuGameplayEnvironmentHost::Instance().SetPreviewSongTime(
+            previewSongTime_);
         ResetPreviewClock(previewSongTime_);
         previewPlaying_ = false;
         previewPaused_ = false;
@@ -5045,6 +5151,8 @@ namespace BigScreen {
             static_cast<double>(songTimeSeconds),
             0.0,
             duration);
+        MenuGameplayEnvironmentHost::Instance().SetPreviewSongTime(
+            previewSongTime_);
         ResetPreviewClock(previewSongTime_);
         DiagnosticSessionLogger::Instance().MenuEvent(
             "preview_seeked", "VideoLibraryMenu", {
@@ -5330,6 +5438,8 @@ namespace BigScreen {
             {
                 const double rawAudioSongTime = previewAudioSource_->get_time();
                 previewSongTime_ = AdvancePreviewClock(rawAudioSongTime);
+                MenuGameplayEnvironmentHost::Instance().SetPreviewSongTime(
+                    previewSongTime_);
                 if(CoreLogic::PreviewReachedLoopBoundary(
                        rawAudioSongTime,
                        selected_ ? selected_->songDuration : 0.0,
@@ -5483,6 +5593,10 @@ namespace BigScreen {
         browserTableReloadPending_ = false;
         CloseEditorNotice();
         editorVisible_ = false;
+        // Menu dismissal owns the final preview lifetime. Never carry a
+        // replacement-time resume request into a later Big Screen session.
+        environmentTransitionPending_ = false;
+        resumeAfterEnvironmentTransition_ = false;
         pendingDownloadRefreshLevelId_.clear();
         terminalDownloadProgressLevelId_.clear();
         const std::string selectedLevelId =

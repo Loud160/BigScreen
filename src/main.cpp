@@ -21,6 +21,7 @@
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ExperimentalFeatures.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/MenuGameplayEnvironmentHost.hpp"
 #include "BigScreen/MenuModal.hpp"
 // BLOOM EXPERIMENT DISABLED (2026-08-18): the implementation and hook remain
 // behind one named build gate so they can be revisited without reconstructing
@@ -1222,6 +1223,15 @@ namespace {
         GlobalNamespace::OverrideEnvironmentSettings* overrideEnvironmentSettings,
         GlobalNamespace::EnvironmentsListModel* environmentsListModel)
     {
+        if(BigScreen::MenuGameplayEnvironmentHost::Instance()
+               .OwnsTransitionSetup(self))
+        {
+            StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
+                self,
+                overrideEnvironmentSettings,
+                environmentsListModel);
+            return;
+        }
         if(!BigScreen::Settings::Instance().ModEnabled())
         {
             StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
@@ -1251,15 +1261,15 @@ namespace {
                 const auto& settings = BigScreen::Settings::Instance();
                 if(playback.MapperEnvironmentPresentationActive())
                 {
-                    // A mapper-requested environment is part of the Cinema
-                    // contract. If none is supplied, retain the map's normal
-                    // Chroma-aware environment rather than forcing Big Mirror.
+                    // Only Big Screen's bundled showcase/compatibility paths
+                    // can own the environment. User-facing Cinema and Chroma
+                    // switches are screen-only and never enter this branch.
                     const auto& mapperEnvironment =
                         playback.RequestedEnvironment();
                     if(!mapperEnvironment)
                     {
                         BigScreen::BigScreenLogger.info(
-                            "Allow Chroma Override retained the map's intended environment");
+                            "Bundled presentation retained the map's intended environment");
                         return;
                     }
                     if(!environmentsListModel)
@@ -1286,7 +1296,7 @@ namespace {
                         self->set_targetEnvironmentInfo(environment);
                         self->set_usingOverrideEnvironment(true);
                         BigScreen::BigScreenLogger.info(
-                            "Allow Chroma Override loaded mapper environment '{}'",
+                            "Bundled presentation loaded authored environment '{}'",
                             *mapperEnvironment);
                     }
                     else
@@ -1368,6 +1378,16 @@ namespace {
         StringW backButtonText,
         bool startPaused)
     {
+        if(BigScreen::MenuGameplayEnvironmentHost::Instance()
+               .OwnsTransitionSetup(self))
+        {
+            StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes(
+                self,
+                playerSpecificSettings,
+                backButtonText,
+                startPaused);
+            return;
+        }
         if(!BigScreen::Settings::Instance().ModEnabled())
         {
             StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes(
@@ -1624,6 +1644,22 @@ namespace {
         GlobalNamespace::AudioTimeSyncController* self,
         float startTimeOffset)
     {
+        auto& environmentHost =
+            BigScreen::MenuGameplayEnvironmentHost::Instance();
+        if(environmentHost.TransitionInProgress())
+        {
+            // The private menu host needs Beat Saber to finish constructing
+            // its standard gameplay graph, but it must never start audible
+            // gameplay or Big Screen's normal gameplay decoder lifecycle.
+            AudioTimeSyncController_StartSong(self, startTimeOffset);
+            environmentHost.CaptureAudioController(self);
+            self->Pause();
+            // Prevent Unity—and hooks installed outside Big Screen's own
+            // AudioTimeSyncController hook—from updating this private preview
+            // clock while its gameplay scene is retained or replaced.
+            self->set_enabled(false);
+            return;
+        }
         BigScreen::ErrorManager::Instance().Guard("saving settings before gameplay", []() {
             BigScreen::Settings::Instance().Flush();
         });
@@ -1700,6 +1736,8 @@ namespace {
         Application_InvokeFocusChanged(hasFocus);
         if(!hasFocus)
         {
+            BigScreen::MenuGameplayEnvironmentHost::Instance()
+                .SuspendForFocusLoss();
             BigScreen::MenuEnvironmentVisibility::Instance().Restore();
             BigScreen::MenuPlacementGuide::Instance().Suspend();
             BigScreen::ErrorManager::Instance().Guard(
@@ -1714,6 +1752,8 @@ namespace {
         }
         else if(BigScreen::IsBigScreenMenuActive())
         {
+            BigScreen::MenuGameplayEnvironmentHost::Instance()
+                .ResumeAfterFocusGain();
             // Focus loss always restores the stock renderer state. Recreate
             // the optional guide only after Beat Saber owns the foreground
             // again and Big Screen's retained flow is still active.
@@ -1872,6 +1912,10 @@ namespace {
         void,
         GlobalNamespace::AudioTimeSyncController* self)
     {
+        if(BigScreen::MenuGameplayEnvironmentHost::Instance()
+               .OwnsAudioController(self))
+            return;
+
         AudioTimeSyncController_Update(self);
 
         if(!BigScreen::Settings::Instance().ModEnabled())
@@ -1901,6 +1945,13 @@ namespace {
         GlobalNamespace::StandardLevelScenesTransitionSetupDataSO* self,
         GlobalNamespace::LevelCompletionResults* levelCompletionResults)
     {
+        if(BigScreen::MenuGameplayEnvironmentHost::Instance()
+               .OwnsTransitionSetup(self))
+        {
+            StandardLevelScenesTransitionSetupDataSO_Finish(
+                self, levelCompletionResults);
+            return;
+        }
         // Release native decoder resources and Unity objects before the normal
         // transition tears down GameCore. This also guarantees that the next
         // selected map cannot inherit a stale frame or decoder worker.
@@ -2054,9 +2105,9 @@ MOD_EXTERN_FUNC void late_load() noexcept
     // visibility owns menu preview lifetime, scene transition owns gameplay
     // setup, and Beat Saber's audio clocks remain authoritative for sync.
     INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes);
     INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel);
     INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelRestartController_RestartLevel);
     INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelRestartController_RestartLevel);
     INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelDetailView_Awake);
@@ -2078,16 +2129,16 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(BigScreen::BigScreenLogger, BloomPrePass_OnPreRender);
 #endif
     INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapObjectSpawnController_Start);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, AudioTimeSyncController_StartSong);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, AudioTimeSyncController_Update);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, BeatmapObjectSpawnController_Start);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, AudioTimeSyncController_StartSong);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, AudioTimeSyncController_Update);
     INSTALL_HOOK(BigScreen::BigScreenLogger, SongPreviewPlayer_Update);
     INSTALL_HOOK(BigScreen::BigScreenLogger, Application_InvokeFocusChanged);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, StandardLevelScenesTransitionSetupDataSO_Finish);
     INSTALL_HOOK(BigScreen::BigScreenLogger, MissionLevelScenesTransitionSetupDataSO_Finish);
-    INSTALL_HOOK(BigScreen::BigScreenLogger, ResultsViewController_DidActivate);
+    INSTALL_HOOK_ORIG(BigScreen::BigScreenLogger, ResultsViewController_DidActivate);
     // SongCore publishes selections after its custom-level details are ready,
     // including WIP songs. A plain native callback keeps this path independent
     // of Beat Saber's private view-controller field layout.

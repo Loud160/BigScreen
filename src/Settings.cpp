@@ -257,13 +257,28 @@ namespace BigScreen {
             document,
             "distractionFreeMenu",
             true);
-        showMenuEnvironment_ = ReadBool(
+        // Migrate the former Boolean without changing what an existing user
+        // sees. A missing four-state value maps true to Menu Environment and
+        // false to No Environment; future map modes persist as their enum.
+        const bool legacyShowMenuEnvironment = ReadBool(
+            document, "showMenuEnvironment", true);
+        menuEnvironmentMode_ = static_cast<MenuEnvironmentMode>(std::clamp(
+            ReadInt(
+                document,
+                "menuEnvironmentMode",
+                legacyShowMenuEnvironment
+                    ? static_cast<int>(MenuEnvironmentMode::MenuEnvironment)
+                    : static_cast<int>(MenuEnvironmentMode::NoEnvironment)),
+            static_cast<int>(MenuEnvironmentMode::NoEnvironment),
+            static_cast<int>(
+                MenuEnvironmentMode::MapEnvironmentAndLightshow)));
+        showMenuGameplayHud_ = ReadBool(
             document,
-            "showMenuEnvironment",
-            true);
+            "showMenuGameplayHud",
+            false);
         // v0.7 originally stored lane-guide state under this development key.
         // It remains only as a one-time fallback for that independent option;
-        // Show Menu Environment is now the sole scenery/floor preference.
+        // the four-state environment mode now owns scenery and floor visibility.
         const bool legacyOpenFloorPlacement = ReadBool(
             document,
             "menuPlacementGuideEnabled",
@@ -550,7 +565,35 @@ namespace BigScreen {
 
     void Settings::SetShowMenuEnvironment(bool value)
     {
-        SetLoggedBoolean("Show Menu Environment", showMenuEnvironment_, value);
+        SetMenuEnvironmentMode(value
+            ? MenuEnvironmentMode::MenuEnvironment
+            : MenuEnvironmentMode::NoEnvironment);
+    }
+
+    void Settings::SetMenuEnvironmentMode(MenuEnvironmentMode value)
+    {
+        const auto normalized = static_cast<MenuEnvironmentMode>(std::clamp(
+            static_cast<int>(value),
+            static_cast<int>(MenuEnvironmentMode::NoEnvironment),
+            static_cast<int>(
+                MenuEnvironmentMode::MapEnvironmentAndLightshow)));
+        const auto previous = menuEnvironmentMode_;
+        menuEnvironmentMode_ = normalized;
+        if(previous != menuEnvironmentMode_)
+            DiagnosticSessionLogger::Instance().MenuEvent(
+                "setting_changed", "Settings", {
+                    {"setting", "Menu Environment Mode"},
+                    {"previousValue", std::to_string(
+                        static_cast<int>(previous))},
+                    {"newValue", std::to_string(
+                        static_cast<int>(menuEnvironmentMode_))}});
+        Save();
+    }
+
+    void Settings::SetShowMenuGameplayHud(bool value)
+    {
+        SetLoggedBoolean(
+            "Show Gameplay HUD", showMenuGameplayHud_, value);
         Save();
     }
 
@@ -1144,7 +1187,12 @@ namespace BigScreen {
 
         Replace(document, "modEnabled", modEnabled_);
         Replace(document, "distractionFreeMenu", distractionFreeMenu_);
-        Replace(document, "showMenuEnvironment", showMenuEnvironment_);
+        Replace(
+            document,
+            "menuEnvironmentMode",
+            static_cast<int>(menuEnvironmentMode_));
+        Replace(document, "showMenuGameplayHud", showMenuGameplayHud_);
+        document.RemoveMember("showMenuEnvironment");
         // Development builds briefly exposed a second floor switch. The
         // environment switch now owns scenery, lighting, and floor together.
         document.RemoveMember("showMenuFloor");

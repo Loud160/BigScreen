@@ -1,13 +1,5 @@
 # Future work
 
-## TODO: Rebuild the deferred menu gameplay-environment preview safely
-
-The attempted partial gameplay host was removed after repeatable Quest menu
-crashes. Do not restore or repeat that scene-stack implementation. The full
-failure history, Beat Saber scene contract, rejected approaches, recommended
-render-only proxy design, and required headset validation are recorded in the
-archived [menu environment preview planning note](ai-assisted-development/planning/MENU_ENVIRONMENT_PREVIEW_DEFERRED.md).
-
 ## TODO: Optionally inherit PC Cinema's default canvas for metadata-only configs
 
 Big Screen currently lets **Respect Mapper Settings** claim the physical screen

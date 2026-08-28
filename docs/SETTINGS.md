@@ -16,9 +16,20 @@ Master switch. Off stops previews, downloads, screens, and environment changes w
 
 While the Big Screen menu is open, temporarily hides the neon Beat Saber sign and supported clock/battery overlays it can detect. Objects are restored on exit. Detection is defensive: stock installations and installations without those optional UI objects remain supported.
 
-### Show Menu Environment — default: On
+### Menu Environment — default: Menu Environment
 
-Shows Beat Saber's normal menu scenery, lighting, and floor behind Big Screen. Off provides an unlit, unobstructed placement space and leaves screens visible below gameplay floor height while preserving the environment hierarchy, menu cameras, controller input, Big Screen UI, preview screen, and optional lane guides. The complete environment is restored on focus loss, mod disable, menu exit, and errors.
+Selects one of four persistent spaces behind Big Screen:
+
+- **No Environment** hides the stock scenery, lighting, and floor for an unobstructed placement space. Screens remain visible below gameplay floor height.
+- **Menu Environment** uses Beat Saber's normal menu scenery, lighting, and floor.
+- **Map Environment** loads the selected map's complete environment, or the independently selected Big Mirror/Glass Desert override, but holds its lighting at the start of the song. Respect Mapper Settings and Allow Chroma Override do not bypass the Environment-tab controls in this menu host.
+- **Map Environment + Lightshow** loads the same environment and advances the map's lighting and animated environment callbacks from the Video Library preview song time. Scrubbing and looping also move or rewind the lightshow.
+
+The map host uses Beat Saber's complete standard scene transition, then disables gameplay cameras, players, note/obstacle spawning, automatic song timing, and gameplay audio. It remains loaded when returning from a song editor to the song list. With **Use Big Mirror Override** enabled, a safe installed OST level supplies the setup data needed to construct Big Mirror as soon as the menu opens; selecting or playing a song is not required, and song changes never rebuild that same environment. With the override off, a genuinely different map environment is switched with a serialized Pop-then-Push boundary; Big Screen never overlaps two private GameCore scene sets. The preview is suspended before unload, rebuilt after the incoming scene is stable, and resumed from its retained song time. This prevents video upload into destroyed Unity objects and prevents third-party audio hooks from advancing a retiring controller. Load and unload durations are recorded in the native log for performance diagnosis. HUD visibility and Environment-tab cleanup controls mutate the retained host in place. The host unloads and the normal menu is restored on focus loss, mod disable, and menu exit. If a map environment cannot load or configure safely, Big Screen falls back to the normal menu environment without changing the saved dropdown choice.
+
+### Show Gameplay HUD — default: Off
+
+Applies only to **Map Environment** and **Map Environment + Lightshow**. The private host creates the gameplay HUD hierarchy once, then On or Off changes the retained stock and compatible third-party HUD canvases in place. This lets screen placement be judged against the same visible counters and panels used during a map without changing the player's normal Beat Saber HUD preference or rebuilding GameCore.
 
 ### Show Lane Guides — default: Off
 
@@ -42,7 +53,7 @@ Shows a confirmation dialog, then restores every global option and all five layo
 
 ## Screen
 
-The menu always displays a blank screen in the placement environment. Changes update it immediately. Turn off **General > Show Menu Environment** for an unobstructed, unlit placement space that also permits positioning below the stock floor, and use **Show Lane Guides** independently when a gameplay-coordinate reference would help. Mapper-controlled Cinema/Chroma presentation can intentionally replace these values for an authored map.
+The menu always displays a blank screen in the selected placement environment. Changes update it immediately. Choose **General > Menu Environment > No Environment** for an unobstructed, unlit placement space that also permits positioning below the stock floor, or select either Map Environment mode to judge the screen against the selected map's actual scenery. **Show Lane Guides** remains independent. Mapper-controlled Cinema/Chroma presentation can intentionally replace screen values for an authored map.
 
 ### Editing Screen Layout — default: Layout 1
 
@@ -54,11 +65,11 @@ Enables independent video framing and free screen placement for the selected lay
 
 ### Respect Mapper Settings — default: On
 
-Applies screen placement, curvature, additional screens, image effects, and explicit Cinema environment changes authored in the map's video metadata. Once a Cinema file supplies screen geometry, it owns the complete physical canvas: omitted geometry fields use Cinema defaults, so a missing `screenCurvature` produces a flat screen rather than inheriting the player's Curved Screen setting. The Video Library preview and retained menu-world screen use the same resolved Cinema canvas as gameplay, so authored size, shape, and placement can be judged before starting the map. Turn this off to keep the mapper's video identity and synchronization while using the selected Big Screen layout and visual settings. A timing/URL-only Cinema file never claims the screen. User video pan, zoom, rotation, tilt, stretch, opacity, and letterbox behavior remain available inside an authored canvas.
+Applies screen placement, curvature, additional screens, and image effects authored in the map's video metadata. Once a Cinema file supplies screen geometry, it owns the complete physical canvas: omitted geometry fields use Cinema defaults, so a missing `screenCurvature` produces a flat screen rather than inheriting the player's Curved Screen setting. The Video Library preview and retained menu-world screen use the same resolved Cinema canvas as gameplay, so authored size, shape, and placement can be judged before starting the map. Turn this off to keep the mapper's video identity and synchronization while using the selected Big Screen layout and visual settings. A timing/URL-only Cinema file never claims the screen. User video pan, zoom, rotation, tilt, stretch, opacity, and letterbox behavior remain available inside an authored canvas. This switch never changes or exempts the gameplay/menu environment.
 
 ### Allow Chroma Override — default: On
 
-Lets a map that is actually detected as using Chroma retain its Chroma-authored gameplay environment instead of Big Screen's environment override. It does not decide who owns the video screen; that separate decision belongs to Respect Mapper Settings. Detection is map-wide and works whether the video came from the mapper, a supported download, Video Import, or the map folder. Turn this off to use Big Screen's environment options while leaving Cinema screen presentation governed by Respect Mapper Settings.
+Lets a map that is actually detected as using Chroma retain its authored video-screen presentation. Detection is map-wide and works whether the video came from the mapper, a supported download, Video Import, or the map folder. It affects only the screen and never bypasses Big Screen's Environment-tab scenery, lighting, or motion choices.
 
 ### Screen Distance Offset — default: 0, range: -180 to +180
 
@@ -134,11 +145,11 @@ While undocked, the map-relative Distance, X/Y, Screen Tilt, Screen Size Multipl
 
 Leaving Big Screen, changing layouts/settings, disabling the mod, or opening the Quest system menu cancels unsaved positioning and restores the last saved placement. **Cancel Positioning** provides the same safe exit. Flat/curved controls continue to apply to an undocked screen.
 
-Respect Mapper Settings takes priority when Cinema metadata supplies authored screen geometry. Turning it off restores Big Screen's neutral canvas before applying the selected layout, so mapper X/Y/Z, rotation, and size never survive as hidden offsets. Allow Chroma Override independently controls only the detected Chroma environment.
+Respect Mapper Settings takes priority when Cinema metadata supplies authored screen geometry. Turning it off restores Big Screen's neutral canvas before applying the selected layout, so mapper X/Y/Z, rotation, and size never survive as hidden offsets. Allow Chroma Override independently allows detected Chroma screen presentation. Neither switch owns the environment.
 
 ## Environment
 
-These options apply only when a playable video map is being prepared. Ordinary maps without an assigned/playable video are unaffected. Changes marked “next map” require environment creation and cannot safely rebuild the current gameplay scene.
+Gameplay environment options apply when a playable video map is prepared. In the menu's Game Environment modes, they also control the retained environment immediately—even before a song is selected when Big Mirror is forced. Lighting, motion, ring, side-bar, side-laser, and spectrogram changes are reversible. These switches are independent of Respect Mapper Settings and Allow Chroma Override; neither screen-related choice disables an Environment-tab control.
 
 ### Map Light Show — default: On
 
@@ -160,7 +171,7 @@ Disabled child controls do not display hover hints; Map Light Show keeps its own
 
 ### Use Big Mirror Override — default: On
 
-Loads Big Mirror for video maps because its open back-wall area fits a large screen. Off preserves the map's intended environment, which can place scenery in front of the video. A detected Chroma map takes environment precedence when Allow Chroma Override is active. An explicit Cinema `environmentName` or `environment` array takes precedence when Respect Mapper Settings is active.
+Keeps Big Mirror loaded as the menu's Game Environment because its open back-wall area fits a large screen. It is created when the menu opens, before a song is selected, and is reused for every selected song. Off preserves each map's intended gameplay environment, which can place scenery in front of the video. Respect Mapper Settings and Allow Chroma Override affect screen presentation only; neither setting changes this Environment-tab choice.
 
 ### Disable Rotation and Motion — default: On
 
