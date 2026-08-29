@@ -376,13 +376,41 @@ int main()
            previewReason.find("ExpertStandard.dat") != std::string::npos,
            "resolved Chroma screens should claim mapper geometry and identify their source file");
 
+    // A cache hit must replay only the parsed Chroma operations against the
+    // caller's current base configuration. It must never return a stale copy
+    // of the first preview's user/Cinema settings.
+    BigScreen::MapVideoConfig cachedPreview;
+    cachedPreview.screenHeight = 9.0f;
+    cachedPreview.screenPosition = {1.0f, 2.0f, -150.0f};
+    Expect(BigScreen::ChromaMapDetector::ApplyCinemaScreenPreview(
+               root, "Standard", 3, cachedPreview, previewReason),
+           "cached Chroma instructions should resolve for a repeated difficulty");
+    Expect(Near(cachedPreview.screenHeight, 9.0f) &&
+           Near(cachedPreview.screenPosition.z, -150.0f) &&
+           cachedPreview.additionalScreens.size() == 3,
+           "cached instructions should apply to the current base configuration");
+
+    // Exact matching must not treat an arbitrary object name ending in
+    // CinemaScreen as the canonical Cinema object.
+    {
+        std::ofstream output(cinemaDifficulty, std::ios::trunc);
+        output << R"({"customData":{"environment":[{
+            "id":"FakeCinemaScreen","lookupMethod":"Exact",
+            "position":[100,100,100]
+        }]}})";
+    }
+    BigScreen::MapVideoConfig falseExactPreview;
+    Expect(!BigScreen::ChromaMapDetector::ApplyCinemaScreenPreview(
+               root, "Standard", 3, falseExactPreview, previewReason),
+           "Exact matching should reject arbitrary CinemaScreen suffixes");
+
     // A non-duplicate instruction mutates the canonical screen itself. Scale
     // is a transform property in Chroma rather than a Cinema screenHeight, so
     // preserve it independently for the menu surface root.
     {
         std::ofstream output(cinemaDifficulty, std::ios::trunc);
         output << R"({"customData":{"environment":[{
-            "id":"CinemaScreen","lookupMethod":"Exact",
+            "id":"Environment/CinemaScreen","lookupMethod":"Exact",
             "position":[7,8,9],"rotation":[10,20,30],"scale":[2,3,1]
         }]}})";
     }

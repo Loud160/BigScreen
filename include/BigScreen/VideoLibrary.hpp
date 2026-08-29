@@ -282,7 +282,11 @@ namespace BigScreen {
         VideoLibrary() = default;
 
         void LoadLocked();
-        void SaveLocked();
+        /// Persists the current records while invalidating only the descriptor
+        /// derived from the changed level. Passing an empty ID is reserved for
+        /// full-library recovery/reload operations whose complete descriptor
+        /// population is no longer authoritative.
+        void SaveLocked(std::string_view changedLevelId = {});
         bool TryLoadManifestLocked(
             const std::filesystem::path& path,
             std::vector<std::pair<std::string, LevelVideoRecords>>& output) const;

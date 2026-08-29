@@ -46,11 +46,17 @@ artifact, and Quest deployment method. After the user tests it, record the
 reported result and any regression before starting the next stage. A stage is
 not complete merely because it compiles.
 
+Each implemented stage is checkpointed on its own
+`codex/fable-review-stage-N` branch before work begins on the next stage. If an
+earlier headset pass exposes a regression, that stage's branch can be fixed in
+isolation and the corrective commit can then be applied to later stage branches
+without mixing unrelated unfinished work.
+
 | Stage | Scope | Status | Commit | Quest result |
 | --- | --- | --- | --- | --- |
-| 1 | Beta correctness, privacy, and unsupported-mode gate | Quest validated | Uncommitted working tree | No obvious regression in the user's initial focused pass |
-| 2 | Unity screen-state and lifetime safety | Awaiting Quest test | Uncommitted working tree | Not deployed; Stage 2 host build only |
-| 3 | Video Library cache and menu responsiveness | Planned | — | Pending |
+| 1 | Beta correctness, privacy, and unsupported-mode gate | Quest validated | `94ab939` (combined Stage 1/2 checkpoint) | No obvious regression in the user's initial focused pass |
+| 2 | Unity screen-state and lifetime safety | Quest testing in progress | `94ab939` on `codex/fable-review-stage-2` | Ownership-safe deployment verified; user testing in progress |
+| 3 | Video Library cache and menu responsiveness | Automated verification passed | Stage 3 checkpoint on `codex/fable-review-stage-3` | Not deployed; Stage 3 QMOD-only build |
 | 4 | Deployment, removal, and ownership parity | Planned | — | Pending |
 | 5 | Downloader operation cleanup and diagnostics | Planned | — | Pending |
 | 6 | Packaging, CI, and dependency reproducibility | Planned | — | Pending |
@@ -251,9 +257,10 @@ Automated evidence:
 - Artifact: `Big Screen.qmod`, 19,692,295 bytes.
 - SHA-256: `532aa225223a734661ca3bc9e8218a647e3735e15533581d4d7b5824ec1641bc`.
 
-Quest result: pending. Stage 2 was built with the QMOD-only workflow; no ADB
-command, deployment, game launch, or headset log access was performed. Use the
-focused checklist above for the next on-device pass.
+Quest result: the ownership-safe source deployment completed with every payload
+hash verified. The user is testing this exact Stage 2 checkpoint while Stage 3
+is developed on its separate branch. Any next headset findings must therefore
+be recorded against Stage 2, not inferred to describe the Stage 3 build.
 
 ## Stage 3 — Video Library cache and menu responsiveness
 
@@ -293,7 +300,39 @@ focused checklist above for the next on-device pass.
 
 ### Result
 
-Pending implementation and Quest testing.
+Implementation and automated verification completed on August 29, 2026.
+
+- Durable one-map library edits invalidate only that level's parsed descriptor.
+  Full cache invalidation remains reserved for full manifest load/recovery.
+- Playback-speed and offset movement updates the visible controls immediately,
+  then coalesces persistence and preview restart until 250 ms after input
+  settles. Map changes, editor exit, metadata refresh, and menu deactivation
+  flush the final pending value before their navigation boundary.
+- Incremental catalog preparation now maintains an O(1)-updated Cinema JSON
+  issue index. Its title button reports honest checked/total progress and its
+  dialog reads the native index rather than synchronously parsing every map.
+- Selected-difficulty Chroma preview instructions are cached by normalized map
+  path, characteristic, difficulty, and `.dat` file fingerprint, then replayed
+  against the current user/Cinema base configuration on each cache hit.
+- Exact Chroma matching accepts only `CinemaScreen` or a hierarchy-qualified
+  final path component; arbitrary names ending in `CinemaScreen` are rejected.
+- Off-screen row models no longer retain raw thumbnail sprite pointers. The LRU
+  pins sprites bound to visible virtualized cells, retires explicit replacements
+  safely, and destroys them only after a subsequent binding pass releases them.
+
+Automated evidence:
+
+- Canonical host suite: 14/14 tests passed.
+- Chroma cache/current-base and exact-ID fixtures: passed.
+- Repository debounce, incremental-index, targeted-cache, and thumbnail-lifetime
+  invariants: passed.
+- Full ARM64 Quest build and validated QMOD packaging: passed.
+- Artifact: `Big Screen.qmod`, 19,710,148 bytes.
+- SHA-256: `2755b5bedb22b46fa4f5e899939a748b94d3cd2d10a72ccf198746e0652dfc6a`.
+
+Quest result: pending. Stage 3 was built through the QMOD-only path. No ADB
+command, deployment, game launch, or headset log access was performed while the
+user tested Stage 2.
 
 ## Stage 4 — Deployment, removal, and ownership parity
 

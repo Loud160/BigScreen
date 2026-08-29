@@ -239,6 +239,7 @@ namespace BigScreen {
         // can place the handle in VR and work for songs of any duration.
         constexpr float PreviewScrubIncrement = 0.001f;
         constexpr float PreviewScrubFollowDelay = 0.25f;
+        constexpr float TimingCommitDebounceSeconds = 0.25f;
         // A quarter second is long enough to build a useful reserve at 60 FPS
         // without making the menu transport feel delayed. This does not sleep
         // or block Unity; Tick continues feeding the stationary decoder clock.
@@ -289,6 +290,12 @@ namespace BigScreen {
         std::uint64_t VideoThumbnailUseCounter = 0;
         std::unordered_map<std::string, CachedVideoThumbnail> VideoThumbnailSprites;
         std::unordered_set<std::string> FailedVideoThumbnailLoads;
+        // CustomCellInfo and LevelListTableCell store raw Sprite pointers. A
+        // normal LRU eviction must therefore never destroy a sprite while a
+        // visible virtualized cell still refers to it. Explicit invalidation
+        // retires a bound sprite and releases it after the next binding pass.
+        std::unordered_set<UnityEngine::Sprite*> BoundVideoThumbnailSprites;
+        std::unordered_set<UnityEngine::Sprite*> RetiredVideoThumbnailSprites;
 
         struct RowVideoThumbnail {
             bool hasVideo = false;
@@ -321,6 +328,12 @@ namespace BigScreen {
             if(!metadata || !metadata->hasVideo || !metadata->path)
             {
                 cellInfo->icon = nullptr;
+                if(coverImage)
+                {
+                    coverImage->set_sprite(
+                        BSML::Utilities::ImageResources::GetBlankSprite());
+                    coverImage->set_color({1.0f, 1.0f, 1.0f, 0.0f});
+                }
                 return;
             }
 
@@ -362,6 +375,12 @@ namespace BigScreen {
                 coverImage->set_sprite(sprite);
                 coverImage->set_color(UnityEngine::Color::get_white());
             }
+            else if(coverImage)
+            {
+                coverImage->set_sprite(
+                    BSML::Utilities::ImageResources::GetBlankSprite());
+                coverImage->set_color({1.0f, 1.0f, 1.0f, 0.0f});
+            }
         }
 
         /// Supplies the timing values that a Video Library download should
@@ -384,8 +403,13 @@ namespace BigScreen {
             if(const auto cached = VideoThumbnailSprites.find(path);
                cached != VideoThumbnailSprites.end())
             {
-                if(cached->second.sprite)
-                    UnityEngine::Object::Destroy(cached->second.sprite);
+                if(UnityW<UnityEngine::Sprite>::isAlive(cached->second.sprite))
+                {
+                    if(BoundVideoThumbnailSprites.contains(cached->second.sprite))
+                        RetiredVideoThumbnailSprites.emplace(cached->second.sprite);
+                    else
+                        UnityEngine::Object::Destroy(cached->second.sprite);
+                }
                 VideoThumbnailSprites.erase(cached);
             }
             FailedVideoThumbnailLoads.erase(path);
@@ -396,6 +420,13 @@ namespace BigScreen {
             const auto found = VideoThumbnailSprites.find(path);
             if(found == VideoThumbnailSprites.end())
                 return nullptr;
+            if(!UnityW<UnityEngine::Sprite>::isAlive(found->second.sprite))
+            {
+                BoundVideoThumbnailSprites.erase(found->second.sprite);
+                RetiredVideoThumbnailSprites.erase(found->second.sprite);
+                VideoThumbnailSprites.erase(found);
+                return nullptr;
+            }
             found->second.lastUse = ++VideoThumbnailUseCounter;
             return found->second.sprite;
         }
@@ -408,24 +439,64 @@ namespace BigScreen {
                 return;
             if(VideoThumbnailSprites.size() >= MaximumCachedVideoThumbnails)
             {
-                const auto oldest = std::min_element(
-                    VideoThumbnailSprites.begin(),
-                    VideoThumbnailSprites.end(),
-                    [](const auto& left, const auto& right)
-                    {
-                        return left.second.lastUse < right.second.lastUse;
-                    });
+                auto oldest = VideoThumbnailSprites.end();
+                for(auto candidate = VideoThumbnailSprites.begin();
+                    candidate != VideoThumbnailSprites.end(); ++candidate)
+                {
+                    if(BoundVideoThumbnailSprites.contains(
+                           candidate->second.sprite))
+                        continue;
+                    if(oldest == VideoThumbnailSprites.end() ||
+                       candidate->second.lastUse < oldest->second.lastUse)
+                        oldest = candidate;
+                }
+                // More than 64 simultaneously visible images is unlikely, but
+                // temporary cache growth is safer than invalidating a live
+                // Unity cell. The next binding pass makes those sprites
+                // evictable again.
                 if(oldest != VideoThumbnailSprites.end())
                 {
-                    if(oldest->second.sprite)
+                    if(UnityW<UnityEngine::Sprite>::isAlive(
+                           oldest->second.sprite))
+                    {
                         UnityEngine::Object::Destroy(oldest->second.sprite);
+                    }
                     FailedVideoThumbnailLoads.erase(oldest->first);
                     VideoThumbnailSprites.erase(oldest);
+                }
+            }
+            if(const auto previous = VideoThumbnailSprites.find(path);
+               previous != VideoThumbnailSprites.end() &&
+               previous->second.sprite != sprite)
+            {
+                if(UnityW<UnityEngine::Sprite>::isAlive(previous->second.sprite))
+                {
+                    if(BoundVideoThumbnailSprites.contains(previous->second.sprite))
+                        RetiredVideoThumbnailSprites.emplace(previous->second.sprite);
+                    else
+                        UnityEngine::Object::Destroy(previous->second.sprite);
                 }
             }
             VideoThumbnailSprites.insert_or_assign(
                 path,
                 CachedVideoThumbnail{sprite, ++VideoThumbnailUseCounter});
+        }
+
+        void ReleaseRetiredVideoThumbnails()
+        {
+            for(auto retired = RetiredVideoThumbnailSprites.begin();
+                retired != RetiredVideoThumbnailSprites.end();)
+            {
+                auto* sprite = *retired;
+                if(BoundVideoThumbnailSprites.contains(sprite))
+                {
+                    ++retired;
+                    continue;
+                }
+                if(UnityW<UnityEngine::Sprite>::isAlive(sprite))
+                    UnityEngine::Object::Destroy(sprite);
+                retired = RetiredVideoThumbnailSprites.erase(retired);
+            }
         }
 
         std::string Lower(std::string value)
@@ -964,6 +1035,8 @@ namespace BigScreen {
         // The old hierarchy may already be gone, so do not dereference or
         // Destroy its cached objects here. Clear native ownership wholesale;
         // the replacement flow will rebuild every control and media reference.
+        CancelPendingTimingCommit();
+        BoundVideoThumbnailSprites.clear();
         for(auto& [identity, cached] : VideoThumbnailSprites)
         {
             (void)identity;
@@ -978,6 +1051,19 @@ namespace BigScreen {
             }
         }
         VideoThumbnailSprites.clear();
+        for(auto* sprite : RetiredVideoThumbnailSprites)
+        {
+            try
+            {
+                if(UnityW<UnityEngine::Sprite>::isAlive(sprite))
+                    UnityEngine::Object::Destroy(sprite);
+            }
+            catch(...)
+            {
+                // The old scene may already have destroyed this sprite.
+            }
+        }
+        RetiredVideoThumbnailSprites.clear();
         FailedVideoThumbnailLoads.clear();
         RowVideoThumbnails.clear();
         RowMapperMetadataIssues.clear();
@@ -1690,6 +1776,7 @@ namespace BigScreen {
             [this](bool enabled)
             {
                 if(suppressTimingCallbacks_) return;
+                CancelPendingTimingCommit();
                 fitToSong_ = enabled;
                 if(enabled)
                 {
@@ -1734,16 +1821,10 @@ namespace BigScreen {
             0.05f, 8.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 rate_ = value;
-                if(SaveTiming())
-                {
-                    terminalDownloadProgressLevelId_.clear();
-                    StartSelectedPreview();
-                    RefreshDetails();
-                    std::ostringstream message;
-                    message << std::fixed << std::setprecision(2)
-                            << "Playback speed saved: " << rate_ << "x.";
-                    PublishEditorNotice(message.str());
-                }
+                std::ostringstream message;
+                message << std::fixed << std::setprecision(2)
+                        << "Playback speed saved: " << rate_ << "x.";
+                ScheduleTimingCommit(message.str());
             });
         EnforceTimingControlHeight(rateSetting_);
         rateTimingHint_ = BSML::Lite::AddHoverHint(
@@ -1755,27 +1836,23 @@ namespace BigScreen {
             -60.0f, 60.0f, 0.15f, true, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 offset_ = value;
-                if(fitToSong_)
-                    ApplyFitToSong();
-                else if(SaveTiming())
+                if(fitToSong_ && !RecalculateFitToSongRate())
+                    return;
+                std::ostringstream message;
+                message << std::fixed << std::setprecision(2);
+                if(offset_ < 0.0)
                 {
-                    terminalDownloadProgressLevelId_.clear();
-                    StartSelectedPreview();
-                    RefreshDetails();
-                    std::ostringstream message;
-                    message << std::fixed << std::setprecision(2);
-                    if(offset_ < 0.0)
-                        message << "Video delayed " << -offset_
-                                << " seconds; lead-in is "
-                                << (blackDuringLeadIn_ ? "black" : "transparent")
-                                << '.';
-                    else if(offset_ > 0.0)
-                        message << "Video skips " << offset_
-                                << " seconds at song start.";
-                    else
-                        message << "Video starts with the song.";
-                    PublishEditorNotice(message.str());
+                    message << "Video delayed " << -offset_
+                            << " seconds; lead-in is "
+                            << (blackDuringLeadIn_ ? "black" : "transparent")
+                            << '.';
                 }
+                else if(offset_ > 0.0)
+                    message << "Video skips " << offset_
+                            << " seconds at song start.";
+                else
+                    message << "Video starts with the song.";
+                ScheduleTimingCommit(message.str());
             });
         // Retain the one-millisecond arrow adjustment while presenting a
         // cleaner two-decimal timer. The native grab handle remains available
@@ -1842,6 +1919,7 @@ namespace BigScreen {
             [this](bool enabled)
             {
                 if(suppressTimingCallbacks_) return;
+                CancelPendingTimingCommit();
                 blackDuringLeadIn_ = enabled;
                 if(SaveTiming())
                 {
@@ -2421,6 +2499,10 @@ namespace BigScreen {
         catalogBuildPhase_ = CatalogBuildPhase::Repository;
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
+        catalogMetadataPreparedCount_ = 0;
+        catalogMetadataComplete_ = false;
+        catalogMetadataIssues_.clear();
+        RefreshBrowserMetadataIssueButton();
     }
 
     void VideoLibraryMenu::AddCatalogBuildItem(
@@ -2594,6 +2676,9 @@ namespace BigScreen {
                 groupCounts[2], groupCounts[3]);
             catalogPrewarmModelReady_ = true;
             catalogPrewarmIndex_ = 0;
+            catalogMetadataPreparedCount_ = 0;
+            catalogMetadataComplete_ = catalog_.empty();
+            RefreshBrowserMetadataIssueButton();
             // Publish the cheap model before Cinema JSON is warmed so the
             // browser is usable while metadata finishes in later slices.
             RebuildVisibleRows();
@@ -2616,10 +2701,13 @@ namespace BigScreen {
             // filesystem/parser exception to this one catalog entry. Describe
             // already records ordinary rejected Cinema JSON as a map-specific
             // diagnostic and returns the usable non-mapper state.
-            auto* level = catalog_[catalogPrewarmIndex_++].level;
+            auto& item = catalog_[catalogPrewarmIndex_++];
+            auto* level = item.level;
             try
             {
-                VideoLibrary::Instance().Describe(level);
+                const auto descriptor =
+                    VideoLibrary::Instance().Describe(level);
+                UpdateCatalogMetadataIssue(item, descriptor);
             }
             catch(const std::exception& exception)
             {
@@ -2632,6 +2720,7 @@ namespace BigScreen {
                 BigScreen::BigScreenLogger.error(
                     "Skipped one video-library descriptor during incremental catalog preparation");
             }
+            catalogMetadataPreparedCount_ = catalogPrewarmIndex_;
             // A count limit alone is not a time limit: one map can have much
             // larger Cinema metadata than another. Yield after roughly two
             // milliseconds (but always make one item of progress) so a large
@@ -2642,11 +2731,17 @@ namespace BigScreen {
                 break;
         }
         if(catalogPrewarmIndex_ < catalog_.size())
+        {
+            RefreshBrowserMetadataIssueButton();
             return false;
+        }
 
         catalogRefreshRequested_ = false;
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
+        catalogMetadataPreparedCount_ = catalog_.size();
+        catalogMetadataComplete_ = true;
+        RefreshBrowserMetadataIssueButton();
         const auto rowsStarted = std::chrono::steady_clock::now();
         RebuildVisibleRows(true);
         BigScreen::BigScreenLogger.info(
@@ -2695,7 +2790,6 @@ namespace BigScreen {
         visible_.reserve(catalog_.size());
         RowVideoThumbnails.clear();
         RowMapperMetadataIssues.clear();
-        std::size_t mapperMetadataIssueCount = 0;
         const auto query = Lower(search_);
         for(auto& item : catalog_)
         {
@@ -2707,8 +2801,6 @@ namespace BigScreen {
             const VideoLibraryRowStatus status = cachedStatus.value_or(
                 VideoLibraryRowStatus{});
             const bool metadataReady = cachedStatus.has_value();
-            if(metadataReady && status.mapperMetadataIssue)
-                ++mapperMetadataIssueCount;
             // "Maps With Video" must never guess. Other filters can display
             // their cheap catalog rows immediately while the metadata column
             // is filled incrementally.
@@ -2733,7 +2825,6 @@ namespace BigScreen {
                     : "JSON error | select for details";
             }
 
-            UnityEngine::Sprite* videoThumbnail = nullptr;
             if(!item.levelId.empty())
             {
                 RowVideoThumbnails[item.levelId] = {
@@ -2746,12 +2837,6 @@ namespace BigScreen {
                         status.mapperMetadataRecovered};
                 }
             }
-            if((status.canPlay || status.canDownload) &&
-               status.thumbnailPath)
-            {
-                videoThumbnail = FindCachedVideoThumbnail(
-                    status.thumbnailPath->string());
-            }
             const std::string subText = author.empty()
                 ? videoState
                 : author + " | " + videoState;
@@ -2762,7 +2847,10 @@ namespace BigScreen {
                 auto* row = reusableRows[rowIndex];
                 row->text = StringW(name);
                 row->subText = StringW(subText);
-                row->icon = videoThumbnail;
+                // Only visible virtualized cells may own a raw cache pointer.
+                // RefreshVisibleRowPresentation binds their thumbnails after
+                // ReloadData; off-screen row models deliberately stay empty.
+                row->icon = nullptr;
                 list_->data->Add(row);
             }
             else
@@ -2770,24 +2858,12 @@ namespace BigScreen {
                 list_->data->Add(BSML::CustomCellInfo::construct(
                     name,
                     subText,
-                    videoThumbnail));
+                    nullptr));
             }
         }
         if(browserTitle_)
             browserTitle_->set_text("Video Library");
-        if(browserMetadataErrorButton_)
-        {
-            browserMetadataErrorButton_->get_gameObject()->SetActive(
-                mapperMetadataIssueCount > 0);
-            if(mapperMetadataIssueCount > 0)
-            {
-                BSML::Lite::SetButtonText(
-                    browserMetadataErrorButton_,
-                    "<color=#FF4B4B>JSON ISSUES (" +
-                        std::to_string(mapperMetadataIssueCount) +
-                        ")</color>");
-            }
-        }
+        RefreshBrowserMetadataIssueButton();
         if(browserStorage_)
             browserStorage_->set_text(BrowserSummary(
                 DistinctSongCount(visible_),
@@ -2903,6 +2979,7 @@ namespace BigScreen {
     {
         if(!level)
             return;
+        FlushPendingTimingCommit(false);
         DownloadManager::Instance().SetForegroundLevel(
             level->levelID ? std::string(level->levelID) : std::string{});
         // Selection is a hard notice-lifecycle boundary even if a caller
@@ -2946,6 +3023,19 @@ namespace BigScreen {
         }
         ClearThumbnail();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const std::string selectedLevelId = selected_ && selected_->levelID
+            ? std::string(selected_->levelID)
+            : std::string{};
+        if(const auto item = std::find_if(
+               catalog_.begin(), catalog_.end(),
+               [&selectedLevelId](const SongLibraryItem& candidate)
+               {
+                   return candidate.levelId == selectedLevelId;
+               }); item != catalog_.end())
+        {
+            UpdateCatalogMetadataIssue(*item, descriptor);
+            RefreshBrowserMetadataIssueButton();
+        }
         const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
         mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
@@ -2988,6 +3078,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::ShowBrowser()
     {
+        FlushPendingTimingCommit(false);
         DownloadManager::Instance().SetForegroundLevel({});
         if(DownloadManager::Instance().Snapshot().state ==
            DownloadState::AwaitingConfirmation)
@@ -3418,11 +3509,22 @@ namespace BigScreen {
             return;
         }
 
+        FlushPendingTimingCommit(false);
         const std::string levelId(selected_->levelID);
         VideoLibrary::Instance().RefreshMapperMetadata(levelId);
         ClearThumbnail();
 
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        if(const auto item = std::find_if(
+               catalog_.begin(), catalog_.end(),
+               [&levelId](const SongLibraryItem& candidate)
+               {
+                   return candidate.levelId == levelId;
+               }); item != catalog_.end())
+        {
+            UpdateCatalogMetadataIssue(*item, descriptor);
+            RefreshBrowserMetadataIssueButton();
+        }
         const auto* timing = EditorTimingConfig(descriptor);
         url_ = descriptor.downloadUrl.value_or("");
         mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
@@ -3460,38 +3562,117 @@ namespace BigScreen {
                 : "This song has no Cinema mapper settings.");
     }
 
+    void VideoLibraryMenu::UpdateCatalogMetadataIssue(
+        const SongLibraryItem& item,
+        const VideoDescriptor& descriptor)
+    {
+        if(item.levelId.empty())
+            return;
+        if(!descriptor.mapperMetadataIssue)
+        {
+            catalogMetadataIssues_.erase(item.levelId);
+            return;
+        }
+
+        catalogMetadataIssues_.insert_or_assign(
+            item.levelId,
+            MapperMetadataIssueSummary{
+                item.levelId,
+                item.songName.empty()
+                    ? std::string("Unknown Song")
+                    : item.songName,
+                descriptor.mapperMetadataRecovered});
+    }
+
+    void VideoLibraryMenu::RefreshBrowserMetadataIssueButton()
+    {
+        if(!browserMetadataErrorButton_)
+            return;
+        if(!catalogMetadataComplete_)
+        {
+            browserMetadataErrorButton_->get_gameObject()->SetActive(true);
+            browserMetadataErrorButton_->set_interactable(true);
+            const std::string total = catalog_.empty()
+                ? std::string("?")
+                : std::to_string(catalog_.size());
+            BSML::Lite::SetButtonText(
+                browserMetadataErrorButton_,
+                "<color=#7DDCFF>CHECKING JSON " +
+                    std::to_string(catalogMetadataPreparedCount_) + "/" +
+                    total + "</color>");
+            return;
+        }
+
+        const bool hasIssues = !catalogMetadataIssues_.empty();
+        browserMetadataErrorButton_->get_gameObject()->SetActive(hasIssues);
+        browserMetadataErrorButton_->set_interactable(hasIssues);
+        if(hasIssues)
+        {
+            BSML::Lite::SetButtonText(
+                browserMetadataErrorButton_,
+                "<color=#FF4B4B>JSON ISSUES (" +
+                    std::to_string(catalogMetadataIssues_.size()) +
+                    ")</color>");
+        }
+    }
+
     void VideoLibraryMenu::ShowBrowserMapperMetadataIssues()
     {
         std::ostringstream message;
-        std::size_t issueCount = 0;
-        for(const auto& item : catalog_)
+        std::vector<MapperMetadataIssueSummary> issues;
+        issues.reserve(catalogMetadataIssues_.size());
+        for(const auto& [levelId, issue] : catalogMetadataIssues_)
         {
-            if(!item.level)
-                continue;
-            const auto descriptor =
-                VideoLibrary::Instance().Describe(item.level);
-            if(!descriptor.mapperMetadataIssue)
-                continue;
-
-            ++issueCount;
-            if(message.tellp() == 0)
-                message << "Maps with Cinema JSON problems:\n\n";
+            (void)levelId;
+            issues.push_back(issue);
+        }
+        std::sort(
+            issues.begin(), issues.end(),
+            [](const auto& left, const auto& right)
+            {
+                return left.songName < right.songName;
+            });
+        if(!catalogMetadataComplete_)
+        {
+            message << "Big Screen is checking Cinema JSON in the background ("
+                    << catalogMetadataPreparedCount_ << " of "
+                    << catalog_.size() << " maps checked). The song list remains "
+                       "usable while this finishes.";
+            if(catalogMetadataIssues_.empty())
+            {
+                message << "\n\nNo problem has been found in the maps checked so far.";
+            }
             else
-                message << "\n";
-            message << "• " << (item.level->songName
-                    ? std::string(item.level->songName)
-                    : std::string("Unknown Song"))
-                << (descriptor.mapperMetadataRecovered
-                    ? " — recovered warning"
-                    : " — JSON error");
+            {
+                message << "\n\nProblems found so far:\n";
+                for(const auto& issue : issues)
+                {
+                    message << "\n• " << issue.songName
+                            << (issue.recovered
+                                ? " — recovered warning"
+                                : " — JSON error");
+                }
+            }
+            PresentBrowserMetadataDialog(
+                "Cinema JSON check in progress", message.str());
+            return;
         }
 
-        if(issueCount == 0)
+        if(catalogMetadataIssues_.empty())
             return;
+        message << "Maps with Cinema JSON problems:\n";
+        for(const auto& issue : issues)
+        {
+            message << "\n• " << issue.songName
+                    << (issue.recovered
+                        ? " — recovered warning"
+                        : " — JSON error");
+        }
         message << "\n\nUse the red or amber button on a song row for that "
                    "map's complete parser explanation.";
         PresentBrowserMetadataDialog(
-            "Cinema JSON issues (" + std::to_string(issueCount) + ")",
+            "Cinema JSON issues (" +
+                std::to_string(catalogMetadataIssues_.size()) + ")",
             message.str());
     }
 
@@ -3708,6 +3889,10 @@ namespace BigScreen {
     {
         if(!selected_)
             return;
+        // Replacing the active assignment establishes new neutral timing. A
+        // delayed slider commit from the prior assignment must not overwrite
+        // that new record when its debounce deadline later expires.
+        CancelPendingTimingCommit();
 
         // The file browser commits a fresh user override with neutral timing.
         // Mirror that durable state into the already-visible editor, then
@@ -3780,6 +3965,10 @@ namespace BigScreen {
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
         if(!selected_) return;
+        // The assignment about to be removed owns any pending timing edit.
+        // Discard that edit instead of recreating or mutating a fallback video
+        // after the unlink/delete operation succeeds.
+        CancelPendingTimingCommit();
         const auto diagnosticLevelId = std::string(selected_->levelID);
         try
         {
@@ -4017,6 +4206,8 @@ namespace BigScreen {
 
         auto* cells = list_->tableView->__cordl_internal_get__visibleCells();
         if(!cells) return;
+        std::unordered_set<int> nextBoundRows;
+        std::unordered_set<UnityEngine::Sprite*> nextBoundSprites;
 
         for(int cellIndex = 0; cellIndex < cells->get_Count(); ++cellIndex)
         {
@@ -4158,7 +4349,25 @@ namespace BigScreen {
                     : nullptr,
                 cellInfo,
                 coverImage.ptr());
+            nextBoundRows.emplace(row);
+            if(UnityW<UnityEngine::Sprite>::isAlive(cellInfo->icon))
+            {
+                // Pin immediately so loading a later visible row cannot evict
+                // a sprite assigned earlier in this same binding pass.
+                BoundVideoThumbnailSprites.emplace(cellInfo->icon);
+                nextBoundSprites.emplace(cellInfo->icon);
+            }
         }
+
+        for(const int oldRow : thumbnailBoundRows_)
+        {
+            if(!nextBoundRows.contains(oldRow) && oldRow >= 0 &&
+               oldRow < list_->data->get_Count() && list_->data[oldRow])
+                list_->data[oldRow]->icon = nullptr;
+        }
+        thumbnailBoundRows_ = std::move(nextBoundRows);
+        BoundVideoThumbnailSprites = std::move(nextBoundSprites);
+        ReleaseRetiredVideoThumbnails();
     }
 
     void VideoLibraryMenu::RefreshVisibleRowThumbnails()
@@ -4167,6 +4376,8 @@ namespace BigScreen {
             return;
         auto* cells = list_->tableView->__cordl_internal_get__visibleCells();
         if(!cells) return;
+        std::unordered_set<int> nextBoundRows;
+        std::unordered_set<UnityEngine::Sprite*> nextBoundSprites;
 
         for(int cellIndex = 0; cellIndex < cells->get_Count(); ++cellIndex)
         {
@@ -4196,7 +4407,23 @@ namespace BigScreen {
                     : nullptr,
                 list_->data[row],
                 coverImage.ptr());
+            nextBoundRows.emplace(row);
+            auto* cellInfo = list_->data[row];
+            if(cellInfo && UnityW<UnityEngine::Sprite>::isAlive(cellInfo->icon))
+            {
+                BoundVideoThumbnailSprites.emplace(cellInfo->icon);
+                nextBoundSprites.emplace(cellInfo->icon);
+            }
         }
+        for(const int oldRow : thumbnailBoundRows_)
+        {
+            if(!nextBoundRows.contains(oldRow) && oldRow >= 0 &&
+               oldRow < list_->data->get_Count() && list_->data[oldRow])
+                list_->data[oldRow]->icon = nullptr;
+        }
+        thumbnailBoundRows_ = std::move(nextBoundRows);
+        BoundVideoThumbnailSprites = std::move(nextBoundSprites);
+        ReleaseRetiredVideoThumbnails();
     }
 
     void VideoLibraryMenu::NotifySongListCellBound(
@@ -4204,6 +4431,61 @@ namespace BigScreen {
     {
         if(list_ && source == list_->tableView)
             rowPresentationRefreshPending_ = true;
+    }
+
+    void VideoLibraryMenu::ScheduleTimingCommit(std::string completionNotice)
+    {
+        if(!selected_ || !selected_->levelID)
+            return;
+        timingCommitPending_ = true;
+        timingCommitDueRealtime_ =
+            UnityEngine::Time::get_realtimeSinceStartup() +
+            TimingCommitDebounceSeconds;
+        pendingTimingLevelId_ = std::string(selected_->levelID);
+        pendingTimingOrigin_ = SelectedVideoOrigin();
+        pendingTimingNotice_ = std::move(completionNotice);
+    }
+
+    void VideoLibraryMenu::CancelPendingTimingCommit()
+    {
+        timingCommitPending_ = false;
+        timingCommitDueRealtime_ = 0.0f;
+        pendingTimingLevelId_.clear();
+        pendingTimingNotice_.clear();
+    }
+
+    bool VideoLibraryMenu::FlushPendingTimingCommit(bool restartPreview)
+    {
+        if(!timingCommitPending_)
+            return true;
+
+        const std::string expectedLevelId = pendingTimingLevelId_;
+        const auto expectedOrigin = pendingTimingOrigin_;
+        const std::string completionNotice = pendingTimingNotice_;
+        CancelPendingTimingCommit();
+
+        // Every ordinary navigation boundary flushes before selected_ changes.
+        // If a future caller violates that contract, reject the stale callback
+        // instead of writing the previous map's timing into the new selection.
+        if(!selected_ || !selected_->levelID ||
+           std::string(selected_->levelID) != expectedLevelId ||
+           SelectedVideoOrigin() != expectedOrigin)
+        {
+            BigScreen::BigScreenLogger.warn(
+                "Discarded stale debounced timing commit for '{}'",
+                expectedLevelId);
+            return false;
+        }
+
+        if(!SaveTiming())
+            return false;
+        terminalDownloadProgressLevelId_.clear();
+        if(restartPreview)
+            StartSelectedPreview();
+        RefreshDetails();
+        if(!completionNotice.empty())
+            PublishEditorNotice(completionNotice);
+        return true;
     }
 
     bool VideoLibraryMenu::SaveTiming()
@@ -4287,6 +4569,7 @@ namespace BigScreen {
     {
         if(!selected_)
             return;
+        CancelPendingTimingCommit();
 
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const auto* mapperTiming = descriptor.mapperDefinition
@@ -4319,6 +4602,7 @@ namespace BigScreen {
     {
         if(!selected_)
             return;
+        CancelPendingTimingCommit();
 
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         const auto* mapperTiming = descriptor.mapperDefinition
@@ -4360,7 +4644,7 @@ namespace BigScreen {
         PublishEditorNotice(message.str());
     }
 
-    bool VideoLibraryMenu::ApplyFitToSong()
+    bool VideoLibraryMenu::RecalculateFitToSongRate()
     {
         if(!selected_)
         {
@@ -4394,6 +4678,17 @@ namespace BigScreen {
             (descriptor.playableConfig->declaredDurationSeconds - offset_) /
             selected_->songDuration;
         rate_ = std::clamp(requestedRate, 0.05, 8.0);
+        suppressTimingCallbacks_ = true;
+        if(rateSetting_)
+            rateSetting_->set_Value(static_cast<float>(rate_));
+        suppressTimingCallbacks_ = false;
+        return true;
+    }
+
+    bool VideoLibraryMenu::ApplyFitToSong()
+    {
+        if(!RecalculateFitToSongRate())
+            return false;
         if(!SaveTiming())
         {
             terminalDownloadProgressLevelId_.clear();
@@ -4402,7 +4697,6 @@ namespace BigScreen {
             return false;
         }
         suppressTimingCallbacks_ = true;
-        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         suppressTimingCallbacks_ = false;
         StartSelectedPreview();
@@ -5834,6 +6128,11 @@ namespace BigScreen {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
 
+        if(timingCommitPending_ &&
+           UnityEngine::Time::get_realtimeSinceStartup() >=
+               timingCommitDueRealtime_)
+            FlushPendingTimingCommit();
+
         // The hierarchy is prewarmed and retained, but its map rows are not a
         // permanent startup snapshot. Capture a bounded catalog/descriptor
         // slice on each safe browser frame after SongCore reports a completed
@@ -6194,6 +6493,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::Deactivate()
     {
+        FlushPendingTimingCommit(false);
         active_ = false;
         browserTableReloadPending_ = false;
         // The retained browser survives ordinary menu exits. Do not carry its
@@ -6246,6 +6546,10 @@ namespace BigScreen {
         // pointers all come from one completed SongCore generation.
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
+        catalogMetadataPreparedCount_ = 0;
+        catalogMetadataComplete_ = false;
+        catalogMetadataIssues_.clear();
+        RefreshBrowserMetadataIssueButton();
         catalogBuildPhase_ = CatalogBuildPhase::Idle;
         catalogBuildItems_.clear();
         catalogBuildIds_.clear();

@@ -959,7 +959,7 @@ namespace BigScreen {
         }
         found->second.localThumbnail =
             LocalThumbnailPath(levelId).filename().string();
-        SaveLocked();
+        SaveLocked(levelId);
         BigScreen::BigScreenLogger.info(
             "Recorded picked thumbnail '{}' for '{}'",
             found->second.localThumbnail,
@@ -975,7 +975,7 @@ namespace BigScreen {
             return false;
         const auto thumbnail = LocalThumbnailPath(levelId);
         found->second.localThumbnail.clear();
-        SaveLocked();
+        SaveLocked(levelId);
         std::error_code removeError;
         std::filesystem::remove(thumbnail, removeError);
         if(removeError)
@@ -1023,7 +1023,7 @@ namespace BigScreen {
             // erase the user's last working video.
             const auto previous = target;
             target = std::move(video);
-            SaveLocked();
+            SaveLocked(levelId);
             if(previous && !IsUserOwnedFile(*previous) &&
                previous->fileName != target->fileName)
                 RemoveManagedFile(videoPath_, previous->fileName);
@@ -1162,7 +1162,7 @@ namespace BigScreen {
             ? std::string(level->songAuthorName) : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
-        SaveLocked();
+        SaveLocked(levelId);
 
         // Only Big Screen-managed downloads are deleted on replacement. Every
         // browser-picked file remains exactly where the user placed it.
@@ -1247,7 +1247,7 @@ namespace BigScreen {
             : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
-        SaveLocked();
+        SaveLocked(levelId);
 
         // A map-local file is never owned or deleted by Big Screen. A managed
         // YouTube override being explicitly replaced is removed to avoid an
@@ -1327,7 +1327,7 @@ namespace BigScreen {
             ? std::string(level->songAuthorName) : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
-        SaveLocked();
+        SaveLocked(levelId);
 
         // Import files remain user-owned. Only a replaced Big Screen download
         // is deleted; another import or map-folder file is merely unregistered.
@@ -1347,7 +1347,7 @@ namespace BigScreen {
             return false;
         const auto removed = *found->second.user;
         found->second.user.reset();
-        SaveLocked();
+        SaveLocked(levelId);
         if(deleteFile && !IsUserOwnedFile(removed))
             RemoveManagedFile(videoPath_, removed.fileName);
         std::filesystem::remove(
@@ -1370,7 +1370,7 @@ namespace BigScreen {
         // This is deliberately a metadata-only operation. The file belongs to
         // the map/user and may be relinked later through Show File Browser.
         found->second.mapperLocalSuppressed = true;
-        SaveLocked();
+        SaveLocked(levelId);
         BigScreen::BigScreenLogger.info("Unlinked mapper-local video for '{}'", levelId);
         return true;
     }
@@ -1385,7 +1385,7 @@ namespace BigScreen {
             return false;
         const auto removed = *found->second.mapper;
         found->second.mapper.reset();
-        SaveLocked();
+        SaveLocked(levelId);
         if(deleteFile)
             RemoveManagedFile(videoPath_, removed.fileName);
         std::filesystem::remove(
@@ -1490,7 +1490,7 @@ namespace BigScreen {
         {
             return false;
         }
-        SaveLocked();
+        SaveLocked(levelId);
         BigScreen::BigScreenLogger.info(
             "Saved {} video timing for '{}': offset {:.2f}s, speed {:.4f}x, fit {}, lead-in {}",
             origin == VideoOrigin::User ? "user" : "mapper",
@@ -1716,7 +1716,7 @@ namespace BigScreen {
             "The primary library and both known-good backups were invalid");
     }
 
-    void VideoLibrary::SaveLocked()
+    void VideoLibrary::SaveLocked(std::string_view changedLevelId)
     {
         const auto temporary = std::filesystem::path(
             manifestPath_.string() + ".tmp");
@@ -1726,11 +1726,6 @@ namespace BigScreen {
         // the candidate, rollback happens before the primary can be replaced;
         // the final swap below is noexcept after a successful replacement.
         auto durableCandidate = records_;
-        // All record mutations flow through SaveLocked. Invalidate derived UI
-        // state here once so no setter can accidentally forget either cache.
-        descriptorCache_.clear();
-        libraryBytesCacheTime_ = {};
-        freeBytesCacheTime_ = {};
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
         // Schema 5 adds the per-map picked-thumbnail filename. Older
@@ -1842,6 +1837,16 @@ namespace BigScreen {
             throw VideoLibraryPersistenceError(
                 "Could not replace video library manifest: " + error.message());
         persistedRecords_.swap(durableCandidate);
+        // A one-map timing or assignment edit must not discard thousands of
+        // unrelated parsed Cinema descriptors. Invalidate only after the new
+        // manifest is durable; if persistence fails, the prior cached value is
+        // still exactly the value represented by persistedRecords_.
+        if(changedLevelId.empty())
+            descriptorCache_.clear();
+        else
+            descriptorCache_.erase(std::string(changedLevelId));
+        libraryBytesCacheTime_ = {};
+        freeBytesCacheTime_ = {};
         }
         catch(...)
         {
@@ -1849,7 +1854,9 @@ namespace BigScreen {
             // manifest. The UI caller may report the exception, but subsequent
             // playback cannot observe a mutation that never reached storage.
             records_ = persistedRecords_;
-            descriptorCache_.clear();
+            // The failed candidate was never published. Keep unrelated cache
+            // entries and the changed map's previous descriptor because the
+            // in-memory records have just been restored to that durable state.
             libraryBytesCacheTime_ = {};
             freeBytesCacheTime_ = {};
             std::error_code cleanupError;

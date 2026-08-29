@@ -2127,9 +2127,10 @@ assert "blackDuringLeadIn_ = enabled;" in library_menu_source
 assert library_menu_source.count("StartSelectedPreview();") >= 5
 assert '"Video timing was not saved"' in library_menu_source
 
-# Every synchronization control must publish its own event after the preview
-# and detail rows have been refreshed. This protects the status line from a
-# future callback regression without coupling it to the downloader snapshot.
+# Toggle/reset synchronization controls publish immediately. Continuous
+# playback-speed and offset callbacks must instead schedule one debounced
+# persistence/restart operation; that operation publishes the final status line
+# only after the slider has settled.
 fit_toggle_callback = library_menu_source.split(
     'fitToggle_ = BSML::Lite::CreateToggle(', 1
 )[1].split('rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
@@ -2137,14 +2138,22 @@ assert "PublishEditorNotice(" in fit_toggle_callback
 rate_callback = library_menu_source.split(
     'rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1
 )[1].split('offsetSetting_ = BSML::Lite::CreateSliderSetting(', 1)[0]
-assert "PublishEditorNotice(message.str());" in rate_callback
+assert "ScheduleTimingCommit(message.str());" in rate_callback
 assert '"Playback Speed", 2, 0.01f' in rate_callback
 offset_callback = library_menu_source.split(
     'offsetSetting_ = BSML::Lite::CreateSliderSetting(', 1
 )[1].split('blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1)[0]
-assert "PublishEditorNotice(message.str());" in offset_callback
+assert "ScheduleTimingCommit(message.str());" in offset_callback
 assert '"Video Playback Offset", 0.001f' in offset_callback
 assert "offsetSetting_->digits = 2;" in offset_callback
+assert "constexpr float TimingCommitDebounceSeconds = 0.25f;" in (
+    library_menu_source
+)
+assert "bool VideoLibraryMenu::FlushPendingTimingCommit(" in library_menu_source
+assert "if(!SaveTiming())" in library_menu_source.split(
+    "bool VideoLibraryMenu::FlushPendingTimingCommit(", 1
+)[1].split("bool VideoLibraryMenu::SaveTiming()", 1)[0]
+assert "FlushPendingTimingCommit(false);" in library_menu_source
 assert "MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);" in (
     library_menu_source
 )
@@ -2961,12 +2970,46 @@ assert "GetSongsLoadedEvent().addCallback(HandleSongsLoaded)" in main_source
 assert "songCatalogRefreshPending.exchange(" in main_source
 assert "catalogRefreshRequested_ && !editorVisible_" in library_menu_source
 assert "PrewarmCatalogStep(8);" in library_menu_source
-assert "catalog_[catalogPrewarmIndex_++].level" in library_menu_source
+assert "auto& item = catalog_[catalogPrewarmIndex_++];" in library_menu_source
+assert "UpdateCatalogMetadataIssue(item, descriptor);" in library_menu_source
+assert "catalogMetadataPreparedCount_ = catalogPrewarmIndex_;" in (
+    library_menu_source
+)
+assert "catalogMetadataComplete_ = true;" in library_menu_source
 visible_rows_body = library_menu_source.split(
     "void VideoLibraryMenu::RebuildVisibleRows(", 1
 )[1].split("void VideoLibraryMenu::ChangeFilter", 1)[0]
 assert "CachedRowStatus(" in visible_rows_body
 assert "VideoLibrary::Instance().Describe(" not in visible_rows_body
+assert "FindCachedVideoThumbnail(" not in visible_rows_body
+assert "row->icon = nullptr;" in visible_rows_body
+json_issue_dialog = library_menu_source.split(
+    "void VideoLibraryMenu::ShowBrowserMapperMetadataIssues()", 1
+)[1].split("void VideoLibraryMenu::ShowMapperMetadataIssueForRow", 1)[0]
+assert "catalogMetadataIssues_" in json_issue_dialog
+assert "VideoLibrary::Instance().Describe(" not in json_issue_dialog
+assert '"Cinema JSON check in progress"' in json_issue_dialog
+assert "BoundVideoThumbnailSprites.contains(" in library_menu_source
+assert "temporary cache growth is safer" in library_menu_source
+assert "ReleaseRetiredVideoThumbnails();" in library_menu_source
+
+# Per-map library mutations retain unrelated parsed descriptors. Only a full
+# recovery save may clear the complete cache.
+save_locked_body = video_library_source.split(
+    "void VideoLibrary::SaveLocked(std::string_view changedLevelId)", 1
+)[1].split(
+    "std::vector<std::string> VideoLibrary::ReferencedThumbnailFileNames", 1
+)[0]
+assert "descriptorCache_.erase(std::string(changedLevelId));" in save_locked_body
+assert "if(changedLevelId.empty())" in save_locked_body
+assert video_library_source.count("SaveLocked(levelId);") >= 10
+
+# Selected-difficulty Chroma preview parsing is fingerprint-cached, and Exact
+# lookup accepts only the canonical ID or a qualified final path component.
+assert "struct PreviewCacheEntry" in chroma_detector_source
+assert "DifficultyDataFingerprint(" in chroma_detector_source
+assert "previewCache.find(cacheKey)" in chroma_detector_source
+assert "separator == '/' || separator == '\\\\'" in chroma_detector_source
 assert "duration_cast<std::chrono::microseconds>" in library_menu_source
 screen_preview_source = (root / "src/ScreenPreview.cpp").read_text(
     encoding="utf-8")

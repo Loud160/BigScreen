@@ -401,21 +401,34 @@ namespace BigScreen {
                     return false;
                 }
             }
-            return id == candidate ||
-                   (id.size() > candidate.size() && id.ends_with(candidate));
+            if(id == candidate)
+                return true;
+            // Chroma's Exact lookup may contain a full hierarchy path, but an
+            // arbitrary name such as FakeCinemaScreen is not the canonical PC
+            // Cinema object. Accept the suffix only when a hierarchy separator
+            // qualifies it as a complete final path component.
+            if(id.size() <= candidate.size() || !id.ends_with(candidate))
+                return false;
+            const char separator = id[id.size() - candidate.size() - 1];
+            return separator == '/' || separator == '\\';
         }
 
-        bool ApplyCinemaScreenInstructions(
+        struct CinemaScreenInstruction {
+            std::optional<Float3> position;
+            std::optional<Float3> rotation;
+            std::optional<Float3> scale;
+            std::optional<bool> active;
+            std::optional<int> duplicates;
+        };
+
+        bool ParseCinemaScreenInstructions(
             const rapidjson::Document& document,
-            MapVideoConfig& config,
-            std::size_t& duplicateCount)
+            std::vector<CinemaScreenInstruction>& instructions)
         {
             const auto* environment = EnvironmentArray(document);
             if(!environment)
                 return false;
 
-            constexpr std::size_t MaximumPreviewScreens = 32;
-            bool matched = false;
             for(const auto& entry : environment->GetArray())
             {
                 if(!entry.IsObject())
@@ -428,7 +441,6 @@ namespace BigScreen {
                 if(!MatchesCinemaScreen(*id, lookup))
                     continue;
 
-                matched = true;
                 const auto position = VectorMember(entry, "position", "_position");
                 const auto localPosition = VectorMember(
                     entry, "localPosition", "_localPosition");
@@ -438,6 +450,30 @@ namespace BigScreen {
                 const auto scale = VectorMember(entry, "scale", "_scale");
                 const auto active = BoolMember(entry, "active", "_active");
                 const auto duplicates = IntMember(entry, "duplicate", "_duplicate");
+
+                instructions.push_back(CinemaScreenInstruction{
+                    position ? position : localPosition,
+                    rotation ? rotation : localRotation,
+                    scale,
+                    active,
+                    duplicates});
+            }
+            return !instructions.empty();
+        }
+
+        void ApplyCinemaScreenInstructions(
+            const std::vector<CinemaScreenInstruction>& instructions,
+            MapVideoConfig& config,
+            std::size_t& duplicateCount)
+        {
+            constexpr std::size_t MaximumPreviewScreens = 32;
+            for(const auto& instruction : instructions)
+            {
+                const auto& position = instruction.position;
+                const auto& rotation = instruction.rotation;
+                const auto& scale = instruction.scale;
+                const auto& active = instruction.active;
+                const auto& duplicates = instruction.duplicates;
 
                 if(duplicates)
                 {
@@ -452,8 +488,8 @@ namespace BigScreen {
                         ++index)
                     {
                         CinemaAdditionalScreen screen;
-                        screen.position = position ? position : localPosition;
-                        screen.rotation = rotation ? rotation : localRotation;
+                        screen.position = position;
+                        screen.rotation = rotation;
                         screen.scale = scale;
                         config.additionalScreens.push_back(std::move(screen));
                         ++duplicateCount;
@@ -464,21 +500,17 @@ namespace BigScreen {
                 // Without duplicate Chroma modifies the original CinemaScreen.
                 // The menu screen has no parent, so local and world transforms
                 // are equivalent for this compatibility bridge.
-                if(position || localPosition)
-                    config.screenPosition = position ? *position : *localPosition;
-                if(rotation || localRotation)
-                    config.screenRotation = rotation ? *rotation : *localRotation;
+                if(position)
+                    config.screenPosition = *position;
+                if(rotation)
+                    config.screenRotation = *rotation;
                 if(scale)
                     config.screenScale = *scale;
                 if(active && !*active)
                     config.screenScale = {0.0f, 0.0f, 0.0f};
             }
-            if(matched)
-            {
-                config.hasMapperPresentation = true;
-                config.hasMapperScreenGeometry = true;
-            }
-            return matched;
+            config.hasMapperPresentation = true;
+            config.hasMapperScreenGeometry = true;
         }
 
         std::vector<std::filesystem::path> DifficultyCandidates(
@@ -519,12 +551,68 @@ namespace BigScreen {
             bool usesChroma = false;
             std::string reason;
         };
+
+        struct PreviewCacheEntry {
+            std::size_t fingerprint = 0;
+            std::vector<CinemaScreenInstruction> instructions;
+            std::string sourceFile;
+        };
         std::mutex cacheMutex;
         std::unordered_map<std::string, CacheEntry> cache;
+        std::unordered_map<std::string, PreviewCacheEntry> previewCache;
 
         void Mix(std::size_t& value, std::size_t component)
         {
             value ^= component + 0x9e3779b9u + (value << 6u) + (value >> 2u);
+        }
+
+        std::size_t DifficultyDataFingerprint(
+            const std::filesystem::path& levelDirectory)
+        {
+            // Fingerprint every .dat file without parsing it. Info.dat chooses
+            // the active difficulty file, so including the complete metadata
+            // set invalidates both a changed selection and changed Chroma
+            // instructions while keeping repeat preview selection inexpensive.
+            std::vector<std::filesystem::path> files;
+            std::error_code iteratorError;
+            for(std::filesystem::directory_iterator iterator(
+                    levelDirectory, iteratorError), end;
+                !iteratorError && iterator != end;
+                iterator.increment(iteratorError))
+            {
+                std::error_code entryError;
+                if(!iterator->is_regular_file(entryError) || entryError)
+                    continue;
+                auto extension = iterator->path().extension().string();
+                std::transform(
+                    extension.begin(), extension.end(), extension.begin(),
+                    [](unsigned char value) {
+                        return static_cast<char>(std::tolower(value));
+                    });
+                if(extension == ".dat")
+                    files.push_back(iterator->path());
+            }
+            std::sort(files.begin(), files.end());
+
+            std::size_t fingerprint = files.size();
+            for(const auto& path : files)
+            {
+                std::error_code metadataError;
+                const auto bytes = std::filesystem::file_size(path, metadataError);
+                if(metadataError)
+                    continue;
+                const auto modified =
+                    std::filesystem::last_write_time(path, metadataError);
+                if(metadataError)
+                    continue;
+                Mix(fingerprint, std::hash<std::string>{}(
+                    path.filename().string()));
+                Mix(fingerprint, std::hash<std::uintmax_t>{}(bytes));
+                Mix(fingerprint,
+                    std::hash<decltype(modified.time_since_epoch().count())>{}(
+                        modified.time_since_epoch().count()));
+            }
+            return fingerprint;
         }
     }
 
@@ -625,6 +713,33 @@ namespace BigScreen {
         std::string& reason)
     {
         reason.clear();
+        const auto fingerprint = DifficultyDataFingerprint(levelDirectory);
+        const auto cacheKey = levelDirectory.lexically_normal().string() + "|" +
+            std::string(characteristic) + "|" + std::to_string(difficulty);
+        {
+            std::scoped_lock lock(cacheMutex);
+            const auto found = previewCache.find(cacheKey);
+            if(found != previewCache.end() &&
+               found->second.fingerprint == fingerprint)
+            {
+                if(found->second.instructions.empty())
+                    return false;
+                std::size_t duplicateCount = 0;
+                ApplyCinemaScreenInstructions(
+                    found->second.instructions, config, duplicateCount);
+                std::ostringstream detail;
+                detail << "Cached Chroma CinemaScreen preview instructions from "
+                       << found->second.sourceFile;
+                if(duplicateCount > 0)
+                    detail << " (" << duplicateCount
+                           << " visible duplicate(s))";
+                reason = detail.str();
+                return true;
+            }
+        }
+
+        std::vector<CinemaScreenInstruction> instructions;
+        std::string sourceFile;
         const auto candidates = DifficultyCandidates(
             levelDirectory, characteristic, difficulty);
         for(const auto& path : candidates)
@@ -632,18 +747,29 @@ namespace BigScreen {
             rapidjson::Document document;
             if(!ReadJson(path, document))
                 continue;
-            std::size_t duplicateCount = 0;
-            if(!ApplyCinemaScreenInstructions(document, config, duplicateCount))
+            if(!ParseCinemaScreenInstructions(document, instructions))
                 continue;
-
-            std::ostringstream detail;
-            detail << "Chroma CinemaScreen preview instructions from "
-                   << path.filename().string();
-            if(duplicateCount > 0)
-                detail << " (" << duplicateCount << " visible duplicate(s))";
-            reason = detail.str();
-            return true;
+            sourceFile = path.filename().string();
+            break;
         }
-        return false;
+
+        {
+            std::scoped_lock lock(cacheMutex);
+            previewCache.insert_or_assign(
+                cacheKey,
+                PreviewCacheEntry{fingerprint, instructions, sourceFile});
+        }
+        if(instructions.empty())
+            return false;
+
+        std::size_t duplicateCount = 0;
+        ApplyCinemaScreenInstructions(instructions, config, duplicateCount);
+        std::ostringstream detail;
+        detail << "Chroma CinemaScreen preview instructions from "
+               << sourceFile;
+        if(duplicateCount > 0)
+            detail << " (" << duplicateCount << " visible duplicate(s))";
+        reason = detail.str();
+        return true;
     }
 }

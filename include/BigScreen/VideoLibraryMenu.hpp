@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -146,6 +147,18 @@ namespace BigScreen {
         void ShowMapperMetadataIssueForRow(int row);
         void ShowMapperMetadataIssue(
             GlobalNamespace::BeatmapLevel* level);
+        struct MapperMetadataIssueSummary {
+            std::string levelId;
+            std::string songName;
+            bool recovered = false;
+        };
+        /// Updates the issue index as each descriptor is prepared. The browser
+        /// summary consumes this native index and never forces a full catalog
+        /// parse from a button callback.
+        void UpdateCatalogMetadataIssue(
+            const SongLibraryItem& item,
+            const VideoDescriptor& descriptor);
+        void RefreshBrowserMetadataIssueButton();
         void PresentBrowserMetadataDialog(
             std::string title,
             std::string detail);
@@ -156,7 +169,15 @@ namespace BigScreen {
         /// boundary.
         void RemoveOverride(bool deleteFile);
         bool ApplyFitToSong();
+        bool RecalculateFitToSongRate();
         bool SaveTiming();
+        /// Continuous slider/arrow callbacks update their visible value first,
+        /// then coalesce manifest persistence and decoder restart until input
+        /// has been idle briefly. Navigation flushes the final value before the
+        /// selected map can change.
+        void ScheduleTimingCommit(std::string completionNotice);
+        bool FlushPendingTimingCommit(bool restartPreview = true);
+        void CancelPendingTimingCommit();
         /// Restores one synchronization value to the mapper-authored Cinema
         /// baseline when present, or to Big Screen's neutral default for maps
         /// without Cinema timing. The other timing controls remain unchanged.
@@ -388,6 +409,11 @@ namespace BigScreen {
         bool suppressScrubberCallback_ = false;
         float scrubberFollowResumeTime_ = 0.0f;
         bool suppressTimingCallbacks_ = false;
+        bool timingCommitPending_ = false;
+        float timingCommitDueRealtime_ = 0.0f;
+        VideoOrigin pendingTimingOrigin_ = VideoOrigin::User;
+        std::string pendingTimingLevelId_;
+        std::string pendingTimingNotice_;
         bool suppressUrlCallback_ = false;
         bool mapperProvidedUrl_ = false;
         bool editorNoticePaintPending_ = false;
@@ -407,6 +433,14 @@ namespace BigScreen {
         bool catalogRefreshRequested_ = true;
         bool catalogPrewarmModelReady_ = false;
         std::size_t catalogPrewarmIndex_ = 0;
+        std::size_t catalogMetadataPreparedCount_ = 0;
+        bool catalogMetadataComplete_ = false;
+        std::unordered_map<std::string, MapperMetadataIssueSummary>
+            catalogMetadataIssues_;
+        // Only rows currently bound to a virtualized cell may retain a raw
+        // thumbnail sprite. The LRU pins those sprites until the next binding
+        // pass replaces this set.
+        std::unordered_set<int> thumbnailBoundRows_;
         // Unity and SongCore objects remain main-thread-only. Their immutable
         // menu metadata is copied in bounded slices, after which native-only
         // sorting runs on a worker without touching IL2CPP objects.
