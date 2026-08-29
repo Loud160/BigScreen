@@ -278,6 +278,7 @@ additional_terms = (root / "LICENSE-ADDITIONAL-TERMS.md").read_text(
 notice_text = (root / "NOTICE").read_text(encoding="utf-8")
 contributing = (root / "CONTRIBUTING.md").read_text(encoding="utf-8")
 inbound_license = (root / "INBOUND_LICENSE.md").read_text(encoding="utf-8")
+privacy_text = (root / "docs/PRIVACY.md").read_text(encoding="utf-8")
 dco = (root / "DCO.txt").read_text(encoding="utf-8")
 third_party_notices = (root / "THIRD_PARTY_NOTICES.md").read_text(
     encoding="utf-8")
@@ -2359,6 +2360,31 @@ for campaign_lifecycle_hook in (
             f"{campaign_lifecycle_hook})") in main_source
 assert '"preparing campaign video"' in main_source
 assert '"stopping campaign gameplay video"' in main_source
+
+# Shared gameplay hooks also run in unsupported multiplayer/tutorial flows.
+# Only Standard (Solo/Practice) and Mission (Campaign) transition preparation
+# can authorize Big Screen's surface, environment, timing, or performance work.
+assert "enum class SupportedGameplayTransition" in main_source
+standard_prepare = main_source.split(
+    "StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo", 2
+)[2].split("StandardLevelScenesTransitionSetupDataSO_InitAndSetupScenes", 1)[0]
+assert "SupportedGameplayTransition::Standard" in standard_prepare
+assert "const bool prepared =" in standard_prepare
+assert main_source.count("SupportedGameplayTransition::Mission") == 2
+spawn_hook = main_source.split(
+    "BeatmapObjectSpawnController_Start", 2
+)[2].split("AudioTimeSyncController_StartSong", 1)[0]
+assert spawn_hook.index("if(!GameplayTransitionAuthorized())") < \
+    spawn_hook.index("PrepareGameplaySurfaceForChroma")
+start_song_hook = main_source.split(
+    "AudioTimeSyncController_StartSong", 2
+)[2].split("PauseController_Pause", 1)[0]
+assert "!GameplayTransitionAuthorized()" in start_song_hook
+update_hook = main_source.split(
+    "AudioTimeSyncController_Update", 2
+)[2].split("StandardLevelScenesTransitionSetupDataSO_Finish", 1)[0]
+assert "!GameplayTransitionAuthorized()" in update_hook
+assert main_source.count("ClearGameplayTransitionAuthorization();") >= 5
 assert "ClearPreparedPreviewForLevel" in playback_header
 assert "ClearPreparedPreviewForLevel" in playback_source
 assert "ClearPreparedPreviewForLevel" in library_menu_source
@@ -2371,6 +2397,67 @@ assert "DestroyIfAlive(gpuTexture_)" in screen_surface_source
 assert "DestroyIfAlive(rgbaTexture_)" in screen_surface_source
 assert "Video frame upload stopped because the Unity screen is no longer valid" in \
     playback_source
+
+# Live screen mutations are transactional across Unity's fake-null lifetime
+# boundary. Failed presentation lookup cannot strand a black lead-in or pair an
+# old mesh with newly generated deformation buffers.
+assert "bool ScreenSurface::IsCreated() const" in screen_surface_source
+is_created_body = screen_surface_source.split(
+    "bool ScreenSurface::IsCreated() const", 1
+)[1].split("bool ScreenSurface::Create(", 1)[0]
+assert "UnityW<UnityEngine::GameObject>::isAlive(gameObject_)" in \
+    is_created_body
+update_geometry_body = screen_surface_source.split(
+    "bool ScreenSurface::UpdateGeometry", 1
+)[1].split("bool ScreenSurface::PresentationObjectsAlive", 1)[0]
+for rollback_state in (
+    "previousDeformationBaseVertices",
+    "previousUndeformedVideoVertices",
+    "previousDynamicVideoVertices",
+    "previousUndeformedVideoUvs",
+    "previousDynamicVideoUvs",
+    "previousDeformationWasApplied",
+    "previousGeometryConfig",
+    "previousGeometryAspectRatio",
+    "previousScreenWidth",
+    "previousScreenHeight",
+):
+    assert rollback_state in update_geometry_body, rollback_state
+assert update_geometry_body.count("rollBackGeometry();") == 2
+assert "DestroyIfAlive(mesh_);" in update_geometry_body
+assert "DestroyIfAlive(videoMesh_);" in update_geometry_body
+
+apply_presentation_body = screen_surface_source.split(
+    "bool ScreenSurface::ApplyPresentation", 1
+)[1].split("bool ScreenSurface::CreateBackgroundMaterial", 1)[0]
+assert "if(!PresentationObjectsAlive())" in apply_presentation_body
+assert "ApplyResolvedNonEmissiveBackground(" in apply_presentation_body
+assert "ConfigureNonEmissiveBackground(" not in apply_presentation_body
+assert apply_presentation_body.index(
+    "!UnityW<UnityEngine::Shader>::isAlive(backgroundShader)"
+) < apply_presentation_body.index("material_->set_shader(videoShader.shader)")
+
+show_lead_in_body = screen_surface_source.split(
+    "void ScreenSurface::ShowLeadIn(bool black)", 1
+)[1].split("void ScreenSurface::SetVisible", 1)[0]
+assert "if(!PresentationObjectsAlive())" in show_lead_in_body
+black_lead_in_body = show_lead_in_body.split("auto* backgroundShader", 1)[1]
+assert black_lead_in_body.index("ApplyResolvedNonEmissiveBackground(") < \
+    black_lead_in_body.index("leadInActive_ = true;")
+assert "leadInActive_ = previousLeadInActive;" in upload_surface
+assert "leadInBlack_ = previousLeadInBlack;" in upload_surface
+
+for setter_name, liveness_check in (
+    ("SetWorldTransform", "GameObject>::isAlive(gameObject_)"),
+    ("SetWorldScale", "GameObject>::isAlive(gameObject_)"),
+    ("SetVideoLocalRoll", "GameObject>::isAlive(videoObject_)"),
+    ("SetOpacity", "PresentationObjectsAlive()"),
+    ("SetDeformation", "Mesh>::isAlive(videoMesh_)"),
+):
+    setter_body = screen_surface_source.split(
+        f"ScreenSurface::{setter_name}", 1
+    )[1].split("ScreenSurface::", 1)[0]
+    assert liveness_check in setter_body, setter_name
 
 # The experimental GPU path keeps FFmpeg types behind the existing backend
 # ABI, normalizes NV12/YUV420P to reusable 8-bit planes, performs rotation and
@@ -2967,6 +3054,57 @@ forget_selection = selection_toggle_source.split(
     "void SelectionVideoToggle::ForgetUi()", 1
 )[1].split("void SelectionVideoToggle::", 1)[0]
 assert "selectedLevel_ = nullptr" in forget_selection
+
+# Resumable media is bound to the exact source/tier/selected stream/downloader
+# identity. Failed staging follows the selected map lifetime, while active and
+# successful background transfers remain process-owned.
+for resume_identity_field in (
+    "sourceIdentity",
+    "requestedHeight",
+    "maximumSourceFps",
+    "formatId",
+    "protocol",
+    "fallbackMode",
+    "downloaderVersion",
+    "downloaderChannel",
+):
+    assert resume_identity_field in download_manager_source
+assert "existing_identity != resume_identity" in download_manager_source
+assert "FinalizeIncompleteTransfer(request.levelId" in download_manager_source
+assert "void DownloadManager::SetForegroundLevel" in download_manager_source
+set_foreground_body = download_manager_source.split(
+    "void DownloadManager::SetForegroundLevel", 1
+)[1].split("void DownloadManager::FinalizeIncompleteTransfer", 1)[0]
+assert "snapshot_ = {};" in set_foreground_body
+assert "SetForegroundLevel(levelId);" in selection_toggle_source
+assert "SetForegroundLevel({});" in song_hidden
+select_level_body = library_menu_source.split(
+    "void VideoLibraryMenu::SelectLevel(", 1
+)[1].split("void VideoLibraryMenu::ShowBrowser()", 1)[0]
+show_browser_body = library_menu_source.split(
+    "void VideoLibraryMenu::ShowBrowser()", 1
+)[1].split("void VideoLibraryMenu::ShowEditor()", 1)[0]
+assert "SetForegroundLevel(" in select_level_body
+assert "SetForegroundLevel({});" in show_browser_body
+
+# Storage/permission failures roll back through a dedicated exception and are
+# recorded as handled user failures, never as circuit-breaker events.
+assert "class VideoLibraryPersistenceError" in video_library_header
+assert video_library_source.count("throw VideoLibraryPersistenceError(") == 2
+timing_persistence_catch = library_menu_source.split(
+    "catch(const VideoLibraryPersistenceError& exception)", 2
+)[2].split("catch(const std::exception& exception)", 1)[0]
+assert "RecordError(" in timing_persistence_catch
+assert "ReportInternal(" not in timing_persistence_catch
+assert "Check free storage and Quest file access" in timing_persistence_catch
+assert "catch(const VideoLibraryPersistenceError& exception)" in \
+    local_browser_source
+
+# The automatic project-release lookup is explicit about cadence, endpoint,
+# and its metadata-only/no-self-install boundary.
+assert "api.github.com/repos/Loud160/BigScreen/releases/latest" in privacy_text
+assert "once in the background" in privacy_text
+assert "does not download or install its own updates" in privacy_text
 
 # Retained menu visits reuse immutable/static presentation assets and cache
 # expensive scene-wide environment lookups instead of repeating them whenever

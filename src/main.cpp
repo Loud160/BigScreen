@@ -131,6 +131,30 @@ namespace {
     // or selected-level object is touched.
     std::atomic_bool songCatalogRefreshPending{false};
 
+    enum class SupportedGameplayTransition {
+        None,
+        Standard,
+        Mission
+    };
+
+    // Big Screen currently supports Solo/Practice through Standard and
+    // Campaign through Mission. AudioTimeSyncController and beatmap-spawn
+    // hooks are shared by other game modes, so prepared menu state alone must
+    // never authorize screens, environment changes, or diagnostics there.
+    SupportedGameplayTransition supportedGameplayTransition =
+        SupportedGameplayTransition::None;
+
+    bool GameplayTransitionAuthorized()
+    {
+        return supportedGameplayTransition !=
+            SupportedGameplayTransition::None;
+    }
+
+    void ClearGameplayTransitionAuthorization()
+    {
+        supportedGameplayTransition = SupportedGameplayTransition::None;
+    }
+
     void HandleSongsLoaded(
         std::span<SongCore::SongLoader::CustomBeatmapLevel* const>)
     {
@@ -1243,6 +1267,7 @@ namespace {
     {
         if(!BigScreen::Settings::Instance().ModEnabled())
         {
+            ClearGameplayTransitionAuthorization();
             StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
                 self,
                 overrideEnvironmentSettings,
@@ -1254,12 +1279,15 @@ namespace {
         // this helper. Preparing here is early enough to influence environment
         // selection but late enough to avoid hooking both overloaded Init APIs.
         auto& playback = BigScreen::PlaybackSession::Instance();
-        BigScreen::ErrorManager::Instance().Guard(
+        const bool prepared = BigScreen::ErrorManager::Instance().Guard(
             "preparing video before environment selection", [&]() {
                 PrepareGameplayVideoForLevel(
                     self->get_beatmapLevel(),
                     self->get_beatmapKey());
             });
+        supportedGameplayTransition = prepared
+            ? SupportedGameplayTransition::Standard
+            : SupportedGameplayTransition::None;
         StandardLevelScenesTransitionSetupDataSO_InitEnvironmentInfo(
             self,
             overrideEnvironmentSettings,
@@ -1488,11 +1516,16 @@ namespace {
         if(BigScreen::Settings::Instance().ModEnabled() &&
            preparationScope.OwnsPreparation())
         {
-            BigScreen::ErrorManager::Instance().Guard(
+            const bool prepared = BigScreen::ErrorManager::Instance().Guard(
                 "preparing campaign video", [&]() {
                     PrepareGameplayVideoForLevel(beatmapLevel, *beatmapKey);
                 });
+            supportedGameplayTransition = prepared
+                ? SupportedGameplayTransition::Mission
+                : SupportedGameplayTransition::None;
         }
+        else if(preparationScope.OwnsPreparation())
+            ClearGameplayTransitionAuthorization();
         MissionLevelScenesTransitionSetupDataSO_InitWithLoadedData(
             self,
             missionId,
@@ -1534,11 +1567,16 @@ namespace {
         if(BigScreen::Settings::Instance().ModEnabled() &&
            preparationScope.OwnsPreparation())
         {
-            BigScreen::ErrorManager::Instance().Guard(
+            const bool prepared = BigScreen::ErrorManager::Instance().Guard(
                 "preparing campaign video", [&]() {
                     PrepareGameplayVideoForLevel(beatmapLevel, *beatmapKey);
                 });
+            supportedGameplayTransition = prepared
+                ? SupportedGameplayTransition::Mission
+                : SupportedGameplayTransition::None;
         }
+        else if(preparationScope.OwnsPreparation())
+            ClearGameplayTransitionAuthorization();
         MissionLevelScenesTransitionSetupDataSO_InitWithLevelsModel(
             self,
             missionId,
@@ -1611,6 +1649,9 @@ namespace {
     {
         BeatmapObjectSpawnController_Start(self);
 
+        if(!GameplayTransitionAuthorized())
+            return;
+
         // Chroma schedules its environment lookup for the end of this frame.
         // Whether Big Screen's hook is installed inside or outside Chroma's,
         // this synchronous call completes before that coroutine resumes. It
@@ -1671,7 +1712,8 @@ namespace {
         });
         AudioTimeSyncController_StartSong(self, startTimeOffset);
 
-        if(!BigScreen::Settings::Instance().ModEnabled())
+        if(!BigScreen::Settings::Instance().ModEnabled() ||
+           !GameplayTransitionAuthorized())
             return;
 
         BigScreen::ErrorManager::Instance().SetGameplayActive(true);
@@ -1916,7 +1958,8 @@ namespace {
     {
         AudioTimeSyncController_Update(self);
 
-        if(!BigScreen::Settings::Instance().ModEnabled())
+        if(!BigScreen::Settings::Instance().ModEnabled() ||
+           !GameplayTransitionAuthorized())
             return;
 
         // Beat Saber's song time is the sole playback clock. It stops during a
@@ -1958,6 +2001,7 @@ namespace {
             BigScreen::PlaybackSession::Instance().LastResultsData());
         BigScreen::ShowcaseLauncher::Instance().OnGameplayFinished();
         BigScreen::ErrorManager::Instance().SetGameplayActive(false);
+        ClearGameplayTransitionAuthorization();
         StandardLevelScenesTransitionSetupDataSO_Finish(self, levelCompletionResults);
     }
 
@@ -1983,6 +2027,7 @@ namespace {
             BigScreen::PlaybackSession::Instance().LastResultsData());
         BigScreen::ShowcaseLauncher::Instance().OnGameplayFinished();
         BigScreen::ErrorManager::Instance().SetGameplayActive(false);
+        ClearGameplayTransitionAuthorization();
         MissionLevelScenesTransitionSetupDataSO_Finish(
             self,
             levelCompletionResults);

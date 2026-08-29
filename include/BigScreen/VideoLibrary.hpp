@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,14 @@ namespace GlobalNamespace {
 }
 
 namespace BigScreen {
+    /// A recoverable failure while making library.json durable. UI callers
+    /// report this as a storage problem and must not count it toward Big
+    /// Screen's internal-error circuit breaker.
+    class VideoLibraryPersistenceError final : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
     enum class VideoOrigin {
         Mapper,
         User

@@ -116,7 +116,7 @@ namespace BigScreen {
             double songTimeSeconds,
             double realTimeSeconds);
 
-        bool IsCreated() const { return gameObject_ != nullptr; }
+        bool IsCreated() const;
         UnityEngine::Texture* Texture() const { return texture_; }
         bool GpuConversionActive() const { return gpuConversionActive_; }
         GpuYuvUploadLayout ActiveGpuYuvUploadLayout() const {
@@ -157,6 +157,10 @@ namespace BigScreen {
         /// alpha after the UI picture is drawn, preventing Beat Saber's bloom
         /// composite from treating the complete video as an emitter.
         bool CreateUiAlphaGuard();
+        /// Unity objects can retain non-null IL2CPP pointers after their scene
+        /// has destroyed them. Every live presentation mutation shares this
+        /// fake-null-aware precondition instead of dereferencing raw pointers.
+        bool PresentationObjectsAlive() const;
         /// Applies picture opacity and letterbox transparency without
         /// replacing the decoded texture or restarting playback.
         bool ApplyPresentation(

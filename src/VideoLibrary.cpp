@@ -1806,7 +1806,8 @@ namespace BigScreen {
             stream.write(buffer.GetString(), static_cast<std::streamsize>(buffer.GetSize()));
             stream.flush();
             if(!stream)
-                throw std::runtime_error("Could not write video library manifest");
+                throw VideoLibraryPersistenceError(
+                    "Could not write video library manifest");
         }
         const auto backup1 = std::filesystem::path(manifestPath_.string() + ".backup1");
         const auto backup2 = std::filesystem::path(manifestPath_.string() + ".backup2");
@@ -1838,7 +1839,7 @@ namespace BigScreen {
         error.clear();
         std::filesystem::rename(temporary, manifestPath_, error);
         if(error)
-            throw std::runtime_error(
+            throw VideoLibraryPersistenceError(
                 "Could not replace video library manifest: " + error.message());
         persistedRecords_.swap(durableCandidate);
         }

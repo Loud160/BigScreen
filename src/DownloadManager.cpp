@@ -180,6 +180,12 @@ namespace BigScreen {
                  destination.extension().string());
         }
 
+        std::filesystem::path ResumeIdentitySibling(
+            const std::filesystem::path& incoming)
+        {
+            return std::filesystem::path(incoming.string() + ".resume.json");
+        }
+
         /// Atomically promotes a fully downloaded sibling while retaining the
         /// old destination until its manifest commit succeeds. This closes the
         /// subtle same-codec replacement hole where yt-dlp's overwrite option
@@ -563,8 +569,30 @@ namespace BigScreen {
         // policy in one Python fragment prevents one surface from accepting a
         // tier the other later rejects after yt-dlp format fields change.
         constexpr std::string_view MediaScriptHelpers = R"PY(
+def redact_external_message(value):
+    text = re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()
+    text = re.sub(
+        r'(?i)(authorization|proxy-authorization)\s*[:=]\s*'
+        r'(?:bearer\s+)?[^\s,;]+',
+        r'\1=[redacted]', text)
+    text = re.sub(
+        r'(?i)(cookie|set-cookie)\s*[:=]\s*[^\r\n]+',
+        r'\1=[redacted]', text)
+    text = re.sub(
+        r'(?i)(po[_-]?token|pot|x-goog-visitor-id)\s*[:=]\s*[^\s,;]+',
+        r'\1=[redacted]', text)
+    # Signed Google media URLs, arbitrary YouTube queries, fragments, and
+    # equivalent CDN tokens are operational secrets even when the host/path
+    # themselves are useful for diagnosis. Preserve that safe prefix only.
+    text = re.sub(
+        r'https?://[^\s\x27\x22?#]+[?#][^\s\x27\x22]*',
+        lambda match: match.group(0).split('?', 1)[0]
+            .split('#', 1)[0] + '?[redacted]',
+        text)
+    return text
+
 def clean_error(value):
-    return re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()[-700:]
+    return redact_external_message(value)[-700:]
 
 def is_sdr(candidate):
     dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
@@ -581,7 +609,7 @@ def tier(candidate):
 )PY";
 
         constexpr const char* DownloaderScript = R"PY(
-import json, os, re, shutil, time, traceback, urllib.parse, urllib.request
+import hashlib, json, os, re, shutil, time, traceback, urllib.parse, urllib.request
 
 job = json.loads(BIGSCREEN_JOB)
 status_path = job['statusPath']
@@ -589,12 +617,7 @@ cancel_path = job['cancelPath']
 ytdlp_log_path = job.get('ytdlpLogPath') or ''
 
 def sanitize_ytdlp_message(value):
-    text = re.sub(r'\x1b\[[0-9;]*m', '', str(value)).strip()
-    text = re.sub(r'(?i)(authorization|cookie|po[_-]?token)\s*[:=]\s*\S+',
-                  r'\1=[redacted]', text)
-    text = re.sub(r'https?://[^\s\x27\x22?#]+[?#][^\s\x27\x22]*',
-                  lambda match: match.group(0).split('?', 1)[0].split('#', 1)[0] + '?[redacted]', text)
-    return text[-2048:]
+    return redact_external_message(value)[-2048:]
 
 class BigScreenYtDlpLogger:
     def __init__(self):
@@ -904,6 +927,61 @@ try:
         float(f.get('fps') or 0) if within_fps_limit else -float(f.get('fps') or 0),
         float(f.get('tbr') or 0),
         int(f.get('filesize') or f.get('filesize_approx') or 0)))
+
+    # yt-dlp's .part file contains no trustworthy statement of which source,
+    # tier, stream, fallback policy, or downloader build created it. Keep that
+    # identity in an atomic sibling and resume only when every field matches.
+    # A different resolution or a changed extractor selection starts from byte
+    # zero instead of appending incompatible media to an old partial transfer.
+    video_id = str(info.get('id') or '')
+    source_identity = (
+        'youtube:' + video_id
+        if re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id)
+        else 'url-sha256:' + hashlib.sha256(
+            str(job['sourceUrl']).encode('utf-8')).hexdigest())
+    resume_identity = {
+        'schemaVersion': 1,
+        'levelId': str(job.get('levelId') or ''),
+        'sourceIdentity': source_identity,
+        'requestedHeight': requested_height,
+        'maximumSourceFps': maximum_fps,
+        'formatId': str(chosen.get('format_id') or ''),
+        'protocol': str(chosen.get('protocol') or ''),
+        'fallbackMode': fallback_mode,
+        'excludedFormatId': excluded_format,
+        'forceHlsRemuxTest': force_hls_remux_test,
+        'downloaderVersion': str(job.get('downloaderVersion') or 'unknown'),
+        'downloaderChannel': str(job.get('downloaderChannel') or 'unknown'),
+    }
+    resume_identity_path = (
+        job.get('resumeIdentityPath') or job['finalPath'] + '.resume.json')
+    part_path = job['finalPath'] + '.part'
+    staged_paths = (job['finalPath'], part_path)
+    if any(os.path.exists(path) for path in staged_paths):
+        existing_identity = None
+        try:
+            with open(resume_identity_path, 'r', encoding='utf-8') as stream:
+                existing_identity = json.load(stream)
+        except (OSError, ValueError, TypeError):
+            pass
+        if existing_identity != resume_identity:
+            for path in staged_paths:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    # Let yt-dlp surface a precise storage error rather than
+                    # pretending an unverified partial can safely be resumed.
+                    raise RuntimeError(
+                        'Could not discard incompatible download staging: ' +
+                        path)
+    identity_temporary = resume_identity_path + '.tmp'
+    with open(identity_temporary, 'w', encoding='utf-8') as stream:
+        json.dump(resume_identity, stream, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(identity_temporary, resume_identity_path)
+
     BigScreenYtDlpLogger().info(
         '[Big Screen] selected ' + stream_summary(chosen))
     expected = int(chosen.get('filesize') or chosen.get('filesize_approx') or 0)
@@ -914,7 +992,6 @@ try:
     if free < required:
         raise OSError('Not enough free Quest storage. Need at least %.1f MB free; %.1f MB is available.' % (required / 1048576, free / 1048576))
     options = dict(common, outtmpl=job['finalPath'], format=chosen['format_id'])
-    part_path = job['finalPath'] + '.part'
     retry_detail = ''
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
@@ -2278,6 +2355,117 @@ os.replace(temporary, job['destination'])
         return result;
     }
 
+    void DownloadManager::RemoveIncompleteTransferFiles(
+        const IncompleteTransfer& transfer)
+    {
+        for(const auto& path : transfer.stagingPaths)
+        {
+            std::error_code error;
+            const bool removed = std::filesystem::remove(path, error);
+            if(error)
+            {
+                BigScreen::BigScreenLogger.warn(
+                    "Could not remove abandoned download staging '{}': {}",
+                    path.string(),
+                    error.message());
+                ErrorManager::Instance().RecordError(
+                    "Cleaning abandoned download staging",
+                    path.string() + ": " + error.message());
+            }
+            else if(removed)
+            {
+                BigScreen::BigScreenLogger.info(
+                    "Removed abandoned download staging '{}'",
+                    path.string());
+            }
+        }
+    }
+
+    void DownloadManager::RegisterIncompleteTransfer(
+        const std::string& levelId,
+        const std::filesystem::path& finalPath,
+        const std::filesystem::path& thumbnailPath)
+    {
+        const auto incomingVideo = IncomingSibling(finalPath);
+        const auto incomingThumbnail = IncomingSibling(thumbnailPath);
+        const auto preparedVideo = std::filesystem::path(
+            incomingVideo.string() + ".prepared.mp4");
+        IncompleteTransfer next{
+            levelId,
+            {
+                incomingVideo,
+                std::filesystem::path(incomingVideo.string() + ".part"),
+                ResumeIdentitySibling(incomingVideo),
+                incomingThumbnail,
+                std::filesystem::path(incomingThumbnail.string() + ".tmp"),
+                preparedVideo,
+                std::filesystem::path(preparedVideo.string() + ".validation.mp4")
+            }};
+
+        std::optional<IncompleteTransfer> abandoned;
+        {
+            std::scoped_lock lock(mutex_);
+            foregroundLevelId_ = levelId;
+            if(incompleteTransfer_ &&
+               incompleteTransfer_->stagingPaths != next.stagingPaths)
+                abandoned = std::move(incompleteTransfer_);
+            incompleteTransfer_ = std::move(next);
+        }
+        if(abandoned)
+            RemoveIncompleteTransferFiles(*abandoned);
+    }
+
+    void DownloadManager::SetForegroundLevel(std::string levelId)
+    {
+        std::optional<IncompleteTransfer> abandoned;
+        {
+            std::scoped_lock lock(mutex_);
+            foregroundLevelId_ = std::move(levelId);
+            const bool terminalFailure =
+                snapshot_.state == DownloadState::Failed ||
+                snapshot_.state == DownloadState::Cancelled;
+            if(incompleteTransfer_ && terminalFailure &&
+               !operationBusy_.load() &&
+               incompleteTransfer_->levelId != foregroundLevelId_)
+            {
+                abandoned = std::move(incompleteTransfer_);
+                incompleteTransfer_.reset();
+                // The partial bytes no longer exist, so an old Cancelled
+                // snapshot must not advertise Resume when this map is opened
+                // again. Failed attempts likewise should not carry their
+                // terminal editor text back from an abandoned selection.
+                snapshot_ = {};
+            }
+        }
+        if(abandoned)
+            RemoveIncompleteTransferFiles(*abandoned);
+    }
+
+    void DownloadManager::FinalizeIncompleteTransfer(
+        const std::string& levelId,
+        bool completed)
+    {
+        std::optional<IncompleteTransfer> cleanup;
+        {
+            std::scoped_lock lock(mutex_);
+            if(!incompleteTransfer_ ||
+               incompleteTransfer_->levelId != levelId)
+                return;
+            // Successful publication never needs resumable state. A failed or
+            // cancelled attempt remains resumable only while the player still
+            // has its originating map selected.
+            if(completed || foregroundLevelId_ != levelId)
+            {
+                cleanup = std::move(incompleteTransfer_);
+                incompleteTransfer_.reset();
+                if(!completed && snapshot_.levelId == levelId)
+                    snapshot_ = {};
+            }
+        }
+        if(cleanup)
+            RemoveIncompleteTransferFiles(*cleanup);
+    }
+
     void DownloadManager::RecordYouTubeDownloadOutcome(DownloadState state)
     {
         bool startReleaseCheck = false;
@@ -2377,6 +2565,10 @@ os.replace(temporary, job['destination'])
             request.levelId,
             request.origin,
             request.requestedHeight == 1440 ? ".webm" : ".mp4");
+        const auto thumbnailPath = library.AllocateThumbnailPath(
+            request.levelId, request.origin);
+        RegisterIncompleteTransfer(
+            request.levelId, finalPath, thumbnailPath);
         const auto statusPath = library.RuntimePath() / "download-status.json";
         const auto cancelPath = library.RuntimePath() / "download.cancel";
         const auto downloaderDiagnosticPath =
@@ -3114,6 +3306,8 @@ os.replace(temporary, job['destination'])
                     request.levelId, request.origin);
             const auto incomingVideoPath = IncomingSibling(finalPath);
             const auto incomingThumbnailPath = IncomingSibling(thumbnailPath);
+            const auto resumeIdentityPath =
+                ResumeIdentitySibling(incomingVideoPath);
             // The downloader's selected container normally matches finalPath,
             // but a repair/transcode can produce a new MP4. Keep the physical
             // source and published identity separate so MP4 bytes are never
@@ -3122,6 +3316,7 @@ os.replace(temporary, job['destination'])
             auto publicationPath = finalPath;
             rapidjson::Document document(rapidjson::kObjectType);
             auto& allocator = document.GetAllocator();
+            AddString(document, "levelId", request.levelId, allocator);
             AddString(document, "sourceUrl", request.sourceUrl, allocator);
             AddString(
                 document, "finalPath", incomingVideoPath.string(), allocator);
@@ -3132,6 +3327,15 @@ os.replace(temporary, job['destination'])
                 allocator);
             AddString(document, "statusPath", statusPath_.string(), allocator);
             AddString(document, "cancelPath", cancelPath_.string(), allocator);
+            AddString(
+                document, "resumeIdentityPath",
+                resumeIdentityPath.string(), allocator);
+            AddString(
+                document, "downloaderVersion",
+                CurrentYtDlpVersion(), allocator);
+            AddString(
+                document, "downloaderChannel",
+                CurrentYtDlpChannel(), allocator);
             AddString(
                 document, "ytdlpLogPath",
                 DiagnosticSessionLogger::Instance().DownloadSessionActive()
@@ -3290,6 +3494,7 @@ os.replace(temporary, job['destination'])
                     "The embedded downloader could not start. Big Screen recorded the internal error; the map and game can continue normally.");
                 RecordYouTubeDownloadOutcome(DownloadState::Failed);
                 outcomeRecorded = true;
+                FinalizeIncompleteTransfer(request.levelId, false);
                 return;
             }
 
@@ -3313,6 +3518,9 @@ os.replace(temporary, job['destination'])
                 rapidjson::Document fallbackDocument(rapidjson::kObjectType);
                 auto& fallbackAllocator = fallbackDocument.GetAllocator();
                 AddString(
+                    fallbackDocument, "levelId", request.levelId,
+                    fallbackAllocator);
+                AddString(
                     fallbackDocument, "sourceUrl", request.sourceUrl,
                     fallbackAllocator);
                 AddString(
@@ -3327,6 +3535,15 @@ os.replace(temporary, job['destination'])
                 AddString(
                     fallbackDocument, "cancelPath", cancelPath_.string(),
                     fallbackAllocator);
+                AddString(
+                    fallbackDocument, "resumeIdentityPath",
+                    resumeIdentityPath.string(), fallbackAllocator);
+                AddString(
+                    fallbackDocument, "downloaderVersion",
+                    CurrentYtDlpVersion(), fallbackAllocator);
+                AddString(
+                    fallbackDocument, "downloaderChannel",
+                    CurrentYtDlpChannel(), fallbackAllocator);
                 AddString(
                     fallbackDocument, "ytdlpLogPath",
                     DiagnosticSessionLogger::Instance().DownloadSessionActive()
@@ -4017,18 +4234,23 @@ os.replace(temporary, job['destination'])
                 request.levelId,
                 StateName(terminalSnapshot.state),
                 terminalSnapshot.message);
+            FinalizeIncompleteTransfer(
+                request.levelId,
+                terminalSnapshot.state == DownloadState::Completed);
         }
         catch(const std::exception& exception)
         {
             SetFailure(std::string("Downloader stopped: ") + exception.what());
             if(!outcomeRecorded)
                 RecordYouTubeDownloadOutcome(DownloadState::Failed);
+            FinalizeIncompleteTransfer(request.levelId, false);
         }
         catch(...)
         {
             SetFailure("Downloader stopped because of an unexpected internal error.");
             if(!outcomeRecorded)
                 RecordYouTubeDownloadOutcome(DownloadState::Failed);
+            FinalizeIncompleteTransfer(request.levelId, false);
         }
     }
 

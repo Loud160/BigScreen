@@ -747,6 +747,14 @@ namespace BigScreen {
                 return;
             }
         }
+        catch(const VideoLibraryPersistenceError& exception)
+        {
+            error = "The video assignment could not be saved. Check free "
+                "storage and Quest file access; your previous assignment is "
+                "still active.";
+            ErrorManager::Instance().RecordError(
+                "Persisting a local video assignment", exception.what());
+        }
         catch(const std::exception& exception)
         {
             error = "The video assignment could not be saved. Your previous "

@@ -832,16 +832,11 @@ namespace BigScreen {
             material->DisableKeyword("_ALPHAPREMULTIPLY_ON");
         }
 
-        bool ConfigureNonEmissiveBackground(
+        void ApplyResolvedNonEmissiveBackground(
             UnityEngine::Material* material,
+            UnityEngine::Shader* shader,
             bool transparent)
         {
-            if(!material)
-                return false;
-            auto* shader = FindVideoShader();
-            if(!shader)
-                return false;
-
             material->set_shader(shader);
             // White texture plus black RGB/zero alpha gives an unambiguous
             // black fragment whose alpha is controlled here rather than by a
@@ -865,6 +860,19 @@ namespace BigScreen {
                 ConfigureVideoBlend(material, 1, 0, 1, 0, true, 1999);
                 material->DisableKeyword("_ALPHABLEND_ON");
             }
+        }
+
+        bool ConfigureNonEmissiveBackground(
+            UnityEngine::Material* material,
+            bool transparent)
+        {
+            if(!UnityW<UnityEngine::Material>::isAlive(material))
+                return false;
+            auto* shader = FindVideoShader();
+            if(!UnityW<UnityEngine::Shader>::isAlive(shader))
+                return false;
+
+            ApplyResolvedNonEmissiveBackground(material, shader, transparent);
             return true;
         }
 
@@ -1071,6 +1079,11 @@ namespace BigScreen {
         {
             BigScreen::BigScreenLogger.error("Video shader tier: resolution failed");
         }
+    }
+
+    bool ScreenSurface::IsCreated() const
+    {
+        return UnityW<UnityEngine::GameObject>::isAlive(gameObject_);
     }
 
     bool ScreenSurface::Create(
@@ -1599,17 +1612,22 @@ namespace BigScreen {
 
     bool ScreenSurface::UpdateGeometry(const MapVideoConfig& config)
     {
-        if(!gameObject_ || !videoObject_ ||
+        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_) ||
+           !UnityW<UnityEngine::GameObject>::isAlive(videoObject_) ||
+           !UnityW<UnityEngine::Mesh>::isAlive(mesh_) ||
+           !UnityW<UnityEngine::Mesh>::isAlive(videoMesh_) ||
            textureWidth_ <= 0 || textureHeight_ <= 0)
             return false;
 
         auto* filter = gameObject_->GetComponent<UnityEngine::MeshFilter*>();
         auto* videoFilter = videoObject_->GetComponent<UnityEngine::MeshFilter*>();
-        auto* alphaGuardFilter = alphaGuardObject_
+        const bool hasAlphaGuard =
+            UnityW<UnityEngine::GameObject>::isAlive(alphaGuardObject_);
+        auto* alphaGuardFilter = hasAlphaGuard
             ? alphaGuardObject_->GetComponent<UnityEngine::MeshFilter*>()
             : nullptr;
-        if(!filter || !videoFilter ||
-           (alphaGuardObject_ && !alphaGuardFilter))
+        if(!filter || !videoFilter || (hasAlphaGuard && !alphaGuardFilter) ||
+           (alphaGuardObject_ && !hasAlphaGuard))
             return false;
 
         const float aspectRatio =
@@ -1618,19 +1636,45 @@ namespace BigScreen {
         auto* previousVideoMesh = videoMesh_;
         const bool previousVideoCoversFrame = videoCoversFrame_;
         const bool previousOpaqueScreenBody = opaqueScreenBody_;
+        const float previousScreenWidth = screenWidth_;
+        const float previousScreenHeight = screenHeight_;
+        const auto previousGeometryConfig = geometryConfig_;
+        const float previousGeometryAspectRatio = geometryAspectRatio_;
+        auto previousDeformationBaseVertices =
+            std::move(deformationBaseVertices_);
+        auto previousUndeformedVideoVertices =
+            std::move(undeformedVideoVertices_);
+        auto previousDynamicVideoVertices = std::move(dynamicVideoVertices_);
+        auto previousUndeformedVideoUvs = std::move(undeformedVideoUvs_);
+        auto previousDynamicVideoUvs = std::move(dynamicVideoUvs_);
+        const bool previousDeformationWasApplied = deformationWasApplied_;
         mesh_ = nullptr;
         videoMesh_ = nullptr;
-        if(!CreateMesh(config, aspectRatio) || !mesh_ ||
-           !CreateVideoMesh(config, aspectRatio) || !videoMesh_)
+        const auto rollBackGeometry = [&]()
         {
-            if(mesh_)
-                UnityEngine::Object::Destroy(mesh_);
-            if(videoMesh_)
-                UnityEngine::Object::Destroy(videoMesh_);
+            DestroyIfAlive(mesh_);
+            DestroyIfAlive(videoMesh_);
             mesh_ = previousMesh;
             videoMesh_ = previousVideoMesh;
             videoCoversFrame_ = previousVideoCoversFrame;
             opaqueScreenBody_ = previousOpaqueScreenBody;
+            screenWidth_ = previousScreenWidth;
+            screenHeight_ = previousScreenHeight;
+            geometryConfig_ = previousGeometryConfig;
+            geometryAspectRatio_ = previousGeometryAspectRatio;
+            deformationBaseVertices_ =
+                std::move(previousDeformationBaseVertices);
+            undeformedVideoVertices_ =
+                std::move(previousUndeformedVideoVertices);
+            dynamicVideoVertices_ = std::move(previousDynamicVideoVertices);
+            undeformedVideoUvs_ = std::move(previousUndeformedVideoUvs);
+            dynamicVideoUvs_ = std::move(previousDynamicVideoUvs);
+            deformationWasApplied_ = previousDeformationWasApplied;
+        };
+        if(!CreateMesh(config, aspectRatio) || !mesh_ ||
+           !CreateVideoMesh(config, aspectRatio) || !videoMesh_)
+        {
+            rollBackGeometry();
             return false;
         }
 
@@ -1640,12 +1684,7 @@ namespace BigScreen {
                config.letterboxTransparent,
                config.videoOpacity))
         {
-            UnityEngine::Object::Destroy(mesh_);
-            UnityEngine::Object::Destroy(videoMesh_);
-            mesh_ = previousMesh;
-            videoMesh_ = previousVideoMesh;
-            videoCoversFrame_ = previousVideoCoversFrame;
-            opaqueScreenBody_ = previousOpaqueScreenBody;
+            rollBackGeometry();
             return false;
         }
 
@@ -1679,10 +1718,8 @@ namespace BigScreen {
         fractureSnapshotActive_ = false;
         if(material_)
             material_->set_mainTexture(texture_);
-        if(previousMesh)
-            UnityEngine::Object::Destroy(previousMesh);
-        if(previousVideoMesh)
-            UnityEngine::Object::Destroy(previousVideoMesh);
+        DestroyIfAlive(previousMesh);
+        DestroyIfAlive(previousVideoMesh);
 
         auto transform = gameObject_->get_transform();
         transform->set_position({
@@ -1744,12 +1781,20 @@ namespace BigScreen {
         return true;
     }
 
+    bool ScreenSurface::PresentationObjectsAlive() const
+    {
+        return UnityW<UnityEngine::GameObject>::isAlive(gameObject_) &&
+            UnityW<UnityEngine::GameObject>::isAlive(videoObject_) &&
+            UnityW<UnityEngine::Material>::isAlive(material_) &&
+            UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_) &&
+            UnityW<UnityEngine::Texture>::isAlive(texture_);
+    }
+
     bool ScreenSurface::ApplyPresentation(
         bool letterboxTransparent,
         float videoOpacity)
     {
-        if(!gameObject_ || !videoObject_ || !material_ ||
-           !backgroundMaterial_ || !texture_)
+        if(!PresentationObjectsAlive())
             return false;
 
         const float nextOpacity = std::clamp(videoOpacity, 0.0f, 1.0f);
@@ -1757,16 +1802,22 @@ namespace BigScreen {
             textureHasAuthoredAlpha_ || colorBlending_;
         const auto videoShader = ResolveVideoShader(pictureTransparent);
         auto* backgroundShader = FindVideoShader();
-        if(!videoShader.shader || !backgroundShader)
+        auto* backgroundRenderer =
+            gameObject_->GetComponent<UnityEngine::MeshRenderer*>();
+        const bool nextVideoMaterialUiMasked =
+            videoShader.family == VideoShaderFamily::UiMasked;
+        if(!UnityW<UnityEngine::Shader>::isAlive(videoShader.shader) ||
+           !UnityW<UnityEngine::Shader>::isAlive(backgroundShader) ||
+           !backgroundRenderer)
             return false;
 
+        // Resolve every potentially failing Unity dependency before changing a
+        // live screen. From this point onward presentation is a single commit:
+        // callers either retain the previous material state or receive the
+        // complete new picture/background/lead-in combination.
         material_->set_shader(videoShader.shader);
-        backgroundMaterial_->set_shader(backgroundShader);
-        videoMaterialUiMasked_ =
-            videoShader.family == VideoShaderFamily::UiMasked;
+        videoMaterialUiMasked_ = nextVideoMaterialUiMasked;
         material_->set_mainTexture(texture_);
-        backgroundMaterial_->set_mainTexture(
-            UnityEngine::Texture2D::get_whiteTexture());
 
         ApplyVideoMaterialMode(
             material_,
@@ -1779,21 +1830,25 @@ namespace BigScreen {
         // UI/Default cannot write the bloom-weight channel itself. Keep its
         // fixed alpha-clearing companion synchronized with the same texture
         // and user-selected opacity; there is deliberately no bloom slider.
-        if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
+        const bool alphaGuardAlive =
+            UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_);
+        if(alphaGuardAlive)
         {
             alphaGuardMaterial_->set_mainTexture(texture_);
             alphaGuardMaterial_->set_color(UnityEngine::Color{
                 1.0f, 1.0f, 1.0f, nextOpacity});
         }
 
-        if(!ConfigureNonEmissiveBackground(
-               backgroundMaterial_, letterboxTransparent))
-            return false;
+        const bool preserveBlackLeadIn = leadInActive_ && leadInBlack_;
+        ApplyResolvedNonEmissiveBackground(
+            backgroundMaterial_,
+            backgroundShader,
+            preserveBlackLeadIn ? false : letterboxTransparent);
 
         // Changing layouts during a negative offset must not expose the first
         // decoded frame early. Preserve an explicitly requested black lead-in
         // until Upload transitions back to the configured presentation.
-        if(leadInActive_ && leadInBlack_)
+        if(preserveBlackLeadIn)
         {
             if(videoMaterialUiMasked_)
             {
@@ -1812,9 +1867,7 @@ namespace BigScreen {
                 material_->set_color(
                     UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
             }
-            if(!ConfigureNonEmissiveBackground(backgroundMaterial_, false))
-                return false;
-            if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
+            if(alphaGuardAlive)
             {
                 alphaGuardMaterial_->set_mainTexture(
                     UnityEngine::Texture2D::get_whiteTexture());
@@ -1825,16 +1878,12 @@ namespace BigScreen {
 
         letterboxTransparent_ = letterboxTransparent;
         opacity_ = nextOpacity;
-        if(auto* backgroundRenderer =
-               gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
-        {
-            backgroundRenderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
-                    opaqueScreenBody_,
-                    letterboxTransparent_,
-                    leadInActive_ && leadInBlack_,
-                    videoCoversFrame_,
-                    textureHasAuthoredAlpha_));
-        }
+        backgroundRenderer->set_enabled(CoreLogic::ScreenBackgroundVisible(
+                opaqueScreenBody_,
+                letterboxTransparent_,
+                preserveBlackLeadIn,
+                videoCoversFrame_,
+                textureHasAuthoredAlpha_));
         return true;
     }
 
@@ -2111,10 +2160,20 @@ namespace BigScreen {
             // embedded shader's fixed zero bloom-emission alpha on the first
             // decoded frame. Bloom-heavy maps consequently turned solid white
             // until moving a diagnostic slider forced another rebuild.
+            const bool previousLeadInActive = leadInActive_;
+            const bool previousLeadInBlack = leadInBlack_;
             leadInActive_ = false;
             leadInBlack_ = false;
             if(!ApplyPresentation(letterboxTransparent_, opacity_))
+            {
+                // ApplyPresentation performs no mutation until its complete
+                // Unity dependency set is available. Keep the lead-in armed so
+                // the next decoded frame can retry instead of stranding a black
+                // material that no longer has an owning state flag.
+                leadInActive_ = previousLeadInActive;
+                leadInBlack_ = previousLeadInBlack;
                 return false;
+            }
             material_->set_mainTexture(texture_);
         }
 
@@ -2408,16 +2467,16 @@ namespace BigScreen {
 
     void ScreenSurface::ShowLeadIn(bool black)
     {
+        if(!PresentationObjectsAlive())
+            return;
+
         if(!black)
         {
+            SetVisible(false);
             leadInActive_ = true;
             leadInBlack_ = false;
-            SetVisible(false);
             return;
         }
-        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_) ||
-           !UnityW<UnityEngine::Material>::isAlive(material_))
-            return;
 
         if(leadInActive_ && leadInBlack_)
         {
@@ -2425,6 +2484,20 @@ namespace BigScreen {
             return;
         }
 
+        auto* backgroundShader = FindVideoShader();
+        auto* backgroundRenderer =
+            gameObject_->GetComponent<UnityEngine::MeshRenderer*>();
+        if(!UnityW<UnityEngine::Shader>::isAlive(backgroundShader) ||
+           !backgroundRenderer)
+        {
+            return;
+        }
+
+        // All fallible lookups are complete. Commit every black lead-in layer
+        // together so failure cannot leave the material sampling the black
+        // texture while leadInActive_ still says normal video is presented.
+        ApplyResolvedNonEmissiveBackground(
+            backgroundMaterial_, backgroundShader, false);
         // Unity owns these shared small textures, so they cost no per-video
         // upload or allocation and must not be destroyed with the surface.
         if(videoMaterialUiMasked_)
@@ -2443,21 +2516,13 @@ namespace BigScreen {
             material_->set_color(
                 UnityEngine::Color{0.0f, 0.0f, 0.0f, 0.0f});
         }
-        // Lead-In Background describes the complete frame, not just the
-        // transformed/cropped video polygon. Make the independent letterbox
-        // layer opaque until Upload restores its configured transparency.
-        if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_) &&
-           !ConfigureNonEmissiveBackground(backgroundMaterial_, false))
-            return;
         if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
         {
             alphaGuardMaterial_->set_mainTexture(
                 UnityEngine::Texture2D::get_whiteTexture());
             alphaGuardMaterial_->set_color(UnityEngine::Color::get_white());
         }
-        if(auto* backgroundRenderer =
-               gameObject_->GetComponent<UnityEngine::MeshRenderer*>())
-            backgroundRenderer->set_enabled(true);
+        backgroundRenderer->set_enabled(true);
         leadInActive_ = true;
         leadInBlack_ = true;
         SetVisible(true);
@@ -2480,25 +2545,25 @@ namespace BigScreen {
         UnityEngine::Vector3 position,
         UnityEngine::Quaternion rotation)
     {
-        if(gameObject_)
+        if(UnityW<UnityEngine::GameObject>::isAlive(gameObject_))
             gameObject_->get_transform()->SetPositionAndRotation(position, rotation);
     }
 
     void ScreenSurface::SetWorldScale(UnityEngine::Vector3 scale)
     {
-        if(gameObject_)
+        if(UnityW<UnityEngine::GameObject>::isAlive(gameObject_))
             gameObject_->get_transform()->set_localScale(scale);
     }
 
     void ScreenSurface::SetVideoLocalRoll(float degrees)
     {
-        if(videoObject_)
+        if(UnityW<UnityEngine::GameObject>::isAlive(videoObject_))
             videoObject_->get_transform()->set_localEulerAngles({0.0f, 0.0f, degrees});
     }
 
     bool ScreenSurface::SetOpacity(float opacity)
     {
-        if(!material_)
+        if(!PresentationObjectsAlive())
             return false;
         const float nextOpacity = std::clamp(opacity, 0.0f, 1.0f);
         // Most cues hold opacity steady for many seconds. Avoid repeating the
@@ -2517,11 +2582,11 @@ namespace BigScreen {
         // material property: 0=None and 2=Back. This changes rasterization
         // only; it does not duplicate geometry, textures, or decoder work.
         const int cullMode = enabled ? 0 : 2;
-        if(material_)
+        if(UnityW<UnityEngine::Material>::isAlive(material_))
             material_->SetInt("_Cull", cullMode);
-        if(backgroundMaterial_)
+        if(UnityW<UnityEngine::Material>::isAlive(backgroundMaterial_))
             backgroundMaterial_->SetInt("_Cull", cullMode);
-        if(alphaGuardMaterial_)
+        if(UnityW<UnityEngine::Material>::isAlive(alphaGuardMaterial_))
             alphaGuardMaterial_->SetInt("_Cull", cullMode);
     }
 
@@ -2530,7 +2595,8 @@ namespace BigScreen {
         double songTimeSeconds,
         double realTimeSeconds)
     {
-        if(!videoMesh_ || deformationBaseVertices_.empty() ||
+        if(!UnityW<UnityEngine::Mesh>::isAlive(videoMesh_) ||
+           deformationBaseVertices_.empty() ||
            !undeformedVideoVertices_ || !dynamicVideoVertices_ ||
            !undeformedVideoUvs_ || !dynamicVideoUvs_)
             return false;

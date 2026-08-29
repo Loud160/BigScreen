@@ -897,6 +897,11 @@ namespace BigScreen {
 
     void SelectionVideoToggle::SongSelectionHidden()
     {
+        // An active transfer may continue while Solo is hidden, but this map
+        // is no longer the foreground owner of failed/cancelled staging. If
+        // the worker later fails, DownloadManager discards its partial bytes
+        // instead of offering Resume from an unrelated selection.
+        DownloadManager::Instance().SetForegroundLevel({});
         controlsVisibleRequested_ = false;
         if(controlsScreen_)
             controlsScreen_->get_gameObject()->SetActive(false);
@@ -926,6 +931,9 @@ namespace BigScreen {
         const std::string& levelId,
         GlobalNamespace::BeatmapLevel* level)
     {
+        // Publish selection even for a difficulty-only callback. Download
+        // staging lifetime is tied to the map identity, not UI reconstruction.
+        DownloadManager::Instance().SetForegroundLevel(levelId);
         auto& playback = PlaybackSession::Instance();
 
         // SongCore also raises its selection event when difficulty changes.

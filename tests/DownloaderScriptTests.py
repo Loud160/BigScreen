@@ -629,6 +629,147 @@ with tempfile.TemporaryDirectory() as directory:
     assert status["errorCode"] == "BS-DL-CANCELLED", status
     assert not final_path.exists()
     assert part_path.read_bytes() == b"resumable-partial-video"
+    resume_identity = json.loads(
+        pathlib.Path(str(final_path) + ".resume.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert resume_identity["sourceIdentity"] == "youtube:abcdefghijk"
+    assert resume_identity["requestedHeight"] == 1080
+    assert resume_identity["maximumSourceFps"] == 60
+    assert resume_identity["formatId"] == "137"
+    assert resume_identity["protocol"] == "https"
+    assert resume_identity["fallbackMode"] is False
+
+# Identity is mandatory for resuming. A stale partial without a sidecar, or a
+# sidecar produced by another source/tier/downloader, must be removed before
+# yt-dlp receives control. Exact identity is retained for yt-dlp's continuedl
+# path instead of being discarded merely because the user pressed Resume.
+for matching_identity in (False, True):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        final_path = root / "video.mp4"
+        part_path = pathlib.Path(str(final_path) + ".part")
+        identity_path = pathlib.Path(str(final_path) + ".resume.json")
+        status_path = root / "status.json"
+        part_path.write_bytes(b"old-partial")
+        expected_identity = {
+            "schemaVersion": 1,
+            "levelId": "level-a",
+            "sourceIdentity": "youtube:abcdefghijk",
+            "requestedHeight": 1080,
+            "maximumSourceFps": 60,
+            "formatId": "137",
+            "protocol": "https",
+            "fallbackMode": False,
+            "excludedFormatId": "",
+            "forceHlsRemuxTest": False,
+            "downloaderVersion": "2026.08.19",
+            "downloaderChannel": "stable",
+        }
+        identity_path.write_text(
+            json.dumps(
+                expected_identity
+                if matching_identity
+                else dict(expected_identity, requestedHeight=720)
+            ),
+            encoding="utf-8",
+        )
+        observed_partial = []
+        candidate = {
+            "format_id": "137",
+            "ext": "mp4",
+            "vcodec": "avc1.640028",
+            "acodec": "none",
+            "width": 1920,
+            "height": 1080,
+            "fps": 60,
+            "filesize": 32,
+            "protocol": "https",
+            "url": "https://example.invalid/video?token=secret",
+        }
+        info = {
+            "id": "abcdefghijk",
+            "title": "Identity test",
+            "duration": 10,
+            "age_limit": 0,
+            "formats": [candidate],
+        }
+
+        class IdentityYoutubeDL:
+            def __init__(self, options):
+                self.options = options
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def extract_info(self, _url, download=False):
+                if not download:
+                    return dict(info)
+                observed_partial.append(part_path.exists())
+                final_path.write_bytes(b"complete")
+                return dict(info)
+
+        old_modules = {
+            name: sys.modules.get(name)
+            for name in ("bigscreen_jsc_provider", "yt_dlp")
+        }
+        sys.modules["bigscreen_jsc_provider"] = types.ModuleType(
+            "bigscreen_jsc_provider"
+        )
+        fake_yt_dlp = types.ModuleType("yt_dlp")
+        fake_yt_dlp.YoutubeDL = IdentityYoutubeDL
+        sys.modules["yt_dlp"] = fake_yt_dlp
+        original_urlopen = urllib.request.urlopen
+
+        class FakeThumbnailResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, _limit=-1):
+                return b"thumbnail"
+
+        urllib.request.urlopen = lambda *_args, **_kwargs: FakeThumbnailResponse()
+        try:
+            namespace = {
+                "BIGSCREEN_JOB": json.dumps(
+                    {
+                        "levelId": "level-a",
+                        "sourceUrl": "https://youtu.be/abcdefghijk",
+                        "finalPath": str(final_path),
+                        "thumbnailPath": str(root / "thumbnail.jpg"),
+                        "statusPath": str(status_path),
+                        "cancelPath": str(root / "cancel"),
+                        "resumeIdentityPath": str(identity_path),
+                        "downloaderVersion": "2026.08.19",
+                        "downloaderChannel": "stable",
+                        "explicitContentAllowed": True,
+                        "requestedHeight": 1080,
+                        "maximumSourceFps": 60,
+                        "reserveBytes": 0,
+                        "unknownRequiredBytes": 0,
+                    }
+                )
+            }
+            exec(
+                compile(download_script, "<resume-identity-test>", "exec"),
+                namespace,
+            )
+        finally:
+            urllib.request.urlopen = original_urlopen
+            for name, module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        assert observed_partial == [matching_identity], observed_partial
 
 # Resolution tiers are orientation-independent (short edge), downloads are
 # exact rather than silently substituting a different tier, and only the new
@@ -647,6 +788,28 @@ assert "if 1440 in vp9_heights:" in probe_script
 
 download = definitions(download_script, "\ntry:\n    publish('preparing'")
 probe = definitions(probe_script, "\ntry:\n    publish('probing'")
+
+# Technical diagnostics may retain the safe host/path but never a signed query,
+# authentication header, cookie, PO token, or visitor token.
+secret_diagnostic = (
+    "Authorization: Bearer bearer-secret po_token=pot-secret "
+    "x-goog-visitor-id:visitor-secret "
+    "https://rr1---sn.example.googlevideo.com/videoplayback?sig=url-secret&expire=1"
+)
+redacted = download["clean_error"](secret_diagnostic)
+for secret in (
+    "bearer-secret",
+    "pot-secret",
+    "visitor-secret",
+    "url-secret",
+):
+    assert secret not in redacted, redacted
+assert "?[redacted]" in redacted, redacted
+cookie_redacted = download["clean_error"](
+    "Cookie: SID=session-secret; HSID=second-secret"
+)
+assert "session-secret" not in cookie_redacted, cookie_redacted
+assert "second-secret" not in cookie_redacted, cookie_redacted
 
 http_cases = {
     "HTTP Error 400: Bad Request": "Bad Request",

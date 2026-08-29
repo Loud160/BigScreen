@@ -2903,6 +2903,8 @@ namespace BigScreen {
     {
         if(!level)
             return;
+        DownloadManager::Instance().SetForegroundLevel(
+            level->levelID ? std::string(level->levelID) : std::string{});
         // Selection is a hard notice-lifecycle boundary even if a caller
         // reaches this method without first navigating through ShowBrowser.
         // Remove the preceding map's renderer and invalidate every token before
@@ -2986,6 +2988,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::ShowBrowser()
     {
+        DownloadManager::Instance().SetForegroundLevel({});
         if(DownloadManager::Instance().Snapshot().state ==
            DownloadState::AwaitingConfirmation)
             DownloadManager::Instance().ResolvePendingTranscode(false);
@@ -3950,6 +3953,18 @@ namespace BigScreen {
             ? "Video file deleted."
             : "Video unlinked from this song.");
         }
+        catch(const VideoLibraryPersistenceError& exception)
+        {
+            constexpr std::string_view failureMessage =
+                "The video assignment could not be saved. Check free storage and Quest file access; the previous library state was restored.";
+            terminalDownloadProgressLevelId_.clear();
+            ErrorManager::Instance().RecordError(
+                "Persisting a removed video assignment", exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Video change was not saved", std::string(failureMessage));
+            RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
+        }
         catch(const std::exception& exception)
         {
             constexpr std::string_view failureMessage =
@@ -4223,6 +4238,20 @@ namespace BigScreen {
                 rate_,
                 fitToSong_,
                 blackDuringLeadIn_);
+        }
+        catch(const VideoLibraryPersistenceError& exception)
+        {
+            constexpr std::string_view failureMessage =
+                "Timing could not be saved. Check free storage and Quest file access; the previous values remain active.";
+            terminalDownloadProgressLevelId_.clear();
+            ErrorManager::Instance().RecordError(
+                "Persisting video timing", exception.what());
+            ErrorManager::Instance().ReportUserVisible(
+                "Video timing was not saved", std::string(failureMessage));
+            restorePersistedTiming();
+            RefreshDetails();
+            PublishEditorNotice(std::string(failureMessage));
+            return false;
         }
         catch(const std::exception& exception)
         {

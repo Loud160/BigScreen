@@ -215,6 +215,12 @@ namespace BigScreen {
             std::string levelId,
             std::string sourceUrl,
             std::filesystem::path destination);
+        /// Publishes the map whose download controls the player is currently
+        /// viewing. Active transfers remain process-owned and may finish after
+        /// this changes, but failed/cancelled staging is retained only while
+        /// its originating map remains selected so Resume cannot consume old
+        /// bytes after the player has moved elsewhere.
+        void SetForegroundLevel(std::string levelId);
         void Cancel();
         /// Resolves the explicit last-resort transcode prompt. The background
         /// operation waits without holding a Unity, downloader, or snapshot
@@ -266,6 +272,21 @@ namespace BigScreen {
         void RecordYouTubeDownloadOutcome(DownloadState state);
         void RefreshSnapshotFromDisk();
         void SetFailure(std::string message);
+
+        struct IncompleteTransfer {
+            std::string levelId;
+            std::vector<std::filesystem::path> stagingPaths;
+        };
+
+        void RegisterIncompleteTransfer(
+            const std::string& levelId,
+            const std::filesystem::path& finalPath,
+            const std::filesystem::path& thumbnailPath);
+        void FinalizeIncompleteTransfer(
+            const std::string& levelId,
+            bool completed);
+        static void RemoveIncompleteTransferFiles(
+            const IncompleteTransfer& transfer);
 
         struct ThumbnailRequest {
             std::string levelId;
@@ -325,6 +346,12 @@ namespace BigScreen {
         std::unordered_set<std::string> requestedThumbnails_;
         bool stopThumbnailWorker_ = false;
         DownloadSnapshot snapshot_;
+        // Protected by mutex_. There can be only one downloader operation, so
+        // one exact staging owner is sufficient. The identity sidecar itself
+        // additionally binds resumable bytes to the source, tier, selected
+        // format, fallback mode, and yt-dlp package that produced them.
+        std::string foregroundLevelId_;
+        std::optional<IncompleteTransfer> incompleteTransfer_;
         // A compatibility warning is published only after the downloaded file
         // and manifest commit succeed. Either UI surface consumes this single
         // mailbox, preventing duplicate dialogs when both controllers exist.
