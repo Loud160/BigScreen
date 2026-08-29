@@ -129,6 +129,19 @@ job. Downloads use H.264 MP4 through 1080p and VP9 WebM at 1440p. Replacement
 files are downloaded to a sibling staging path; the old managed file remains in
 place until the new file and manifest assignment commit successfully.
 
+Every staged H.264 download must produce a software-decoded probe frame before
+publication. Google DASH MP4s and HLS/MPEG-TS media are first stream-copied into
+a seek-safe MP4 so timing/index metadata can be rebuilt without altering the
+encoded pictures. If validation and that lossless repair fail, C++ excludes the
+rejected yt-dlp format and requests one exact-tier alternate, preferring HLS.
+Only after those fast paths fail does the worker publish an explicit conversion
+confirmation and wait on a dedicated condition variable without holding a UI,
+snapshot, or Python lock. An approved conversion uses the isolated FFmpeg 9
+backend, trying MediaCodec decode/encode first and software decode/x264 second.
+Progress and cancellation are plain snapshot state consumed later by Unity.
+The converted file is revalidated and atomically promoted under its real MP4
+identity; no failed path replaces the previous assignment.
+
 Menu state is event-driven or deliberately rate-limited. Resolved map video
 descriptors and video thumbnails are cached, the thumbnail cache has a bounded
 LRU, storage totals are sampled at most once per second, and download status is
@@ -192,16 +205,22 @@ machine**:
 
 Retaining UI does not mean retaining a frozen song list. SongCore's completed
 song-load event publishes a thread-safe invalidation flag, which Big Screen
-consumes on Unity's update thread. The inexpensive level-pointer model is built
-first; first-use video descriptors are then resolved four maps at a time while
-the stock menu is idle, or eight maps at a time while Big Screen's browser is
-open. Mapper JSON and managed-file discovery can touch Quest shared storage, so
-this optional cache work is deliberately separate from menu readiness. A map
-installed after startup can therefore expose its mapper video, download action,
-and Configure Video shortcut without reconstructing the complete UI or pausing
-the menu for a large library scan. If the editor is already open, catalog work
-waits until the browser is visible so an active selected-level object is never
-swapped underneath its callbacks.
+consumes on Unity's update thread. Unity/SongCore level objects are enumerated in
+bounded item/time slices and their immutable ID/name/author/search strings are
+copied once. Native-only sorting then runs on one owned worker; a generation
+token prevents a completed sort from publishing pointers across a later
+SongCore refresh. First-use video descriptors are resolved four maps at a time
+while the stock menu is idle, or eight maps at a time while Big Screen's browser
+is open. Virtual rows consult only already-cached descriptor projections, so
+filtering and row creation do not parse Cinema JSON or inspect files. HMUI's
+real virtual-cell bind event schedules decoration refresh for the next Unity
+frame, while asynchronous thumbnail refreshes update only images and never
+rewrite native text geometry during hover. A map installed after startup can
+therefore expose its mapper video, download action, and Configure Video shortcut
+without reconstructing the complete UI or pausing the menu for a large library
+scan. If the editor is already open, catalog work waits until the browser is
+visible so an active selected-level object is never swapped underneath its
+callbacks.
 
 The Solo **Configure Video** shortcut passes a stable level ID into the same
 retained flow. On first activation HMUI receives that editor as the initial
@@ -323,6 +342,14 @@ which can include asynchronous MediaCodec waits and thread descheduling. The
 measurement interval is reset once after preview/gameplay prewarm and is not
 periodically reset by live-panel refreshes.
 
+Presentation statistics use source-aware output deadlines rather than media-
+timestamp gap rounding. Delivered FPS is the expected source/playback/cap
+cadence multiplied by the bounded delivered-deadline ratio, so it cannot exceed
+the source or active cap. A Practice or Replay clock discontinuity starts a new
+measurement epoch and clears the old deadline/frame-sampling totals; otherwise
+abandoned time before the new song position would be reported as dropped
+frames.
+
 The screen is ordinary environment-layer geometry. A frame/background mesh and
 a separately clipped video-content mesh share one root transform. That split
 allows rotation, zoom, pan, perspective tilt, stretching, and black or fully
@@ -385,6 +412,17 @@ screens reuse the primary screen's uploaded video texture without another
 decode or texture upload. The parser/worker paths have host coverage, but the
 complete presentation path still requires the on-device checks listed in
 `KNOWN_ISSUES.md`.
+
+Menu preview has no gameplay Chroma controller, so a narrow compatibility pass
+resolves the selected BeatmapKey's difficulty file and applies only initial
+environment instructions that match `CinemaScreen`. Gameplay takes the opposite
+approach: it keeps the unmodified Cinema baseline, constructs the canonical
+surface inside the loaded environment before Chroma's delayed scan, and lets
+Chroma own real duplicates and tracks. Song start reuses that surface instead
+of destroying the object Chroma already indexed. Restarts repeat decoder and
+surface prewarming. The shared GPU target is cleared to black at creation so a
+Chroma-visible duplicate cannot expose undefined RenderTexture memory before
+the first decoded picture.
 
 Cinema environment clones are created before Chroma's delayed prop-group pass,
 temporarily offset unless `mergePropGroups` requests merging, then transformed

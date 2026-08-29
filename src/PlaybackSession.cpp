@@ -64,8 +64,9 @@ namespace BigScreen {
         // Screen cannot force Big Mirror or remove lighting/side geometry.
         return showcaseEligible_ || cinemaCompatibilityCycleEligible_ ||
                (Settings::Instance().RespectMapperSettings() &&
-                baseConfig_ &&
-                baseConfig_->hasMapperScreenGeometry);
+                 ((baseConfig_ && baseConfig_->hasMapperScreenGeometry) ||
+                  (chromaPreviewBaseConfig_ &&
+                   chromaPreviewBaseConfig_->hasMapperScreenGeometry)));
     }
 
     bool PlaybackSession::MapperEnvironmentPresentationActive() const
@@ -139,6 +140,7 @@ namespace BigScreen {
         Stop();
         lastResultsData_.reset();
         baseConfig_.reset();
+        chromaPreviewBaseConfig_.reset();
         config_.reset();
         levelDirectory_.clear();
         preparedLevelId_.clear();
@@ -207,6 +209,7 @@ namespace BigScreen {
                     BigScreen::BigScreenLogger.info(
                         "Allow Chroma Override detected map-wide Chroma use: {}",
                         chromaReason);
+                    ResolveChromaCinemaPreview();
                 }
             }
             cinemaCompatibilityCycleEligible_ =
@@ -235,6 +238,7 @@ namespace BigScreen {
     {
         preparedCharacteristic_ = characteristic;
         preparedDifficulty_ = difficulty;
+        ResolveChromaCinemaPreview();
         showcaseEligible_ = baseConfig_ && UpDownShowcase::MatchesTarget(
             preparedSongName_,
             preparedSongArtist_,
@@ -249,6 +253,43 @@ namespace BigScreen {
                 preparedCharacteristic_,
                 preparedDifficulty_);
         }
+    }
+
+    bool PlaybackSession::ConfigurePreviewBeatmap(
+        const std::string& characteristic,
+        int difficulty)
+    {
+        if(preparedCharacteristic_ == characteristic &&
+           preparedDifficulty_ == difficulty)
+            return false;
+
+        preparedCharacteristic_ = characteristic;
+        preparedDifficulty_ = difficulty;
+        ResolveChromaCinemaPreview();
+        RefreshDisplaySettings();
+        return true;
+    }
+
+    void PlaybackSession::ResolveChromaCinemaPreview()
+    {
+        chromaPreviewBaseConfig_.reset();
+        if(!baseConfig_ || !chromaMapDetected_ || levelDirectory_.empty())
+            return;
+
+        auto preview = *baseConfig_;
+        std::string reason;
+        if(!ChromaMapDetector::ApplyCinemaScreenPreview(
+               levelDirectory_,
+               preparedCharacteristic_,
+               preparedDifficulty_,
+               preview,
+               reason))
+            return;
+
+        chromaPreviewBaseConfig_ = std::move(preview);
+        BigScreen::BigScreenLogger.info(
+            "Prepared PC Cinema-compatible menu screen layout: {}",
+            reason);
     }
 
     void PlaybackSession::RefreshDisplaySettings()
@@ -306,7 +347,16 @@ namespace BigScreen {
             return;
         }
 
-        config_ = *baseConfig_;
+        // Quest Chroma is active only during a real gameplay beatmap. The menu
+        // instead consumes the selected difficulty's initial CinemaScreen
+        // transforms so configs that park the base screen offscreen and expose
+        // only Chroma duplicates still look like their PC Cinema counterpart.
+        const bool useChromaMenuPreview =
+            intendedContext != PlaybackContext::Gameplay &&
+            chromaPreviewBaseConfig_.has_value();
+        config_ = useChromaMenuPreview
+            ? *chromaPreviewBaseConfig_
+            : *baseConfig_;
 
         // Always derive from the immutable mapper baseline. This makes Reset
         // to Defaults deterministic and prevents repeated X/Y/Z, tilt, or
@@ -561,7 +611,12 @@ namespace BigScreen {
         const bool gpuConversionRequested =
             Settings::Instance().GpuVideoConversionEnabled() &&
             !gpuConversionDisabledForSession_;
-        if(!surface_.Create(
+        const bool reuseChromaSurface =
+            context == PlaybackContext::Gameplay &&
+            gameplaySurfacePreparedForChroma_ &&
+            surface_.IsCreated();
+        if(!reuseChromaSurface &&
+           !surface_.Create(
                *config_,
                decoder_.Width(),
                decoder_.Height(),
@@ -573,7 +628,12 @@ namespace BigScreen {
             decoder_.Close();
             return;
         }
-        SynchronizeGpuPresentationState(gpuConversionRequested);
+        if(!reuseChromaSurface)
+            SynchronizeGpuPresentationState(gpuConversionRequested);
+        else
+            BigScreen::BigScreenLogger.info(
+                "Reused the pre-Chroma gameplay CinemaScreen for video playback");
+        gameplaySurfacePreparedForChroma_ = false;
 
         if(MapperScreenPresentationActive() &&
            !config_->additionalScreens.empty() &&
@@ -1073,6 +1133,58 @@ namespace BigScreen {
         BigScreen::BigScreenLogger.info("Prewarmed gameplay video decoder before scene activation");
     }
 
+    void PlaybackSession::PrepareGameplaySurfaceForChroma()
+    {
+        // Chroma scans the loaded environment once, from an end-of-frame
+        // coroutine started by BeatmapObjectSpawnController::Start. Creating
+        // CinemaScreen later from AudioTimeSyncController::StartSong is too
+        // late: video decoding succeeds, but the mapper's duplicate and track
+        // instructions have already found zero matching objects.
+        if(!Settings::Instance().ModEnabled() ||
+           !Settings::Instance().RespectMapperSettings() ||
+           !config_ ||
+           !chromaMapDetected_ ||
+           !chromaPreviewBaseConfig_ ||
+           environmentOnlySession_ ||
+           started_ ||
+           !gameplayDecoderPrewarmed_ ||
+           gameplayPrewarmFailed_ ||
+           surface_.IsCreated())
+            return;
+
+        RebuildEffectiveConfig(PlaybackContext::Gameplay);
+        if(!config_)
+            return;
+
+        const bool gpuConversionRequested =
+            Settings::Instance().GpuVideoConversionEnabled() &&
+            !gpuConversionDisabledForSession_;
+        if(!surface_.Create(
+               *config_,
+               decoder_.Width(),
+               decoder_.Height(),
+               gpuConversionRequested))
+        {
+            // Start(Gameplay) retains its normal creation path and can retry.
+            // Do not turn an optional interoperability preparation failure
+            // into a failed map transition.
+            BigScreen::BigScreenLogger.error(
+                "Could not create CinemaScreen before Chroma's environment scan; gameplay will retry at song start");
+            return;
+        }
+        SynchronizeGpuPresentationState(gpuConversionRequested);
+
+        // The mapper parks the canonical source off-wall, then asks Chroma to
+        // duplicate it into the visible tracked screens. Chroma preserves the
+        // source active state when `_active` is omitted. Keep this off-wall
+        // source active so its duplicates are active; Start(Gameplay) will
+        // reuse it and the decoded texture/material shared by those copies.
+        surface_.SetVisible(true);
+        gameplaySurfacePreparedForChroma_ = true;
+        BigScreen::BigScreenLogger.info(
+            "Prepared active CinemaScreen before Chroma's gameplay environment scan");
+    }
+
     void PlaybackSession::Tick(double songTimeSeconds)
     {
         if(!Settings::Instance().ModEnabled() || !started_ || !config_)
@@ -1284,26 +1396,19 @@ namespace BigScreen {
         const int fpsLimit = std::max(1, effectiveFpsLimit_);
         const auto presentationSlot = static_cast<std::int64_t>(std::floor(
             std::max(0.0, songTimeSeconds) * fpsLimit + 0.000001));
+        // Do not key this test to lastPresentationSlot_. A negative video
+        // offset can legitimately leave that optional empty at map startup;
+        // Practice Mode may nevertheless begin minutes into the song. The old
+        // condition then counted every deadline from song zero as missed.
         const bool clockDiscontinuity =
-            lastPresentationSlot_.has_value() &&
-            (songTimeSeconds + 0.01 < lastTickSongTime_ ||
-             songTimeSeconds - lastTickSongTime_ > 0.75);
+            songTimeSeconds + 0.01 < lastTickSongTime_ ||
+            songTimeSeconds - lastTickSongTime_ > 0.75;
         if(clockDiscontinuity)
         {
-            // A practice/replay seek starts a fresh automatic-performance
-            // sample. Mixing frames from before and after a large clock jump
-            // could create an artificial miss spike and lower quality.
-            windowDeliveredPresentedFrames_ = 0;
-            windowExpectedPresentationDeadlines_ = 0;
-            windowExpectedPresentationFraction_ = 0.0;
-            performanceWindowStartSongTime_ = songTimeSeconds;
-            diagnosticsWindowDeliveredPresentedFrames_ = 0;
-            diagnosticsWindowExpectedPresentationDeadlines_ = 0;
-            diagnosticsWindowExpectedPresentationFraction_ = 0.0;
-            diagnosticsWindowStartSongTime_ = songTimeSeconds;
-            // Preserve the session totals across a Replay/practice seek, but
-            // discard a partial deadline that belonged to the old clock span.
-            expectedPresentationFraction_ = 0.0;
+            // A Practice/Replay seek starts a new measurement epoch. Keeping
+            // totals from the old timeline makes the new position look as if
+            // all earlier pictures were dropped.
+            ResetPresentationMeasurement(songTimeSeconds);
         }
         else
         {
@@ -1368,29 +1473,24 @@ namespace BigScreen {
             // aware expected cadence by the delivered/expected ratio so a
             // healthy 24 FPS video under a 30 FPS cap reads 24 FPS—not 30.
             // Fit-to-Song's resolved playbackRate is already included here.
-            const double expectedWindowVideoFps =
-                CoreLogic::ExpectedPresentationRate(
+            const double currentWindowVideoFps =
+                CoreLogic::ObservedPresentationRate(
                     d.sourceFps,
                     config_->playbackRate,
-                    d.outputFpsLimit);
-            const double currentWindowVideoFps = currentWindowExpected > 0
-                ? expectedWindowVideoFps *
-                    static_cast<double>(currentWindowDelivered) /
-                    static_cast<double>(currentWindowExpected)
-                : 0.0;
+                    d.outputFpsLimit,
+                    currentWindowExpected,
+                    currentWindowDelivered);
             const double currentWindowMissed = CoreLogic::MissedFramePercent(
                 currentWindowExpected,
                 currentWindowDelivered);
             if(diagnosticsWindowStartSongTime_ <= 0.0)
                 diagnosticsWindowStartSongTime_ = songTimeSeconds;
-            bool completedDiagnosticsWindow = false;
             if(songTimeSeconds - diagnosticsWindowStartSongTime_ >= 5.0)
             {
                 diagnosticsWindowDeliveredPresentedFrames_ = 0;
                 diagnosticsWindowExpectedPresentationDeadlines_ = 0;
                 diagnosticsWindowExpectedPresentationFraction_ = 0.0;
                 diagnosticsWindowStartSongTime_ = songTimeSeconds;
-                completedDiagnosticsWindow = true;
             }
             const auto frameRate = CoreLogic::SummarizeFrameRate(
                 minimumFrameSeconds_,
@@ -1808,6 +1908,7 @@ namespace BigScreen {
                     decoderCpuBaselineMilliseconds_);
         }
         gameplayDecoderPrewarmed_ = false;
+        gameplaySurfacePreparedForChroma_ = false;
         gameplayPrewarmFailed_ = false;
         gameplayPrewarmError_.clear();
         started_ = false;
@@ -1976,6 +2077,36 @@ namespace BigScreen {
         ResetAutomaticPerformanceWindow(songTimeSeconds);
     }
 
+    void PlaybackSession::ResetPresentationMeasurement(double songTimeSeconds)
+    {
+        deliveredPresentedFrames_ = 0;
+        expectedPresentationDeadlines_ = 0;
+        expectedPresentationFraction_ = 0.0;
+        presentationMisses_.Reset();
+
+        windowDeliveredPresentedFrames_ = 0;
+        windowExpectedPresentationDeadlines_ = 0;
+        windowExpectedPresentationFraction_ = 0.0;
+        performanceWindowStartSongTime_ = songTimeSeconds;
+
+        diagnosticsWindowDeliveredPresentedFrames_ = 0;
+        diagnosticsWindowExpectedPresentationDeadlines_ = 0;
+        diagnosticsWindowExpectedPresentationFraction_ = 0.0;
+        diagnosticsWindowStartSongTime_ = songTimeSeconds;
+        diagnosticsFrameCounter_ = 0;
+
+        minimumFrameSeconds_ = 0.0;
+        maximumFrameSeconds_ = 0.0;
+        totalFrameSeconds_ = 0.0;
+        sampledFrames_ = 0;
+        gameplayFrameSamplingFinished_ = false;
+        lastFpsSongTime_ = songTimeSeconds;
+        ResetAutomaticPerformanceController(songTimeSeconds);
+        BigScreen::BigScreenLogger.info(
+            "Performance measurement rebased at song time {:.3f} after a Practice/Replay clock change",
+            songTimeSeconds);
+    }
+
     void PlaybackSession::CaptureDiagnosticsSummary()
     {
         const auto diagnostics = Diagnostics();
@@ -1984,17 +2115,13 @@ namespace BigScreen {
             ? 100.0 * static_cast<double>(missedFrames) /
                 static_cast<double>(diagnostics.expectedFrames)
             : 0.0;
-        const double expectedVideoFps = CoreLogic::ExpectedPresentationRate(
+        const double averageVideoFps = CoreLogic::ObservedPresentationRate(
             diagnostics.sourceFps,
             config_ ? config_->playbackRate : 1.0,
-            diagnostics.outputFpsLimit);
-        const double averageVideoFps = diagnostics.expectedFrames > 0
-            ? expectedVideoFps *
-                static_cast<double>(
-                    diagnostics.expectedFrames -
-                    std::min(diagnostics.expectedFrames, missedFrames)) /
-                static_cast<double>(diagnostics.expectedFrames)
-            : 0.0;
+            diagnostics.outputFpsLimit,
+            diagnostics.expectedFrames,
+            diagnostics.expectedFrames -
+                std::min(diagnostics.expectedFrames, missedFrames));
         std::ostringstream text;
         text << diagnostics.videoWidth << 'x' << diagnostics.videoHeight
              << " @ " << std::fixed << std::setprecision(1)
@@ -2082,19 +2209,14 @@ namespace BigScreen {
             maximumFrameSeconds_,
             totalFrameSeconds_,
             sampledFrames_);
-        const double expectedVideoFps = CoreLogic::ExpectedPresentationRate(
+        const double averageVideoFps = CoreLogic::ObservedPresentationRate(
             diagnostics.sourceFps,
             config_ ? config_->playbackRate : 1.0,
-            diagnostics.outputFpsLimit);
-        const double averageVideoFps = diagnostics.expectedFrames > 0
-            ? expectedVideoFps *
-                static_cast<double>(
-                    diagnostics.expectedFrames -
-                    std::min(
-                        diagnostics.expectedFrames,
-                        diagnostics.missedFrames)) /
-                static_cast<double>(diagnostics.expectedFrames)
-            : 0.0;
+            diagnostics.outputFpsLimit,
+            diagnostics.expectedFrames,
+            diagnostics.expectedFrames - std::min(
+                diagnostics.expectedFrames,
+                diagnostics.missedFrames));
         PerformancePanel::Instance().SetStatistics({
             context_ == PlaybackContext::Gameplay,
             frameRate.minimumFps,

@@ -31,17 +31,27 @@ under their own terms. None of those components is relicensed by Big Screen.
   scripts. It is not installed or launched as a separate executable.
 - **certifi 2026.7.22** — Mozilla Public License 2.0. Its CA bundle is installed
   as a physical package for Python/OpenSSL certificate validation.
-- **FFmpeg 4.4.8 and 9.0.1 libraries** (`avformat`, `avcodec`, `avutil`, and
-  `swscale`) — GNU Lesser General Public License 2.1 or later. Big Screen
-  dynamically links two private Android ARM64 runtimes. Their checked configure
-  records exclude `--enable-gpl`, `--enable-version3`, and `--enable-nonfree`.
-  The builds contain only the documented software/MediaCodec decoders,
-  MP4/MOV, Matroska/WebM, and MPEG-TS demuxing, local-file/JNI integration,
-  and frame scaling.
-  The QMOD includes the LGPL text, exact build configuration, and source-change
-  records for both versions. The matching unmodified source archives are
-  permanently available from the
+- **FFmpeg 4.4.8 libraries** (`avformat`, `avcodec`, `avutil`, and `swscale`)
+  — GNU Lesser General Public License 2.1 or later. This private Android ARM64
+  comparison runtime remains decoder/remux-only and excludes GPL, version-3,
+  and nonfree components.
+- **FFmpeg 9.0.1 libraries** (`avformat`, `avcodec`, `avutil`, and `swscale`)
+  — configured under GNU General Public License version 2 or later because its
+  private Android ARM64 runtime enables the x264 encoder. It contains the same
+  documented software/MediaCodec decoders and container support, plus the
+  Android MediaCodec H.264 encoder and pinned x264 software fallback used only
+  for an explicitly approved, last-resort video conversion. Version-3 and
+  nonfree components remain disabled.
+- **x264 commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`** — GNU General
+  Public License version 2 or later. It is statically linked into the private
+  FFmpeg 9 `libavcodec` runtime with only 8-bit, 4:2:0, library-mode support;
+  its CLI and OpenCL support are disabled. The QMOD includes x264's complete
+  GPL text, both FFmpeg build records, and both FFmpeg source-change records.
+  The matching FFmpeg archives are available from the
   [Big Screen FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1).
+  Before a QMOD containing the new encoder runtime is publicly distributed,
+  that corresponding-source release must also carry the exact pinned x264
+  archive identified by `FFMPEG-9.0.1-BUILD-INFO.txt`.
 - **beatsaber-hook 6.4.2** — MIT License. The QMOD includes the resolved runtime
   library because Big Screen directly requires it.
 
@@ -77,7 +87,7 @@ Versions and resolved sources are recorded in `qpm.json` and
   scaffold; see `PROVENANCE.md`.
 
 The QMOD installs this notice, Big Screen's license/additional terms/attribution,
-and the CPython, OpenSSL, SQLite, yt-dlp, QuickJS-NG, certifi, and FFmpeg
+and the CPython, OpenSSL, SQLite, yt-dlp, QuickJS-NG, certifi, FFmpeg, and x264
 license/build records beside the embedded runtime under Big Screen's ModData
 folder. This summary is informational and does not replace those complete
 terms.

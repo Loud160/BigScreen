@@ -54,18 +54,27 @@ normal shutdown path used by other loaded mods.
 Metadata probing reports only compatible exact resolution tiers. A selected
 tier is pinned into the job rather than delegated to yt-dlp's changing `best`
 policy: H.264 is required through 1080p and VP9 at 1440p. Both probing and
-transfer explicitly exclude the `android_vr` client. Current yt-dlp may deliver
-the selected H.264 tier through fragmented HLS. Big Screen prefers a direct
-HTTPS MP4 at the same tier; when only the HLS/MPEG-TS representation is usable,
-the background download worker copies its H.264 packets into a seek-safe MP4
-without decoding or re-encoding them. The UI reports this distinct preparation
-stage and its file progress. The prepared MP4 is validated before publication.
-If preparation fails, the original stream is retained only after the software
-decoder produces a test frame; the player then receives a warning that hardware
-decoding is unavailable and software playback may reduce video or gameplay
-performance. A replacement downloads to a sibling staging file and is atomically
-promoted only after preparation completes; the prior assignment is restored if
-preparation, publication, or the manifest commit fails.
+transfer explicitly exclude the `android_vr` client. Big Screen prefers a
+direct HTTPS MP4 at the same tier. Direct H.264 MP4s must produce a decoded
+probe frame before publication, and Google DASH-branded MP4s are losslessly
+remuxed to rebuild complete timing/index metadata. If that fast repair fails,
+the rejected format is excluded and yt-dlp retries once, preferring an HLS
+representation and then another H.264 stream at the exact requested tier.
+
+An HLS/MPEG-TS result is copied into a seek-safe MP4 without decoding or
+re-encoding its pictures. Only after direct validation, lossless repair, and
+alternate/HLS recovery all fail does Big Screen offer a full transcode. That
+conversion never begins silently: a confirmation explains that it may take
+several minutes, consume battery/processing power, and temporarily require a
+second full-size file. The approved path tries Android MediaCodec hardware
+decoding and encoding first; if that complete hardware path fails, it retries
+with FFmpeg software decoding and the pinned x264 encoder. Progress remains in
+the normal downloader UI, cancellation is honored, and the converted MP4 must
+pass the same decode validation before atomic publication. The original or
+previously assigned video remains intact after any failed, declined, timed-out,
+or cancelled recovery attempt. Detailed diagnostics preserve the actual
+decoder, remuxer, alternate-stream, hardware-transcoder, and software-
+transcoder failures instead of reducing them to one generic format message.
 
 The shipped baseline is also reproducible from pinned yt-dlp and yt-dlp-ejs
 source archives. The source-build recipe checks both archives, rebuilds the EJS

@@ -399,6 +399,57 @@ with tempfile.TemporaryDirectory() as directory:
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["state"] == "completed", status
     assert chosen_formats == ["direct-1080"], chosen_formats
+    assert status["formatId"] == "direct-1080", status
+    assert status["transport"] == "direct", status
+
+    # C++ requests one alternate only after rejecting the staged direct MP4.
+    # The exact rejected format is excluded and HLS wins even though it does
+    # not have the direct transport preference used by the ordinary attempt.
+    namespace = {
+        "BIGSCREEN_JOB": json.dumps(
+            {
+                "sourceUrl": "https://youtu.be/transport",
+                "finalPath": str(final_path),
+                "thumbnailPath": str(root / "thumbnail.jpg"),
+                "statusPath": str(status_path),
+                "cancelPath": str(root / "cancel"),
+                "explicitContentAllowed": True,
+                "requestedHeight": 1080,
+                "maximumSourceFps": 30,
+                "reserveBytes": 0,
+                "unknownRequiredBytes": 0,
+                "fallbackMode": True,
+                "excludedFormatId": "direct-1080",
+            }
+        )
+    }
+    old_modules = {
+        name: sys.modules.get(name)
+        for name in ("bigscreen_jsc_provider", "yt_dlp")
+    }
+    sys.modules["bigscreen_jsc_provider"] = types.ModuleType(
+        "bigscreen_jsc_provider"
+    )
+    fake_yt_dlp = types.ModuleType("yt_dlp")
+    fake_yt_dlp.YoutubeDL = TransportYoutubeDL
+    sys.modules["yt_dlp"] = fake_yt_dlp
+    try:
+        exec(
+            compile(download_script, "<transport-fallback-test>", "exec"),
+            namespace,
+        )
+    finally:
+        for name, module in old_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "completed", status
+    assert chosen_formats == ["direct-1080", "hls-1080"], chosen_formats
+    assert status["formatId"] == "hls-1080", status
+    assert status["transport"] == "hls", status
 
 # Execute the production script against a small fake yt-dlp implementation.
 # This exercises the recovery branch rather than merely checking its spelling:

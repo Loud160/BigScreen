@@ -118,6 +118,11 @@ namespace BigScreen {
 
         Float3 screenPosition{0.0f, 12.0f, 60.0f};
         Float3 screenRotation{-8.0f, 0.0f, 0.0f};
+        // Normally one. Menu-only Chroma compatibility uses this to reproduce
+        // an environment instruction that scales the canonical CinemaScreen
+        // transform. Gameplay leaves it at one and lets Quest Chroma apply the
+        // selected beatmap's real transform/track data.
+        Float3 screenScale{1.0f, 1.0f, 1.0f};
         float screenHeight = 25.0f;
         std::optional<float> screenWidthOverride;
         float screenCurvature = 0.0f;

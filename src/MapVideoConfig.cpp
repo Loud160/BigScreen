@@ -131,6 +131,7 @@ namespace BigScreen {
         const MapVideoConfig defaults;
         screenPosition = defaults.screenPosition;
         screenRotation = defaults.screenRotation;
+        screenScale = defaults.screenScale;
         screenHeight = defaults.screenHeight;
         screenWidthOverride = defaults.screenWidthOverride;
         screenCurvature = defaults.screenCurvature;

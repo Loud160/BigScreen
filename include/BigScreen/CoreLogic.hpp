@@ -1280,6 +1280,31 @@ namespace BigScreen::CoreLogic {
             static_cast<double>(outputFramesPerSecond));
     }
 
+    /// Converts one completed presentation window into the user-facing video
+    /// cadence. Startup and clock rebases can briefly produce more uploaded
+    /// pictures than elapsed deadlines, so clamp the delivered ratio instead
+    /// of ever reporting a rate above the source-aware output ceiling.
+    inline double ObservedPresentationRate(
+        double sourceFramesPerSecond,
+        double playbackRate,
+        int outputFramesPerSecond,
+        std::uint64_t expectedFrames,
+        std::uint64_t presentedFrames)
+    {
+        const double expectedRate = ExpectedPresentationRate(
+            sourceFramesPerSecond,
+            playbackRate,
+            outputFramesPerSecond);
+        if(expectedRate <= 0.0 || expectedFrames == 0)
+            return 0.0;
+        const double deliveredRatio = std::clamp(
+            static_cast<double>(presentedFrames) /
+                static_cast<double>(expectedFrames),
+            0.0,
+            1.0);
+        return expectedRate * deliveredRatio;
+    }
+
     /// Returns the media-clock distance between distinct pictures that the
     /// presentation path should request. The output FPS setting is a ceiling,
     /// not a target: a 59.94 FPS source under a 60 FPS ceiling must retain its

@@ -867,6 +867,26 @@ namespace BigScreen {
         return descriptor;
     }
 
+    std::optional<VideoLibraryRowStatus> VideoLibrary::CachedRowStatus(
+        std::string_view levelId) const
+    {
+        if(levelId.empty())
+            return std::nullopt;
+        std::scoped_lock lock(mutex_);
+        const auto found = descriptorCache_.find(std::string(levelId));
+        if(found == descriptorCache_.end())
+            return std::nullopt;
+        const auto& descriptor = found->second;
+        return VideoLibraryRowStatus{
+            descriptor.hasUserOverride,
+            descriptor.CanPlay(),
+            descriptor.CanDownload(),
+            descriptor.mapperMetadataIssue.has_value(),
+            descriptor.mapperMetadataRecovered,
+            descriptor.downloadUrl,
+            descriptor.thumbnailPath};
+    }
+
     void VideoLibrary::RefreshMapperMetadata(const std::string& levelId)
     {
         RefreshPlaylistCinemaIndex();

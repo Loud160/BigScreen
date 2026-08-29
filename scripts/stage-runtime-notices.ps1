@@ -25,6 +25,7 @@ $noticeSources = @{
     "FFMPEG-4.4.8-CHANGES.diff" = Join-Path $ffmpeg44Runtime "bigscreen-ffmpeg-changes.diff"
     "FFMPEG-9.0.1-BUILD-INFO.txt" = Join-Path $ffmpeg9Runtime "BUILD-INFO.txt"
     "FFMPEG-9.0.1-CHANGES.diff" = Join-Path $ffmpeg9Runtime "bigscreen-ffmpeg-changes.diff"
+    "X264-GPL-2.0-OR-LATER.txt" = Join-Path $ffmpeg9Runtime "COPYING.X264-GPLv2"
     "CERTIFI-MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/CERTIFI-MPL-2.0.txt"
     "MPL-2.0.txt" = Join-Path $repositoryRoot "licenses/MPL-2.0.txt"
     "YT-DLP-UNLICENSE.txt" = Join-Path $repositoryRoot "licenses/YT-DLP-UNLICENSE.txt"

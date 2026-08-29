@@ -13,16 +13,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -30,6 +34,7 @@
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/NestedHoverHintOverride.hpp"
 #include "BigScreen/PlaybackSession.hpp"
 #include "BigScreen/ScreenPreview.hpp"
 #include "BigScreen/Settings.hpp"
@@ -117,6 +122,118 @@ namespace BigScreen {
             "Show All Maps", "Custom Maps", "WIP Maps",
             "OST Maps", "DLC Maps", "Maps With Video"
         };
+
+        class CatalogSortWorker final {
+        public:
+            CatalogSortWorker() : thread_([this]() { Run(); }) {}
+
+            ~CatalogSortWorker()
+            {
+                {
+                    std::scoped_lock lock(mutex_);
+                    stopping_ = true;
+                }
+                wake_.notify_one();
+                if(thread_.joinable())
+                    thread_.join();
+            }
+
+            CatalogSortWorker(const CatalogSortWorker&) = delete;
+            CatalogSortWorker& operator=(const CatalogSortWorker&) = delete;
+
+            void Submit(
+                std::uint64_t generation,
+                std::vector<SongLibraryItem> items)
+            {
+                {
+                    std::scoped_lock lock(mutex_);
+                    pending_ = Job{generation, std::move(items)};
+                    completed_.reset();
+                }
+                wake_.notify_one();
+            }
+
+            bool TryTake(
+                std::uint64_t generation,
+                std::vector<SongLibraryItem>& items)
+            {
+                std::scoped_lock lock(mutex_);
+                if(!completed_)
+                    return false;
+                if(completed_->generation != generation)
+                {
+                    // A SongCore refresh invalidated this native snapshot
+                    // while it was sorting. Never publish level pointers from
+                    // two different repository generations.
+                    completed_.reset();
+                    return false;
+                }
+                items = std::move(completed_->items);
+                completed_.reset();
+                return true;
+            }
+
+        private:
+            struct Job {
+                std::uint64_t generation = 0;
+                std::vector<SongLibraryItem> items;
+            };
+
+            void Run()
+            {
+                while(true)
+                {
+                    Job job;
+                    {
+                        std::unique_lock lock(mutex_);
+                        wake_.wait(lock, [this]()
+                        {
+                            return stopping_ || pending_.has_value();
+                        });
+                        if(stopping_)
+                            return;
+                        job = std::move(*pending_);
+                        pending_.reset();
+                    }
+
+                    std::sort(
+                        job.items.begin(),
+                        job.items.end(),
+                        [](const auto& left, const auto& right)
+                        {
+                            if(left.normalizedSongName !=
+                               right.normalizedSongName)
+                                return left.normalizedSongName <
+                                    right.normalizedSongName;
+                            if(left.normalizedSongAuthor !=
+                               right.normalizedSongAuthor)
+                                return left.normalizedSongAuthor <
+                                    right.normalizedSongAuthor;
+                            return left.levelId < right.levelId;
+                        });
+
+                    {
+                        std::scoped_lock lock(mutex_);
+                        completed_ = std::move(job);
+                    }
+                }
+            }
+
+            std::mutex mutex_;
+            std::condition_variable wake_;
+            std::optional<Job> pending_;
+            std::optional<Job> completed_;
+            bool stopping_ = false;
+            std::thread thread_;
+        };
+
+        CatalogSortWorker& CatalogSorter()
+        {
+            static CatalogSortWorker worker;
+            return worker;
+        }
+
+        std::atomic<std::uint64_t> NextCatalogBuildGeneration{0};
         // Keep the UI slider normalized and translate its position to song
         // time. One thousand positions are comfortably finer than a controller
         // can place the handle in VR and work for songs of any duration.
@@ -187,6 +304,65 @@ namespace BigScreen {
             RowMapperMetadataIssues;
         constexpr std::string_view MapperMetadataRowButtonName =
             "BigScreenMapperMetadataIssueButton";
+
+        UnityEngine::Sprite* FindCachedVideoThumbnail(const std::string& path);
+        void CacheVideoThumbnail(
+            const std::string& path,
+            UnityEngine::Sprite* sprite);
+
+        void RefreshRowVideoThumbnail(
+            const std::string& levelId,
+            const RowVideoThumbnail* metadata,
+            BSML::CustomCellInfo* cellInfo,
+            UnityEngine::UI::Image* coverImage)
+        {
+            if(!cellInfo)
+                return;
+            if(!metadata || !metadata->hasVideo || !metadata->path)
+            {
+                cellInfo->icon = nullptr;
+                return;
+            }
+
+            const std::string path = metadata->path->string();
+            UnityEngine::Sprite* sprite = nullptr;
+            if(auto* loaded = FindCachedVideoThumbnail(path))
+                sprite = loaded;
+            else if(Utility::IsRegularFile(*metadata->path) &&
+                    !FailedVideoThumbnailLoads.contains(path))
+            {
+                try
+                {
+                    sprite = BSML::Lite::FileToSprite(path);
+                    if(sprite)
+                        CacheVideoThumbnail(path, sprite);
+                    else
+                        FailedVideoThumbnailLoads.emplace(path);
+                }
+                catch(const std::exception& error)
+                {
+                    FailedVideoThumbnailLoads.emplace(path);
+                    BigScreen::BigScreenLogger.warn(
+                        "Could not display video thumbnail '{}': {}",
+                        path,
+                        error.what());
+                }
+            }
+            else if(metadata->sourceUrl && Settings::Instance().ModEnabled())
+            {
+                DownloadManager::Instance().QueueVideoThumbnail(
+                    levelId,
+                    *metadata->sourceUrl,
+                    *metadata->path);
+            }
+
+            cellInfo->icon = sprite;
+            if(sprite && coverImage)
+            {
+                coverImage->set_sprite(sprite);
+                coverImage->set_color(UnityEngine::Color::get_white());
+            }
+        }
 
         /// Supplies the timing values that a Video Library download should
         /// inherit. A playable user/mapper assignment is authoritative while
@@ -357,6 +533,20 @@ namespace BigScreen {
                    isDomain("youtube-nocookie.com");
         }
 
+        std::optional<std::string> NormalizeYouTubeInput(
+            const std::string& value)
+        {
+            const auto trimmed = Trim(value);
+            // Beat Saber's stock Quest keyboard does not expose ':' or '/'.
+            // Accepting YouTube's 11-character ID gives headset-only users a
+            // complete typing path while pasted full links remain unchanged.
+            if(CoreLogic::IsValidYouTubeVideoId(trimmed))
+                return "https://www.youtube.com/watch?v=" + trimmed;
+            if(IsYouTubeUrl(trimmed))
+                return trimmed;
+            return std::nullopt;
+        }
+
         std::string EncodeUrlQuery(const std::string& value)
         {
             // Encode UTF-8 bytes directly. YouTube accepts percent-encoded
@@ -408,6 +598,8 @@ namespace BigScreen {
                     : "Stopping the video download...";
             if(metadataOnly)
                 return "Checking YouTube link...";
+            if(transfer.state == DownloadState::AwaitingConfirmation)
+                return "Waiting for video conversion confirmation...";
             if(transfer.state == DownloadState::Preparing &&
                transfer.containerPreparation && transfer.totalBytes > 0)
             {
@@ -415,7 +607,10 @@ namespace BigScreen {
                     100.0 * transfer.downloadedBytes / transfer.totalBytes,
                     0.0,
                     100.0));
-                return "Preparing video for playback (" +
+                const std::string phase = transfer.message.empty()
+                    ? "Preparing video for playback"
+                    : transfer.message;
+                return phase + " (" +
                     std::to_string(percent) + "%).";
             }
             if(transfer.state != DownloadState::Downloading)
@@ -489,16 +684,12 @@ namespace BigScreen {
                 // Beat Saber can expose more than one repository row for the
                 // same musical work (for example, difficulty-specific data).
                 // Count by normalized title/artist rather than those rows.
-                const std::string name = level->songName
-                    ? Lower(std::string(level->songName))
-                    : std::string{};
-                const std::string author = level->songAuthorName
-                    ? Lower(std::string(level->songAuthorName))
-                    : std::string{};
+                const std::string& name = item->normalizedSongName;
+                const std::string& author = item->normalizedSongAuthor;
                 if(!name.empty())
                     songs.emplace(name + "\x1f" + author);
-                else if(level->levelID)
-                    songs.emplace(std::string(level->levelID));
+                else if(!item->levelId.empty())
+                    songs.emplace(item->levelId);
             }
             return songs.size();
         }
@@ -533,7 +724,7 @@ namespace BigScreen {
         bool MatchesFilter(
             SongLibraryFilter filter,
             const SongLibraryItem& item,
-            const VideoDescriptor& descriptor)
+            bool hasVideo)
         {
             switch(filter)
             {
@@ -541,8 +732,7 @@ namespace BigScreen {
                 case SongLibraryFilter::Wip: return item.group == SongLibraryGroup::Wip;
                 case SongLibraryFilter::Ost: return item.group == SongLibraryGroup::Ost;
                 case SongLibraryFilter::Dlc: return item.group == SongLibraryGroup::Dlc;
-                case SongLibraryFilter::Video:
-                    return descriptor.CanPlay() || descriptor.CanDownload();
+                case SongLibraryFilter::Video: return hasVideo;
                 default: return true;
             }
         }
@@ -570,6 +760,9 @@ namespace BigScreen {
         constexpr float TimingControlHeight = 8.0f;
         constexpr float TimingControlSpacing = -2.0f;
         constexpr float TimingControlCount = 4.0f;
+        constexpr float TimingControlRightExtension = 2.0f;
+        constexpr float TimingResetGlyphTextSize = 6.0f;
+        constexpr float TimingResetButtonSize = 7.0f;
 
         void EnforceTimingControlHeight(UnityEngine::Component* component)
         {
@@ -577,6 +770,96 @@ namespace BigScreen {
                 component, -1.0f, TimingControlHeight, 1.0f);
             if(auto* layout = EnsureLayout(component))
                 layout->set_minHeight(TimingControlHeight);
+        }
+
+        void MatchIncrementControlWidthToSlider(
+            BSML::IncrementSetting* increment,
+            BSML::SliderSetting* slider)
+        {
+            if(!increment || !slider || !slider->slider)
+                return;
+            auto incrementTransform = increment->get_transform();
+            if(!incrementTransform || incrementTransform->get_childCount() < 2)
+                return;
+            auto incrementControl = incrementTransform->GetChild(1)
+                .cast<UnityEngine::RectTransform>();
+            auto sliderControl = slider->slider->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            if(!incrementControl || !sliderControl)
+                return;
+            const auto currentSize = incrementControl->get_sizeDelta();
+            incrementControl->set_sizeDelta({
+                sliderControl->get_sizeDelta().x,
+                currentSize.y});
+        }
+
+        /// Extends only the interactive portion of a native setting row toward
+        /// the panel's right edge. Moving the pivot by the matching amount
+        /// holds the control's left edge (and therefore its label allocation)
+        /// still while its right edge reaches the playback scrubber alignment.
+        void ExtendTimingControlRight(UnityEngine::RectTransform* control)
+        {
+            if(!control) return;
+            const auto currentSize = control->get_sizeDelta();
+            const auto pivot = control->get_pivot();
+            const auto currentPosition = control->get_anchoredPosition();
+            control->set_sizeDelta({
+                currentSize.x + TimingControlRightExtension,
+                currentSize.y});
+            control->set_anchoredPosition({
+                currentPosition.x +
+                    (pivot.x * TimingControlRightExtension),
+                currentPosition.y});
+        }
+
+        UnityEngine::RectTransform* IncrementControl(
+            BSML::IncrementSetting* setting)
+        {
+            if(!setting || !setting->get_transform() ||
+               setting->get_transform()->get_childCount() < 2)
+                return nullptr;
+            return setting->get_transform()->GetChild(1)
+                .cast<UnityEngine::RectTransform>();
+        }
+
+        UnityEngine::RectTransform* SliderControl(
+            BSML::SliderSetting* setting)
+        {
+            return setting && setting->slider
+                ? setting->slider->get_transform()
+                    .cast<UnityEngine::RectTransform>()
+                : nullptr;
+        }
+
+        void ConfigureTimingResetButton(
+            UnityEngine::UI::Button* button,
+            UnityEngine::RectTransform* control)
+        {
+            if(!button || !control) return;
+            BSML::Lite::SetButtonTextSize(button, TimingResetGlyphTextSize);
+            if(auto* layout = button->get_gameObject()
+                   ->GetComponent<UnityEngine::UI::LayoutElement*>())
+            {
+                layout->set_minWidth(TimingResetButtonSize);
+                layout->set_preferredWidth(TimingResetButtonSize);
+                layout->set_preferredHeight(TimingResetButtonSize);
+                layout->set_flexibleWidth(0.0f);
+            }
+
+            // Match the proven screen-layout reset placement: the button is a
+            // nested overlay immediately left of the value control, not a new
+            // layout column. This preserves the label and complete row width.
+            auto resetRect = button->get_transform()
+                .cast<UnityEngine::RectTransform>();
+            resetRect->SetParent(control, false);
+            resetRect->set_anchorMin({0.0f, 0.5f});
+            resetRect->set_anchorMax({0.0f, 0.5f});
+            resetRect->set_pivot({1.0f, 0.5f});
+            resetRect->set_anchoredPosition({-1.5f, 0.0f});
+            resetRect->set_sizeDelta({
+                TimingResetButtonSize,
+                TimingResetButtonSize});
+            resetRect->SetAsLastSibling();
         }
 
         void StyleToggleRow(
@@ -1106,16 +1389,20 @@ namespace BigScreen {
         ConfigureLayout(pasteUrlButton_, 13.0f, 7.5f, 0.0f);
         SetBrightButtonLabel(pasteUrlButton_, 2.45f);
         urlInput_ = BSML::Lite::CreateStringSetting(
-            urlEntryRow, "YouTube URL", "", [this](StringW value) {
+            urlEntryRow, "YouTube URL or Video ID", "", [this](StringW value) {
                 url_ = Trim(std::string(value));
                 if(!suppressUrlCallback_)
                 {
                     terminalDownloadProgressLevelId_.clear();
                     mapperProvidedUrl_ = false;
                     RefreshUrlTextColor();
-                    BeginUrlProbe();
                 }
             });
+        // BSML's shared text-field prefab defaults to 128 characters. Signed
+        // YouTube share URLs can exceed that, which looked like the keyboard
+        // had stopped accepting input. Checking is explicit; never launch a
+        // downloader probe from each keyboard edit/commit event.
+        urlInput_->_textLengthLimit = 2048;
         ConfigureLayout(urlInput_, 0.0f, 8.0f, 1.0f);
         urlInputText_ = urlInput_->__cordl_internal_get__textView().ptr();
         RefreshUrlTextColor();
@@ -1129,7 +1416,7 @@ namespace BigScreen {
         SetBrightButtonLabel(checkUrlButton_, 2.35f);
         BSML::Lite::AddHoverHint(
             checkUrlButton_,
-            "Checks the displayed YouTube address and enables Download Video when the video is available. Use this for a mapper-provided address that has not been checked yet.");
+            "Checks the displayed YouTube address and enables Download Video when the video is available. Paste a full link, or type the 11-character video ID shown after v= in a YouTube link.");
         // The stock input field is almost indistinguishable from the menu
         // behind it on the side screen. Add a low-opacity, very light gray
         // plate behind only the editable URL control; keeping it non-raycast
@@ -1300,6 +1587,52 @@ namespace BigScreen {
             {29.0f, 8.0f},
             [this]() { ConfirmPendingResolutionDownload(); });
 
+        transcodeConfirmModal_ = BSML::Lite::CreateModal(
+            editorController,
+            {84.0f, 52.0f},
+            []()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(false);
+            },
+            true);
+        transcodeConfirmationText_ = BSML::Lite::CreateText(
+            transcodeConfirmModal_,
+            "",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 6.0f},
+            {76.0f, 31.0f});
+        transcodeConfirmationText_->set_enableWordWrapping(true);
+        transcodeConfirmationText_->set_enableAutoSizing(true);
+        transcodeConfirmationText_->set_fontSizeMin(2.35f);
+        transcodeConfirmationText_->set_fontSizeMax(3.0f);
+        transcodeConfirmationText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        transcodeConfirmationText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            transcodeConfirmModal_->get_transform(),
+            "Cancel",
+            {23.0f, -40.0f},
+            {27.0f, 8.0f},
+            [this]()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(false);
+                if(transcodeConfirmModal_)
+                    transcodeConfirmModal_->Hide();
+            });
+        BSML::Lite::CreateUIButton(
+            transcodeConfirmModal_->get_transform(),
+            "Convert Video",
+            {61.0f, -40.0f},
+            {35.0f, 8.0f},
+            [this]()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(true);
+                if(transcodeConfirmModal_)
+                    transcodeConfirmModal_->Hide();
+            });
+
         // Only this fixed-height host belongs to the long-lived controller.
         // Each selected-map visit creates its own TextMeshPro child inside the
         // host and destroys that child on exit. A CanvasRenderer mesh from one
@@ -1372,8 +1705,8 @@ namespace BigScreen {
                 {
                     // Fit to Song owns the calculated rate. Returning to manual
                     // mode must start from the neutral 1.00x baseline rather
-                    // than leaving a fitted value such as 0.98x that makes the
-                    // next 0.05 arrow step land on an unexpected 1.03x.
+                    // than leaving a fitted value such as 0.98x as the next
+                    // manual arrow adjustment's starting point.
                     rate_ = 1.0;
                     if(!SaveTiming())
                         return;
@@ -1389,12 +1722,15 @@ namespace BigScreen {
             });
         EnforceTimingControlHeight(fitToggle_);
         StyleToggleRow(fitToggle_, "Fit to Song");
+        ExtendTimingControlRight(
+            fitToggle_->toggle->get_transform()
+                .cast<UnityEngine::RectTransform>());
         fitTimingHint_ = BSML::Lite::AddHoverHint(
             fitToggle_,
             std::string(FitTimingHint));
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
-            timingControlsBody, "Playback Speed", 2, 0.05f, 1.0f,
+            timingControlsBody, "Playback Speed", 2, 0.01f, 1.0f,
             0.05f, 8.0f, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 rate_ = value;
@@ -1414,9 +1750,9 @@ namespace BigScreen {
             rateSetting_,
             std::string(RateTimingHint));
 
-        offsetSetting_ = BSML::Lite::CreateIncrementSetting(
-            timingControlsBody, "Video Playback Offset", 2, 0.25f, 0.0f,
-            -60.0f, 60.0f, {0, 0}, [this](float value) {
+        offsetSetting_ = BSML::Lite::CreateSliderSetting(
+            timingControlsBody, "Video Playback Offset", 0.001f, 0.0f,
+            -60.0f, 60.0f, 0.15f, true, {0, 0}, [this](float value) {
                 if(suppressTimingCallbacks_) return;
                 offset_ = value;
                 if(fitToSong_)
@@ -1441,10 +1777,63 @@ namespace BigScreen {
                     PublishEditorNotice(message.str());
                 }
             });
+        // Retain the one-millisecond arrow adjustment while presenting a
+        // cleaner two-decimal timer. The native grab handle remains available
+        // for coarse movement across the full range.
+        offsetSetting_->digits = 2;
         EnforceTimingControlHeight(offsetSetting_);
+        // BSML's native IncrementSetting uses a 40-unit value/arrow area,
+        // while SliderSetting uses 52. Match the interactive portions rather
+        // than stretching either complete settings row.
+        MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);
         offsetTimingHint_ = BSML::Lite::AddHoverHint(
             offsetSetting_,
             std::string(OffsetTimingHint));
+
+        // Extend the value-side controls without moving their labels. Their
+        // right edges now share the playback scrubber's visual endpoint.
+        ExtendTimingControlRight(IncrementControl(rateSetting_));
+        ExtendTimingControlRight(SliderControl(offsetSetting_));
+
+        constexpr const char* RateResetHint =
+            "Resets playback speed to the map author's Cinema value, or to 1.00x when the map has no Cinema timing.";
+        rateResetButton_ = BSML::Lite::CreateUIButton(
+            timingControlsBody,
+            "↻",
+            {0.0f, 0.0f},
+            {8.0f, 8.0f},
+            [this]() { ResetPlaybackRate(); });
+        ConfigureTimingResetButton(
+            rateResetButton_, IncrementControl(rateSetting_));
+        BSML::Lite::AddHoverHint(rateResetButton_, RateResetHint);
+        if(rateResetButton_ && rateTimingHint_)
+        {
+            rateResetButton_->get_gameObject()
+                ->AddComponent<NestedHoverHintOverride*>()->Configure(
+                    rateTimingHint_,
+                    std::string(RateTimingHint),
+                    RateResetHint);
+        }
+
+        constexpr const char* OffsetResetHint =
+            "Resets video offset to the map author's Cinema value, or to 0.00 seconds when the map has no Cinema timing.";
+        offsetResetButton_ = BSML::Lite::CreateUIButton(
+            timingControlsBody,
+            "↻",
+            {0.0f, 0.0f},
+            {8.0f, 8.0f},
+            [this]() { ResetVideoOffset(); });
+        ConfigureTimingResetButton(
+            offsetResetButton_, SliderControl(offsetSetting_));
+        BSML::Lite::AddHoverHint(offsetResetButton_, OffsetResetHint);
+        if(offsetResetButton_ && offsetTimingHint_)
+        {
+            offsetResetButton_->get_gameObject()
+                ->AddComponent<NestedHoverHintOverride*>()->Configure(
+                    offsetTimingHint_,
+                    std::string(OffsetTimingHint),
+                    OffsetResetHint);
+        }
 
         blackLeadInToggle_ = BSML::Lite::CreateToggle(
             timingControlsBody,
@@ -1466,6 +1855,9 @@ namespace BigScreen {
             });
         EnforceTimingControlHeight(blackLeadInToggle_);
         StyleToggleRow(blackLeadInToggle_, "Lead-In Background");
+        ExtendTimingControlRight(
+            blackLeadInToggle_->toggle->get_transform()
+                .cast<UnityEngine::RectTransform>());
         leadInTimingHint_ = BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             std::string(LeadInTimingHint));
@@ -2019,84 +2411,143 @@ namespace BigScreen {
 
     void VideoLibraryMenu::BeginCatalogRebuild()
     {
-        const auto rebuildStarted = std::chrono::steady_clock::now();
-        catalog_.clear();
-        std::unordered_set<std::string> ids;
-        auto add = [&](GlobalNamespace::BeatmapLevel* level, SongLibraryGroup group) {
-            if(level && level->levelID && ids.emplace(std::string(level->levelID)).second)
-                catalog_.push_back({level, group});
+        catalogBuildItems_.clear();
+        catalogBuildIds_.clear();
+        catalogBuildPackIndex_ = 0;
+        catalogBuildLevelIndex_ = 0;
+        catalogBuildSongCoreIndex_ = 0;
+        catalogBuildGeneration_ =
+            NextCatalogBuildGeneration.fetch_add(1) + 1;
+        catalogBuildPhase_ = CatalogBuildPhase::Repository;
+        catalogPrewarmModelReady_ = false;
+        catalogPrewarmIndex_ = 0;
+    }
+
+    void VideoLibraryMenu::AddCatalogBuildItem(
+        GlobalNamespace::BeatmapLevel* level,
+        SongLibraryGroup group)
+    {
+        if(!level || !level->levelID)
+            return;
+        const std::string levelId(level->levelID);
+        if(!catalogBuildIds_.emplace(levelId).second)
+            return;
+        const std::string name = level->songName
+            ? std::string(level->songName)
+            : std::string("Unknown Song");
+        const std::string author = level->songAuthorName
+            ? std::string(level->songAuthorName)
+            : std::string{};
+        const std::string normalizedName = Lower(name);
+        const std::string normalizedAuthor = Lower(author);
+        catalogBuildItems_.push_back({
+            level,
+            group,
+            levelId,
+            name,
+            author,
+            normalizedName,
+            normalizedAuthor,
+            normalizedName + " " + normalizedAuthor});
+    }
+
+    void VideoLibraryMenu::CaptureCatalogBuildStep(std::size_t itemBudget)
+    {
+        itemBudget = std::max<std::size_t>(itemBudget, 1);
+        std::size_t captured = 0;
+        const auto sliceStarted = std::chrono::steady_clock::now();
+        const auto shouldYield = [&]()
+        {
+            return captured >= itemBudget ||
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - sliceStarted).count() >=
+                    1000;
         };
 
-        auto* container = BSML::Helpers::GetDiContainer();
-        auto* model = container
-            ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
-            : nullptr;
-        auto* repository = model
-            ? model->__cordl_internal_get__allExistingBeatmapLevelsRepository()
-            : nullptr;
-        if(repository)
+        while(!shouldYield())
         {
-            for(auto* pack : repository->__cordl_internal_get__beatmapLevelPacks())
+            if(catalogBuildPhase_ == CatalogBuildPhase::Repository)
             {
-                if(!pack) continue;
-                for(auto* level : pack->__cordl_internal_get__beatmapLevels())
+                auto* container = BSML::Helpers::GetDiContainer();
+                auto* model = container
+                    ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
+                    : nullptr;
+                auto* repository = model
+                    ? model->__cordl_internal_get__allExistingBeatmapLevelsRepository()
+                    : nullptr;
+                if(!repository)
                 {
-                    auto* custom = level && level->levelID
-                        ? SongCore::API::Loading::GetLevelByLevelID(std::string(level->levelID))
-                        : nullptr;
-                    add(level, custom
-                        ? (IsWip(custom) ? SongLibraryGroup::Wip : SongLibraryGroup::Custom)
-                        : OfficialGroup(pack));
+                    catalogBuildPhase_ = CatalogBuildPhase::SongCore;
+                    continue;
                 }
+
+                const auto packs =
+                    repository->__cordl_internal_get__beatmapLevelPacks();
+                if(catalogBuildPackIndex_ >= packs.size())
+                {
+                    catalogBuildPhase_ = CatalogBuildPhase::SongCore;
+                    continue;
+                }
+                auto* pack = packs[catalogBuildPackIndex_];
+                if(!pack)
+                {
+                    ++catalogBuildPackIndex_;
+                    catalogBuildLevelIndex_ = 0;
+                    continue;
+                }
+                const auto levels = pack->__cordl_internal_get__beatmapLevels();
+                if(catalogBuildLevelIndex_ >= levels.size())
+                {
+                    ++catalogBuildPackIndex_;
+                    catalogBuildLevelIndex_ = 0;
+                    continue;
+                }
+
+                auto* level = levels[catalogBuildLevelIndex_++];
+                auto* custom = level && level->levelID
+                    ? SongCore::API::Loading::GetLevelByLevelID(
+                        std::string(level->levelID))
+                    : nullptr;
+                AddCatalogBuildItem(
+                    level,
+                    custom
+                        ? (IsWip(custom)
+                            ? SongLibraryGroup::Wip
+                            : SongLibraryGroup::Custom)
+                        : OfficialGroup(pack));
+                ++captured;
+                continue;
             }
+
+            if(catalogBuildPhase_ == CatalogBuildPhase::SongCore)
+            {
+                // SongCore is authoritative for custom and WIP songs. Read a
+                // bounded number of managed objects on Unity's thread, then
+                // retain only immutable native strings for background work.
+                const auto customLevels =
+                    SongCore::API::Loading::GetAllLevels();
+                if(catalogBuildSongCoreIndex_ < customLevels.size())
+                {
+                    auto* custom =
+                        customLevels[catalogBuildSongCoreIndex_++];
+                    AddCatalogBuildItem(
+                        custom,
+                        IsWip(custom)
+                            ? SongLibraryGroup::Wip
+                            : SongLibraryGroup::Custom);
+                    ++captured;
+                    continue;
+                }
+
+                CatalogSorter().Submit(
+                    catalogBuildGeneration_,
+                    std::move(catalogBuildItems_));
+                catalogBuildItems_.clear();
+                catalogBuildIds_.clear();
+                catalogBuildPhase_ = CatalogBuildPhase::Sorting;
+            }
+            return;
         }
-
-        // SongCore is authoritative for custom and WIP songs. Supplementing
-        // the base repository prevents its async refresh timing from hiding
-        // tracks when this menu is opened immediately after game startup.
-        for(auto* custom : SongCore::API::Loading::GetAllLevels())
-            add(custom, IsWip(custom) ? SongLibraryGroup::Wip : SongLibraryGroup::Custom);
-
-        // Startup recovery waits for this complete catalog because level IDs
-        // are the only safe way to reconnect deterministic managed filenames.
-        std::vector<GlobalNamespace::BeatmapLevel*> installedLevels;
-        installedLevels.reserve(catalog_.size());
-        for(const auto& item : catalog_)
-            installedLevels.push_back(item.level);
-        VideoLibrary::Instance().RecoverManagedFiles(installedLevels);
-
-        std::sort(catalog_.begin(), catalog_.end(), [](const auto& left, const auto& right) {
-            // Resolve every tie so rebuilding the catalog cannot reshuffle
-            // songs that share a title. Table cells and the backing model both
-            // use this index, so their order must be completely deterministic.
-            const auto leftName = Lower(left.level && left.level->songName
-                ? std::string(left.level->songName) : std::string{});
-            const auto rightName = Lower(right.level && right.level->songName
-                ? std::string(right.level->songName) : std::string{});
-            if(leftName != rightName) return leftName < rightName;
-
-            const auto leftArtist = Lower(left.level && left.level->songAuthorName
-                ? std::string(left.level->songAuthorName) : std::string{});
-            const auto rightArtist = Lower(right.level && right.level->songAuthorName
-                ? std::string(right.level->songAuthorName) : std::string{});
-            if(leftArtist != rightArtist) return leftArtist < rightArtist;
-
-            const auto leftId = left.level && left.level->levelID
-                ? std::string(left.level->levelID) : std::string{};
-            const auto rightId = right.level && right.level->levelID
-                ? std::string(right.level->levelID) : std::string{};
-            return leftId < rightId;
-        });
-        std::array<int, 4> groupCounts{};
-        for(const auto& item : catalog_)
-            ++groupCounts[static_cast<int>(item.group)];
-        BigScreen::BigScreenLogger.info(
-            "Video library catalog rebuilt in {} ms: {} total ({} custom, {} WIP, {} OST, {} DLC)",
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - rebuildStarted).count(),
-            catalog_.size(), groupCounts[0], groupCounts[1], groupCounts[2], groupCounts[3]);
-        catalogPrewarmModelReady_ = true;
-        catalogPrewarmIndex_ = 0;
     }
 
     bool VideoLibraryMenu::PrewarmCatalogStep(
@@ -2107,7 +2558,46 @@ namespace BigScreen {
         if(!catalogRefreshRequested_)
             return true;
         if(!catalogPrewarmModelReady_)
-            BeginCatalogRebuild();
+        {
+            if(catalogBuildPhase_ == CatalogBuildPhase::Idle)
+                BeginCatalogRebuild();
+            if(catalogBuildPhase_ == CatalogBuildPhase::Repository ||
+               catalogBuildPhase_ == CatalogBuildPhase::SongCore)
+                CaptureCatalogBuildStep(
+                    std::max<std::size_t>(descriptorBudget, 64));
+            if(catalogBuildPhase_ != CatalogBuildPhase::Sorting)
+                return false;
+
+            std::vector<SongLibraryItem> sortedCatalog;
+            if(!CatalogSorter().TryTake(
+                   catalogBuildGeneration_, sortedCatalog))
+                return false;
+            catalog_ = std::move(sortedCatalog);
+            catalogBuildPhase_ = CatalogBuildPhase::Idle;
+
+            // Recovery runs only after a damaged/missing library manifest;
+            // the normal path returns immediately. It must remain on Unity's
+            // thread because it reads BeatmapLevel metadata while reconnecting
+            // deterministic managed filenames.
+            std::vector<GlobalNamespace::BeatmapLevel*> installedLevels;
+            installedLevels.reserve(catalog_.size());
+            for(const auto& item : catalog_)
+                installedLevels.push_back(item.level);
+            VideoLibrary::Instance().RecoverManagedFiles(installedLevels);
+
+            std::array<int, 4> groupCounts{};
+            for(const auto& item : catalog_)
+                ++groupCounts[static_cast<int>(item.group)];
+            BigScreen::BigScreenLogger.info(
+                "Video library catalog captured incrementally and sorted in the background: {} total ({} custom, {} WIP, {} OST, {} DLC)",
+                catalog_.size(), groupCounts[0], groupCounts[1],
+                groupCounts[2], groupCounts[3]);
+            catalogPrewarmModelReady_ = true;
+            catalogPrewarmIndex_ = 0;
+            // Publish the cheap model before Cinema JSON is warmed so the
+            // browser is usable while metadata finishes in later slices.
+            RebuildVisibleRows();
+        }
 
         // Describe() performs the map-local Cinema JSON and managed-assignment
         // lookup on its first call, then retains the result in VideoLibrary.
@@ -2117,6 +2607,7 @@ namespace BigScreen {
         const auto end = std::min(
             catalogPrewarmIndex_ + descriptorBudget,
             catalog_.size());
+        const auto sliceStarted = std::chrono::steady_clock::now();
         while(catalogPrewarmIndex_ < end)
         {
             // One malformed mapper file must not pin the incremental cursor or
@@ -2141,6 +2632,14 @@ namespace BigScreen {
                 BigScreen::BigScreenLogger.error(
                     "Skipped one video-library descriptor during incremental catalog preparation");
             }
+            // A count limit alone is not a time limit: one map can have much
+            // larger Cinema metadata than another. Yield after roughly two
+            // milliseconds (but always make one item of progress) so a large
+            // library cannot monopolize the Unity/menu thread for seconds.
+            if(std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now() - sliceStarted).count() >=
+               2000)
+                break;
         }
         if(catalogPrewarmIndex_ < catalog_.size())
             return false;
@@ -2149,7 +2648,7 @@ namespace BigScreen {
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
         const auto rowsStarted = std::chrono::steady_clock::now();
-        RebuildVisibleRows();
+        RebuildVisibleRows(true);
         BigScreen::BigScreenLogger.info(
             "Video library catalog prewarming completed; retained rows finalized in {} ms",
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2159,14 +2658,10 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RebuildCatalog()
     {
-        BeginCatalogRebuild();
-        // Explicit refreshes occur after SongCore changes the installed map
-        // model. Almost every descriptor is already cached; completing this
-        // uncommon invalidation atomically keeps the visible table consistent.
-        while(!PrewarmCatalogStep(
-            std::max<std::size_t>(catalog_.size(), 1)))
-        {
-        }
+        RequestCatalogRefresh();
+        // Never spin Unity's thread waiting for thousands of maps. Tick and
+        // the retained-menu prewarmer continue this state machine next frame.
+        PrewarmCatalogStep(8);
     }
 
     void VideoLibraryMenu::RebuildVisibleRows(bool preserveScrollPosition)
@@ -2187,57 +2682,96 @@ namespace BigScreen {
 
         visible_.clear();
         if(!list_) return;
+        // Keep the managed row objects allocated by the initial cheap catalog
+        // pass. Metadata completion, filter changes, and editor returns update
+        // those objects in place instead of allocating thousands of new IL2CPP
+        // CustomCellInfo instances for every rebuild.
+        std::vector<BSML::CustomCellInfo*> reusableRows;
+        reusableRows.reserve(list_->data->get_Count());
+        for(int index = 0; index < list_->data->get_Count(); ++index)
+            reusableRows.push_back(list_->data[index]);
         list_->data->Clear();
+        list_->data->EnsureCapacity(static_cast<int>(catalog_.size()));
+        visible_.reserve(catalog_.size());
         RowVideoThumbnails.clear();
         RowMapperMetadataIssues.clear();
         std::size_t mapperMetadataIssueCount = 0;
         const auto query = Lower(search_);
         for(auto& item : catalog_)
         {
-            auto* level = item.level;
-            const auto name = level->songName ? std::string(level->songName) : "Unknown Song";
-            const auto author = level->songAuthorName
-                ? std::string(level->songAuthorName) : std::string{};
-            const auto descriptor = VideoLibrary::Instance().Describe(level);
-            if(descriptor.mapperMetadataIssue)
+            const auto& name = item.songName;
+            const auto& author = item.songAuthor;
+            const auto cachedStatus = !item.levelId.empty()
+                ? VideoLibrary::Instance().CachedRowStatus(item.levelId)
+                : std::nullopt;
+            const VideoLibraryRowStatus status = cachedStatus.value_or(
+                VideoLibraryRowStatus{});
+            const bool metadataReady = cachedStatus.has_value();
+            if(metadataReady && status.mapperMetadataIssue)
                 ++mapperMetadataIssueCount;
-            if(!MatchesFilter(filter_, item, descriptor) ||
-               (!query.empty() && Lower(name + " " + author).find(query) == std::string::npos))
+            // "Maps With Video" must never guess. Other filters can display
+            // their cheap catalog rows immediately while the metadata column
+            // is filled incrementally.
+            if((filter_ == SongLibraryFilter::Video && !metadataReady) ||
+               !MatchesFilter(
+                   filter_,
+                   item,
+                   status.canPlay || status.canDownload) ||
+               (!query.empty() &&
+                item.normalizedSearchText.find(query) == std::string::npos))
                 continue;
             visible_.push_back(&item);
-            std::string videoState = descriptor.hasUserOverride ? "User video" :
-                descriptor.CanPlay() ? "Video ready" :
-                descriptor.CanDownload() ? "Download available" : "No video";
-            if(descriptor.mapperMetadataIssue)
+            std::string videoState = !metadataReady
+                ? "Checking video metadata"
+                : status.hasUserOverride ? "User video" :
+                    status.canPlay ? "Video ready" :
+                    status.canDownload ? "Download available" : "No video";
+            if(metadataReady && status.mapperMetadataIssue)
             {
-                videoState = descriptor.mapperMetadataRecovered
+                videoState = status.mapperMetadataRecovered
                     ? "JSON warning | " + videoState
                     : "JSON error | select for details";
             }
 
             UnityEngine::Sprite* videoThumbnail = nullptr;
-            if(level->levelID)
+            if(!item.levelId.empty())
             {
-                RowVideoThumbnails[std::string(level->levelID)] = {
-                    descriptor.CanPlay() || descriptor.CanDownload(),
-                    descriptor.downloadUrl,
-                    descriptor.thumbnailPath};
-                if(descriptor.mapperMetadataIssue)
+                RowVideoThumbnails[item.levelId] = {
+                    status.canPlay || status.canDownload,
+                    status.downloadUrl,
+                    status.thumbnailPath};
+                if(status.mapperMetadataIssue)
                 {
-                    RowMapperMetadataIssues[std::string(level->levelID)] = {
-                        descriptor.mapperMetadataRecovered};
+                    RowMapperMetadataIssues[item.levelId] = {
+                        status.mapperMetadataRecovered};
                 }
             }
-            if((descriptor.CanPlay() || descriptor.CanDownload()) &&
-               descriptor.thumbnailPath)
+            if((status.canPlay || status.canDownload) &&
+               status.thumbnailPath)
             {
                 videoThumbnail = FindCachedVideoThumbnail(
-                    descriptor.thumbnailPath->string());
+                    status.thumbnailPath->string());
             }
-            list_->data->Add(BSML::CustomCellInfo::construct(
-                name,
-                author.empty() ? videoState : author + " | " + videoState,
-                videoThumbnail));
+            const std::string subText = author.empty()
+                ? videoState
+                : author + " | " + videoState;
+            const auto rowIndex = list_->data->get_Count();
+            if(rowIndex < static_cast<int>(reusableRows.size()) &&
+               reusableRows[rowIndex])
+            {
+                auto* row = reusableRows[rowIndex];
+                row->text = StringW(name);
+                row->subText = StringW(subText);
+                row->icon = videoThumbnail;
+                list_->data->Add(row);
+            }
+            else
+            {
+                list_->data->Add(BSML::CustomCellInfo::construct(
+                    name,
+                    subText,
+                    videoThumbnail));
+            }
         }
         if(browserTitle_)
             browserTitle_->set_text("Video Library");
@@ -2261,11 +2795,6 @@ namespace BigScreen {
                 VideoLibrary::Instance().FreeBytes()));
         if(tableView)
         {
-            // A TableView retains its selected index even when its data is
-            // rebuilt. Clear it before reloading so returning from the child
-            // editor leaves every row clickable, including the song the user
-            // just edited.
-            tableView->ClearSelection();
             if(preserveScrollPosition)
             {
                 // Do not use ReloadDataKeepingPosition here. In Beat Saber's
@@ -2292,6 +2821,12 @@ namespace BigScreen {
                         HMUI::TableView::ScrollPositionType::Beginning,
                         false);
             }
+            // ReloadData can restore the TableView's retained selected index,
+            // so clearing before the reload is ineffective. Clear only after
+            // the new cell pool is bound; otherwise the row used to open the
+            // editor stays highlighted and HMUI suppresses a second selection
+            // event when the user tries to reopen that same song.
+            tableView->ClearSelection();
             RefreshVisibleRowPresentation();
         }
     }
@@ -2327,10 +2862,30 @@ namespace BigScreen {
             catalog_.end(),
             [levelId](const SongLibraryItem& candidate)
             {
-                return candidate.level && candidate.level->levelID &&
-                    std::string(candidate.level->levelID) == levelId;
+                return candidate.levelId == levelId;
             });
-        if(item == catalog_.end())
+        GlobalNamespace::BeatmapLevel* level = item != catalog_.end()
+            ? item->level
+            : SongCore::API::Loading::GetLevelByLevelID(
+                std::string(levelId));
+        if(!level)
+        {
+            // Configure Video can be invoked before a multi-thousand-song
+            // catalog finishes its bounded capture. Resolve this one requested
+            // official level through the repository's ID index instead of
+            // blocking the UI until the full scan completes.
+            auto* container = BSML::Helpers::GetDiContainer();
+            auto* model = container
+                ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
+                : nullptr;
+            auto* repository = model
+                ? model->__cordl_internal_get__allExistingBeatmapLevelsRepository()
+                : nullptr;
+            if(repository)
+                level = repository->GetBeatmapLevelById(
+                    StringW(std::string(levelId)));
+        }
+        if(!level)
         {
             BigScreen::BigScreenLogger.warn(
                 "Could not deep-link Big Screen's video editor: level '{}' was not in the installed-song catalog",
@@ -2338,7 +2893,7 @@ namespace BigScreen {
             return false;
         }
 
-        SelectLevel(item->level, navigateToEditor);
+        SelectLevel(level, navigateToEditor);
         return true;
     }
 
@@ -2431,6 +2986,9 @@ namespace BigScreen {
 
     void VideoLibraryMenu::ShowBrowser()
     {
+        if(DownloadManager::Instance().Snapshot().state ==
+           DownloadState::AwaitingConfirmation)
+            DownloadManager::Instance().ResolvePendingTranscode(false);
         CloseEditorNotice();
         editorVisible_ = false;
         pendingDownloadRefreshLevelId_.clear();
@@ -2464,10 +3022,9 @@ namespace BigScreen {
         if(!list_ || !list_->tableView || visible_.empty()) return;
         for(std::size_t index = 0; index < visible_.size(); ++index)
         {
-            auto* level = visible_[index] ? visible_[index]->level : nullptr;
-            const std::string name = level && level->songName
-                ? std::string(level->songName)
-                : std::string{};
+            const auto* item = visible_[index];
+            if(!item) continue;
+            const std::string& name = item->songName;
             if(name.empty()) continue;
             const auto first = static_cast<unsigned char>(name.front());
             const bool alpha = std::isalpha(first) != 0;
@@ -2504,15 +3061,41 @@ namespace BigScreen {
             RefreshDetails();
             return;
         }
-        url_ = Trim(url_);
-        if(!IsYouTubeUrl(url_))
+        // The Quest keyboard can update InputFieldView's displayed value a
+        // frame before BSML forwards onValueChanged. Treat the field itself as
+        // authoritative when Check is pressed so a freshly typed address is
+        // never replaced by the previous C++ string.
+        if(urlInput_)
+        {
+            const auto displayedUrl = Trim(std::string(urlInput_->get_text()));
+            if(displayedUrl != url_)
+            {
+                url_ = displayedUrl;
+                mapperProvidedUrl_ = false;
+                RefreshUrlTextColor();
+            }
+        }
+        const auto normalizedUrl = NormalizeYouTubeInput(url_);
+        if(!normalizedUrl)
         {
             terminalDownloadProgressLevelId_.clear();
             PublishEditorNotice(url_.empty()
-                ? "Enter a YouTube link first."
-                : "Use a youtube.com or youtu.be link.");
+                ? "Enter a YouTube link or 11-character video ID first."
+                : "Paste a YouTube link or type its 11-character video ID.");
             RefreshDetails();
             return;
+        }
+        if(url_ != *normalizedUrl)
+        {
+            url_ = *normalizedUrl;
+            mapperProvidedUrl_ = false;
+            if(urlInput_)
+            {
+                suppressUrlCallback_ = true;
+                urlInput_->SetText(url_);
+                suppressUrlCallback_ = false;
+            }
+            RefreshUrlTextColor();
         }
 
         std::string error;
@@ -3412,7 +3995,7 @@ namespace BigScreen {
         }
     }
 
-    void VideoLibraryMenu::RefreshVisibleRowPresentation()
+    void VideoLibraryMenu::RefreshVisibleRowPresentation(bool updateTextLayout)
     {
         if(!list_ || !list_->tableView || !list_->data)
             return;
@@ -3531,86 +4114,81 @@ namespace BigScreen {
                     BSML::Utilities::ImageResources::GetBlankSprite());
                 coverImage->set_color({1.0f, 1.0f, 1.0f, 0.0f});
             }
-            const float rowTextRightInset =
-                hasMetadataIssue && hasVideo ? -22.5f :
-                hasMetadataIssue ? -14.0f :
-                hasVideo ? -11.0f :
-                -2.0f;
-            if(auto nameText = levelCell->__cordl_internal_get__songNameText())
+            if(updateTextLayout)
             {
-                // CustomListTableData normally assigns text only when HMUI
-                // requests a cell. A retained right-side controller can reuse
-                // an already-visible cell at a different index without making
-                // that request, leaving its old title in place until hover.
-                // Bind from the current row every time Big Screen refreshes the
-                // row presentation instead of treating text and thumbnails as
-                // separate ownership paths.
-                nameText->set_text(cellInfo->text);
-                auto rect = nameText->get_rectTransform();
-                rect->set_anchorMin({0.0f, 0.5f});
-                rect->set_anchorMax({1.0f, 0.5f});
-                rect->set_pivot({0.0f, 0.5f});
-                rect->set_anchoredPosition({1.2f, 1.7f});
-                rect->set_sizeDelta({rowTextRightInset, 3.5f});
-            }
-            if(auto authorText = levelCell->__cordl_internal_get__songAuthorText())
-            {
-                authorText->set_text(
-                    cellInfo->subText ? cellInfo->subText : "");
-                auto rect = authorText->get_rectTransform();
-                rect->set_anchorMin({0.0f, 0.5f});
-                rect->set_anchorMax({1.0f, 0.5f});
-                rect->set_pivot({0.0f, 0.5f});
-                rect->set_anchoredPosition({1.2f, -1.8f});
-                rect->set_sizeDelta({rowTextRightInset, 3.0f});
-            }
-
-            if(!hasVideo || !metadata->second.path)
-            {
-                cellInfo->icon = nullptr;
-                continue;
-            }
-
-            const std::string path = metadata->second.path->string();
-            UnityEngine::Sprite* sprite = nullptr;
-            if(auto* loaded = FindCachedVideoThumbnail(path))
-                sprite = loaded;
-            else if(Utility::IsRegularFile(*metadata->second.path) &&
-                    !FailedVideoThumbnailLoads.contains(path))
-            {
-                try
+                if(auto nameText =
+                       levelCell->__cordl_internal_get__songNameText())
                 {
-                    sprite = BSML::Lite::FileToSprite(path);
-                    if(sprite)
-                        CacheVideoThumbnail(path, sprite);
-                    else
-                        FailedVideoThumbnailLoads.emplace(path);
+                    // CustomListTableData normally assigns text only when
+                    // HMUI requests a cell. Explicit browser reloads rebind the
+                    // retained cells once, outside pointer hover. Do not also
+                    // rewrite the TMP RectTransforms: HMUI owns that geometry
+                    // and reapplies its native layout during highlight. The old
+                    // post-editor transform override therefore made only those
+                    // retained rows snap when the pointer first crossed them.
+                    nameText->set_text(cellInfo->text);
                 }
-                catch(const std::exception& error)
+                if(auto authorText =
+                       levelCell->__cordl_internal_get__songAuthorText())
                 {
-                    FailedVideoThumbnailLoads.emplace(path);
-                    BigScreen::BigScreenLogger.warn(
-                        "Could not display video thumbnail '{}': {}",
-                        path,
-                        error.what());
+                    authorText->set_text(
+                        cellInfo->subText ? cellInfo->subText : "");
                 }
             }
-            else if(metadata->second.sourceUrl &&
-                    Settings::Instance().ModEnabled())
-            {
-                DownloadManager::Instance().QueueVideoThumbnail(
-                    levelId,
-                    *metadata->second.sourceUrl,
-                    *metadata->second.path);
-            }
 
-            cellInfo->icon = sprite;
-            if(sprite && coverImage)
-            {
-                coverImage->set_sprite(sprite);
-                coverImage->set_color(UnityEngine::Color::get_white());
-            }
+            RefreshRowVideoThumbnail(
+                levelId,
+                metadata != RowVideoThumbnails.end()
+                    ? &metadata->second
+                    : nullptr,
+                cellInfo,
+                coverImage.ptr());
         }
+    }
+
+    void VideoLibraryMenu::RefreshVisibleRowThumbnails()
+    {
+        if(!list_ || !list_->tableView || !list_->data)
+            return;
+        auto* cells = list_->tableView->__cordl_internal_get__visibleCells();
+        if(!cells) return;
+
+        for(int cellIndex = 0; cellIndex < cells->get_Count(); ++cellIndex)
+        {
+            auto levelCell = cells->get_Item(cellIndex)
+                .try_cast<GlobalNamespace::LevelListTableCell>()
+                .value_or(nullptr);
+            if(!levelCell) continue;
+            const int row = levelCell->get_idx();
+            if(row < 0 || row >= static_cast<int>(visible_.size()) ||
+               row >= list_->data->get_Count())
+                continue;
+            auto* item = visible_[row];
+            auto* level = item ? item->level : nullptr;
+            if(!level || !level->levelID) continue;
+
+            const std::string levelId(level->levelID);
+            const auto metadata = RowVideoThumbnails.find(levelId);
+            auto coverImage = levelCell->__cordl_internal_get__coverImage();
+            const bool hasVideo = metadata != RowVideoThumbnails.end() &&
+                metadata->second.hasVideo;
+            if(coverImage)
+                coverImage->get_gameObject()->SetActive(hasVideo);
+            RefreshRowVideoThumbnail(
+                levelId,
+                metadata != RowVideoThumbnails.end()
+                    ? &metadata->second
+                    : nullptr,
+                list_->data[row],
+                coverImage.ptr());
+        }
+    }
+
+    void VideoLibraryMenu::NotifySongListCellBound(
+        HMUI::TableView* source)
+    {
+        if(list_ && source == list_->tableView)
+            rowPresentationRefreshPending_ = true;
     }
 
     bool VideoLibraryMenu::SaveTiming()
@@ -3674,6 +4252,83 @@ namespace BigScreen {
             PublishEditorNotice(std::string(failureMessage));
             return false;
         }
+    }
+
+    void VideoLibraryMenu::ResetPlaybackRate()
+    {
+        if(!selected_)
+            return;
+
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto* mapperTiming = descriptor.mapperDefinition
+            ? &*descriptor.mapperDefinition
+            : nullptr;
+        rate_ = std::clamp(
+            mapperTiming ? mapperTiming->playbackRate : 1.0,
+            0.05,
+            8.0);
+        if(!SaveTiming())
+            return;
+
+        suppressTimingCallbacks_ = true;
+        if(rateSetting_)
+            rateSetting_->set_Value(static_cast<float>(rate_));
+        suppressTimingCallbacks_ = false;
+        terminalDownloadProgressLevelId_.clear();
+        StartSelectedPreview();
+        RefreshDetails();
+
+        std::ostringstream message;
+        message << std::fixed << std::setprecision(2)
+                << "Playback speed reset to "
+                << (mapperTiming ? "mapper value: " : "default: ")
+                << rate_ << "x.";
+        PublishEditorNotice(message.str());
+    }
+
+    void VideoLibraryMenu::ResetVideoOffset()
+    {
+        if(!selected_)
+            return;
+
+        const auto descriptor = VideoLibrary::Instance().Describe(selected_);
+        const auto* mapperTiming = descriptor.mapperDefinition
+            ? &*descriptor.mapperDefinition
+            : nullptr;
+        offset_ = std::clamp(
+            mapperTiming ? mapperTiming->offsetSeconds : 0.0,
+            -60.0,
+            60.0);
+
+        // Fit to Song derives playback speed from the offset. Reuse the same
+        // authoritative calculation so resetting one control cannot leave the
+        // other displaying a rate that no longer reaches the video's endpoint.
+        const bool fitReapplied = fitToSong_;
+        if(fitReapplied)
+        {
+            if(!ApplyFitToSong())
+                return;
+        }
+        else
+        {
+            if(!SaveTiming())
+                return;
+            StartSelectedPreview();
+        }
+
+        suppressTimingCallbacks_ = true;
+        if(offsetSetting_)
+            offsetSetting_->set_Value(static_cast<float>(offset_));
+        suppressTimingCallbacks_ = false;
+        terminalDownloadProgressLevelId_.clear();
+        RefreshDetails();
+
+        std::ostringstream message;
+        message << std::fixed << std::setprecision(2)
+                << "Video offset reset to "
+                << (mapperTiming ? "mapper value: " : "default: ")
+                << offset_ << " seconds.";
+        PublishEditorNotice(message.str());
     }
 
     bool VideoLibraryMenu::ApplyFitToSong()
@@ -4007,8 +4662,17 @@ namespace BigScreen {
     {
         if(auto notice = DownloadManager::Instance().TakeDownloadNotice())
         {
-            ErrorManager::Instance().ReportUserVisible(
-                notice->title, notice->message);
+            if(notice->offerTranscode && transcodeConfirmModal_ &&
+               transcodeConfirmationText_)
+            {
+                transcodeConfirmationText_->set_text(notice->message);
+                ShowModalInFront(transcodeConfirmModal_);
+            }
+            else
+            {
+                ErrorManager::Instance().ReportUserVisible(
+                    notice->title, notice->message);
+            }
         }
         auto& library = VideoLibrary::Instance();
         auto& downloader = DownloadManager::Instance();
@@ -4290,6 +4954,7 @@ namespace BigScreen {
                 !download.metadataOnly &&
                 (download.state == DownloadState::Preparing ||
                  download.state == DownloadState::Downloading ||
+                 download.state == DownloadState::AwaitingConfirmation ||
                   download.state == DownloadState::Cancelled ||
                   download.state == DownloadState::Failed);
             // A completed transfer has already replaced/assigned the active
@@ -4370,7 +5035,8 @@ namespace BigScreen {
             downloadOperationInProgress &&
             !download.metadataOnly &&
             (download.state == DownloadState::Preparing ||
-             download.state == DownloadState::Downloading);
+             download.state == DownloadState::Downloading ||
+             download.state == DownloadState::AwaitingConfirmation);
         for(auto* row : timingRows_)
             if(row) row->SetActive(
                 !videoTransferPending &&
@@ -4381,6 +5047,10 @@ namespace BigScreen {
         if(offsetSetting_) offsetSetting_->set_interactable(
             descriptor.CanPlay() && !videoTransferPending);
         if(rateSetting_) rateSetting_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending && !fitToSong_);
+        if(offsetResetButton_) offsetResetButton_->set_interactable(
+            descriptor.CanPlay() && !videoTransferPending);
+        if(rateResetButton_) rateResetButton_->set_interactable(
             descriptor.CanPlay() && !videoTransferPending && !fitToSong_);
         if(fitToggle_) fitToggle_->set_interactable(
             descriptor.CanPlay() && !videoTransferPending);
@@ -5136,12 +5806,12 @@ namespace BigScreen {
         songPreviewPlayer_ = songPreviewPlayer;
 
         // The hierarchy is prewarmed and retained, but its map rows are not a
-        // permanent startup snapshot. Resolve a small descriptor slice on each
-        // safe browser frame after SongCore reports a completed refresh. If the
-        // editor is open, keep its selected BeatmapLevel stable and defer until
-        // the user backs out instead of replacing table objects underneath
-        // active callbacks. This keeps large libraries from blocking Unity's
-        // UI thread when Big Screen first appears.
+        // permanent startup snapshot. Capture a bounded catalog/descriptor
+        // slice on each safe browser frame after SongCore reports a completed
+        // refresh. If the editor is open, keep its selected BeatmapLevel stable
+        // and defer until the user backs out instead of replacing table objects
+        // underneath active callbacks. This keeps large libraries from
+        // blocking Unity's UI thread when Big Screen first appears.
         if(catalogRefreshRequested_ && !editorVisible_)
             PrewarmCatalogStep(8);
 
@@ -5161,6 +5831,11 @@ namespace BigScreen {
                 if(auto* scrollView = tableView->get_scrollView().ptr();
                    scrollView && !visible_.empty())
                     scrollView->ScrollTo(browserReturnScrollPosition_, false);
+                // This is the definitive reload performed after the browser is
+                // active. It can restore selection even though the earlier
+                // inactive rebuild cleared it, so deselect again at the point
+                // where HMUI can no longer overwrite the result.
+                tableView->ClearSelection();
                 RefreshVisibleRowPresentation();
             }
             browserTableReloadPending_ = false;
@@ -5183,10 +5858,21 @@ namespace BigScreen {
            !IsAlive(previewAudioClip_) && !audioLoadTask_ &&
            !levelDataLoadTask_)
             RequestSelectedAudio();
-        if(!editorVisible_ && ++thumbnailTickCounter_ >= 9)
+        if(!editorVisible_ && rowPresentationRefreshPending_)
+        {
+            rowPresentationRefreshPending_ = false;
+            // TableView also lays cells out during pointer/highlight changes.
+            // Refresh only thumbnail/error decorations on that path; rewriting
+            // TMP geometry here made no-thumbnail rows visibly jump on hover.
+            RefreshVisibleRowPresentation(false);
+        }
+        // Thumbnail files arrive asynchronously after their row was bound.
+        // Poll only the image surfaces at a low cadence; rewriting TMP text
+        // and layout every nine frames was the visible hover "jump".
+        if(!editorVisible_ && ++thumbnailTickCounter_ >= 60)
         {
             thumbnailTickCounter_ = 0;
-            RefreshVisibleRowPresentation();
+            RefreshVisibleRowThumbnails();
         }
 
         try
@@ -5443,12 +6129,12 @@ namespace BigScreen {
         PlaybackSession::Instance().SetLibraryPreviewOwnershipActive(true);
         active_ = true;
         // Beat Saber and SongCore retain their level objects for the menu
-        // session. A first activation with hundreds of maps must not synchronously
-        // parse any unrelated descriptor before a Configure Video deep-link is
-        // honored. Build only the inexpensive pointer model here; Tick or the
-        // hidden main-menu warmer advances descriptor slices afterward.
+        // session. A first activation with thousands of maps must not scan the
+        // full repository or parse unrelated descriptors before a Configure
+        // Video deep-link is honored. Advance one bounded state-machine slice;
+        // Tick or the hidden main-menu warmer continues on later frames.
         if(catalogRefreshRequested_ && !catalogPrewarmModelReady_)
-            BeginCatalogRebuild();
+            PrewarmCatalogStep(8);
         if(editorVisible_) RefreshDetails();
         if(!Settings::Instance().ModEnabled())
         {
@@ -5481,6 +6167,11 @@ namespace BigScreen {
     {
         active_ = false;
         browserTableReloadPending_ = false;
+        // The retained browser survives ordinary menu exits. Do not carry its
+        // selected index into the next visit, where clicking that same song
+        // would otherwise be treated as selecting an already-selected cell.
+        if(list_ && list_->tableView)
+            list_->tableView->ClearSelection();
         CloseEditorNotice();
         editorVisible_ = false;
         pendingDownloadRefreshLevelId_.clear();
@@ -5526,6 +6217,12 @@ namespace BigScreen {
         // pointers all come from one completed SongCore generation.
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
+        catalogBuildPhase_ = CatalogBuildPhase::Idle;
+        catalogBuildItems_.clear();
+        catalogBuildIds_.clear();
+        catalogBuildPackIndex_ = 0;
+        catalogBuildLevelIndex_ = 0;
+        catalogBuildSongCoreIndex_ = 0;
     }
 
     void VideoLibraryMenu::StopActivePreview()

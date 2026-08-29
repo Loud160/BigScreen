@@ -48,16 +48,32 @@ symbol_namespace="BIGSCREEN${runtime_tag}"
 ffmpeg_archive="ffmpeg-${ffmpeg_version}.tar.xz"
 ffmpeg_url="https://ffmpeg.org/releases/${ffmpeg_archive}"
 android_api="24"
-# Increment this whenever the recipe changes in a way that requires existing
-# staged FFmpeg runtimes to be rebuilt.  Revision 2 removes host-specific cache,
-# home-directory, and Android NDK paths from the configuration string compiled
-# into libavutil so Windows/WSL and native Linux produce identical libraries.
-build_recipe_revision="2"
+# Increment the affected runtime only when its recipe changes. Revision 2
+# removed host paths from both builds; FFmpeg 9 revision 3 adds the two explicit
+# H.264 transcoders while revision 4 records their complete license/source
+# metadata. The comparison FFmpeg 4 runtime remains unchanged.
+if [[ "${runtime_tag}" == "9" ]]; then
+    build_recipe_revision="4"
+else
+    build_recipe_revision="2"
+fi
+
+# FFmpeg contains no native software H.264 encoder. The FFmpeg 9 runtime uses
+# Android MediaCodec first and carries one pinned x264 fallback for the rare
+# device/format combination where the hardware encoder cannot start. x264 is
+# GPL-2.0-or-later; Big Screen is GPL-3.0-only, so this is a compatible but
+# deliberate change from the still-LGPL comparison FFmpeg 4.4 runtime.
+x264_commit="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+x264_sha256="cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9"
+x264_archive="x264-${x264_commit}.tar.gz"
+x264_url="https://github.com/mirror/x264/archive/${x264_commit}.tar.gz"
 
 # Keep compilation in the native Linux filesystem.  Building thousands of
 # small FFmpeg objects through WSL's /mnt/c bridge is dramatically slower and
 # can leave partially copied trees after an interrupted Windows session.
 cache_root="${BIGSCREEN_FFMPEG_CACHE:-${HOME}/.cache/bigscreen-ffmpeg}"
+x264_archive_path="${cache_root}/${x264_archive}"
+x264_download_path="${x264_archive_path}.download.$$"
 source_root="${cache_root}/ffmpeg-${ffmpeg_version}"
 pristine_root="${cache_root}/ffmpeg-${ffmpeg_version}-pristine"
 build_root="${cache_root}/build-${ffmpeg_version}-android-arm64"
@@ -86,7 +102,7 @@ config_record_path="${install_root}/bigscreen-ffmpeg-config.mak"
 
 # Interrupted downloads must never become the persistent cache entry. The
 # process-specific temporary is removed on every exit, including Ctrl+C.
-trap 'rm -f "${archive_download_path}"' EXIT INT TERM
+trap 'rm -f "${archive_download_path}" "${x264_download_path}"' EXIT INT TERM
 
 # The local Windows development setup keeps a Linux NDK in WSL.  CI and other
 # developers can set ANDROID_NDK_ROOT explicitly to use any equivalent Linux
@@ -140,11 +156,24 @@ is_complete_install() {
         CONFIG_MP4_MUXER; do
         grep -q "^${required_option}=yes$" "${config_record_path}" || return 1
     done
+    if [[ "${runtime_tag}" == "9" ]]; then
+        grep -q '^CONFIG_H264_MEDIACODEC_ENCODER=yes$' \
+            "${config_record_path}" || return 1
+        grep -q '^CONFIG_LIBX264_ENCODER=yes$' \
+            "${config_record_path}" || return 1
+        grep -q '^CONFIG_GPL=yes$' "${config_record_path}" || return 1
+        [[ -f "${install_root}/COPYING.X264-GPLv2" ]] || return 1
+    fi
     ! grep -q '^CONFIG_HEVC_DECODER=yes$' "${config_record_path}" || return 1
 }
 
 if is_complete_install && [[ "${1:-}" != "--force" ]]; then
-    printf 'Big Screen LGPL FFmpeg %s is already staged.\n' "${ffmpeg_version}"
+    if [[ "${runtime_tag}" == "9" ]]; then
+        printf 'Big Screen GPL FFmpeg %s with x264 fallback is already staged.\n' \
+            "${ffmpeg_version}"
+    else
+        printf 'Big Screen LGPL FFmpeg %s is already staged.\n' "${ffmpeg_version}"
+    fi
     exit 0
 fi
 
@@ -190,6 +219,37 @@ archive_is_valid || {
     exit 1
 }
 
+if [[ "${runtime_tag}" == "9" ]]; then
+    x264_archive_is_valid() {
+        [[ -f "${x264_archive_path}" ]] &&
+            printf '%s  %s\n' "${x264_sha256}" "${x264_archive_path}" |
+                sha256sum --check --status
+    }
+    if [[ -f "${x264_archive_path}" ]] && ! x264_archive_is_valid; then
+        printf 'Discarding an incomplete or invalid cached x264 archive: %s\n' \
+            "${x264_archive_path}" >&2
+        rm -f "${x264_archive_path}"
+    fi
+    if [[ ! -f "${x264_archive_path}" ]]; then
+        printf 'Downloading pinned x264 software H.264 fallback source.\n'
+        curl --fail --location --retry 3 \
+            --output "${x264_download_path}" "${x264_url}"
+        printf '%s  %s\n' "${x264_sha256}" "${x264_download_path}" |
+            sha256sum --check --status || {
+                printf 'Downloaded x264 source failed SHA-256 verification.\n' >&2
+                exit 1
+            }
+        mv -f "${x264_download_path}" "${x264_archive_path}"
+    else
+        printf 'Using cached pinned x264 source archive.\n'
+    fi
+    x264_archive_is_valid || {
+        printf 'x264 source archive failed SHA-256 verification: %s\n' \
+            "${x264_archive_path}" >&2
+        exit 1
+    }
+fi
+
 rm -rf "${source_root}" "${pristine_root}" "${build_root}" \
     "${native_install_root}" "${install_root}"
 tar -xf "${archive_path}" -C "${cache_root}"
@@ -213,20 +273,54 @@ mkdir -p "${build_root}"
 ln -s "${toolchain_bin}/.." "${build_root}/${portable_toolchain_root}"
 cd "${build_root}"
 
-# This is intentionally a decode-and-remux-only configuration. In particular, it does
-# not use --enable-gpl, --enable-version3, --enable-nonfree, libx264, libx265,
-# libvidstab, or any encoder/filter dependency. Big Screen downloads an
-# existing H.264/VP8/VP9 stream and only needs to demux, copy H.264 packets
-# from MPEG-TS into MP4, decode, seek, and convert decoded frames to RGBA. HEVC
-# is deliberately MediaCodec-only: Big
-# Screen does not compile or ship FFmpeg's software HEVC decoder. All enabled
-# components remain LGPL and the explicit allowlist below is the license and
-# footprint boundary.
+ffmpeg_license_options=()
+ffmpeg_encoder_options=()
+ffmpeg_pkg_config_path=""
+if [[ "${runtime_tag}" == "9" ]]; then
+    printf 'Building the pinned x264 software fallback for FFmpeg 9.\n'
+    mkdir -p x264-source .bigscreen-x264-install
+    tar -xf "${x264_archive_path}" -C x264-source --strip-components=1
+    (
+        cd x264-source
+        # Keep pinned third-party warnings out of the player-facing build
+        # transcript just as the FFmpeg compilation below does. Configure,
+        # compiler, assembler, archive, and link errors remain fatal.
+        CC="../${portable_toolchain_root}/bin/aarch64-linux-android${android_api}-clang" \
+        AR="../${portable_toolchain_root}/bin/llvm-ar" \
+        RANLIB="../${portable_toolchain_root}/bin/llvm-ranlib" \
+        STRIP="../${portable_toolchain_root}/bin/llvm-strip" \
+        ./configure \
+            --host=aarch64-linux \
+            --sysroot="../${portable_toolchain_root}/sysroot" \
+            --prefix=".bigscreen-x264-install" \
+            --enable-static \
+            --disable-cli \
+            --disable-opencl \
+            --enable-pic \
+            --bit-depth=8 \
+            --chroma-format=420 \
+            --extra-cflags='-O3 -fPIC -w'
+        make -j"$(nproc)"
+        make install
+        cp -a .bigscreen-x264-install/. ../.bigscreen-x264-install/
+    )
+    ffmpeg_license_options=(--enable-gpl --enable-libx264)
+    ffmpeg_encoder_options=(
+        --enable-encoder=h264_mediacodec
+        --enable-encoder=libx264)
+    ffmpeg_pkg_config_path=".bigscreen-x264-install/lib/pkgconfig"
+fi
+
+# FFmpeg 4.4 remains the minimal LGPL decode/remux comparison runtime. FFmpeg 9
+# additionally enables the Android H.264 encoder and pinned x264 software
+# fallback used only after direct-MP4 repair and alternate/HLS recovery fail
+# and the player explicitly approves a potentially long transcode. Neither
+# runtime enables version3/nonfree features or unrelated encoders/filters.
 #
 # Current yt-dlp clients can select fragmented HLS/MPEG-TS media when a direct
 # MP4 is unavailable. Keep the MPEG-TS demuxer and MP4 muxer in both private
 # FFmpeg builds so Big Screen can normalize that payload without re-encoding.
-"${source_root}/configure" \
+PKG_CONFIG_PATH="${ffmpeg_pkg_config_path}" "${source_root}/configure" \
     --prefix="${portable_install_prefix}" \
     --target-os=android \
     --arch=aarch64 \
@@ -259,6 +353,8 @@ cd "${build_root}"
     --enable-swscale \
     --enable-jni \
     --enable-mediacodec \
+    "${ffmpeg_license_options[@]}" \
+    "${ffmpeg_encoder_options[@]}" \
     --enable-decoder=h264 \
     --enable-decoder=h264_mediacodec \
     --enable-decoder=hevc_mediacodec \
@@ -287,12 +383,17 @@ cd "${build_root}"
 # generated makefile records disabled configure features with negated entries;
 # any positive GPL/version3/nonfree entry means a future edit changed the
 # license and must stop before producing redistributable binaries.
-for forbidden_option in CONFIG_GPL CONFIG_VERSION3 CONFIG_NONFREE; do
+for forbidden_option in CONFIG_VERSION3 CONFIG_NONFREE; do
     if grep -q "^${forbidden_option}=yes$" "${build_root}/ffbuild/config.mak"; then
         printf 'Forbidden FFmpeg license option was enabled: %s\n' "${forbidden_option}" >&2
         exit 1
     fi
 done
+if [[ "${runtime_tag}" != "9" ]] &&
+   grep -q '^CONFIG_GPL=yes$' "${build_root}/ffbuild/config.mak"; then
+    printf 'The comparison FFmpeg 4.4 runtime must remain LGPL-only.\n' >&2
+    exit 1
+fi
 
 # A successful configure can silently disable a requested component when a
 # future FFmpeg dependency changes. Refuse to publish a runtime whose build
@@ -321,6 +422,18 @@ for required_option in \
         exit 1
     fi
 done
+if [[ "${runtime_tag}" == "9" ]]; then
+    for required_encoder in \
+        CONFIG_H264_MEDIACODEC_ENCODER \
+        CONFIG_LIBX264_ENCODER; do
+        if ! grep -q "^${required_encoder}=yes$" \
+               "${build_root}/ffbuild/config.mak"; then
+            printf 'Required FFmpeg transcoder option was not enabled: %s\n' \
+                "${required_encoder}" >&2
+            exit 1
+        fi
+    done
+fi
 
 # HEVC must remain hardware-only. This negative assertion is as important as
 # the positive decoder checks above: accidentally enabling CONFIG_HEVC_DECODER
@@ -369,6 +482,10 @@ emit_stable_diff() {
 cp "${build_root}/config.h" "${install_root}/bigscreen-ffmpeg-config.h"
 cp "${build_root}/ffbuild/config.mak" "${config_record_path}"
 cp "${source_root}/COPYING.LGPLv2.1" "${install_root}/COPYING.LGPLv2.1"
+if [[ "${runtime_tag}" == "9" ]]; then
+    cp "${build_root}/x264-source/COPYING" \
+        "${install_root}/COPYING.X264-GPLv2"
+fi
 
 # Fail the build if a future FFmpeg/configure change silently reintroduces a
 # normal libav dependency or drops the private symbol namespace.
@@ -402,6 +519,18 @@ if grep -Fq "${cache_root}" "${install_root}/bigscreen-ffmpeg-changes.diff"; the
     exit 1
 fi
 
+if [[ "${runtime_tag}" == "9" ]]; then
+    license_configuration="GPL-2.0-or-later FFmpeg build with pinned GPL-2.0-or-later x264; version3 and nonfree components disabled"
+    encoder_configuration="H.264 encoders: Android MediaCodec primary, x264 software fallback"
+    x264_build_information="x264 source: ${x264_url}
+x264 commit: ${x264_commit}
+x264 SHA-256: ${x264_sha256}"
+else
+    license_configuration="LGPL-2.1-or-later; GPL, version3, and nonfree components disabled"
+    encoder_configuration="H.264 encoders: disabled"
+    x264_build_information="x264 source: not used"
+fi
+
 cat > "${install_root}/BUILD-INFO.txt" <<EOF
 FFmpeg version: ${ffmpeg_version}
 Upstream source: ${ffmpeg_url}
@@ -409,7 +538,9 @@ Upstream SHA-256: ${ffmpeg_sha256}
 Android ABI: arm64-v8a
 Minimum Android API: ${android_api}
 NDK: $(basename "${android_ndk_root}")
-License configuration: LGPL-2.1-or-later; GPL and nonfree components disabled
+License configuration: ${license_configuration}
+${encoder_configuration}
+${x264_build_information}
 Third-party warning policy: compiler warnings suppressed for pinned FFmpeg sources; configure checks and compiler errors remain active
 Build script: scripts/build-ffmpeg-lgpl.sh
 Build recipe revision: ${build_recipe_revision}
@@ -417,5 +548,10 @@ EOF
 
 (cd "${install_root}/lib" && \
     sha256sum *"${build_suffix}".so) > "${install_root}/SHA256SUMS"
-printf 'FFmpeg %s LGPL runtime built successfully.\n' "${ffmpeg_version}" > "${stamp_path}"
-printf 'Staged Big Screen LGPL FFmpeg at %s\n' "${install_root}"
+printf 'FFmpeg %s private runtime built successfully.\n' "${ffmpeg_version}" > "${stamp_path}"
+if [[ "${runtime_tag}" == "9" ]]; then
+    printf 'Staged Big Screen GPL FFmpeg with x264 fallback at %s\n' \
+        "${install_root}"
+else
+    printf 'Staged Big Screen LGPL FFmpeg at %s\n' "${install_root}"
+fi

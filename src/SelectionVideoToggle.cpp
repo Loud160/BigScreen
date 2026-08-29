@@ -25,6 +25,7 @@
 #include "BigScreen/SettingsMenu.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "GlobalNamespace/BeatmapCharacteristicSO.hpp"
 #include "GlobalNamespace/BeatmapLevel.hpp"
 #include "GlobalNamespace/MissionLevelDetailViewController.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
@@ -440,6 +441,7 @@ namespace BigScreen {
         if(!detailView)
             return;
 
+        soloDetailView_ = detailView;
         CreateTopControls(detailView, false);
         if(!controlsScreen_ || controlsAnchor_.ptr() != detailView || downloadRow_)
             return;
@@ -667,12 +669,61 @@ namespace BigScreen {
             [this]() { ConfirmPendingResolutionDownload(); });
         confirmResolutionButton_->get_gameObject()->SetActive(false);
 
+        transcodeModal_ = BSML::Lite::CreateModal(
+            detailView,
+            {92.0f, 54.0f},
+            []()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(false);
+            },
+            true);
+        transcodeModalText_ = BSML::Lite::CreateText(
+            transcodeModal_,
+            "",
+            TMPro::FontStyles::Normal,
+            3.0f,
+            {0.0f, 7.0f},
+            {84.0f, 32.0f});
+        transcodeModalText_->set_enableWordWrapping(true);
+        transcodeModalText_->set_enableAutoSizing(true);
+        transcodeModalText_->set_fontSizeMin(2.35f);
+        transcodeModalText_->set_fontSizeMax(3.0f);
+        transcodeModalText_->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
+        transcodeModalText_->set_alignment(
+            TMPro::TextAlignmentOptions::Center);
+        BSML::Lite::CreateUIButton(
+            transcodeModal_->get_transform(),
+            "Cancel",
+            {27.0f, -41.0f},
+            {29.0f, 8.0f},
+            [this]()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(false);
+                if(transcodeModal_)
+                    transcodeModal_->Hide();
+            });
+        BSML::Lite::CreateUIButton(
+            transcodeModal_->get_transform(),
+            "Convert Video",
+            {67.0f, -41.0f},
+            {37.0f, 8.0f},
+            [this]()
+            {
+                DownloadManager::Instance().ResolvePendingTranscode(true);
+                if(transcodeModal_)
+                    transcodeModal_->Hide();
+            });
+
         // The common controls were already completed by CreateTopControls.
         // Everything above is intentionally Solo-only download UI.
     }
 
     void SelectionVideoToggle::ForgetUi()
     {
+        if(DownloadManager::Instance().Snapshot().state ==
+           DownloadState::AwaitingConfirmation)
+            DownloadManager::Instance().ResolvePendingTranscode(false);
         // The menu scene owns the detail-view children and destroys them
         // normally, but the floating controls canvas is scene-root and ours:
         // destroy it here so a retained-then-recreated detail view cannot
@@ -690,6 +741,7 @@ namespace BigScreen {
         }
         controlsScreen_ = nullptr;
         controlsAnchor_ = nullptr;
+        soloDetailView_ = nullptr;
         controlsRequireTopScreen_ = false;
         controlsPositionPending_ = false;
         controlsVisibleRequested_ = false;
@@ -703,6 +755,8 @@ namespace BigScreen {
         downloadStatusLayout_ = nullptr;
         resolutionModal_ = nullptr;
         resolutionModalText_ = nullptr;
+        transcodeModal_ = nullptr;
+        transcodeModalText_ = nullptr;
         resolutionButtons_.clear();
         displayedResolutionHeights_.clear();
         confirmResolutionButton_ = nullptr;
@@ -879,6 +933,7 @@ namespace BigScreen {
         // global switch itself never depends on which level is selected.
         if(levelId == selectedLevelId_)
         {
+            SynchronizeSelectedBeatmapPreview(true);
             RefreshUi();
             return;
         }
@@ -900,11 +955,46 @@ namespace BigScreen {
             : VideoDescriptor{};
         inMapEnabled_ = Settings::Instance().VideoEnabled();
         playback.Prepare(level);
+        SynchronizeSelectedBeatmapPreview(false);
         selectedLevelHasVideo_ = playback.HasPreparedVideo();
         RefreshUi();
 
         if(selectedLevelHasVideo_ && inMapEnabled_ && IsMenuPreviewEnabled())
             playback.Start(PlaybackContext::MenuPreview);
+    }
+
+    void SelectionVideoToggle::SynchronizeSelectedBeatmapPreview(
+        bool restartActivePreview)
+    {
+        if(!selectedLevel_ || !soloDetailView_)
+            return;
+
+        // CORDL's generated BeatmapKey/characteristic accessors are not const,
+        // even though this is a read-only synchronization pass.
+        auto key = soloDetailView_->get_beatmapKey();
+        if(!key.IsValid() || !key.beatmapCharacteristic || !key.levelId)
+            return;
+        const std::string keyLevelId(key.levelId);
+        if(keyLevelId != selectedLevelId_)
+            return;
+
+        const auto serializedName =
+            key.beatmapCharacteristic->get_serializedName();
+        if(!serializedName)
+            return;
+
+        auto& playback = PlaybackSession::Instance();
+        const bool wasActive = playback.IsMenuPreviewActive();
+        const bool changed = playback.ConfigurePreviewBeatmap(
+            std::string(serializedName),
+            key.difficulty.value__);
+        if(changed && restartActivePreview && wasActive &&
+           selectedLevelHasVideo_ && inMapEnabled_ && IsMenuPreviewEnabled())
+        {
+            playback.Start(PlaybackContext::MenuPreview);
+            BigScreen::BigScreenLogger.info(
+                "Rebuilt menu video preview for the newly selected difficulty");
+        }
     }
 
     void SelectionVideoToggle::ApplyGlobalVideoEnabled(bool enabled)
@@ -1458,8 +1548,17 @@ namespace BigScreen {
         {
             if(auto notice = DownloadManager::Instance().TakeDownloadNotice())
             {
-                ErrorManager::Instance().ReportUserVisible(
-                    notice->title, notice->message);
+                if(notice->offerTranscode && transcodeModal_ &&
+                   transcodeModalText_)
+                {
+                    transcodeModalText_->set_text(notice->message);
+                    ShowModalInFront(transcodeModal_);
+                }
+                else
+                {
+                    ErrorManager::Instance().ReportUserVisible(
+                        notice->title, notice->message);
+                }
             }
         }
         const auto snapshot = DownloadManager::Instance().Snapshot();
@@ -1511,7 +1610,12 @@ namespace BigScreen {
             BSML::Lite::SetButtonText(
                 downloadButton_.ptr(), "Cancel");
             downloadStatus_->set_color({1.0f, 0.86f, 0.25f, 1.0f});
-            if(snapshot.state == DownloadState::Preparing)
+            if(snapshot.state == DownloadState::AwaitingConfirmation)
+            {
+                downloadStatus_->set_text(
+                    "Waiting for conversion confirmation...");
+            }
+            else if(snapshot.state == DownloadState::Preparing)
             {
                 if(snapshot.totalBytes)
                 {
@@ -1519,7 +1623,9 @@ namespace BigScreen {
                         snapshot.downloadedBytes,
                         snapshot.totalBytes);
                     downloadStatus_->set_text(
-                        "Preparing video for playback " +
+                        (snapshot.message.empty()
+                            ? "Preparing video for playback"
+                            : snapshot.message) + " " +
                         std::to_string(static_cast<int>(
                             std::round(progress * 100.0f))) + "%");
                 }

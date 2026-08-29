@@ -119,6 +119,8 @@ download_manager_source = (root / "src/DownloadManager.cpp").read_text(
 video_normalizer_source = (
     root / "src/VideoContainerNormalizer.cpp"
 ).read_text(encoding="utf-8")
+video_transcoder_source = (root / "src/VideoTranscoder.cpp").read_text(
+    encoding="utf-8")
 frame_decoder_source = (root / "src/FrameDecoder.cpp").read_text(
     encoding="utf-8")
 frame_decoder_facade = (root / "src/FrameDecoderFacade.cpp").read_text(
@@ -248,6 +250,10 @@ showcase_timeline_source = (root / "src/UpDownShowcaseTimeline.cpp").read_text(
 )
 screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
     encoding="utf-8"
+)
+assert "RenderTexture::set_active(gpuTexture_);" in screen_surface_source
+assert "GL::Clear(true, true, UnityEngine::Color::get_black());" in (
+    screen_surface_source
 )
 cinema_environment_source = (root / "src/CinemaEnvironment.cpp").read_text(
     encoding="utf-8"
@@ -423,7 +429,7 @@ assert "PresentBrowserMetadataDialog" in library_menu_source
 assert "ShowModalInFront(browserMetadataModal_)" in library_menu_source
 assert "Cinema JSON recovered" in library_menu_source
 assert "coverImage->get_gameObject()->SetActive(hasVideo)" in library_menu_source
-assert "hasMetadataIssue && hasVideo ? -22.5f" in library_menu_source
+assert "hasVideo ? -8.8f : -0.4f" in library_menu_source
 for runtime_source_path in list((root / "src").glob("*.cpp")) + list(
         (root / "include").rglob("*.hpp")):
     assert "PaperLogger" not in runtime_source_path.read_text(
@@ -665,6 +671,7 @@ for runtime_notice in (
     "BIGSCREEN-LICENSE.txt",
     "BIGSCREEN-ADDITIONAL-TERMS.md",
     "BIGSCREEN-NOTICE.txt",
+    "X264-GPL-2.0-OR-LATER.txt",
     "OPENSSL-APACHE-2.0.txt",
     "SQLITE-PUBLIC-DOMAIN.txt",
 ):
@@ -675,6 +682,7 @@ for preserved_third_party_term in (
     "Apache License 2.0",
     "Mozilla Public License 2.0",
     "GNU Lesser General Public License 2.1 or later",
+    "GNU General Public License version 2 or later",
     "Unlicense",
     "zlib License",
 ):
@@ -958,6 +966,7 @@ for documented_dependency in (
     "bs-cordl",
     "FFmpeg comparison runtime | 4.4.8",
     "FFmpeg default runtime | 9.0.1",
+    "x264 software H.264 encoder",
     "CPython Android runtime | 3.14.7",
     "QuickJS-NG amalgamation | 0.16.1",
     "yt-dlp | stable 2026.08.19",
@@ -968,10 +977,27 @@ assert "archive_sha256=" in ndk_install
 assert "sha256sum --check --strict" in ndk_install
 assert "archive_sha1=" not in ndk_install
 
-# The release configuration must remain LGPL-only and keep both benchmarked
-# versions reproducible until on-device evidence selects the replacement.
-for forbidden in ("--enable-gpl", "--enable-version3", "--enable-nonfree"):
-    assert forbidden not in re.sub(r"#[^\n]*", "", ffmpeg_build)
+# FFmpeg 4 remains the decoder/remux-only LGPL comparison runtime. FFmpeg 9 is
+# deliberately GPL-configured because its explicit last-resort software H.264
+# encoder is the pinned x264 implementation. Version-3 and nonfree components
+# remain forbidden in both recipes.
+uncommented_ffmpeg_build = re.sub(r"#[^\n]*", "", ffmpeg_build)
+for forbidden in ("--enable-version3", "--enable-nonfree"):
+    assert forbidden not in uncommented_ffmpeg_build
+assert "--enable-gpl" in uncommented_ffmpeg_build
+assert "--enable-libx264" in uncommented_ffmpeg_build
+assert "--enable-encoder=h264_mediacodec" in ffmpeg_build
+assert "--enable-encoder=libx264" in ffmpeg_build
+assert 'x264_commit="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"' in (
+    ffmpeg_build
+)
+assert 'x264_sha256="cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9"' in (
+    ffmpeg_build
+)
+assert 'if [[ "${runtime_tag}" != "9" ]]' in ffmpeg_build
+assert "The comparison FFmpeg 4.4 runtime must remain LGPL-only" in (
+    ffmpeg_build
+)
 for version in ("4.4.8", "9.0.1"):
     assert version in ffmpeg_build
     assert version in cmake
@@ -1006,7 +1032,7 @@ for required_config_gate in (
     assert required_config_gate in ffmpeg_build
 assert "VideoContainerNormalizer::PrepareDownloadedVideo" in download_manager_source
 assert '"video_container_prepared"' in download_manager_source
-assert '"remuxed_mpegts_to_mp4"' in download_manager_source
+assert '"remuxed_to_mp4"' in download_manager_source
 assert "OperationInProgress()" in download_manager_header
 assert "bool containerPreparation = false" in download_manager_header
 assert "snapshot_.containerPreparation = true" in download_manager_source
@@ -1017,9 +1043,30 @@ assert "constexpr bool ForceHlsRemuxTest = false;" in download_manager_source
 assert '"forceHlsRemuxTest", ForceHlsRemuxTest, allocator);' in (
     download_manager_source
 )
+assert "fallback_mode = bool(job.get('fallbackMode', False))" in (
+    download_manager_source
+)
+assert '"fallbackMode", true, fallbackAllocator);' in download_manager_source
+assert '"BS-DL-PREP-FALLBACK-001"' in download_manager_source
 assert "av_interleaved_write_frame" in video_normalizer_source
 assert "CanDecodeSoftwareFrame" in video_normalizer_source
+assert "avcodec_send_packet(context, nullptr)" in video_normalizer_source
+assert "drain output and retry this same packet" in video_normalizer_source
+assert 'MetadataEquals(input, "major_brand", "dash")' in video_normalizer_source
 assert "SoftwareDecoderRequired" in video_normalizer_source
+assert "CreateVideoTranscoder9Backend" in video_transcoder_source
+assert "VideoTranscoder.cpp" in cmake
+assert "list(FILTER cpp_file_list EXCLUDE REGEX" in cmake
+assert "ResolvePendingTranscode" in download_manager_source
+assert "publicationSourcePath = preparedVideoPath;" in download_manager_source
+assert 'request.origin,\n                            ".mp4")' in download_manager_source
+assert "stored.codec = publishedProbe.codec;" in download_manager_source
+assert "stored.durationSeconds = publishedProbe.durationSeconds;" in (
+    download_manager_source
+)
+assert "offerTranscode = false" in download_manager_header
+assert "h264_mediacodec" in video_transcoder_source
+assert "libx264" in video_transcoder_source
 for runtime_tag in ("44", "9"):
     assert f"libavformat-bigscreen{runtime_tag}.so" in cmake
     assert f"libavcodec-bigscreen{runtime_tag}.so" in cmake
@@ -1035,6 +1082,7 @@ assert "BIGSCREEN9_LIB" in ffmpeg_elf_audit
 assert "OtherNamespace" in ffmpeg_elf_audit
 assert "CreateFrameDecoder44Backend" in ffmpeg_elf_audit
 assert "CreateFrameDecoder9Backend" in ffmpeg_elf_audit
+assert "CreateVideoTranscoder9Backend" in ffmpeg_elf_audit
 assert "CreateFrameDecoder44Backend" in frame_decoder_facade
 assert "CreateFrameDecoder9Backend" in frame_decoder_facade
 assert "Settings::Instance().UseFfmpeg9()" in frame_decoder_facade
@@ -1382,6 +1430,7 @@ for clean_install_runtime in (
     "yt-dlp-shipped",
     "runtime-manifest.json",
     "bigscreen_jsc_provider.py",
+    "X264-GPL-2.0-OR-LATER.txt",
     "lib-dynload",
     "fileCopies",
 ):
@@ -1702,6 +1751,17 @@ assert "const int row = levelCell->get_idx();" in visible_row_refresh_body
 assert "auto* cellInfo = list_->data[row];" in visible_row_refresh_body
 assert "nameText->set_text(cellInfo->text);" in visible_row_refresh_body
 assert "cellInfo->subText ? cellInfo->subText : \"\"" in visible_row_refresh_body
+assert "if(updateTextLayout)" in visible_row_refresh_body
+# HMUI owns the native title/author geometry. Reapplying custom TMP transforms
+# after returning from the editor makes retained no-video rows snap back to the
+# native layout on their first hover, even though their content is correct.
+text_refresh_body = visible_row_refresh_body.split(
+    "if(updateTextLayout)", 1
+)[1].split("RefreshRowVideoThumbnail", 1)[0]
+assert "set_anchorMin" not in text_refresh_body
+assert "set_anchorMax" not in text_refresh_body
+assert "set_anchoredPosition" not in text_refresh_body
+assert "set_sizeDelta" not in text_refresh_body
 # The final full reload must happen after HMUI reports the retained browser as
 # active; reloading only during ShowBrowser is overwritten by the side-panel
 # transition. Preserve position while retaining the existing visible-row pass
@@ -1713,8 +1773,26 @@ assert "scrollView->ScrollTo(browserReturnScrollPosition_, false);" in (
     library_menu_source
 )
 assert "browserTableReloadPending_ = false;" in library_menu_source
+active_browser_reload = library_menu_source.split(
+    "if(browserTableReloadPending_ && !editorVisible_", 1
+)[1].split("browserTableReloadPending_ = false;", 1)[0]
+assert active_browser_reload.index("tableView->ReloadData();") < (
+    active_browser_reload.index("tableView->ClearSelection();")
+)
+assert active_browser_reload.index("tableView->ClearSelection();") < (
+    active_browser_reload.index("RefreshVisibleRowPresentation();")
+)
 assert "LogVisibleRowState" not in library_menu_source
 assert "thumbnailTickCounter_" in library_menu_source
+assert "TableView_LayoutCellForIdx" in main_source
+assert "NotifySongListCellBound(self);" in main_source
+assert "RefreshVisibleRowPresentation(false);" in library_menu_source
+thumbnail_refresh_body = library_menu_source.split(
+    "void VideoLibraryMenu::RefreshVisibleRowThumbnails()", 1
+)[1].split("void VideoLibraryMenu::NotifySongListCellBound", 1)[0]
+assert "nameText->set_text" not in thumbnail_refresh_body
+assert "authorText->set_text" not in thumbnail_refresh_body
+assert "thumbnailTickCounter_ >= 9" not in library_menu_source
 assert settings_menu_source.count("UnityEngine::Vector2{42, 8}") >= 2
 assert "BSML::Lite::SetButtonTextSize(updaterButton_, 2.6f);" in settings_menu_source
 assert "BSML::Lite::SetButtonTextSize(stableUpdaterButton_, 2.6f);" in settings_menu_source
@@ -1914,7 +1992,9 @@ assert select_level.index("ShowEditor();") < (
     select_level.index("OpenEditorNotice();")
 )
 assert "bool VideoLibraryMenu::OpenEditorForLevelId(" in library_menu_source
-assert "std::string(candidate.level->levelID) == levelId" in library_menu_source
+assert "candidate.levelId == levelId" in library_menu_source
+assert "SongCore::API::Loading::GetLevelByLevelID(" in library_menu_source
+assert "repository->GetBeatmapLevelById(" in library_menu_source
 open_editor_notice = library_menu_source.split(
     "void VideoLibraryMenu::OpenEditorNotice()", 1
 )[1].split("void VideoLibraryMenu::CloseEditorNotice()", 1)[0]
@@ -1976,6 +2056,7 @@ assert show_browser.index("CloseEditorNotice();") < (
 deactivate_video_library = library_menu_source.split(
     "void VideoLibraryMenu::Deactivate()", 1
 )[1].split("void VideoLibraryMenu::StopActivePreview()", 1)[0]
+assert "list_->tableView->ClearSelection();" in deactivate_video_library
 assert deactivate_video_library.index("CloseEditorNotice();") < (
     deactivate_video_library.index("editorVisible_ = false;")
 )
@@ -2054,12 +2135,40 @@ fit_toggle_callback = library_menu_source.split(
 assert "PublishEditorNotice(" in fit_toggle_callback
 rate_callback = library_menu_source.split(
     'rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1
-)[1].split('offsetSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
+)[1].split('offsetSetting_ = BSML::Lite::CreateSliderSetting(', 1)[0]
 assert "PublishEditorNotice(message.str());" in rate_callback
+assert '"Playback Speed", 2, 0.01f' in rate_callback
 offset_callback = library_menu_source.split(
-    'offsetSetting_ = BSML::Lite::CreateIncrementSetting(', 1
+    'offsetSetting_ = BSML::Lite::CreateSliderSetting(', 1
 )[1].split('blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1)[0]
 assert "PublishEditorNotice(message.str());" in offset_callback
+assert '"Video Playback Offset", 0.001f' in offset_callback
+assert "offsetSetting_->digits = 2;" in offset_callback
+assert "MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);" in (
+    library_menu_source
+)
+assert library_menu_source.count("ExtendTimingControlRight(") >= 5
+assert "void VideoLibraryMenu::ResetPlaybackRate()" in library_menu_source
+assert "void VideoLibraryMenu::ResetVideoOffset()" in library_menu_source
+for timing_reset_body in (
+    library_menu_source.split(
+        "void VideoLibraryMenu::ResetPlaybackRate()", 1
+    )[1].split("void VideoLibraryMenu::ResetVideoOffset()", 1)[0],
+    library_menu_source.split(
+        "void VideoLibraryMenu::ResetVideoOffset()", 1
+    )[1].split("bool VideoLibraryMenu::ApplyFitToSong()", 1)[0],
+):
+    assert "descriptor.mapperDefinition" in timing_reset_body
+    assert "SaveTiming()" in timing_reset_body or "ApplyFitToSong()" in timing_reset_body
+assert "ConfigureTimingResetButton(" in library_menu_source
+assert "NestedHoverHintOverride" in library_menu_source
+assert "urlInput_->_textLengthLimit = 2048;" in library_menu_source
+assert '"YouTube URL or Video ID"' in library_menu_source
+url_probe_body = library_menu_source.split(
+    "void VideoLibraryMenu::BeginUrlProbe()", 1
+)[1].split("void VideoLibraryMenu::BeginDownload()", 1)[0]
+assert "urlInput_->get_text()" in url_probe_body
+assert "NormalizeYouTubeInput(url_)" in url_probe_body
 lead_in_callback = library_menu_source.split(
     'blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1
 )[1].split('timingRows_.push_back(', 1)[0]
@@ -2473,8 +2582,15 @@ library_deactivate = library_menu_source.split(
 assert "SetLibraryPreviewOwnershipActive(true);" in library_refresh
 assert "SetLibraryPreviewOwnershipActive(false);" in library_deactivate
 assert "if(catalogRefreshRequested_ && !catalogPrewarmModelReady_)" in library_refresh
-assert "BeginCatalogRebuild();" in library_refresh
-assert "PrewarmCatalogStep(8);" not in library_refresh
+assert "PrewarmCatalogStep(8);" in library_refresh
+assert "BeginCatalogRebuild();" not in library_refresh
+# Opening the library must advance the same bounded state machine used by the
+# retained-menu warmer. Managed SongCore/Unity metadata stays on its owning
+# thread in small slices; native string sorting is explicitly handed off.
+assert "CaptureCatalogBuildStep(" in library_menu_source
+assert "CatalogSorter().Submit(" in library_menu_source
+assert "CatalogSorter().TryTake(" in library_menu_source
+assert "while(!PrewarmCatalogStep(" not in library_menu_source
 assert "RequestCatalogRefresh();" in showcase_source
 preview_audio_start = library_menu_source.split(
     "void VideoLibraryMenu::StartPreviewAudio()", 1
@@ -2759,6 +2875,12 @@ assert "songCatalogRefreshPending.exchange(" in main_source
 assert "catalogRefreshRequested_ && !editorVisible_" in library_menu_source
 assert "PrewarmCatalogStep(8);" in library_menu_source
 assert "catalog_[catalogPrewarmIndex_++].level" in library_menu_source
+visible_rows_body = library_menu_source.split(
+    "void VideoLibraryMenu::RebuildVisibleRows(", 1
+)[1].split("void VideoLibraryMenu::ChangeFilter", 1)[0]
+assert "CachedRowStatus(" in visible_rows_body
+assert "VideoLibrary::Instance().Describe(" not in visible_rows_body
+assert "duration_cast<std::chrono::microseconds>" in library_menu_source
 screen_preview_source = (root / "src/ScreenPreview.cpp").read_text(
     encoding="utf-8")
 screen_preview_suspend = screen_preview_source.split(

@@ -31,6 +31,7 @@
 #include "BigScreen/QuickJsEngine.hpp"
 #include "BigScreen/QuickJsPythonModule.hpp"
 #include "BigScreen/VideoContainerNormalizer.hpp"
+#include "BigScreen/VideoTranscoderBackend.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -280,6 +281,8 @@ namespace BigScreen {
                 case DownloadState::Probing: return "probing";
                 case DownloadState::ProbeCompleted: return "probe_completed";
                 case DownloadState::Downloading: return "downloading";
+                case DownloadState::AwaitingConfirmation:
+                    return "awaiting_confirmation";
                 case DownloadState::Completed: return "completed";
                 case DownloadState::UpdateAvailable: return "update_available";
                 case DownloadState::UpToDate: return "up_to_date";
@@ -295,6 +298,8 @@ namespace BigScreen {
             if(state == "probing") return DownloadState::Probing;
             if(state == "probe_completed") return DownloadState::ProbeCompleted;
             if(state == "downloading") return DownloadState::Downloading;
+            if(state == "awaiting_confirmation")
+                return DownloadState::AwaitingConfirmation;
             if(state == "completed") return DownloadState::Completed;
             if(state == "update_available") return DownloadState::UpdateAvailable;
             if(state == "up_to_date") return DownloadState::UpToDate;
@@ -874,18 +879,28 @@ try:
     # higher bitrate because it must be normalized after transfer.
     def direct_transport(candidate):
         return 1 if str(candidate.get('protocol') or '').lower() in ('http', 'https') else 0
-    # The internal C++ validation switch sets this job flag when a developer
-    # needs the exact same URL to use an HLS/MPEG-TS transport. Normal builds
-    # leave it false and retain direct-MP4 preference below.
+    # The internal validation switch forces HLS for repeatable developer tests.
+    # Normal recovery sets fallbackMode only after C++ rejects the first staged
+    # container. It excludes that exact format, prefers HLS because remuxing it
+    # is much cheaper than transcoding, then accepts another H.264 transport if
+    # YouTube does not expose HLS at the requested tier.
     force_hls_remux_test = bool(job.get('forceHlsRemuxTest', False))
-    if force_hls_remux_test:
+    fallback_mode = bool(job.get('fallbackMode', False))
+    excluded_format = str(job.get('excludedFormatId') or '')
+    if fallback_mode and excluded_format:
+        selection_pool = [candidate for candidate in selection_pool
+            if str(candidate.get('format_id') or '') != excluded_format]
+        if not selection_pool:
+            raise RuntimeError('Requested format is not available: no alternate H.264 stream exists at the selected tier')
+    if force_hls_remux_test or fallback_mode:
         hls_pool = [candidate for candidate in selection_pool
             if str(candidate.get('protocol') or '').lower().startswith('m3u8')]
-        if not hls_pool:
+        if force_hls_remux_test and not hls_pool:
             raise RuntimeError('HLS remux test requested, but this video has no compatible HLS stream at the selected tier')
-        selection_pool = hls_pool
+        if hls_pool:
+            selection_pool = hls_pool
     chosen = max(selection_pool, key=lambda f: (
-        direct_transport(f) if not force_hls_remux_test else 0,
+        direct_transport(f) if not force_hls_remux_test and not fallback_mode else 0,
         float(f.get('fps') or 0) if within_fps_limit else -float(f.get('fps') or 0),
         float(f.get('tbr') or 0),
         int(f.get('filesize') or f.get('filesize_approx') or 0)))
@@ -980,6 +995,9 @@ try:
         height=chosen.get('height') or 0,
         codec=chosen.get('vcodec') or 'h264',
         requestedHeight=requested_height,
+        formatId=chosen.get('format_id') or '',
+        protocol=chosen.get('protocol') or '',
+        transport=('direct' if direct_transport(chosen) else 'hls'),
         thumbnailPath=published_thumbnail,
         diagnostic=retry_detail.strip(),
         bytes=size,
@@ -2367,6 +2385,10 @@ os.replace(temporary, job['destination'])
         std::filesystem::remove(statusPath);
         std::filesystem::remove(downloaderDiagnosticPath);
         {
+            std::scoped_lock decisionLock(transcodeDecisionMutex_);
+            transcodeDecision_.reset();
+        }
+        {
             std::scoped_lock lock(mutex_);
             statusPath_ = statusPath;
             cancelPath_ = cancelPath;
@@ -3039,7 +3061,25 @@ os.replace(temporary, job['destination'])
                     cancelPath.string());
             return;
         }
+        {
+            std::scoped_lock decisionLock(transcodeDecisionMutex_);
+            if(!transcodeDecision_)
+                transcodeDecision_ = false;
+        }
+        transcodeDecisionWake_.notify_all();
         BigScreen::BigScreenLogger.info("Downloader cancellation requested for {}", levelId);
+    }
+
+    void DownloadManager::ResolvePendingTranscode(bool approved)
+    {
+        {
+            std::scoped_lock lock(transcodeDecisionMutex_);
+            transcodeDecision_ = approved;
+        }
+        transcodeDecisionWake_.notify_all();
+        BigScreen::BigScreenLogger.info(
+            "Last-resort video transcode was {} by the player",
+            approved ? "approved" : "declined");
     }
 
     DownloadSnapshot DownloadManager::Snapshot()
@@ -3074,6 +3114,12 @@ os.replace(temporary, job['destination'])
                     request.levelId, request.origin);
             const auto incomingVideoPath = IncomingSibling(finalPath);
             const auto incomingThumbnailPath = IncomingSibling(thumbnailPath);
+            // The downloader's selected container normally matches finalPath,
+            // but a repair/transcode can produce a new MP4. Keep the physical
+            // source and published identity separate so MP4 bytes are never
+            // committed under a misleading .webm name.
+            auto publicationSourcePath = incomingVideoPath;
+            auto publicationPath = finalPath;
             rapidjson::Document document(rapidjson::kObjectType);
             auto& allocator = document.GetAllocator();
             AddString(document, "sourceUrl", request.sourceUrl, allocator);
@@ -3247,6 +3293,143 @@ os.replace(temporary, job['destination'])
                 return;
             }
 
+            // The first yt-dlp attempt deliberately prefers a direct H.264
+            // MP4. If native validation later rejects that staged container,
+            // rerun the same embedded downloader once while excluding the
+            // rejected format. The Python selector prefers HLS on this pass,
+            // because downloading and stream-remuxing HLS is far faster and
+            // less lossy than decoding and re-encoding the complete video.
+            // This helper is invoked only after Python already ran normally;
+            // runtime-package rollback therefore remains owned by the first
+            // attempt above rather than being duplicated recursively.
+            auto runFallbackDownload = [&](const std::string& excludedFormatId)
+            {
+                std::error_code cleanupError;
+                std::filesystem::remove(incomingVideoPath, cleanupError);
+                cleanupError.clear();
+                std::filesystem::remove(
+                    incomingVideoPath.string() + ".part", cleanupError);
+
+                rapidjson::Document fallbackDocument(rapidjson::kObjectType);
+                auto& fallbackAllocator = fallbackDocument.GetAllocator();
+                AddString(
+                    fallbackDocument, "sourceUrl", request.sourceUrl,
+                    fallbackAllocator);
+                AddString(
+                    fallbackDocument, "finalPath", incomingVideoPath.string(),
+                    fallbackAllocator);
+                AddString(
+                    fallbackDocument, "thumbnailPath",
+                    incomingThumbnailPath.string(), fallbackAllocator);
+                AddString(
+                    fallbackDocument, "statusPath", statusPath_.string(),
+                    fallbackAllocator);
+                AddString(
+                    fallbackDocument, "cancelPath", cancelPath_.string(),
+                    fallbackAllocator);
+                AddString(
+                    fallbackDocument, "ytdlpLogPath",
+                    DiagnosticSessionLogger::Instance().DownloadSessionActive()
+                        ? downloaderDiagnosticPath_.string()
+                        : std::string{},
+                    fallbackAllocator);
+                AddString(
+                    fallbackDocument, "excludedFormatId", excludedFormatId,
+                    fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "explicitContentAllowed", request.explicitContentAllowed,
+                    fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "requestedHeight", request.requestedHeight,
+                    fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "maximumSourceFps", request.maximumSourceFps,
+                    fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "forceHlsRemuxTest", false, fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "fallbackMode", true, fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "reserveBytes",
+                    static_cast<std::uint64_t>(RequiredReserve),
+                    fallbackAllocator);
+                fallbackDocument.AddMember(
+                    "unknownRequiredBytes",
+                    static_cast<std::uint64_t>(1024ull * 1024ull * 1024ull),
+                    fallbackAllocator);
+                rapidjson::StringBuffer fallbackBuffer;
+                rapidjson::Writer<rapidjson::StringBuffer> fallbackWriter(
+                    fallbackBuffer);
+                fallbackDocument.Accept(fallbackWriter);
+
+                {
+                    std::scoped_lock lock(mutex_);
+                    ignoreStatusFile_ = false;
+                    snapshot_.state = DownloadState::Preparing;
+                    snapshot_.containerPreparation = false;
+                    snapshot_.message =
+                        "Trying an alternate H.264 video stream";
+                    snapshot_.downloadedBytes = 0;
+                    snapshot_.totalBytes = 0;
+                    snapshot_.speedBytesPerSecond = 0.0;
+                    snapshot_.etaSeconds = 0.0;
+                }
+                DiagnosticSessionLogger::Instance().DownloadEvent(
+                    "download_fallback_started", "DownloadManager", {
+                        {"levelId", request.levelId},
+                        {"excludedFormatId", excludedFormatId},
+                        {"preference", "hls_then_alternate_h264"}});
+
+                bool fallbackRuntimeFailed = false;
+                std::string fallbackPythonFailure;
+                {
+                    ScopedPythonGil gil;
+                    auto fallbackGlobals = CreatePythonGlobals(
+                        fallbackBuffer.GetString(), fallbackBuffer.GetSize());
+                    PythonObject fallbackResult;
+                    if(fallbackGlobals)
+                    {
+                        const std::string fallbackScript =
+                            std::string(MediaScriptHelpers) + DownloaderScript;
+                        fallbackResult.reset(PyRun_String(
+                            fallbackScript.c_str(), Py_file_input,
+                            fallbackGlobals.get(), fallbackGlobals.get()));
+                    }
+                    if(!fallbackGlobals || !fallbackResult)
+                    {
+                        fallbackPythonFailure = TakePythonExceptionText();
+                        fallbackRuntimeFailed = true;
+                    }
+                }
+                if(fallbackRuntimeFailed)
+                {
+                    BigScreen::BigScreenLogger.error(
+                        "Embedded downloader fallback Python failure:\n{}",
+                        fallbackPythonFailure);
+                    ErrorManager::Instance().RecordError(
+                        "Embedded downloader fallback execution",
+                        fallbackPythonFailure);
+                    DownloadSnapshot failed;
+                    failed.state = DownloadState::Failed;
+                    failed.levelId = request.levelId;
+                    failed.errorCode = "BS-DL-FALLBACK-001";
+                    failed.message =
+                        "BS-DL-FALLBACK-001: Alternate video download failed.";
+                    failed.diagnostic = fallbackPythonFailure;
+                    return failed;
+                }
+
+                RefreshSnapshotFromDisk();
+                DownloadSnapshot fallbackSnapshot;
+                {
+                    std::scoped_lock lock(mutex_);
+                    fallbackSnapshot = snapshot_;
+                    if(fallbackSnapshot.state == DownloadState::Completed)
+                        ignoreStatusFile_ = true;
+                }
+                return fallbackSnapshot;
+            };
+
             DownloadSnapshot terminalSnapshot;
             RefreshSnapshotFromDisk();
             {
@@ -3285,12 +3468,12 @@ os.replace(temporary, job['destination'])
             {
                 const auto preparedVideoPath = std::filesystem::path(
                     incomingVideoPath.string() + ".prepared.mp4");
-                std::error_code stalePreparedError;
-                std::filesystem::remove(
-                    preparedVideoPath, stalePreparedError);
-
-                const auto normalization =
-                    VideoContainerNormalizer::PrepareDownloadedVideo(
+                auto prepareDownloadedVideo = [&]()
+                {
+                    std::error_code stalePreparedError;
+                    std::filesystem::remove(
+                        preparedVideoPath, stalePreparedError);
+                    return VideoContainerNormalizer::PrepareDownloadedVideo(
                         incomingVideoPath,
                         preparedVideoPath,
                         request.requestedHeight,
@@ -3315,55 +3498,339 @@ os.replace(temporary, job['destination'])
                              return std::filesystem::is_regular_file(
                                  cancelPath_, error) && !error;
                          });
+                };
+
+                auto readStatusValue = [&](const char* name)
+                {
+                    std::ifstream stream(statusPath_, std::ios::binary);
+                    const std::string json{
+                        std::istreambuf_iterator<char>(stream), {}};
+                    rapidjson::Document status;
+                    status.Parse(json.data(), json.size());
+                    return ReadString(status, name);
+                };
+
+                auto recordNormalization = [&](const auto& normalization,
+                                               std::string_view attempt)
+                {
+                    const char* normalizationAction = "failed";
+                    switch(normalization.state)
+                    {
+                        case VideoNormalizationState::Ready:
+                            normalizationAction = "validated_container";
+                            break;
+                        case VideoNormalizationState::Remuxed:
+                            normalizationAction = "remuxed_to_mp4";
+                            break;
+                        case VideoNormalizationState::SoftwareDecoderRequired:
+                            normalizationAction = "software_fallback";
+                            break;
+                        case VideoNormalizationState::Cancelled:
+                            normalizationAction = "cancelled";
+                            break;
+                        case VideoNormalizationState::Failed:
+                            break;
+                    }
+                    DiagnosticSessionLogger::Instance().DownloadEvent(
+                        "video_container_prepared",
+                        "VideoContainerNormalizer",
+                        {
+                            {"levelId", request.levelId},
+                            {"attempt", std::string(attempt)},
+                            {"action", normalizationAction},
+                            {"detail", normalization.detail},
+                            {"outputBytes", std::to_string(
+                                normalization.outputBytes)}
+                        });
+                };
+
+                auto normalization = prepareDownloadedVideo();
+                recordNormalization(normalization, "preferred");
+
+                // A structurally questionable direct DASH file must never be
+                // published merely because yt-dlp completed its transfer. If
+                // validation and lossless MP4 repair both failed, retry one
+                // different H.264 representation. The embedded selector uses
+                // HLS first, then another direct stream at the exact requested
+                // tier. Transcoding remains strictly after these fast paths.
+                if(normalization.state == VideoNormalizationState::Failed &&
+                   request.requestedHeight <= 1080)
+                {
+                    const std::string rejectedFormatId =
+                        readStatusValue("formatId");
+                    const std::string preferredFailure = normalization.detail;
+                    terminalSnapshot = runFallbackDownload(rejectedFormatId);
+                    if(terminalSnapshot.state == DownloadState::Completed)
+                    {
+                        normalization = prepareDownloadedVideo();
+                        recordNormalization(normalization, "alternate");
+                    }
+                    else if(terminalSnapshot.state == DownloadState::Failed)
+                    {
+                        terminalSnapshot.errorCode =
+                            "BS-DL-PREP-FALLBACK-001";
+                        terminalSnapshot.message =
+                            "BS-DL-PREP-FALLBACK-001: No playable video stream was found.";
+                        terminalSnapshot.diagnostic =
+                            "Preferred stream validation failed: " +
+                            preferredFailure + " Alternate H.264/HLS attempt "
+                            "failed: " +
+                            (terminalSnapshot.diagnostic.empty()
+                                ? terminalSnapshot.message
+                                : terminalSnapshot.diagnostic);
+                        ErrorManager::Instance().RecordError(
+                            terminalSnapshot.errorCode,
+                            terminalSnapshot.diagnostic);
+                    }
+                }
+
+                if(terminalSnapshot.state == DownloadState::Completed &&
+                   (normalization.state == VideoNormalizationState::Failed ||
+                    normalization.state ==
+                        VideoNormalizationState::SoftwareDecoderRequired))
+                {
+                    std::error_code sizeError;
+                    const auto inputBytes = std::filesystem::file_size(
+                        incomingVideoPath, sizeError);
+                    const auto space = std::filesystem::space(
+                        incomingVideoPath.parent_path(), sizeError);
+                    if(sizeError || inputBytes == 0 ||
+                       space.available < inputBytes + RequiredReserve)
+                    {
+                        terminalSnapshot.state = DownloadState::Failed;
+                        terminalSnapshot.errorCode = "BS-DL-TRANSCODE-SPACE-001";
+                        terminalSnapshot.message =
+                            "BS-DL-TRANSCODE-SPACE-001: More Quest storage is required.";
+                        terminalSnapshot.diagnostic = normalization.detail +
+                            " Transcoding also needs room for a second complete "
+                            "video file plus Big Screen's storage reserve.";
+                    }
+                    else
+                    {
+                        {
+                            std::scoped_lock decisionLock(
+                                transcodeDecisionMutex_);
+                            transcodeDecision_.reset();
+                        }
+                        {
+                            std::scoped_lock lock(mutex_);
+                            ignoreStatusFile_ = true;
+                            snapshot_.state =
+                                DownloadState::AwaitingConfirmation;
+                            snapshot_.containerPreparation = true;
+                            snapshot_.message =
+                                "Waiting for transcode confirmation";
+                            downloadNotice_ = DownloadNotice{
+                                "Video must be converted",
+                                "Big Screen could not repair the direct MP4 or "
+                                "prepare an alternate H.264/HLS stream. It can "
+                                "convert the complete video as a last resort.\n\n"
+                                "Hardware conversion is tried first, with a "
+                                "slower software fallback if needed. This may "
+                                "take several minutes, use significant battery "
+                                "and processing power, and temporarily require "
+                                "space for a second copy of the video.\n\n"
+                                "Convert this video now?",
+                                true};
+                        }
+                        DiagnosticSessionLogger::Instance().DownloadEvent(
+                            "transcode_confirmation_requested",
+                            "DownloadManager",
+                            {
+                                {"levelId", request.levelId},
+                                {"reason", normalization.detail},
+                                {"inputBytes", std::to_string(inputBytes)}
+                            });
+
+                        std::optional<bool> transcodeApproved;
+                        {
+                            std::unique_lock decisionLock(
+                                transcodeDecisionMutex_);
+                            transcodeDecisionWake_.wait_for(
+                                decisionLock,
+                                std::chrono::minutes(5),
+                                [this]() { return transcodeDecision_.has_value(); });
+                            transcodeApproved = transcodeDecision_;
+                        }
+
+                        const bool decisionReceived =
+                            transcodeApproved.has_value();
+                        const bool approved =
+                            transcodeApproved.value_or(false);
+                        if(!approved)
+                        {
+                            terminalSnapshot.state = decisionReceived
+                                ? DownloadState::Cancelled
+                                : DownloadState::Failed;
+                            terminalSnapshot.errorCode = decisionReceived
+                                ? "BS-DL-CANCELLED"
+                                : "BS-DL-TRANSCODE-TIMEOUT-001";
+                            terminalSnapshot.message = decisionReceived
+                                ? "Video conversion cancelled."
+                                : "BS-DL-TRANSCODE-TIMEOUT-001: Video conversion was not confirmed.";
+                            terminalSnapshot.diagnostic = normalization.detail;
+                        }
+                        else
+                        {
+                            {
+                                std::scoped_lock lock(mutex_);
+                                snapshot_.state = DownloadState::Preparing;
+                                snapshot_.message =
+                                    "Converting video for playback";
+                                snapshot_.downloadedBytes = 0;
+                                snapshot_.totalBytes = inputBytes;
+                            }
+                            std::error_code preparedCleanup;
+                            std::filesystem::remove(
+                                preparedVideoPath, preparedCleanup);
+                            auto transcoder = CreateVideoTranscoder9Backend();
+                            const auto transcode = transcoder
+                                ? transcoder->TranscodeToH264Mp4(
+                                    incomingVideoPath,
+                                    preparedVideoPath,
+                                    modloader_jvm,
+                                    [this](std::uint64_t completed,
+                                           std::uint64_t total)
+                                    {
+                                        std::scoped_lock lock(mutex_);
+                                        snapshot_.state =
+                                            DownloadState::Preparing;
+                                        snapshot_.containerPreparation = true;
+                                        snapshot_.message =
+                                            "Converting video for playback";
+                                        snapshot_.downloadedBytes = completed;
+                                        snapshot_.totalBytes = total;
+                                        snapshot_.speedBytesPerSecond = 0.0;
+                                        snapshot_.etaSeconds = 0.0;
+                                    },
+                                    [this]()
+                                    {
+                                        std::error_code error;
+                                        return std::filesystem::is_regular_file(
+                                            cancelPath_, error) && !error;
+                                    })
+                                : VideoTranscodeResult{
+                                    false,
+                                    false,
+                                    VideoTranscodeEncoder::None,
+                                    0,
+                                    {},
+                                    "The FFmpeg 9 transcoder backend could not be created."};
+
+                            if(transcode.completed)
+                            {
+                                const auto validationPath =
+                                    std::filesystem::path(
+                                        preparedVideoPath.string() +
+                                        ".validation.mp4");
+                                const auto validation =
+                                    VideoContainerNormalizer::PrepareDownloadedVideo(
+                                        preparedVideoPath,
+                                        validationPath,
+                                        request.requestedHeight,
+                                        {},
+                                        [this]()
+                                        {
+                                            std::error_code error;
+                                            return std::filesystem::is_regular_file(
+                                                cancelPath_, error) && !error;
+                                        });
+                                std::filesystem::remove(
+                                    validationPath, preparedCleanup);
+                                if(validation.state ==
+                                   VideoNormalizationState::Ready)
+                                {
+                                    publicationSourcePath = preparedVideoPath;
+                                    publicationPath =
+                                        VideoLibrary::Instance().AllocateVideoPath(
+                                            request.levelId,
+                                            request.origin,
+                                            ".mp4");
+                                    normalization.state =
+                                        VideoNormalizationState::Ready;
+                                    normalization.outputBytes =
+                                        transcode.outputBytes;
+                                    normalization.detail = transcode.encoder ==
+                                            VideoTranscodeEncoder::AndroidMediaCodec
+                                        ? "Converted with Android MediaCodec H.264."
+                                        : "Converted with the x264 software H.264 fallback.";
+                                    if(!transcode.hardwareFailure.empty())
+                                        normalization.detail +=
+                                            " Hardware encoder failure: " +
+                                            transcode.hardwareFailure;
+                                    softwareDecoderRequired = false;
+                                    DiagnosticSessionLogger::Instance().DownloadEvent(
+                                        "video_transcoded",
+                                        "VideoTranscoder",
+                                        {
+                                            {"levelId", request.levelId},
+                                            {"encoder", transcode.encoder ==
+                                                VideoTranscodeEncoder::AndroidMediaCodec
+                                                    ? "android_mediacodec"
+                                                    : "x264_software"},
+                                            {"detail", normalization.detail},
+                                            {"outputBytes", std::to_string(
+                                                transcode.outputBytes)}
+                                        });
+                                }
+                                else
+                                {
+                                    terminalSnapshot.state =
+                                        DownloadState::Failed;
+                                    terminalSnapshot.errorCode =
+                                        "BS-DL-TRANSCODE-VALIDATE-001";
+                                    terminalSnapshot.message =
+                                        "BS-DL-TRANSCODE-VALIDATE-001: Converted video validation failed.";
+                                    terminalSnapshot.diagnostic =
+                                        validation.detail;
+                                }
+                            }
+                            else if(transcode.cancelled)
+                            {
+                                terminalSnapshot.state =
+                                    DownloadState::Cancelled;
+                                terminalSnapshot.errorCode =
+                                    "BS-DL-CANCELLED";
+                                terminalSnapshot.message =
+                                    "Video conversion cancelled.";
+                                terminalSnapshot.diagnostic =
+                                    transcode.detail;
+                            }
+                            else
+                            {
+                                terminalSnapshot.state = DownloadState::Failed;
+                                terminalSnapshot.errorCode =
+                                    "BS-DL-TRANSCODE-001";
+                                terminalSnapshot.message =
+                                    "BS-DL-TRANSCODE-001: Video conversion failed.";
+                                terminalSnapshot.diagnostic = transcode.detail;
+                                ErrorManager::Instance().RecordError(
+                                    terminalSnapshot.errorCode,
+                                    transcode.detail);
+                            }
+                        }
+                    }
+                }
 
                 // Record the container-preparation outcome independently of
-                // the final download result. This proves whether a transfer
-                // arrived as a directly usable container, was remuxed from
-                // MPEG-TS, or had to retain the verified software-decoder
-                // fallback without relying on transient in-headset text.
-                const char* normalizationAction = "failed";
-                switch(normalization.state)
-                {
-                    case VideoNormalizationState::Ready:
-                        normalizationAction = "direct_container";
-                        break;
-                    case VideoNormalizationState::Remuxed:
-                        normalizationAction = "remuxed_mpegts_to_mp4";
-                        break;
-                    case VideoNormalizationState::SoftwareDecoderRequired:
-                        normalizationAction = "software_fallback";
-                        break;
-                    case VideoNormalizationState::Cancelled:
-                        normalizationAction = "cancelled";
-                        break;
-                    case VideoNormalizationState::Failed:
-                        break;
-                }
-                DiagnosticSessionLogger::Instance().DownloadEvent(
-                    "video_container_prepared",
-                    "VideoContainerNormalizer",
-                    {
-                        {"levelId", request.levelId},
-                        {"action", normalizationAction},
-                        {"detail", normalization.detail},
-                        {"outputBytes", std::to_string(
-                            normalization.outputBytes)}
-                    });
-
-                if(normalization.state ==
+                // final download result. The alternate transfer may already
+                // have produced a terminal failure/cancellation, in which case
+                // do not overwrite it with the preferred attempt's state.
+                if(terminalSnapshot.state == DownloadState::Completed &&
+                   normalization.state ==
                    VideoNormalizationState::Remuxed)
                 {
-                    // This replaces only the unpublished incoming sibling.
-                    // The currently assigned video remains protected by the
-                    // separate transaction used during final publication.
-                    StagedFileReplacement preparedReplacement(
-                        preparedVideoPath, incomingVideoPath);
-                    preparedReplacement.Promote();
-                    preparedReplacement.Commit();
+                    publicationSourcePath = preparedVideoPath;
+                    publicationPath =
+                        VideoLibrary::Instance().AllocateVideoPath(
+                            request.levelId,
+                            request.origin,
+                            ".mp4");
                     BigScreen::BigScreenLogger.info(
-                        "Normalized downloaded MPEG-TS into a seek-safe MP4");
+                        "Normalized downloaded video into a seek-safe MP4");
                 }
-                else if(normalization.state ==
+                else if(terminalSnapshot.state == DownloadState::Completed &&
+                        normalization.state ==
                         VideoNormalizationState::SoftwareDecoderRequired)
                 {
                     softwareDecoderRequired = true;
@@ -3375,14 +3842,16 @@ os.replace(temporary, job['destination'])
                         "BS-DL-PREP-SW-001",
                         normalization.detail);
                 }
-                else if(normalization.state ==
+                else if(terminalSnapshot.state == DownloadState::Completed &&
+                        normalization.state ==
                         VideoNormalizationState::Cancelled)
                 {
                     terminalSnapshot.state = DownloadState::Cancelled;
                     terminalSnapshot.message =
                         "Video preparation cancelled. Select Resume to download it again.";
                 }
-                else if(normalization.state ==
+                else if(terminalSnapshot.state == DownloadState::Completed &&
+                        normalization.state ==
                         VideoNormalizationState::Failed)
                 {
                     terminalSnapshot.state = DownloadState::Failed;
@@ -3400,7 +3869,7 @@ os.replace(temporary, job['destination'])
                     std::error_code preparedSizeError;
                     terminalSnapshot.downloadedBytes =
                         std::filesystem::file_size(
-                            incomingVideoPath, preparedSizeError);
+                            publicationSourcePath, preparedSizeError);
                     terminalSnapshot.totalBytes = preparedSizeError
                         ? 0
                         : terminalSnapshot.downloadedBytes;
@@ -3413,69 +3882,98 @@ os.replace(temporary, job['destination'])
                 const std::string json{std::istreambuf_iterator<char>(stream), {}};
                 rapidjson::Document status;
                 status.Parse(json.data(), json.size());
-                StoredVideo stored;
-                stored.sourceUrl = request.sourceUrl;
-                stored.fileName = finalPath.filename().string();
-                stored.title = ReadString(status, "title");
-                stored.codec = ReadString(status, "codec");
-                stored.offsetSeconds = request.offsetSeconds;
-                stored.playbackRate = request.playbackRate;
-                stored.fitToSong = request.fitToSong;
-                stored.blackDuringLeadIn = request.blackDuringLeadIn;
-                stored.durationSeconds = ReadNumber(status, "duration");
-                stored.bytes = terminalSnapshot.totalBytes;
-                stored.width = static_cast<int>(ReadNumber(status, "width"));
-                stored.height = static_cast<int>(ReadNumber(status, "height"));
-
-                // Promote only after yt-dlp has published a complete, probed
-                // file. The transactions roll back automatically if either
-                // filesystem publication or the manifest update throws.
-                BigScreen::BigScreenLogger.info(
-                    "Publishing downloaded video file for {}",
-                    request.levelId);
-                StagedFileReplacement videoReplacement(
-                    incomingVideoPath, finalPath);
-                videoReplacement.Promote();
-                std::optional<StagedFileReplacement> thumbnailReplacement;
-                std::error_code thumbnailError;
-                if(std::filesystem::is_regular_file(
-                       incomingThumbnailPath, thumbnailError) &&
-                   !thumbnailError)
+                const auto publishedProbe =
+                    VideoLibrary::Instance().InspectLocalVideo(
+                        publicationSourcePath);
+                if(!publishedProbe.compatible)
                 {
-                    thumbnailReplacement.emplace(
-                        incomingThumbnailPath, thumbnailPath);
-                    thumbnailReplacement->Promote();
+                    terminalSnapshot.state = DownloadState::Failed;
+                    terminalSnapshot.errorCode = "BS-DL-PUBLISH-PROBE-001";
+                    terminalSnapshot.message =
+                        "BS-DL-PUBLISH-PROBE-001: Prepared video validation failed.";
+                    terminalSnapshot.diagnostic = publishedProbe.problem;
+                    ErrorManager::Instance().RecordError(
+                        terminalSnapshot.errorCode,
+                        terminalSnapshot.diagnostic);
                 }
-                VideoLibrary::Instance().CommitDownload(
-                    request.levelId,
-                    request.songName,
-                    request.songAuthor,
-                    request.origin,
-                    std::move(stored));
-                BigScreen::BigScreenLogger.info(
-                    "Committed downloaded video manifest for {}",
-                    request.levelId);
-                videoReplacement.Commit();
-                if(thumbnailReplacement)
-                    thumbnailReplacement->Commit();
-                terminalSnapshot.thumbnailPath =
-                    Utility::IsRegularFile(thumbnailPath)
-                        ? thumbnailPath.string()
-                        : std::string{};
-                const auto diagnostic = ReadString(status, "diagnostic");
-                if(!diagnostic.empty())
-                    BigScreen::BigScreenLogger.warn(
-                        "Video download completed with a non-fatal warning: {}",
-                        diagnostic);
 
-                if(softwareDecoderRequired)
+                if(terminalSnapshot.state == DownloadState::Completed)
                 {
-                    std::scoped_lock lock(mutex_);
-                    downloadNotice_ = DownloadNotice{
-                        "Software video decoding required",
-                        "Big Screen could not prepare this video for hardware decoding. "
-                        "It can still play using software decoding, but the video frame rate "
-                        "or gameplay performance may be reduced."};
+                    StoredVideo stored;
+                    stored.sourceUrl = request.sourceUrl;
+                    stored.fileName = publicationPath.filename().string();
+                    stored.title = ReadString(status, "title");
+                    // The durable manifest must describe the file that will
+                    // actually be opened, not yt-dlp's original stream after
+                    // remuxing or transcoding changed its container/codec.
+                    stored.codec = publishedProbe.codec;
+                    stored.offsetSeconds = request.offsetSeconds;
+                    stored.playbackRate = request.playbackRate;
+                    stored.fitToSong = request.fitToSong;
+                    stored.blackDuringLeadIn = request.blackDuringLeadIn;
+                    stored.durationSeconds = publishedProbe.durationSeconds;
+                    stored.bytes = publishedProbe.bytes;
+                    stored.width = publishedProbe.width;
+                    stored.height = publishedProbe.height;
+
+                    BigScreen::BigScreenLogger.info(
+                        "Publishing downloaded video file for {}",
+                        request.levelId);
+                    StagedFileReplacement videoReplacement(
+                        publicationSourcePath, publicationPath);
+                    videoReplacement.Promote();
+                    std::optional<StagedFileReplacement> thumbnailReplacement;
+                    std::error_code thumbnailError;
+                    if(std::filesystem::is_regular_file(
+                           incomingThumbnailPath, thumbnailError) &&
+                       !thumbnailError)
+                    {
+                        thumbnailReplacement.emplace(
+                            incomingThumbnailPath, thumbnailPath);
+                        thumbnailReplacement->Promote();
+                    }
+                    VideoLibrary::Instance().CommitDownload(
+                        request.levelId,
+                        request.songName,
+                        request.songAuthor,
+                        request.origin,
+                        std::move(stored));
+                    BigScreen::BigScreenLogger.info(
+                        "Committed downloaded video manifest for {}",
+                        request.levelId);
+                    videoReplacement.Commit();
+                    if(thumbnailReplacement)
+                        thumbnailReplacement->Commit();
+                    terminalSnapshot.thumbnailPath =
+                        Utility::IsRegularFile(thumbnailPath)
+                            ? thumbnailPath.string()
+                            : std::string{};
+                    const auto diagnostic = ReadString(status, "diagnostic");
+                    if(!diagnostic.empty())
+                        BigScreen::BigScreenLogger.warn(
+                            "Video download completed with a non-fatal warning: {}",
+                            diagnostic);
+
+                    // A repaired MP4 uses a different unpublished source than
+                    // yt-dlp. Once the transaction is durable, remove only the
+                    // abandoned incoming sibling so it cannot consume a second
+                    // video's worth of storage.
+                    if(publicationSourcePath != incomingVideoPath)
+                    {
+                        std::error_code cleanupError;
+                        std::filesystem::remove(
+                            incomingVideoPath, cleanupError);
+                    }
+
+                    if(softwareDecoderRequired)
+                    {
+                        std::scoped_lock lock(mutex_);
+                        downloadNotice_ = DownloadNotice{
+                            "Software video decoding required",
+                            "Big Screen could not prepare this video for hardware decoding. "
+                            "It can still play using software decoding, but the video frame rate "
+                            "or gameplay performance may be reduced."};
+                    }
                 }
             }
             {
@@ -3495,7 +3993,8 @@ os.replace(temporary, job['destination'])
                 {"totalBytes", std::to_string(terminalSnapshot.totalBytes)}};
             if(terminalState == DownloadState::Completed)
             {
-                terminalFields.emplace_back("outputPath", finalPath.string());
+                terminalFields.emplace_back(
+                    "outputPath", publicationPath.string());
                 diagnostics.DownloadEvent(
                     "download_completed", "DownloadManager", terminalFields);
                 diagnostics.EndDownloadSession("completed", terminalFields);

@@ -143,6 +143,11 @@ namespace BigScreen {
         /// Runs again when song selection is shown because the hierarchy's
         /// final transforms are not guaranteed during construction.
         void PositionControlsRow();
+        /// Reads the authoritative BeatmapKey from Solo's retained detail view
+        /// and resolves any Chroma-authored CinemaScreen preview layout. A
+        /// difficulty-only change may restart the menu decoder so its Unity
+        /// screen group is rebuilt from the newly selected beatmap data.
+        void SynchronizeSelectedBeatmapPreview(bool restartActivePreview);
         /// Captures Beat Saber's already-loaded preview clip immediately
         /// before the nested Big Screen flow replaces it. The same native
         /// preview player can then restart that clip when the user returns to
@@ -158,6 +163,7 @@ namespace BigScreen {
         // and MissionLevelDetailViewController (Campaign). It is used only to
         // locate the active ScreenSystem and its stock top title screen.
         UnityW<UnityEngine::Component> controlsAnchor_ = nullptr;
+        UnityW<GlobalNamespace::StandardLevelDetailView> soloDetailView_ = nullptr;
         // Campaign's detail transform is not in the same coordinate space as
         // Solo's fallback anchor. Until its ScreenSystem top screen is ready,
         // keep the panel hidden and retry rather than placing it far offscreen.
@@ -177,6 +183,8 @@ namespace BigScreen {
         UnityW<UnityEngine::UI::LayoutElement> downloadStatusLayout_ = nullptr;
         UnityW<BSML::ModalView> resolutionModal_ = nullptr;
         UnityW<TMPro::TextMeshProUGUI> resolutionModalText_ = nullptr;
+        UnityW<BSML::ModalView> transcodeModal_ = nullptr;
+        UnityW<TMPro::TextMeshProUGUI> transcodeModalText_ = nullptr;
         std::vector<UnityW<UnityEngine::UI::Button>> resolutionButtons_;
         std::vector<int> displayedResolutionHeights_;
         UnityW<UnityEngine::UI::Button> confirmResolutionButton_ = nullptr;

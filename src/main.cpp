@@ -98,6 +98,8 @@
 #include "System/Collections/Generic/LinkedList_1.hpp"
 #include "System/Collections/Generic/LinkedListNode_1.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "HMUI/TableCell.hpp"
+#include "HMUI/TableView.hpp"
 #include "UnityEngine/Application.hpp"
 #include "UnityEngine/Camera.hpp"
 #include "UnityEngine/Color.hpp"
@@ -1060,6 +1062,23 @@ namespace {
 #endif
 
     MAKE_HOOK_MATCH(
+        TableView_LayoutCellForIdx,
+        &HMUI::TableView::LayoutCellForIdx,
+        void,
+        HMUI::TableView* self,
+        HMUI::TableCell* cell,
+        int index,
+        float offset)
+    {
+        TableView_LayoutCellForIdx(self, cell, index, offset);
+        // HMUI binds only the handful of rows currently visible. Notify Big
+        // Screen after that real virtual-cell event and finish its thumbnail/
+        // inset presentation on the next Unity frame. This replaces the old
+        // nine-frame polling loop that visibly moved titles during hover.
+        BigScreen::VideoLibraryMenu::Instance().NotifySongListCellBound(self);
+    }
+
+    MAKE_HOOK_MATCH(
         BeatmapCallbacksController_TriggerBeatmapEvent,
         &GlobalNamespace::BeatmapCallbacksController::TriggerBeatmapEvent,
         void,
@@ -1551,7 +1570,14 @@ namespace {
                 RestoreShowcaseTrackRings();
                 RestoreShowcaseSidePillars();
                 RestoreShowcaseBackground();
-                BigScreen::PlaybackSession::Instance().Stop();
+                auto& playback = BigScreen::PlaybackSession::Instance();
+                playback.Stop();
+                // RestartLevel reuses the prepared BeatmapLevel and bypasses
+                // the normal transition Init hook that prewarms a fresh
+                // decoder. Reopen it here so BeatmapObjectSpawnController can
+                // recreate CinemaScreen before Chroma's next end-of-frame
+                // environment scan, exactly as it does on the initial play.
+                playback.PrewarmGameplay();
             });
         StandardLevelRestartController_RestartLevel(self);
     }
@@ -1567,7 +1593,12 @@ namespace {
                 RestoreShowcaseTrackRings();
                 RestoreShowcaseSidePillars();
                 RestoreShowcaseBackground();
-                BigScreen::PlaybackSession::Instance().Stop();
+                auto& playback = BigScreen::PlaybackSession::Instance();
+                playback.Stop();
+                // Campaign restarts also retain the prepared level instead of
+                // repeating Mission Init. Keep their Chroma discovery and
+                // decoder lifecycle identical to an initial campaign launch.
+                playback.PrewarmGameplay();
             });
         MissionLevelRestartController_RestartLevel(self);
     }
@@ -1579,6 +1610,17 @@ namespace {
         GlobalNamespace::BeatmapObjectSpawnController* self)
     {
         BeatmapObjectSpawnController_Start(self);
+
+        // Chroma schedules its environment lookup for the end of this frame.
+        // Whether Big Screen's hook is installed inside or outside Chroma's,
+        // this synchronous call completes before that coroutine resumes. It
+        // gives Chroma the canonical CinemaScreen early enough to duplicate
+        // and track, while StartSong remains the playback-clock boundary.
+        BigScreen::ErrorManager::Instance().Guard(
+            "preparing the gameplay video surface for Chroma", []() {
+                BigScreen::PlaybackSession::Instance()
+                    .PrepareGameplaySurfaceForChroma();
+            });
 
         if(!BigScreen::Settings::Instance().ModEnabled() ||
            !BigScreen::Settings::Instance().PerformanceDiagnosticsEnabled() ||
@@ -2078,6 +2120,7 @@ MOD_EXTERN_FUNC void late_load() noexcept
     INSTALL_HOOK(BigScreen::BigScreenLogger, BloomPrePass_OnPreRender);
 #endif
     INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapCallbacksController_TriggerBeatmapEvent);
+    INSTALL_HOOK(BigScreen::BigScreenLogger, TableView_LayoutCellForIdx);
     INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsRotationEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(BigScreen::BigScreenLogger, TrackLaneRingsPositionStepEffectSpawner_HandleBeatmapEvent);
     INSTALL_HOOK(BigScreen::BigScreenLogger, BeatmapObjectSpawnController_Start);

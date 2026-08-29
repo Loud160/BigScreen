@@ -8,10 +8,12 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "BigScreen/VideoEditorNoticeModel.hpp"
@@ -34,7 +36,7 @@ namespace GlobalNamespace {
     class SongPreviewPlayer;
     struct LoadBeatmapLevelDataResult;
 }
-namespace HMUI { class HoverHint; class ImageView; class InputFieldView; class ViewController; }
+namespace HMUI { class HoverHint; class ImageView; class InputFieldView; class TableView; class ViewController; }
 namespace TMPro { class TextMeshProUGUI; }
 namespace System::Threading::Tasks { template<class TResult> class Task_1; }
 namespace UnityEngine { class AudioClip; class AudioSource; class GameObject; class Sprite; }
@@ -47,6 +49,15 @@ namespace BigScreen {
     struct SongLibraryItem {
         GlobalNamespace::BeatmapLevel* level = nullptr;
         SongLibraryGroup group = SongLibraryGroup::Ost;
+        // Snapshot immutable menu metadata once. Re-reading managed IL2CPP
+        // strings while sorting/filtering thousands of rows is unnecessary
+        // interop work and was amplified on large SongCore libraries.
+        std::string levelId;
+        std::string songName;
+        std::string songAuthor;
+        std::string normalizedSongName;
+        std::string normalizedSongAuthor;
+        std::string normalizedSearchText;
     };
 
     /// Owns the contents of two independent right-panel view controllers: a
@@ -94,12 +105,22 @@ namespace BigScreen {
         /// the map's PNG in place. The sprite cache is keyed by path, so the
         /// stale decode must be evicted before the same path is shown again.
         void LocalThumbnailChanged(const std::string& thumbnailPath);
+        /// Called after HMUI lays out a newly bound virtual row. The cell is
+        /// not reliably in the visible collection until layout completes, so
+        /// defer one presentation pass instead of polling and rewriting text
+        /// every few frames (which made titles jump under the pointer).
+        void NotifySongListCellBound(HMUI::TableView* source);
 
     private:
         enum class EditorTransferKind { None, Probe, Download };
+        enum class CatalogBuildPhase { Idle, Repository, SongCore, Sorting };
 
         VideoLibraryMenu() = default;
         void BeginCatalogRebuild();
+        void AddCatalogBuildItem(
+            GlobalNamespace::BeatmapLevel* level,
+            SongLibraryGroup group);
+        void CaptureCatalogBuildStep(std::size_t itemBudget);
         void RebuildCatalog();
         void RebuildVisibleRows(bool preserveScrollPosition = false);
         void SelectRow(int row);
@@ -136,6 +157,11 @@ namespace BigScreen {
         void RemoveOverride(bool deleteFile);
         bool ApplyFitToSong();
         bool SaveTiming();
+        /// Restores one synchronization value to the mapper-authored Cinema
+        /// baseline when present, or to Big Screen's neutral default for maps
+        /// without Cinema timing. The other timing controls remain unchanged.
+        void ResetPlaybackRate();
+        void ResetVideoOffset();
         void OpenEditorNotice();
         void CloseEditorNotice();
         std::optional<VideoEditorNoticeModel::RevisionToken> PublishEditorNotice(
@@ -161,10 +187,14 @@ namespace BigScreen {
         void RefreshDetails();
         void ClearThumbnail();
         /// Rebinds every visible recycled cell from its current table index.
-        /// Big Screen owns both the custom video thumbnail and the text/layout
-        /// presentation, so refreshing only the thumbnail can leave retained
-        /// HMUI cells displaying another row's song until pointer hover.
-        void RefreshVisibleRowPresentation();
+        /// Explicit browser reloads restore title/author text while leaving
+        /// their transforms under HMUI ownership. A TableView cell-bind
+        /// notification passes false so hover/recycling refreshes decorations
+        /// without reassigning text during the highlight transition.
+        void RefreshVisibleRowPresentation(bool updateTextLayout = true);
+        /// Refreshes only asynchronously arriving thumbnail art. It must not
+        /// rewrite TMP text or row geometry during pointer hover.
+        void RefreshVisibleRowThumbnails();
         void StartSelectedPreview();
         void RequestSelectedAudio();
         /// Releases the reference-counted full-song audio acquired for an
@@ -222,8 +252,10 @@ namespace BigScreen {
         BSML::CustomListTableData* list_ = nullptr;
         HMUI::InputFieldView* searchInput_ = nullptr;
         HMUI::InputFieldView* urlInput_ = nullptr;
-        BSML::IncrementSetting* offsetSetting_ = nullptr;
+        BSML::SliderSetting* offsetSetting_ = nullptr;
         BSML::IncrementSetting* rateSetting_ = nullptr;
+        UnityEngine::UI::Button* rateResetButton_ = nullptr;
+        UnityEngine::UI::Button* offsetResetButton_ = nullptr;
         BSML::SliderSetting* playbackScrubber_ = nullptr;
         BSML::ToggleSetting* fitToggle_ = nullptr;
         BSML::ToggleSetting* blackLeadInToggle_ = nullptr;
@@ -259,6 +291,8 @@ namespace BigScreen {
         std::string pendingLocalDeleteLevelId_;
         std::filesystem::path pendingLocalDeletePath_;
         BSML::ModalView* downloadConfirmModal_ = nullptr;
+        BSML::ModalView* transcodeConfirmModal_ = nullptr;
+        TMPro::TextMeshProUGUI* transcodeConfirmationText_ = nullptr;
         UnityEngine::GameObject* storageSpacer_ = nullptr;
         UnityEngine::GameObject* storagePanel_ = nullptr;
         // Timing rows remain visible but locked when a mapper supplied Cinema
@@ -368,10 +402,21 @@ namespace BigScreen {
         // position and perform one definitive reload only after the browser
         // reports active.
         bool browserTableReloadPending_ = false;
+        bool rowPresentationRefreshPending_ = false;
         float browserReturnScrollPosition_ = 0.0f;
         bool catalogRefreshRequested_ = true;
         bool catalogPrewarmModelReady_ = false;
         std::size_t catalogPrewarmIndex_ = 0;
+        // Unity and SongCore objects remain main-thread-only. Their immutable
+        // menu metadata is copied in bounded slices, after which native-only
+        // sorting runs on a worker without touching IL2CPP objects.
+        CatalogBuildPhase catalogBuildPhase_ = CatalogBuildPhase::Idle;
+        std::vector<SongLibraryItem> catalogBuildItems_;
+        std::unordered_set<std::string> catalogBuildIds_;
+        std::size_t catalogBuildPackIndex_ = 0;
+        std::size_t catalogBuildLevelIndex_ = 0;
+        std::size_t catalogBuildSongCoreIndex_ = 0;
+        std::uint64_t catalogBuildGeneration_ = 0;
         int pendingDownloadHeight_ = 0;
     };
 }

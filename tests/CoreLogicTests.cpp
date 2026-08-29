@@ -374,6 +374,16 @@ int main()
     Expect(presentationMisses.Observe(1, 1) == 0,
            "a new playback measurement resets cumulative deadline outcomes");
 
+    Expect(std::abs(
+        ObservedPresentationRate(60.0, 1.0, 60, 100, 93) - 55.8) < 0.0001,
+        "observed video FPS scales the source-aware ceiling by delivered deadlines");
+    Expect(std::abs(
+        ObservedPresentationRate(60.0, 1.0, 60, 2, 4) - 60.0) < 0.0001,
+        "startup uploads cannot make video FPS exceed the source/output ceiling");
+    Expect(std::abs(
+        ObservedPresentationRate(24.0, 1.0, 60, 24, 24) - 24.0) < 0.0001,
+        "a lower-cadence source reports its native rate rather than the output cap");
+
     double nativeDeadlineFraction = 0.0;
     std::uint64_t nativeDeadlines = 0;
     for(int update = 0; update < 360; ++update)

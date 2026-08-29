@@ -27,10 +27,11 @@ namespace BigScreen {
         std::uint64_t outputBytes = 0;
     };
 
-    /// Converts a video-only H.264 MPEG-TS download into a seek-safe MP4
-    /// without decoding or re-encoding its pictures. Direct MP4/WebM inputs
-    /// are validated and returned unchanged. All work runs on the caller's
-    /// background thread; callbacks must therefore remain Unity-free.
+    /// Validates downloaded video containers and converts H.264 MPEG-TS or
+    /// timing-incomplete Google DASH MP4 input into a seek-safe MP4 without
+    /// decoding or re-encoding its pictures. Ordinary direct MP4 input must
+    /// produce a software-decoded probe frame before it is accepted. All work
+    /// runs on the caller's background thread; callbacks must remain Unity-free.
     class VideoContainerNormalizer final {
     public:
         using ProgressCallback =

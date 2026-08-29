@@ -108,6 +108,7 @@ RUNTIME_FILES = (
     "FFMPEG-4.4.8-CHANGES.diff",
     "FFMPEG-9.0.1-BUILD-INFO.txt",
     "FFMPEG-9.0.1-CHANGES.diff",
+    "X264-GPL-2.0-OR-LATER.txt",
     "CERTIFI-MPL-2.0.txt",
     "MPL-2.0.txt",
     "YT-DLP-UNLICENSE.txt",
@@ -654,6 +655,7 @@ def stage_notices() -> None:
         "FFMPEG-4.4.8-CHANGES.diff": ffmpeg44 / "bigscreen-ffmpeg-changes.diff",
         "FFMPEG-9.0.1-BUILD-INFO.txt": ffmpeg9 / "BUILD-INFO.txt",
         "FFMPEG-9.0.1-CHANGES.diff": ffmpeg9 / "bigscreen-ffmpeg-changes.diff",
+        "X264-GPL-2.0-OR-LATER.txt": ffmpeg9 / "COPYING.X264-GPLv2",
         "CERTIFI-MPL-2.0.txt": ROOT / "licenses" / "CERTIFI-MPL-2.0.txt",
         "MPL-2.0.txt": ROOT / "licenses" / "MPL-2.0.txt",
         "YT-DLP-UNLICENSE.txt": ROOT / "licenses" / "YT-DLP-UNLICENSE.txt",
@@ -738,10 +740,12 @@ def validate_elf(build_directory: pathlib.Path = BUILD) -> None:
         if backend not in main_dynamic:
             raise BuildError(f"libbigscreen.so does not require {backend}.")
     runtimes = (
-        ("44", "9", "BIGSCREEN44_LIB", "BIGSCREEN9_LIB", "CreateFrameDecoder44Backend"),
-        ("9", "44", "BIGSCREEN9_LIB", "BIGSCREEN44_LIB", "CreateFrameDecoder9Backend"),
+        ("44", "9", "BIGSCREEN44_LIB", "BIGSCREEN9_LIB",
+         ("CreateFrameDecoder44Backend",)),
+        ("9", "44", "BIGSCREEN9_LIB", "BIGSCREEN44_LIB",
+         ("CreateFrameDecoder9Backend", "CreateVideoTranscoder9Backend")),
     )
-    for tag, other, namespace, other_namespace, factory in runtimes:
+    for tag, other, namespace, other_namespace, factories in runtimes:
         name = f"libbigscreen-ffmpeg{tag}-backend.so"
         path = build_directory / name
         dynamic = readelf(build_directory, path, "-d")
@@ -754,8 +758,9 @@ def validate_elf(build_directory: pathlib.Path = BUILD) -> None:
                 raise BuildError(f"{name} has an incorrect FFmpeg dependency set.")
         if namespace not in versions or other_namespace in versions:
             raise BuildError(f"{name} is not isolated to {namespace}* symbols.")
-        if factory not in symbols:
-            raise BuildError(f"{name} does not export {factory}.")
+        for factory in factories:
+            if factory not in symbols:
+                raise BuildError(f"{name} does not export {factory}.")
     print("Dual FFmpeg backend ELF isolation validated.")
 
 

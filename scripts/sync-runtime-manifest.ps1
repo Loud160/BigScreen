@@ -57,6 +57,7 @@ function Sync-BigScreenRuntimeManifest {
         "FFMPEG-4.4.8-CHANGES.diff",
         "FFMPEG-9.0.1-BUILD-INFO.txt",
         "FFMPEG-9.0.1-CHANGES.diff",
+        "X264-GPL-2.0-OR-LATER.txt",
         "CERTIFI-MPL-2.0.txt",
         "MPL-2.0.txt",
         "YT-DLP-UNLICENSE.txt",

@@ -251,7 +251,7 @@ modules and must not appear as direct `DT_NEEDED` entries in
 `libbigscreen.so`. The build script stages them for packaging without placing
 them in QPM's recursively linked input directory.
 
-`scripts/build-linux.sh` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. `scripts/bootstrap-linux.sh` fetches and hash-checks Android NDK r27d when its verified cache is missing. Each build enables software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV, Matroska/WebM, and MPEG-TS demuxing; the MP4 muxer; the local-file protocol; and `libswscale`. It explicitly omits encoders, GPL, version-3-only, and nonfree components. The build fails if configure silently drops any required decoder, demuxer, muxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container. MPEG-TS demuxing and MP4 muxing let the background downloader normalize an HLS payload by copying its existing H.264 packets into a seek-safe MP4 without re-encoding.
+`scripts/build-linux.sh` stages both FFmpeg 4.4.8 and FFmpeg 9.0.1 by invoking `scripts/build-ffmpeg-lgpl.sh` for each pinned source release. `scripts/bootstrap-linux.sh` fetches and hash-checks Android NDK r27d when its verified cache is missing. Both builds enable software H.264, VP8, and VP9 plus Android MediaCodec H.264, H.265/HEVC, VP8, and VP9; JNI/MediaCodec integration; MP4/MOV, Matroska/WebM, and MPEG-TS demuxing; the MP4 muxer; the local-file protocol; and `libswscale`. The FFmpeg 4.4 comparison remains LGPL-only and encoder-free. The default FFmpeg 9 runtime is GPL-configured and additionally enables Android's MediaCodec H.264 encoder plus one pinned, static x264 software fallback. Version-3-only, nonfree, and unrelated encoders remain disabled. The build fails if configure silently drops any required decoder, encoder, demuxer, muxer, or JNI/MediaCodec support. Matroska support is required because the 1440p downloader deliberately stores VP9 in its native WebM container. MPEG-TS demuxing and MP4 muxing let the background downloader normalize an HLS payload by copying its existing H.264 packets into a seek-safe MP4 without re-encoding.
 
 A clean native build can take several minutes. Ninja's final progress item
 combines the main `libbigscreen.so` link, ThinLTO optimization, debug-symbol
@@ -277,14 +277,17 @@ automatically rebuilds older cached runtimes that do not contain it.
 
 The outputs use separate `-bigscreen44` / `-bigscreen9` SONAME suffixes and `BIGSCREEN44_LIB*` / `BIGSCREEN9_LIB*` symbol-version namespaces. The matching decoder implementation is also linked as `libbigscreen-ffmpeg44-backend.so` or `libbigscreen-ffmpeg9-backend.so`. This separate-backend boundary matters: putting two ordinary FFmpeg call sites directly in one shared object would let both bind to the first runtime despite matching headers. Each backend instead records hard versioned-symbol requirements for exactly one runtime, while an FFmpeg-type-free facade chooses the backend and moves the existing reusable RGBA or Y/U/V frame buffers without an extra frame copy.
 
-For LGPL corresponding-source redistribution, both unmodified archives
+For corresponding-source redistribution, both unmodified FFmpeg archives
 identified in the packaged `FFMPEG-4.4.8-BUILD-INFO.txt` and
 `FFMPEG-9.0.1-BUILD-INFO.txt` records are maintained in the
 [permanent FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1).
 Every public QMOD release must link directly to that source release while it
-distributes these exact FFmpeg builds. The QMOD includes both exact build
-records and generated source diffs. Both upstream archive SHA-256 values and
-all transformations are recorded in `scripts/build-ffmpeg-lgpl.sh`.
+distributes these exact FFmpeg builds. A release containing the GPL-configured
+FFmpeg 9 transcoder must also add the exact pinned x264 source archive named in
+its build record to the permanent source release. The QMOD includes both exact
+build records, generated FFmpeg source diffs, and x264's GPL text. All source
+URLs, revisions, archive SHA-256 values, and transformations are recorded in
+`scripts/build-ffmpeg-lgpl.sh`.
 
 To make a clean dual-runtime build and retain a clearly named comparison QMOD,
 native library, and both reproducibility records, run:
@@ -352,8 +355,9 @@ same archive bytes through WSL and native Linux. It packages:
 - runtime integrity manifest;
 - Big Screen's GPLv3 text, section 7 terms, attribution notice, and the
   QuickJS-NG, CPython, OpenSSL, SQLite, certifi, yt-dlp, and FFmpeg notices;
-- both private LGPL FFmpeg sets (eight FFmpeg libraries), two decoder backend
-  libraries, and both versions' build/source-change records.
+- both private FFmpeg sets (eight FFmpeg libraries), two decoder backend
+  libraries, both versions' build/source-change records, and x264's GPL text
+  for the GPL-configured FFmpeg 9 transcoder runtime.
 
 Inspect the archive before release:
 
@@ -368,7 +372,9 @@ metadata and `NOTICE`. The repository may remain private during development,
 but its matching release source must be publicly accessible when the QMOD is
 publicly distributed. The BSQMods repository consumed by ModsBeforeFriday
 accepts QMOD release metadata, but that packaging mechanism does not replace
-GPL/LGPL source availability obligations.
+GPL/LGPL source availability obligations. A release containing the FFmpeg 9
+transcoder must include the exact pinned x264 archive in the permanent
+corresponding-source assets as well.
 
 For an ELF dependency audit, use the NDK copy of `llvm-readelf` and verify that
 the direct Python dependency list contains `libpython3.14.so` but not

@@ -99,6 +99,10 @@ RECURSE_FILES(c_file_list ${SOURCE_DIR}/*.c)
 # FrameDecoder.cpp is compiled twice below against ABI-matching headers. The
 # ordinary source glob must not also compile it as a third, ambiguous backend.
 list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]FrameDecoder\\.cpp$")
+# VideoTranscoder.cpp uses FFmpeg 9-only encoder APIs and is isolated beside
+# that backend. Compiling it into libbigscreen.so would bind its AV structures
+# to the conservative FFmpeg 4 compatibility runtime.
+list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]VideoTranscoder\\.cpp$")
 
 set(BIGSCREEN_FFMPEG44_DIR
         ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/ffmpeg-lgpl)
@@ -130,7 +134,9 @@ set_target_properties(bigscreen_ffmpeg44_backend PROPERTIES
         OUTPUT_NAME "bigscreen-ffmpeg44-backend"
         POSITION_INDEPENDENT_CODE ON)
 
-add_library(bigscreen_ffmpeg9_backend SHARED ${SOURCE_DIR}/FrameDecoder.cpp)
+add_library(bigscreen_ffmpeg9_backend SHARED
+        ${SOURCE_DIR}/FrameDecoder.cpp
+        ${SOURCE_DIR}/VideoTranscoder.cpp)
 target_compile_definitions(bigscreen_ffmpeg9_backend PRIVATE
         BIGSCREEN_NATIVE_FFMPEG_IMPLEMENTATION=1
         FrameDecoder=FrameDecoder9Backend
@@ -333,10 +339,13 @@ foreach(BIGSCREEN_PYTHON_LIBRARY
             COMMENT "Stage ${BIGSCREEN_PYTHON_LIBRARY}")
 endforeach()
 
-# Big Screen ships both private, minimal LGPL FFmpeg runtimes so the user can
-# select a decoder in Misc and compare the same map without reinstalling a
-# different QMOD. VideoLibrary's compatibility probe intentionally uses the
-# conservative 4.4 headers/runtime; actual playback uses the selected backend.
+# Big Screen ships two private, minimal FFmpeg runtimes so the user can select
+# a decoder in Misc and compare the same map without reinstalling a different
+# QMOD. The 4.4 comparison runtime remains LGPL-only. The default FFmpeg 9
+# runtime is GPL-configured because it also contains the user-approved,
+# last-resort MediaCodec/x264 transcoders. VideoLibrary's compatibility probe
+# intentionally uses the conservative 4.4 headers/runtime; actual playback
+# uses the selected backend.
 message(STATUS "Using switchable private FFmpeg 4.4.8 and 9.0.1 runtimes")
 target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE
         ${BIGSCREEN_FFMPEG44_DIR}/include)

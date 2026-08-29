@@ -117,6 +117,19 @@ namespace BigScreen {
         bool CanPlay() const { return playableConfig.has_value(); }
     };
 
+    /// Lightweight song-browser projection of an already-resolved descriptor.
+    /// Copying complete MapVideoConfig screen/environment vectors for thousands
+    /// of virtual rows defeats caching even when no file I/O occurs.
+    struct VideoLibraryRowStatus {
+        bool hasUserOverride = false;
+        bool canPlay = false;
+        bool canDownload = false;
+        bool mapperMetadataIssue = false;
+        bool mapperMetadataRecovered = false;
+        std::optional<std::string> downloadUrl;
+        std::optional<std::filesystem::path> thumbnailPath;
+    };
+
     /// Result of probing one MP4/WebM found in a user-readable video folder.
     /// Invalid files remain in the list so the UI can explain why they cannot
     /// be selected instead of silently hiding them.
@@ -144,6 +157,11 @@ namespace BigScreen {
 
         void Initialize();
         VideoDescriptor Describe(GlobalNamespace::BeatmapLevel* level) const;
+        /// Returns only an already-resolved descriptor. The song browser uses
+        /// this non-blocking path while its virtualized rows are being built;
+        /// uncached Cinema files continue warming in bounded menu-frame slices.
+        std::optional<VideoLibraryRowStatus> CachedRowStatus(
+            std::string_view levelId) const;
         /// Rebuilds the one-per-session Cinema playlist index and forgets the
         /// cached descriptor for one selected song. This is deliberately an
         /// explicit UI action: Quest never polls map or playlist files while a

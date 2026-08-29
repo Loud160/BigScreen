@@ -69,6 +69,24 @@ share the primary decoded texture and effects, and do not create another decoder
 or texture upload. One config is limited to 32 additional screens as a Quest
 geometry/memory safety boundary.
 
+For Chroma maps, Big Screen also resolves the currently selected characteristic
+and difficulty through legacy or current `Info.dat`, then reads initial
+environment instructions that match PC Cinema's canonical `CinemaScreen`.
+Menu preview supports exact, contains, starts-with, ends-with, and regular-
+expression lookup plus `active`, `duplicate`, world/local position,
+world/local rotation, and transform scale. A duplicate instruction creates
+the requested visible preview screens without moving Cinema's parked source;
+a non-duplicate instruction changes the canonical preview screen itself. The
+same 32-screen safety limit applies. Menu preview intentionally does not
+simulate Chroma animation-track events.
+
+In gameplay, Big Screen does not replace Chroma's beatmap processor. It creates
+the canonical `CinemaScreen` in the loaded gameplay environment before Chroma's
+end-of-frame environment lookup, then reuses that surface when the song starts.
+Chroma remains responsible for the selected difficulty's duplicates, tracks,
+and animation events. Solo and Campaign restart paths repeat decoder/surface
+prewarming so those Chroma-owned screens are discoverable after a restart.
+
 The following picture fields are supported:
 
 - `colorCorrection`: `brightness`, `contrast`, `saturation`, `exposure`,

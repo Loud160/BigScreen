@@ -47,6 +47,19 @@ namespace BigScreen {
             return false;
         }
 
+        bool MetadataEquals(
+            const AVFormatContext* format,
+            const char* key,
+            const char* expected)
+        {
+            if(!format || !key || !expected)
+                return false;
+            const auto* entry = av_dict_get(
+                format->metadata, key, nullptr, AV_DICT_MATCH_CASE);
+            return entry && entry->value &&
+                std::strcmp(entry->value, expected) == 0;
+        }
+
         int OpenVideoInput(
             const std::filesystem::path& path,
             AVFormatContext*& format,
@@ -116,6 +129,29 @@ namespace BigScreen {
                         FfmpegError(status);
                 else
                 {
+                    bool decoderFailed = false;
+                    const auto receiveAvailableFrames = [&]()
+                    {
+                        while(true)
+                        {
+                            const int receiveStatus =
+                                avcodec_receive_frame(context, frame);
+                            if(receiveStatus >= 0)
+                            {
+                                decoded = true;
+                                return;
+                            }
+                            if(receiveStatus == AVERROR(EAGAIN) ||
+                               receiveStatus == AVERROR_EOF)
+                                return;
+                            error =
+                                "The software decoder rejected this stream: " +
+                                FfmpegError(receiveStatus);
+                            decoderFailed = true;
+                            return;
+                        }
+                    };
+
                     int inspectedPackets = 0;
                     while(inspectedPackets < 600 &&
                           av_read_frame(format, packet) >= 0)
@@ -123,20 +159,57 @@ namespace BigScreen {
                         if(packet->stream_index == videoStream)
                         {
                             ++inspectedPackets;
-                            status = avcodec_send_packet(context, packet);
-                            if(status >= 0 || status == AVERROR(EAGAIN))
+                            // FFmpeg retains ownership of an input packet only
+                            // after send_packet accepts it. EAGAIN therefore
+                            // means "drain output and retry this same packet",
+                            // not that the packet may be discarded.
+                            while(!decoded && !decoderFailed)
                             {
-                                status = avcodec_receive_frame(context, frame);
-                                if(status >= 0)
+                                status = avcodec_send_packet(context, packet);
+                                if(status == AVERROR(EAGAIN))
                                 {
-                                    decoded = true;
+                                    receiveAvailableFrames();
+                                    if(!decoded && !decoderFailed)
+                                    {
+                                        error = "The software decoder made no "
+                                            "progress while accepting a test packet.";
+                                        decoderFailed = true;
+                                    }
                                     break;
                                 }
+                                if(status < 0)
+                                {
+                                    error = "The software decoder could not "
+                                        "accept this stream: " +
+                                        FfmpegError(status);
+                                    decoderFailed = true;
+                                    break;
+                                }
+                                receiveAvailableFrames();
+                                break;
                             }
                         }
                         av_packet_unref(packet);
+                        if(decoded || decoderFailed)
+                            break;
                     }
-                    if(!decoded)
+
+                    // Delayed/B-frame streams may not emit a picture until
+                    // end-of-stream is flushed. A viability probe that omits
+                    // this flush rejects otherwise playable videos.
+                    if(!decoded && !decoderFailed)
+                    {
+                        status = avcodec_send_packet(context, nullptr);
+                        if(status < 0 && status != AVERROR_EOF)
+                        {
+                            error = "The software decoder could not flush this "
+                                "stream: " + FfmpegError(status);
+                            decoderFailed = true;
+                        }
+                        else
+                            receiveAvailableFrames();
+                    }
+                    if(!decoded && !decoderFailed)
                         error = "The software decoder could not produce a test frame.";
                 }
             }
@@ -151,7 +224,7 @@ namespace BigScreen {
             return decoded;
         }
 
-        bool ValidateRemuxedMp4(
+        bool ValidatePlayableH264Mp4(
             const std::filesystem::path& path,
             std::string& error)
         {
@@ -170,10 +243,20 @@ namespace BigScreen {
             if(!valid)
                 error = "The prepared file did not validate as an H.264 MP4.";
             avformat_close_input(&format);
-            return valid;
+            if(!valid)
+                return false;
+
+            std::string decoderError;
+            if(!CanDecodeSoftwareFrame(path, decoderError))
+            {
+                error = "The prepared H.264 MP4 could not produce a video "
+                    "frame: " + decoderError;
+                return false;
+            }
+            return true;
         }
 
-        bool RemuxMpegTsToMp4(
+        bool RemuxVideoToMp4(
             AVFormatContext* input,
             int inputVideoStream,
             const std::filesystem::path& outputPath,
@@ -354,16 +437,18 @@ namespace BigScreen {
             (parameters->codec_id == AV_CODEC_ID_H264 ||
              parameters->codec_id == AV_CODEC_ID_VP9);
 
-        if((isMp4 || isWebm) && expectedCodec &&
-           parameters->width > 0 && parameters->height > 0)
+        if(isWebm && expectedCodec && parameters->width > 0 &&
+           parameters->height > 0)
         {
             avformat_close_input(&input);
             result.state = VideoNormalizationState::Ready;
             result.outputBytes = inputBytes;
             return result;
         }
-        if(!isMpegTs || !parameters ||
-           parameters->codec_id != AV_CODEC_ID_H264)
+
+        if(!parameters || parameters->codec_id != AV_CODEC_ID_H264 ||
+           parameters->width <= 0 || parameters->height <= 0 ||
+           (!isMp4 && !isMpegTs))
         {
             avformat_close_input(&input);
             result.detail =
@@ -371,10 +456,49 @@ namespace BigScreen {
             return result;
         }
 
+        // YouTube's direct DASH MP4s can have enough metadata for libavformat
+        // to identify the stream while still omitting the complete timing/index
+        // information MediaCodec needs for reliable play, seek, and restart.
+        // The problematic files identify themselves with major_brand=dash.
+        // Stream-copying them through the MP4 muxer is fast and preserves the
+        // encoded pictures while rebuilding that container metadata.
+        const bool timingIncompleteDash = isMp4 &&
+            MetadataEquals(input, "major_brand", "dash");
+        std::string directValidationFailure;
+
+        if(isMp4 && !timingIncompleteDash)
+        {
+            avformat_close_input(&input);
+            std::string decoderError;
+            if(CanDecodeSoftwareFrame(downloadedPath, decoderError))
+            {
+                result.state = VideoNormalizationState::Ready;
+                result.outputBytes = inputBytes;
+                return result;
+            }
+
+            // A stream-copy cannot repair damaged encoded pictures, but it can
+            // repair packet timing or an index that prevented the first decode
+            // probe from reaching a frame. Preserve the decoder's real failure
+            // so the terminal error remains useful if the retry also fails.
+            directValidationFailure = "Direct H.264 MP4 validation failed: " +
+                decoderError;
+            if(OpenVideoInput(
+                   downloadedPath, input, videoStream, decoderError) < 0)
+            {
+                if(input)
+                    avformat_close_input(&input);
+                result.detail = directValidationFailure +
+                    " Reopening it for repair also failed: " +
+                    decoderError;
+                return result;
+            }
+        }
+
         std::error_code cleanupError;
         std::filesystem::remove(remuxedPath, cleanupError);
         std::string remuxError;
-        const bool remuxed = RemuxMpegTsToMp4(
+        const bool remuxed = RemuxVideoToMp4(
             input,
             videoStream,
             remuxedPath,
@@ -394,7 +518,7 @@ namespace BigScreen {
         if(remuxed)
         {
             std::string validationError;
-            if(ValidateRemuxedMp4(remuxedPath, validationError))
+            if(ValidatePlayableH264Mp4(remuxedPath, validationError))
             {
                 result.state = VideoNormalizationState::Remuxed;
                 result.outputBytes = std::filesystem::file_size(
@@ -407,11 +531,12 @@ namespace BigScreen {
         }
         std::filesystem::remove(remuxedPath, cleanupError);
 
-        // A failed container conversion must never turn a usable download
-        // into a hard error. Confirm that Big Screen's software H.264 decoder
-        // can actually produce a picture before accepting the original TS.
+        // Only MPEG-TS retains the legacy software-only escape hatch. A direct
+        // DASH MP4 that failed both validation and repair is intentionally a
+        // hard failure so DownloadManager can retry a different transport
+        // instead of publishing a questionable stream into the library.
         std::string softwareError;
-        if(requestedHeight <= 1080 &&
+        if(isMpegTs && requestedHeight <= 1080 &&
            CanDecodeSoftwareFrame(downloadedPath, softwareError))
         {
             result.state = VideoNormalizationState::SoftwareDecoderRequired;
@@ -423,7 +548,10 @@ namespace BigScreen {
         }
 
         result.state = VideoNormalizationState::Failed;
-        result.detail = (remuxError.empty()
+        result.detail = directValidationFailure;
+        if(!result.detail.empty())
+            result.detail += " ";
+        result.detail += (remuxError.empty()
             ? "The H.264 stream could not be converted to MP4."
             : remuxError) + " Software validation also failed: " + softwareError;
         return result;

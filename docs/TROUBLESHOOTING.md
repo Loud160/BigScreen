@@ -198,15 +198,22 @@ video IDs, timing, placement, and effects remain available. Truncated or
 structurally damaged JSON is not guessed through, but the user can still paste
 a replacement YouTube URL or assign a compatible local video to that map.
 
-Some YouTube clients provide an H.264 tier as fragmented HLS/MPEG-TS rather
-than a normal MP4. After the transfer, **Preparing video for playback** copies
-that stream into a seek-safe MP4 without re-encoding, so the picture quality is
-unchanged. This temporarily requires room for both files. If preparation fails
-but the original produces a software-decoded test frame, Big Screen assigns it,
-records `BS-DL-PREP-SW-001`, and warns the player; hardware decoding is
-unavailable for that file and software playback may reduce video or gameplay frame rate. A
-`BS-DL-PREP-001` failure means neither a validated MP4 nor a verified software
-fallback could be published, so the previous assignment remains unchanged.
+Big Screen validates a downloaded direct H.264 MP4 before assigning it. A
+Google DASH MP4 or an HLS/MPEG-TS transfer may show **Preparing video for
+playback** while the background worker losslessly rebuilds a seek-safe MP4;
+picture quality does not change. If the direct file cannot be validated or
+repaired, Big Screen automatically tries a different stream at the same tier,
+preferring HLS before any re-encoding.
+
+If every fast path fails, **Video must be converted** is a last-resort choice,
+not an automatic delay. Conversion may take several minutes and temporarily
+needs room for both files. Big Screen tries the Quest's MediaCodec hardware
+decoder and encoder first, then falls back to software decoding plus x264 only
+if hardware conversion fails. The progress line remains visible throughout.
+Cancelling or declining leaves the prior map assignment unchanged. Codes under
+`BS-DL-PREP-*`, `BS-DL-FALLBACK-*`, and `BS-DL-TRANSCODE-*` retain the actual
+validation/decoder/transcoder detail in Big Screen's diagnostic log and error
+popup so a bad stream can be distinguished from low storage or a user cancel.
 
 If the video library JSON is damaged, Big Screen quarantines it and restores the
 newest of two known-good backups. If neither backup is usable, it reconstructs

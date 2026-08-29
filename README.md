@@ -69,7 +69,7 @@ the copyrighted song is not bundled in the QMOD.
 | Source | Workflow |
 |---|---|
 | **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, `video.json`, or playlist `customData.cinema`. Media/timing, geometry, color correction, vignette, and other supported presentation fields are read; map-driven bloom and soft-additive blending are currently ignored for stability. A URL-only map receives a Cinema-style download control on song selection. |
-| **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL, verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
+| **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL (or type its 11-character video ID), verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
 | **Local Quest storage** | Browse readable shared-storage folders and assign a compatible MP4 or WebM without renaming or copying it. Custom and WIP maps begin in their map folder; built-in songs begin in Big Screen's Video Import folder. |
 
 Only one downloaded source is assigned to a song at a time. Replacing it keeps
@@ -82,8 +82,10 @@ removes only the map assignment and leaves the original file untouched.
 
 - Beat Saber's song clock remains the playback authority.
 - Preview the map audio and video together before playing.
-- Adjust playback offset and speed, or use **Fit to Song** to account for the
-  map duration and lead-in automatically.
+- Adjust playback offset in one-millisecond arrow steps and playback speed in
+  0.01x steps, or use **Fit to Song** to account for the map duration and
+  lead-in automatically. Adjacent reset buttons restore mapper-authored Cinema
+  timing when available and neutral timing otherwise.
 - Choose a solid black or transparent lead-in and transparent or opaque
   letterboxing.
 - Pause, seek, resume after the end, practice, and Replay playback retain the
@@ -108,7 +110,10 @@ published because replacing it outside the QMOD can leave the installed
 runtimes or manifest out of sync; developers who need that binary should build
 it from source. The exact FFmpeg source archives are kept in the
 [permanent FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1)
-for rebuilding and license compliance, not installation.
+for rebuilding and license compliance, not installation. A public release that
+contains the FFmpeg 9 conversion fallback must also add the exact pinned x264
+source archive identified by its packaged build record to those permanent
+corresponding-source assets.
 
 Beat Saber must already be patched for mods, and the Big Screen release must
 match the Beat Saber version installed on the headset.
@@ -147,8 +152,13 @@ Big Screen supports H.264/H.265 MP4 and VP8/VP9 WebM sources. YouTube downloads
 offer the compatible 480p, 720p, 1080p, and hardware-only 1440p files that the
 source actually provides. Playback preserves the selected file's native
 resolution, with configurable 15, 30, and 60 FPS presentation ceilings. Direct
-H.264 MP4 is preferred; compatible HLS downloads are prepared as seek-safe MP4
-files in the background without re-encoding or reducing quality.
+H.264 MP4 is preferred and validated before assignment. Timing-incomplete DASH
+MP4 and compatible HLS downloads are prepared as seek-safe MP4 files in the
+background without re-encoding or reducing quality. If direct repair fails,
+Big Screen retries another exact-tier H.264/HLS stream. Only when every fast
+path fails does it offer an explicit last-resort conversion, trying Quest
+MediaCodec hardware first and the bundled x264 software fallback second while
+showing progress throughout.
 
 For comparison and performance tuning, the mod includes:
 
@@ -406,8 +416,10 @@ thumbnail retrieval, update checks, or the user-requested showcase assets. See
 <details>
 <summary><strong>Video and rendering path</strong></summary>
 
-Big Screen dynamically loads two private LGPL FFmpeg runtimes behind one stable
-decoder facade. Software or MediaCodec decoding produces CPU-readable frames.
+Big Screen dynamically loads two private FFmpeg runtimes behind one stable
+decoder facade. The FFmpeg 4 comparison is LGPL-only; the default FFmpeg 9
+runtime is GPL-configured to provide the optional MediaCodec/x264 recovery
+transcoder. Software or MediaCodec decoding produces CPU-readable frames.
 The default presentation path transports supported 8-bit YUV420P/NV12 planes
 and performs YUV conversion, container rotation, color correction, and vignette
 in one GPU pass; the reusable CPU RGBA conversion and Unity texture-upload path
@@ -419,9 +431,11 @@ layouts or failed GPU resources fall back for the rest of that playback session.
 Playback workers own codec state; Unity and Beat Saber objects remain on the
 game thread. Thumbnail generation remains on its existing CPU RGBA path.
 
-The FFmpeg builds are decoder-only, use unique SONAMEs and symbol namespaces,
-and are validated to exclude GPL, version-3, and nonfree components. Both build
-configurations and source transformations are recorded for reproducibility.
+Both builds use unique SONAMEs and symbol namespaces. FFmpeg 4 is validated to
+remain encoder-free and LGPL-only. FFmpeg 9 enables only the two reviewed H.264
+encoders and is validated to exclude version-3 and nonfree components. Both
+build configurations, source revisions, licenses, and source transformations
+are recorded for reproducibility.
 
 </details>
 

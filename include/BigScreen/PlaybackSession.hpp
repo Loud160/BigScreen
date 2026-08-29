@@ -106,6 +106,12 @@ namespace BigScreen {
         void ConfigureGameplayBeatmap(
             const std::string& characteristic,
             int difficulty);
+        /// Resolves the selected Solo difficulty's Chroma CinemaScreen
+        /// placement for menu preview. Returns true when the selected key
+        /// changed and an active preview therefore needs to be restarted.
+        bool ConfigurePreviewBeatmap(
+            const std::string& characteristic,
+            int difficulty);
         /// Rebuilds the selected map's effective display configuration from
         /// mapper-authored metadata and the latest global settings.
         void RefreshDisplaySettings();
@@ -133,6 +139,11 @@ namespace BigScreen {
         /// clock begins. Unity geometry is intentionally deferred until the
         /// gameplay scene exists.
         void PrewarmGameplay();
+        /// Creates the canonical CinemaScreen after the gameplay environment
+        /// scene exists but before Chroma's end-of-frame environment scan.
+        /// Chroma can then find, duplicate, and attach mapper tracks to the
+        /// same surface that Start(Gameplay) will reuse for video playback.
+        void PrepareGameplaySurfaceForChroma();
         void Tick(double songTimeSeconds);
         /// Applies a new user FPS cap without reopening FFmpeg or requiring
         /// preview pause/resume. It also starts a clean comparison window.
@@ -225,8 +236,12 @@ namespace BigScreen {
         void ApplyAutomaticPerformanceFpsLimit(int nextFps);
         void ResetAutomaticPerformanceWindow(double songTimeSeconds);
         void ResetAutomaticPerformanceController(double songTimeSeconds);
+        /// Begins a new reporting epoch after Practice/Replay changes the song
+        /// clock. Old deadlines cannot be compared to the new timeline.
+        void ResetPresentationMeasurement(double songTimeSeconds);
         void CaptureDiagnosticsSummary();
         bool ReopenLibraryPreviewDecoder(double mediaTime);
+        void ResolveChromaCinemaPreview();
 
         std::filesystem::path levelDirectory_;
         // Captured while the BeatmapLevel is known and retained through scene
@@ -245,6 +260,11 @@ namespace BigScreen {
         // offsets to an already-adjusted config would accumulate scale and
         // placement changes, especially after Reset to Defaults.
         std::optional<MapVideoConfig> baseConfig_;
+        // Gameplay intentionally consumes the unmodified baseConfig_ and lets
+        // Quest Chroma own its real environment/track pass. Menus have no
+        // gameplay Chroma controller, so this optional copy contains only the
+        // selected difficulty's initial CinemaScreen transforms/duplicates.
+        std::optional<MapVideoConfig> chromaPreviewBaseConfig_;
         std::optional<MapVideoConfig> config_;
         FrameDecoder decoder_;
         ScreenSurface surface_;
@@ -262,6 +282,11 @@ namespace BigScreen {
         double menuPreviewStartSongTime_ = 0.0;
         bool started_ = false;
         bool gameplayDecoderPrewarmed_ = false;
+        // Chroma performs a one-shot environment lookup at the end of the
+        // BeatmapObjectSpawnController::Start frame. Remember that the Unity
+        // surface was created at that earlier boundary so Start(Gameplay)
+        // reuses it instead of destroying the object Chroma just tracked.
+        bool gameplaySurfacePreparedForChroma_ = false;
         // A failed prewarm already queued a safe user-visible error. Remember
         // it through Start() so the same transition does not immediately retry
         // the identical open and duplicate both work and error reporting.

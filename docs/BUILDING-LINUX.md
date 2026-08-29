@@ -15,7 +15,8 @@ Its Windows counterpart is `Build-QMOD.bat`; both are guaranteed build-only
 entry points and never initialize ADB or access a Quest.
 
 The wrapper restores pinned project dependencies, runs the complete Linux host
-tests, builds both private LGPL FFmpeg runtimes, builds Big Screen for Quest
+tests, builds the private LGPL FFmpeg 4 comparison runtime and GPL-configured
+FFmpeg 9 default/transcoder runtime, builds Big Screen for Quest
 ARM64 with Android NDK r27d, validates the ELF boundaries and package manifest,
 and writes `Big Screen.qmod` in the repository root.
 
@@ -294,6 +295,7 @@ inputs:
   launcher is used and no existing ADB can be found;
 - QPM dependencies locked by `qpm.shared.json`;
 - FFmpeg 4.4.8 and 9.0.1 source from ffmpeg.org;
+- pinned x264 source for FFmpeg 9's last-resort software H.264 encoder;
 - the pinned Android CPython, yt-dlp, certifi, QuickJS-NG, and validation
   artifacts documented in [DEPENDENCIES.md](DEPENDENCIES.md).
 

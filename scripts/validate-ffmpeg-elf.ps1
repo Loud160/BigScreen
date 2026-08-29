@@ -63,11 +63,15 @@ foreach ($backendName in @(
 foreach ($runtime in @(
     @{
         Tag = "44"; OtherTag = "9"; Namespace = "BIGSCREEN44_LIB";
-        OtherNamespace = "BIGSCREEN9_LIB"; Factory = "CreateFrameDecoder44Backend"
+        OtherNamespace = "BIGSCREEN9_LIB";
+        Factories = @("CreateFrameDecoder44Backend")
     },
     @{
         Tag = "9"; OtherTag = "44"; Namespace = "BIGSCREEN9_LIB";
-        OtherNamespace = "BIGSCREEN44_LIB"; Factory = "CreateFrameDecoder9Backend"
+        OtherNamespace = "BIGSCREEN44_LIB";
+        Factories = @(
+            "CreateFrameDecoder9Backend",
+            "CreateVideoTranscoder9Backend")
     })) {
     $backendName = "libbigscreen-ffmpeg$($runtime.Tag)-backend.so"
     $backendPath = Join-Path $BuildDirectory $backendName
@@ -89,8 +93,10 @@ foreach ($runtime in @(
         $versions -match [Regex]::Escape($runtime.OtherNamespace)) {
         throw "$backendName is not isolated to $($runtime.Namespace)* symbols"
     }
-    if ($symbols -notmatch [Regex]::Escape($runtime.Factory)) {
-        throw "$backendName does not export $($runtime.Factory)"
+    foreach ($factory in $runtime.Factories) {
+        if ($symbols -notmatch [Regex]::Escape($factory)) {
+            throw "$backendName does not export $factory"
+        }
     }
 }
 

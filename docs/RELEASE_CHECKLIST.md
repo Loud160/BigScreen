@@ -16,6 +16,9 @@
       [FFmpeg corresponding-source release](https://github.com/Loud160/BigScreen/releases/tag/ffmpeg-sources-4.4.8-9.0.1),
       and the public QMOD release links directly to it. The packaged build
       configurations and patches match those source archives.
+- [ ] If the FFmpeg 9 transcoder is included, the same corresponding-source
+      release also contains the exact pinned x264 archive identified in the
+      packaged FFmpeg 9 build record, and the QMOD contains x264's GPL text.
 - [ ] Review the tracked large-file refactor in `FUTURE_WORK.md`; either complete
       it after major behavior is stable or explicitly carry it as documented
       technical debt for this release.
@@ -35,6 +38,8 @@
       need CPython's SSL, crypto, or SQLite runtime libraries.
 - [ ] A clean ARM64 build includes both isolated decoder backends, all eight
       version-suffixed FFmpeg libraries, and both packaged build records.
+- [ ] The FFmpeg 9 backend exports its transcoder factory, uses MediaCodec for
+      the primary decode/encode path, and retains the pinned x264 fallback.
 - [ ] ELF inspection proves the 4.4 backend needs only `BIGSCREEN44_LIB*`
       symbols and the 9 backend needs only `BIGSCREEN9_LIB*` symbols.
 - [ ] QMOD creation passes from clean staged dependencies and replaces no prior artifact until fresh-archive validation succeeds.

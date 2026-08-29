@@ -14,6 +14,7 @@
 #include <array>
 #include <exception>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -35,9 +36,11 @@
 #include "UnityEngine/AssetBundle.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/RectTransform.hpp"
+#include "UnityEngine/SceneManagement/Scene.hpp"
 #include "UnityEngine/SceneManagement/SceneManager.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/GameObject.hpp"
+#include "UnityEngine/GL.hpp"
 #include "UnityEngine/Graphics.hpp"
 #include "UnityEngine/HideFlags.hpp"
 #include "UnityEngine/LayerMask.hpp"
@@ -108,6 +111,66 @@ namespace BigScreen {
         {
             static VideoShaderResources resources;
             return resources;
+        }
+
+        bool MoveToLoadedGameplayEnvironmentScene(
+            UnityEngine::GameObject* gameObject,
+            std::string& sceneName)
+        {
+            sceneName.clear();
+            if(!gameObject)
+                return false;
+
+            // Some environments happen to expose this conventional root, but
+            // many valid scenes (including KDAEnvironment) do not. Retain the
+            // inexpensive fast path while validating that it really belongs
+            // to a loaded gameplay environment rather than MenuEnvironment.
+            if(auto environmentRoot =
+                   UnityEngine::GameObject::Find("/Environment"))
+            {
+                auto scene = environmentRoot->get_scene();
+                const auto name = scene.get_name();
+                if(scene.IsValid() && scene.get_isLoaded() && name)
+                {
+                    const std::string candidate(name);
+                    if(candidate.find("Environment") != std::string::npos &&
+                       candidate.find("Menu") == std::string::npos)
+                    {
+                        UnityEngine::SceneManagement::SceneManager::
+                            MoveGameObjectToScene(gameObject, scene);
+                        sceneName = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            // Chroma indexes objects only from loaded scenes whose names
+            // contain Environment. Resolve that scene directly instead of
+            // assuming anything about its root hierarchy. This must run before
+            // Chroma's end-of-frame environment scan so CinemaScreen$ can be
+            // duplicated and assigned to the mapper's animation tracks.
+            const int sceneCount = UnityEngine::SceneManagement::SceneManager::
+                get_sceneCount();
+            for(int index = 0; index < sceneCount; ++index)
+            {
+                auto scene = UnityEngine::SceneManagement::SceneManager::
+                    GetSceneAt(index);
+                if(!scene.IsValid() || !scene.get_isLoaded())
+                    continue;
+                const auto name = scene.get_name();
+                if(!name)
+                    continue;
+                const std::string candidate(name);
+                if(candidate.find("Environment") == std::string::npos ||
+                   candidate.find("Menu") != std::string::npos)
+                    continue;
+
+                UnityEngine::SceneManagement::SceneManager::
+                    MoveGameObjectToScene(gameObject, scene);
+                sceneName = candidate;
+                return true;
+            }
+            return false;
         }
 
         UnityEngine::Shader* LoadVideoShaderAsset(
@@ -1067,15 +1130,19 @@ namespace BigScreen {
         if(!gameObject_)
             return false;
 
-        // Quest Chroma intentionally indexes only objects belonging to an
-        // environment scene. A newly constructed object otherwise lands in
-        // GameCore and is invisible to Chroma's CinemaScreen$ lookup. Move the
-        // root into the loaded environment scene before Chroma's delayed scan;
-        // no parenting is needed, so the mapper's world coordinates stay exact.
-        if(auto environmentRoot = UnityEngine::GameObject::Find("/Environment"))
+        // A newly constructed object lands in GameCore, which Quest Chroma
+        // deliberately excludes from its environment lookup. Scene names are
+        // the stable contract here; a literal /Environment hierarchy is not.
+        // No parenting is needed, so mapper-authored world coordinates remain
+        // exact after Chroma creates and tracks its CinemaScreen duplicates.
+        std::string environmentSceneName;
+        if(MoveToLoadedGameplayEnvironmentScene(
+               gameObject_, environmentSceneName))
         {
-            UnityEngine::SceneManagement::SceneManager::MoveGameObjectToScene(
-                gameObject_, environmentRoot->get_scene());
+            BigScreen::BigScreenLogger.debug(
+                "Placed '{}' in gameplay environment scene '{}' for Chroma lookup",
+                rootName,
+                environmentSceneName);
         }
 
         // Match Beat Saber's environment geometry so the normal VR cameras see
@@ -1094,6 +1161,11 @@ namespace BigScreen {
             config.screenRotation.x,
             config.screenRotation.y,
             config.screenRotation.z
+        });
+        transform->set_localScale({
+            config.screenScale.x,
+            config.screenScale.y,
+            config.screenScale.z
         });
 
         const float aspectRatio = static_cast<float>(videoWidth) / videoHeight;
@@ -1621,6 +1693,10 @@ namespace BigScreen {
             config.screenRotation.x,
             config.screenRotation.y,
             config.screenRotation.z});
+        transform->set_localScale({
+            config.screenScale.x,
+            config.screenScale.y,
+            config.screenScale.z});
 
         const float flatWidth = config.screenWidthOverride.value_or(
             config.screenHeight * aspectRatio);
@@ -1930,6 +2006,16 @@ namespace BigScreen {
         }
         gpuTexture_->set_filterMode(UnityEngine::FilterMode::Bilinear);
         gpuTexture_->set_wrapMode(UnityEngine::TextureWrapMode::Clamp);
+        // RenderTexture contents are undefined immediately after Create().
+        // Big Screen hides its source renderer until the first decoded frame,
+        // but Chroma can duplicate that renderer before playback and make the
+        // clone visible through mapper tracks. Clear the shared texture now so
+        // a negative video offset or decoder startup shows stable black rather
+        // than a few seconds of recycled GPU memory/static on those clones.
+        auto previousTarget = UnityEngine::RenderTexture::get_active();
+        UnityEngine::RenderTexture::set_active(gpuTexture_);
+        UnityEngine::GL::Clear(true, true, UnityEngine::Color::get_black());
+        UnityEngine::RenderTexture::set_active(previousTarget);
 
         const auto requestedLayout =
             Settings::Instance().ConsolidatedYuvUploadEnabled()

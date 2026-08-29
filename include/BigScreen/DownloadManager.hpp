@@ -37,6 +37,7 @@ namespace BigScreen {
         ProbeCompleted,
         Preparing,
         Downloading,
+        AwaitingConfirmation,
         Completed,
         UpdateAvailable,
         UpToDate,
@@ -86,9 +87,9 @@ namespace BigScreen {
         std::string errorCode;
         std::string diagnostic;
         bool metadataOnly = false;
-        // True only while C++ is actively remuxing an H.264 MPEG-TS transfer.
-        // Generic downloader finalization and already-valid MP4/WebM files do
-        // not use the user-visible container-preparation state.
+        // True only while C++ validates, remuxes, or explicitly transcodes a
+        // transferred video. Generic downloader finalization and already-
+        // valid MP4/WebM files do not use this user-visible preparation state.
         bool containerPreparation = false;
         std::vector<int> availableHeights;
         // Retained in memory across status-file refreshes so Retry/Resume and
@@ -98,7 +99,8 @@ namespace BigScreen {
         bool Active() const {
             return state == DownloadState::Probing ||
                    state == DownloadState::Preparing ||
-                   state == DownloadState::Downloading;
+                   state == DownloadState::Downloading ||
+                   state == DownloadState::AwaitingConfirmation;
         }
     };
 
@@ -127,6 +129,10 @@ namespace BigScreen {
     struct DownloadNotice {
         std::string title;
         std::string message;
+        // A normal informational notice uses the established one-button error
+        // surface. This flag requests a two-button, panel-owned confirmation
+        // whose decision resumes or cancels the waiting background operation.
+        bool offerTranscode = false;
     };
 
     enum class YtDlpReleaseCheckState {
@@ -210,6 +216,10 @@ namespace BigScreen {
             std::string sourceUrl,
             std::filesystem::path destination);
         void Cancel();
+        /// Resolves the explicit last-resort transcode prompt. The background
+        /// operation waits without holding a Unity, downloader, or snapshot
+        /// lock, so this main-thread call only publishes one boolean decision.
+        void ResolvePendingTranscode(bool approved);
         DownloadSnapshot Snapshot();
         /// True from successful queue ownership through the final publication
         /// of every operation result. Unlike DownloadSnapshot::Active(), this
@@ -319,6 +329,9 @@ namespace BigScreen {
         // and manifest commit succeed. Either UI surface consumes this single
         // mailbox, preventing duplicate dialogs when both controllers exist.
         std::optional<DownloadNotice> downloadNotice_;
+        std::mutex transcodeDecisionMutex_;
+        std::condition_variable transcodeDecisionWake_;
+        std::optional<bool> transcodeDecision_;
         std::filesystem::path statusPath_;
         std::filesystem::path cancelPath_;
         std::filesystem::path downloaderDiagnosticPath_;

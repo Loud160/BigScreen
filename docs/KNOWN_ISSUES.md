@@ -4,7 +4,7 @@
 > unresolved quality concerns. It is a preservation checkpoint, not a release
 > candidate. Everything must be retested on Quest before release.
 
-Last reviewed: August 24, 2026
+Last reviewed: August 29, 2026
 
 ## Experimental GPU conversion status
 
@@ -48,8 +48,10 @@ In particular:
 - opaque/transparency presentation depends on the selected video material and
   therefore belongs in the same on-device test matrix;
 - environment cloning, requested environments, additional screens, Chroma
-  cooperation, and the Respect Mapper Settings switch all require wider map
-  testing before their behavior can be called compatible with PC Cinema.
+  cooperation, selected-difficulty `CinemaScreen` preview placement, gameplay
+  precreation/reuse, restart behavior, and the Respect Mapper Settings switch
+  all require wider map testing before their behavior can be called compatible
+  with PC Cinema.
 
 Unknown mapper fields are ignored rather than treated as fatal errors, so the
 absence of a particular Cinema feature should not by itself prevent ordinary
@@ -70,7 +72,12 @@ At minimum, retest all of the following before this checkpoint is advanced:
 - GPU Video Conversion off/on, including automatic fallback and the complete
   Showcase crack/shatter path;
 - YouTube download, local assignment, refresh, unlink/delete, storage, reset,
-  error recovery, and settings migration.
+  direct-DASH validation, HLS/alternate recovery, approved hardware/software
+  transcoding, cancellation, error recovery, and settings migration;
+- large Video Libraries across initial load, search/filter/jump, thumbnail
+  arrival, hover, editor return, repeated selection, and SongCore refresh;
+- Practice/Replay clock jumps and the resulting performance-panel/results
+  deadline, missed-frame, and delivered-FPS statistics.
 
 Host tests and a successful Quest build remain necessary, but they cannot
 replace the visual and lifecycle checks above.

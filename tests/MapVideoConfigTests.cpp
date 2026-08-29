@@ -313,6 +313,89 @@ int main()
     Expect(!BigScreen::ChromaMapDetector::UsesChroma(root, chromaReason),
            "an empty environment array should not claim Chroma ownership");
 
+    // PC Cinema creates one canonical CinemaScreen. Chroma maps commonly park
+    // that base at z=-200, duplicate it, and place the visible copies through
+    // the selected difficulty's environment data. Menu preview has no active
+    // Chroma beatmap controller, so the compatibility bridge must reproduce
+    // those initial clone transforms itself without moving the parked base.
+    std::filesystem::remove(difficulty);
+    {
+        std::ofstream output(info, std::ios::trunc);
+        output << R"({
+            "_difficultyBeatmapSets":[{
+                "_beatmapCharacteristicName":"Standard",
+                "_difficultyBeatmaps":[{
+                    "_difficulty":"Expert",
+                    "_beatmapFilename":"ExpertStandard.dat"
+                }]
+            }]
+        })";
+    }
+    const auto cinemaDifficulty = root / "ExpertStandard.dat";
+    {
+        std::ofstream output(cinemaDifficulty, std::ios::trunc);
+        output << R"({
+            "customData":{"environment":[
+                {"id":"CinemaScreen$","lookupMethod":"Regex","track":"cinema",
+                 "duplicate":1,"scale":[1,1,1],"position":[0,-1.9,20],
+                 "rotation":[45,0,0]},
+                {"id":"CinemaScreen$","lookupMethod":"Regex","track":"cL",
+                 "duplicate":1,"position":[-3,2,15],"rotation":[0,-25,0]},
+                {"id":"CinemaScreen$","lookupMethod":"Regex","track":"cR",
+                 "duplicate":1,"position":[3,2,15],"rotation":[0,25,0]},
+                {"id":"EnvironmentLight$","lookupMethod":"Regex",
+                 "duplicate":1,"position":[0,0,0]}
+            ]}
+        })";
+    }
+    BigScreen::MapVideoConfig chromaPreview;
+    chromaPreview.screenPosition = {0.0f, 5.0f, -200.0f};
+    chromaPreview.screenRotation = {45.0f, 0.0f, 0.0f};
+    chromaPreview.screenHeight = 5.0f;
+    std::string previewReason;
+    Expect(BigScreen::ChromaMapDetector::ApplyCinemaScreenPreview(
+               root, "Standard", 3, chromaPreview, previewReason),
+           "selected-difficulty Chroma CinemaScreen data should resolve for menu preview");
+    Expect(Near(chromaPreview.screenPosition.z, -200.0f),
+           "Chroma duplicate instructions must not move Cinema's parked base screen");
+    Expect(chromaPreview.additionalScreens.size() == 3,
+           "three Chroma CinemaScreen duplicates should become three shared preview screens");
+    if(chromaPreview.additionalScreens.size() == 3)
+    {
+        Expect(chromaPreview.additionalScreens[0].position &&
+               Near(chromaPreview.additionalScreens[0].position->y, -1.9f) &&
+               Near(chromaPreview.additionalScreens[0].position->z, 20.0f),
+               "center Chroma duplicate should retain its initial placement");
+        Expect(chromaPreview.additionalScreens[1].rotation &&
+               Near(chromaPreview.additionalScreens[1].rotation->y, -25.0f) &&
+               chromaPreview.additionalScreens[2].rotation &&
+               Near(chromaPreview.additionalScreens[2].rotation->y, 25.0f),
+               "left and right Chroma duplicate rotations should remain exact");
+    }
+    Expect(chromaPreview.hasMapperScreenGeometry &&
+           previewReason.find("ExpertStandard.dat") != std::string::npos,
+           "resolved Chroma screens should claim mapper geometry and identify their source file");
+
+    // A non-duplicate instruction mutates the canonical screen itself. Scale
+    // is a transform property in Chroma rather than a Cinema screenHeight, so
+    // preserve it independently for the menu surface root.
+    {
+        std::ofstream output(cinemaDifficulty, std::ios::trunc);
+        output << R"({"customData":{"environment":[{
+            "id":"CinemaScreen","lookupMethod":"Exact",
+            "position":[7,8,9],"rotation":[10,20,30],"scale":[2,3,1]
+        }]}})";
+    }
+    BigScreen::MapVideoConfig directPreview;
+    Expect(BigScreen::ChromaMapDetector::ApplyCinemaScreenPreview(
+               root, "Standard", 3, directPreview, previewReason),
+           "direct Chroma CinemaScreen instructions should resolve");
+    Expect(Near(directPreview.screenPosition.x, 7.0f) &&
+           Near(directPreview.screenRotation.y, 20.0f) &&
+           Near(directPreview.screenScale.x, 2.0f) &&
+           Near(directPreview.screenScale.y, 3.0f),
+           "direct screen position, rotation, and transform scale should all apply");
+
     std::filesystem::remove_all(root);
     if(failures == 0)
         std::cout << "All Big Screen map configuration tests passed.\n";

@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- Corrected performance reporting after Practice/Replay clock jumps by starting
+  a new presentation-measurement epoch instead of counting deadlines from the
+  abandoned timeline. Reported video FPS is now bounded by the source cadence,
+  playback rate, and active output cap.
+- Made YouTube entry reliable for long share links and freshly committed
+  Quest-keyboard text. Because Beat Saber's stock headset keyboard omits URL
+  punctuation, the field also accepts a typed 11-character YouTube video ID.
+  Video Playback Offset is now a draggable slider with one-millisecond arrow
+  increments and two-decimal feedback. Playback Speed now changes in 0.01x
+  steps, and both timing controls extend to the playback scrubber's right edge.
+  Each has a matching reset button that restores mapper-authored Cinema timing
+  when present, or Big Screen's neutral 0.00-second/1.00x defaults otherwise.
+- Reworked the Video Library's large-catalog path so SongCore metadata appears
+  immediately while map-local Cinema/video descriptors warm in bounded frame
+  slices. Virtual rows now reuse their models and refresh thumbnails separately
+  from text; cell-bind/highlight refreshes no longer rewrite title geometry, so
+  rows without thumbnails remain stationary under the pointer. Returning from
+  a map's configuration now also leaves HMUI's native title and author
+  transforms intact instead of applying a conflicting one-frame layout that
+  snapped back on the row's first hover.
+- The Video Library now clears HMUI's retained selected index after its final
+  active-controller reload and on menu exit. The song used to open the editor
+  no longer remains highlighted and can be reopened immediately after backing
+  out or revisiting Big Screen.
+- Cleared the shared GPU video target to black when it is created. Chroma maps
+  that expose duplicated Cinema screens before the first decoded picture can
+  no longer display undefined RenderTexture memory as brief startup static.
+- Added selected-difficulty Chroma `CinemaScreen` interoperability. Menu preview
+  resolves the active BeatmapKey and reproduces initial Chroma duplicate,
+  position, rotation, scale, and active instructions for the canonical Cinema
+  screen. Gameplay creates that canonical surface in the loaded environment
+  before Chroma's delayed lookup, reuses it when the song starts, and repeats
+  the prewarm path on Solo or Campaign restart so Chroma-owned tracked screens
+  do not disappear after the initial play.
+- Hardened YouTube video publication so direct H.264 DASH MP4s are decoded and
+  losslessly repaired before assignment. A rejected stream now triggers one
+  exact-tier retry that prefers HLS/MPEG-TS remuxing before any re-encoding.
+- Added an explicit last-resort conversion prompt with visible progress,
+  cancellation, storage protection, Android MediaCodec hardware decode/encode
+  first, and a pinned x264 software fallback. Failed conversion never replaces
+  the map's existing video, and detailed diagnostics retain the actual decoder
+  or transcoder failure.
+
 ## 0.7.0-alpha.13 — First-party logging and dependency resilience
 
 - Replaced Big Screen's direct Paper2 logging dependency with a private,
