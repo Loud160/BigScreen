@@ -17,6 +17,15 @@ $script:SourceInstallRoot = "$($script:BigScreenModData)/BigScreen/SourceInstall
 $script:CompleteReceiptPath = "$($script:SourceInstallRoot)/source-install.json"
 $script:PartialReceiptPath = "$($script:SourceInstallRoot)/source-install.partial.json"
 $script:BaselineRoot = "$($script:SourceInstallRoot)/Baseline"
+$script:LegacyRuntimeMarkers = @(
+    "python314.zip",
+    "yt-dlp-shipped",
+    "certifi.whl",
+    "runtime-manifest.json",
+    "CPYTHON-LICENSE.txt",
+    "bigscreen_jsc_provider.py",
+    "lib-dynload/_ssl.cpython-314-aarch64-linux-android.so"
+)
 
 function Get-BigScreenJsonArray($Object, [string]$Name) {
     if (-not $Object) { return @() }
@@ -30,6 +39,19 @@ function Get-BigScreenObjectProperty($Object, [string]$Name, $Default = $null) {
     $property = $Object.PSObject.Properties[$Name]
     if (-not $property -or $null -eq $property.Value) { return $Default }
     return $property.Value
+}
+
+function Test-BigScreenLegacyRuntimePayload {
+    # Runtime also contains generated update state, status files, thumbnails,
+    # and Python bytecode caches. Those files are intentionally preserved by a
+    # source uninstall and must not make a clean removal look like an old
+    # pre-receipt install. Only immutable files shipped by a source build prove
+    # that a legacy embedded runtime is still installed.
+    $runtimeRoot = "$($script:BigScreenModData)/BigScreen/Runtime"
+    foreach ($relative in $script:LegacyRuntimeMarkers) {
+        if (Test-BigScreenRemoteFile "$runtimeRoot/$relative") { return $true }
+    }
+    return $false
 }
 
 function Test-BigScreenExclusiveLibraryName([string]$Name) {
@@ -211,12 +233,11 @@ function Get-BigScreenInstallClassification([string]$GameVersion) {
     $presentLegacyPaths = @($legacyPaths | Where-Object {
         Test-BigScreenRemoteFile $_
     })
-    # Old Build & Deploy revisions installed this private runtime without an
-    # ownership receipt. Treat a runtime-only remnant as a legacy source
-    # install so removal/migration does not mistake it for an uninstalled mod
-    # and later preserve every runtime file as an external baseline.
-    $legacyRuntimeRoot = "$($script:BigScreenModData)/BigScreen/Runtime"
-    $hasLegacyRuntime = Test-BigScreenRemoteDirectory $legacyRuntimeRoot
+    # Old Build & Deploy revisions installed the private runtime without an
+    # ownership receipt. Detect actual shipped payload rather than the
+    # directory itself: generated updater/status/cache files survive a normal
+    # uninstall by design and are not evidence that the mod remains installed.
+    $hasLegacyRuntime = Test-BigScreenLegacyRuntimePayload
     $receiptPaths = @{}
     foreach ($receipt in @($completeReceipt, $partialReceipt)) {
         if (-not $receipt) { continue }
@@ -477,6 +498,13 @@ function Remove-BigScreenRetiredReceiptFiles($PriorReceipt, $CurrentPlan) {
             [string]$item.ownership -ne "BigScreenExclusive") { continue }
         $current = Get-BigScreenRemoteHash ([string]$item.path)
         if (-not $current) { continue }
+        if ([string]$item.previousState -eq "present" -and
+            $current -eq [string]$item.previousSha256) {
+            # A prior attempt may have restored this baseline immediately
+            # before being interrupted. Treat that exact recorded hash as
+            # completed retirement rather than as foreign content.
+            continue
+        }
         if ($current -ne [string]$item.installedSha256) {
             throw "Retired source payload is ambiguous at $($item.path); it was preserved and deployment was refused."
         }

@@ -160,6 +160,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_LIST_DIR}/RepositoryInvariantTests.py"
                 "${CMAKE_CURRENT_LIST_DIR}/..")
+else()
+    message(WARNING
+        "Python 3 was not found: downloader and repository-policy host tests "
+        "will not be registered in this local CTest configuration.")
 endif()
 
 # FrameDecoder has no Unity dependency, so Linux CI can exercise the actual
@@ -200,4 +204,8 @@ if(HOST_FFMPEG_FOUND AND Python3_Interpreter_FOUND)
                 "${FRAME_FIXTURE_DIR}/portrait.mp4")
     set_tests_properties(bigscreen-frame-decoder-tests PROPERTIES
         FIXTURES_REQUIRED frame_media)
+elseif(NOT HOST_FFMPEG_FOUND)
+    message(WARNING
+        "Host FFmpeg development packages were not found: FrameDecoder host "
+        "tests will not be registered in this local CTest configuration.")
 endif()

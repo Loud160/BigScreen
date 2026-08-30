@@ -107,6 +107,29 @@ Assert-Equal "MIXED_OR_AMBIGUOUS" `
         -ReceiptUnreadable $true) `
     "unreadable source receipt"
 
+# A normal receipt-based uninstall preserves generated updater/status/cache
+# files below Runtime. They are user/runtime state, not evidence of an old
+# source installation. Immutable shipped payload remains a legacy marker.
+$script:RuntimeFileFixture = @{
+    "yt-dlp-active" = $true
+    "update-status.json" = $true
+    "download-status.json" = $true
+    "__pycache__/bigscreen_jsc_provider.cpython-314.pyc" = $true
+}
+function Test-BigScreenRemoteFile([string]$Path) {
+    foreach ($relative in $script:RuntimeFileFixture.Keys) {
+        if ($Path.EndsWith("/$relative")) { return $true }
+    }
+    return $false
+}
+if (Test-BigScreenLegacyRuntimePayload) {
+    throw "Generated Runtime state was misclassified as a legacy source payload."
+}
+$script:RuntimeFileFixture["runtime-manifest.json"] = $true
+if (-not (Test-BigScreenLegacyRuntimePayload)) {
+    throw "A shipped Runtime marker was not recognized as legacy source payload."
+}
+
 # Partial cleanup must distinguish a completed source write from a file whose
 # original baseline is already present. Complete-receipt cleanup remains more
 # conservative because a later baseline match could have been written by a
@@ -193,6 +216,14 @@ try {
 } finally {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# A deployment interrupted immediately after restoring a retired file must be
+# safely resumable. The preceding complete receipt remains the retirement proof,
+# and seeing its exact recorded baseline is completed work, not ambiguity.
+$script:RemoteHashFixture = "baseline"
+Remove-BigScreenRetiredReceiptFiles `
+    ([pscustomobject]@{ files = @($exclusiveFixture) }) `
+    @()
 
 $remover = Get-Content -LiteralPath (Join-Path $root "scripts/remove-bigscreen.ps1") -Raw
 foreach ($protected in @("BigScreen/Thumbnails", "BigScreen/Video Import", "library.json", "BigScreen/Logs")) {

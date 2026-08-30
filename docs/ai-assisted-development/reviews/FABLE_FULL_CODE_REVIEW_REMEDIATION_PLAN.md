@@ -57,7 +57,7 @@ without mixing unrelated unfinished work.
 | 1 | Beta correctness, privacy, and unsupported-mode gate | Quest validated | `94ab939` (combined Stage 1/2 checkpoint) | No obvious regression in the user's initial focused pass |
 | 2 | Unity screen-state and lifetime safety | Quest validated | `94ab939` on `codex/fable-review-stage-2` | User reported no regression in the focused Stage 2 pass |
 | 3 | Video Library cache and menu responsiveness | Quest validated | `537678b` plus the live-update correction on `codex/fable-review-stage-3` | On August 30, 2026, the user verified that menu timing and screen edits remained responsive without interrupting video playback and could not reproduce the prior crash |
-| 4 | Deployment, removal, and ownership parity | Planned | — | Pending |
+| 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
 | 5 | Downloader operation cleanup and diagnostics | Planned | — | Pending |
 | 6 | Packaging, CI, and dependency reproducibility | Planned | — | Pending |
 | 7 | GPU presentation-path overhead | Planned | — | Pending |
@@ -258,9 +258,8 @@ Automated evidence:
 - SHA-256: `532aa225223a734661ca3bc9e8218a647e3735e15533581d4d7b5824ec1641bc`.
 
 Quest result: the ownership-safe source deployment completed with every payload
-hash verified. The user is testing this exact Stage 2 checkpoint while Stage 3
-is developed on its separate branch. Any next headset findings must therefore
-be recorded against Stage 2, not inferred to describe the Stage 3 build.
+hash verified. The user completed the focused Stage 2 pass without finding an
+obvious regression and approved moving to Stage 3.
 
 ## Stage 3 — Video Library cache and menu responsiveness
 
@@ -445,7 +444,72 @@ Stage 3 is therefore **Quest validated**. The code remains on
 
 ### Result
 
-Pending implementation and host/Quest testing.
+Implementation was rebuilt and automated verification was completed on
+August 30, 2026, on `codex/fable-review-stage-4`. The branch now starts from
+the Quest-validated Stage 3 correction at `42934a1`; the preceding Stage 4 tip
+is preserved separately as `codex/fable-review-stage-4-pre-live-stage3`.
+
+- Linux/Python source deployment now rejects changed receipt-owned bytes before
+  mutation, resumes only provable partial states, strictly validates retired
+  payload hashes, and restores a verified recorded baseline when appropriate.
+- Both host paths retain the preceding complete receipt while a new partial
+  plan exists. An interrupted retirement pass is replayed on the next deploy,
+  while an already-restored exact baseline is accepted as completed work.
+- Confirmed uninstall remains intentionally permissive for exact
+  `BigScreenExclusive` receipt paths, but shared dependencies are preserved.
+  Linux now matches Windows by allowing guarded mixed source/MBF cleanup only
+  from readable receipts and by excluding every path claimed by MBF.
+- Live logging, tombstone retrieval, and standalone game restart now use the
+  shared Quest/Beat Saber device selector. The logging helper no longer uses
+  `Invoke-Expression`; regex and output-file inputs stay data, not code.
+- The documented Linux `--yes` option is accepted, optional CTest omissions
+  produce visible warnings, and the three Windows-specific PowerShell policy
+  suites are now executed in GitHub Actions without becoming Linux build
+  prerequisites.
+
+Automated evidence:
+
+- Canonical host suite: 14/14 tests passed.
+- Python/Linux ownership, removal, deterministic package, dependency, and
+  device-selection fixtures: passed.
+- PowerShell source-ownership, dependency, deterministic ZIP, and parser
+  checks: passed.
+- Full ARM64 Quest build and validated QMOD packaging: passed.
+- Artifact: `Big Screen.qmod`, 19,715,363 bytes.
+- SHA-256: `b6585cfad2e6e71244e9ae26156949dc91ac3f6b51605c5850a81f47b63747f5`.
+
+Focused Quest verification completed on August 30, 2026:
+
+- The canonical Windows source-deploy path selected the authorized Quest 2
+  while an unrelated unauthorized Android device was also connected. All 95
+  receipt entries matched their deployed SHA-256 values, no partial receipt
+  remained, and the native library matched
+  `19b6d18f36f620c0a25e2259f2547d17871988a924a6155276ba947d29606bcd`.
+- Repeating source deployment correctly classified the existing install as
+  `SOURCE_MANAGED`. Mod-only removal then removed the native/runtime payload
+  and receipt while preserving the settings file, library data, and all seven
+  managed video files with their original hashes.
+- That live removal/reinstall cycle exposed a false legacy-install diagnosis:
+  generated updater/status/cache files intentionally left under `Runtime`
+  were being treated as an old embedded runtime. Windows and Linux now detect
+  legacy installs only from immutable shipped runtime markers. Policy tests
+  cover generated-only and real shipped-runtime cases. A second real removal
+  and reinstall consequently classified the headset as `NOT_INSTALLED`, did
+  not request destructive legacy migration, and recreated a complete
+  zero-mismatch receipt without altering user data.
+- Standalone restart, tombstone retrieval, and live logging each selected the
+  Quest 2 rather than the unrelated device. Restart issued the expected Beat
+  Saber launch intent; tombstone retrieval pulled the newest 513,978-byte
+  record; and a bounded live-log test wrote 32 lines (8,128 bytes).
+- The QMOD is still byte-identical to the validated Stage 3 package because
+  Stage 4 changes only host deployment, removal, logging, policy, CI, tests,
+  and documentation—not the packaged Quest payload.
+
+Tests that would destroy user data or require unavailable external state were
+not forced merely to satisfy the checklist: settings/video deletion choices,
+an actual MBF-owned conflict, two simultaneously authorized Quests, a
+deliberately interrupted live deployment, and a native-Linux USB deployment.
+Their policy paths remain covered by the automated cross-host fixtures.
 
 ## Stage 5 — Downloader operation cleanup and diagnostics
 

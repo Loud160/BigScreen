@@ -73,6 +73,42 @@ assert policy.receipt_removal_action(fixture, None, False) == "AlreadyAbsent"
 shared = dict(fixture, ownership="SharedDependency")
 assert policy.receipt_removal_action(shared, "source", True) == "PreserveShared"
 
+# Deployment and uninstall deliberately use different ownership policies.
+# Redeployment must stop on unknown bytes, while a confirmed uninstall may
+# still remove a receipt-owned private path whose hash changed later.
+assert policy.partial_receipt_recoverable(fixture, "source")
+assert policy.partial_receipt_recoverable(fixture, "old-source")
+assert policy.partial_receipt_recoverable(fixture, "baseline")
+assert not policy.partial_receipt_recoverable(fixture, "unknown")
+assert policy.managed_receipt_safe(fixture, "source")
+assert not policy.managed_receipt_safe(fixture, "baseline")
+absent_fixture = dict(fixture, previousState="absent", previousSha256=None)
+assert policy.managed_receipt_safe(absent_fixture, None)
+assert policy.retired_deployment_action(shared, "source", None) == "PreserveShared"
+assert policy.retired_deployment_action(fixture, None, None) == "AlreadyAbsent"
+assert policy.retired_deployment_action(fixture, "baseline", None) == "AlreadyRestored"
+assert policy.retired_deployment_action(fixture, "unknown", "baseline") == "RefuseAmbiguous"
+assert policy.retired_deployment_action(absent_fixture, "source", None) == "RemoveExclusive"
+backed_fixture = dict(fixture, previousBackupPath="/baseline/source.bin")
+assert policy.retired_deployment_action(backed_fixture, "source", "baseline") == "RestoreBaseline"
+assert policy.retired_deployment_action(fixture, "source", None) == "RefuseMissingBaseline"
+
+# A clean uninstall may preserve updater state and Python caches below Runtime.
+# Those generated files must not force the next deploy through destructive
+# legacy migration; an immutable shipped runtime marker still must.
+generated_runtime_files = {
+    "yt-dlp-active",
+    "update-status.json",
+    "download-status.json",
+    "__pycache__/bigscreen_jsc_provider.cpython-314.pyc",
+}
+assert not policy.legacy_runtime_payload_present(
+    lambda relative: relative in generated_runtime_files
+)
+assert policy.legacy_runtime_payload_present(
+    lambda relative: relative == "runtime-manifest.json"
+)
+
 devices = policy.parse_adb_devices([
     "List of devices attached",
     # ADB 37 aligns the serial and state with spaces. Older releases commonly
@@ -146,13 +182,27 @@ with tempfile.TemporaryDirectory(prefix="BigScreen-PipelineTests-") as temporary
         assert "Duplicate ZIP entry" in str(error)
 
 remover = (root / "scripts" / "remove-bigscreen.ps1").read_text(encoding="utf-8")
-for protected in (
+python_tool = (root / "scripts" / "quest_tool.py").read_text(encoding="utf-8")
+protected = (
     "BigScreen/Thumbnails", "BigScreen/Video Import",
     "library.json", "BigScreen/Logs",
-):
-    assert not __import__("re").search(r"rm.*" + __import__("re").escape(protected), remover)
+)
+for script_text in (remover, python_tool):
+    # Search complete commands, including multiline PowerShell expressions,
+    # rather than assuming the protected path appears on the same source line
+    # as rm. Bound the command-sized window so later explanatory text cannot be
+    # mistaken for part of an earlier deletion command.
+    for path in protected:
+        assert not __import__("re").search(
+            r"rm\s+-r[fF]?\b.{0,256}" + __import__("re").escape(path),
+            script_text,
+            __import__("re").IGNORECASE | __import__("re").DOTALL,
+        )
+    assert "BigScreen/Videos" in script_text
 assert "Also remove Big Screen's downloaded videos?" in remover
 assert 'BigScreen/Videos"' in remover
 assert "expectedVideosPath" in remover
+assert "rm -rf -- '$($script:SourceInstallRoot)'" in remover
+assert "rm -rf -- '{SOURCE_ROOT}'" in python_tool
 
 print("Canonical build pipeline, ownership, dependency, and deterministic ZIP tests passed.")

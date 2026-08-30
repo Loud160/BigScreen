@@ -25,9 +25,13 @@ import time
 import zipfile
 
 from quest_policy import (
+    legacy_runtime_payload_present,
+    managed_receipt_safe,
     parse_adb_devices,
+    partial_receipt_recoverable,
     quest_identity,
     receipt_removal_action,
+    retired_deployment_action,
     resolve_install_state,
     version_satisfies,
 )
@@ -385,13 +389,21 @@ def classification(adb: Adb, game_version: str) -> dict:
         mbf_metadata=bool(mbf),
         mbf_payload_complete=mbf_complete,
         legacy_phase_copies=len(legacy),
-        legacy_runtime=adb.directory_exists(RUNTIME_ROOT),
+        # A normal uninstall preserves generated updater/status/cache files in
+        # Runtime. Only immutable shipped payload marks a pre-receipt install.
+        legacy_runtime=legacy_runtime_payload_present(
+            lambda relative: adb.file_exists(f"{RUNTIME_ROOT}/{relative}")
+        ),
         receipt_unreadable=(complete_exists and complete is None) or (partial_exists and partial is None),
         unexpected_phase_copy=bool(unexpected),
     )
     return {
         "state": state, "complete": complete, "partial": partial, "mbf": mbf,
         "legacy": legacy, "unexpected": unexpected,
+        "receipt_unreadable": (
+            (complete_exists and complete is None) or
+            (partial_exists and partial is None)
+        ),
     }
 
 
@@ -481,7 +493,7 @@ def make_receipt(adb: Adb, plan: list[dict], current: dict, prior: dict | None) 
 
 def reconcile_item(adb: Adb, item: dict, partial: bool) -> str | None:
     action = receipt_removal_action(item, adb.remote_hash(item["path"]), partial)
-    if action in {"PreserveShared", "AlreadyAbsent"}:
+    if action in {"PreserveShared", "AlreadyAbsent", "AlreadyRestored"}:
         return None
     # Removal is intentionally based on the receipt's ownership classification,
     # not the installed hash. Big Screen must remain removable after a partial
@@ -489,6 +501,63 @@ def reconcile_item(adb: Adb, item: dict, partial: bool) -> str | None:
     # Shared dependencies never reach this branch.
     adb.shell(f"rm -f -- '{safe_remote(item['path'])}'")
     return item["path"] if adb.file_exists(item["path"]) else None
+
+
+def assert_partial_recoverable(adb: Adb, receipt: dict) -> None:
+    """Refuse to resume an interrupted deployment over unowned bytes."""
+    for item in receipt.get("files", []):
+        current_hash = adb.remote_hash(item["path"])
+        if not partial_receipt_recoverable(item, current_hash):
+            raise QuestToolError(
+                "Partial source deployment is ambiguous at "
+                f"{item['path']}. Current content matches neither the intended "
+                "source file, the state captured immediately before deployment, "
+                "nor the original source-development baseline. The file was preserved."
+            )
+
+
+def assert_managed_receipt_safe(adb: Adb, receipt: dict) -> None:
+    """Refuse a source update when a completed receipt no longer owns a path."""
+    for item in receipt.get("files", []):
+        if not managed_receipt_safe(item, adb.remote_hash(item["path"])):
+            raise QuestToolError(
+                "Source ownership is ambiguous at "
+                f"{item['path']}. Its current hash no longer matches the source "
+                "receipt, so deployment was refused without changing Quest files."
+            )
+
+
+def reconcile_retired_deployment_item(adb: Adb, item: dict) -> None:
+    """Strictly retire one old-plan path, restoring its original baseline."""
+    current_hash = adb.remote_hash(item["path"])
+    backup_path = item.get("previousBackupPath")
+    backup_hash = adb.remote_hash(backup_path) if backup_path else None
+    action = retired_deployment_action(item, current_hash, backup_hash)
+    path = safe_remote(item["path"])
+    if action in {"PreserveShared", "AlreadyAbsent"}:
+        return
+    if action == "RefuseAmbiguous":
+        raise QuestToolError(
+            f"Retired source payload is ambiguous at {path}; it was preserved "
+            "and deployment was refused."
+        )
+    if action == "RefuseMissingBaseline":
+        raise QuestToolError(
+            f"The baseline for retired source payload {path} is unavailable; "
+            "it was preserved."
+        )
+    if action == "RemoveExclusive":
+        adb.shell(f"rm -f -- '{path}'")
+        if adb.file_exists(path):
+            raise QuestToolError(f"Retired source payload could not be removed: {path}")
+        return
+    if action == "RestoreBaseline":
+        backup = safe_remote(backup_path)
+        adb.shell(f"cp '{backup}' '{path}'")
+        if adb.remote_hash(path) != item.get("previousSha256"):
+            raise QuestToolError(f"The baseline for retired source payload {path} could not be restored.")
+        return
+    raise QuestToolError(f"Unknown retired-path action {action!r} for {path}.")
 
 
 def deploy() -> None:
@@ -509,6 +578,16 @@ def deploy() -> None:
         raise QuestToolError("Big Screen source/MBF ownership is mixed or ambiguous; no Quest files were changed.")
     plan = deployment_plan(current)
     prior = state["partial"] if state["state"] == "SOURCE_PARTIAL" else state["complete"]
+    retirement_prior = (
+        state["complete"]
+        if state["state"] == "SOURCE_PARTIAL" and state["complete"]
+        else prior
+    )
+    if state["state"] == "SOURCE_PARTIAL":
+        assert_partial_recoverable(adb, state["partial"])
+        print("A recoverable partial source deployment was found. Resuming from its preserved baseline.")
+    elif state["state"] == "SOURCE_MANAGED":
+        assert_managed_receipt_safe(adb, state["complete"])
     if state["state"] == "LEGACY_SOURCE":
         if not sys.stdin.isatty() or input(
             "A legacy pre-receipt source install was found. Clean its exact private payload and continue? [Y/N] "
@@ -525,13 +604,10 @@ def deploy() -> None:
     receipt = make_receipt(adb, plan, current, prior)
     adb.write_json(receipt, PARTIAL_RECEIPT)
     current_paths = {item["path"] for item in plan}
-    if prior:
-        ambiguous = [
-            path for item in prior.get("files", []) if item["path"] not in current_paths
-            for path in [reconcile_item(adb, item, True)] if path
-        ]
-        if ambiguous:
-            raise QuestToolError(f"Retired source paths changed externally and were preserved: {ambiguous}")
+    if retirement_prior:
+        for item in retirement_prior.get("files", []):
+            if item["path"] not in current_paths:
+                reconcile_retired_deployment_item(adb, item)
     by_path = {item["path"]: item for item in plan}
     print("Deploying and hash-verifying Big Screen's complete source payload.")
     for receipt_item in receipt["files"]:
@@ -570,8 +646,17 @@ def remove(
     if state["state"] == "NOT_INSTALLED":
         print("No source-managed Big Screen installation was found; user data was not changed.")
         return
-    if state["state"] in {"MBF_MANAGED", "MBF_REGISTERED_NOT_INSTALLED", "MIXED_OR_AMBIGUOUS"}:
-        raise QuestToolError("This installation is MBF-managed or ownership is ambiguous; remove/repair it through MBF.")
+    if state["state"] in {"MBF_MANAGED", "MBF_REGISTERED_NOT_INSTALLED"}:
+        raise QuestToolError("This installation is MBF-managed; remove it through MBF.")
+    if state["state"] == "MIXED_OR_AMBIGUOUS" and (
+        state["receipt_unreadable"] or state["unexpected"] or
+        (not state["complete"] and not state["partial"])
+    ):
+        raise QuestToolError(
+            "Big Screen ownership is ambiguous and cannot be reconciled from "
+            "readable receipts. No files were changed. Remove any MBF registration "
+            "first, preserve unknown files, and rerun this tool."
+        )
     print(
         "Big Screen will be removed. Settings and managed downloads are preserved "
         "unless their separate prompts are accepted; map-folder videos, Video Import "
@@ -595,13 +680,33 @@ def remove(
         }
     adb.shell(f"am force-stop '{PACKAGE}'")
     failed: list[str] = []
-    receipt = state["partial"] if state["state"] == "SOURCE_PARTIAL" else state["complete"]
+    receipt = (
+        state["partial"]
+        if state["state"] in {"SOURCE_PARTIAL", "MIXED_OR_AMBIGUOUS"} and state["partial"]
+        else state["complete"]
+    )
     if receipt:
-        partial = state["state"] == "SOURCE_PARTIAL"
+        partial = bool(state["partial"])
+        mbf_paths = {
+            path
+            for _, _, required in state["mbf"]
+            for path in required
+        } if state["state"] == "MIXED_OR_AMBIGUOUS" else set()
         for item in receipt.get("files", []):
+            if item["path"] in mbf_paths:
+                print(f"Preserved MBF-required path: {item['path']}")
+                continue
             path = reconcile_item(adb, item, partial)
             if path:
                 failed.append(path)
+        if state["partial"] and state["complete"]:
+            partial_paths = {item["path"] for item in state["partial"].get("files", [])}
+            for item in state["complete"].get("files", []):
+                if item["path"] in partial_paths or item["path"] in mbf_paths:
+                    continue
+                path = reconcile_item(adb, item, True)
+                if path:
+                    failed.append(path)
     elif state["state"] == "LEGACY_SOURCE":
         for path in state["legacy"]:
             adb.shell(f"rm -f -- '{safe_remote(path)}'")
@@ -628,6 +733,11 @@ def remove(
         print("Big Screen-managed downloaded videos were preserved.")
     adb.shell(f"rm -rf -- '{SOURCE_ROOT}'")
     print("Source installation removed. Map-folder videos, Video Import files, and logs were preserved.")
+    if state["state"] == "MIXED_OR_AMBIGUOUS":
+        print(
+            "Big Screen remains registered with ModsBeforeFriday. Use MBF to repair "
+            "or remove its package before another source deployment."
+        )
 
 
 def collect_logs(since_minutes: int, output_root: pathlib.Path) -> pathlib.Path:

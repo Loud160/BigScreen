@@ -20,6 +20,22 @@ from dataclasses import dataclass
 import re
 
 
+LEGACY_RUNTIME_MARKERS = (
+    "python314.zip",
+    "yt-dlp-shipped",
+    "certifi.whl",
+    "runtime-manifest.json",
+    "CPYTHON-LICENSE.txt",
+    "bigscreen_jsc_provider.py",
+    "lib-dynload/_ssl.cpython-314-aarch64-linux-android.so",
+)
+
+
+def legacy_runtime_payload_present(file_exists) -> bool:
+    """Distinguish shipped runtime files from preserved generated state."""
+    return any(file_exists(relative) for relative in LEGACY_RUNTIME_MARKERS)
+
+
 @dataclass(frozen=True)
 class SemanticVersion:
     major: int
@@ -118,6 +134,70 @@ def receipt_removal_action(item: dict, current_sha256: str | None, partial: bool
     if not current_sha256:
         return "AlreadyAbsent"
     return "RemoveExclusive"
+
+
+def partial_receipt_recoverable(item: dict, current_sha256: str | None) -> bool:
+    """Return whether an interrupted deployment has a provable safe state.
+
+    A partial receipt can legitimately observe the newly installed bytes, the
+    bytes captured immediately before this attempt, or the original baseline.
+    Anything else may belong to another installer and must block redeployment.
+    """
+    predeploy_state = item.get("preDeployState", item.get("previousState"))
+    predeploy_hash = (
+        None
+        if predeploy_state == "absent"
+        else item.get("preDeploySha256", item.get("previousSha256"))
+    )
+    baseline_hash = (
+        None if item.get("previousState") == "absent" else item.get("previousSha256")
+    )
+    return current_sha256 in {
+        item.get("installedSha256"),
+        predeploy_hash,
+        baseline_hash,
+    }
+
+
+def managed_receipt_safe(item: dict, current_sha256: str | None) -> bool:
+    """Return whether a completed source install may be replaced safely."""
+    if current_sha256 == item.get("installedSha256"):
+        return True
+    # A missing source-exclusive file is recoverable when source mode began
+    # with no file at that destination. Changed/restored content is not.
+    return current_sha256 is None and item.get("previousState") == "absent"
+
+
+def retired_deployment_action(
+    item: dict,
+    current_sha256: str | None,
+    baseline_sha256: str | None,
+) -> str:
+    """Choose the strict action for a path retired by a new source plan.
+
+    This is intentionally stricter than ``receipt_removal_action``. Deployment
+    is automatic and must never overwrite external bytes. Explicit uninstall
+    remains permissive for paths a receipt marks BigScreenExclusive.
+    """
+    if item.get("ownership") != "BigScreenExclusive":
+        return "PreserveShared"
+    if current_sha256 is None:
+        return "AlreadyAbsent"
+    if (
+        item.get("previousState") == "present"
+        and current_sha256 == item.get("previousSha256")
+    ):
+        return "AlreadyRestored"
+    if current_sha256 != item.get("installedSha256"):
+        return "RefuseAmbiguous"
+    if item.get("previousState") == "absent":
+        return "RemoveExclusive"
+    if (
+        item.get("previousBackupPath")
+        and baseline_sha256 == item.get("previousSha256")
+    ):
+        return "RestoreBaseline"
+    return "RefuseMissingBaseline"
 
 
 def parse_adb_devices(lines: list[str]) -> list[dict[str, str]]:

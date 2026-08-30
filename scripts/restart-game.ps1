@@ -35,6 +35,9 @@ if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
     throw "ADB was not found. Install Android platform-tools or SideQuest before restarting Beat Saber."
 }
 
+. (Join-Path $PSScriptRoot "adb-target.ps1")
+[void](Select-BigScreenAdbTarget "Beat Saber restart")
+
 & adb shell am force-stop com.beatgames.beatsaber
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & adb shell am start com.beatgames.beatsaber/com.unity3d.player.UnityPlayerActivity

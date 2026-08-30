@@ -16,6 +16,9 @@ Param(
     [Switch] $help
 )
 
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "adb-target.ps1")
+
 if ($help -eq $true) {
     Write-Output "`"Pull-Tombstone`" - Finds and pulls the most recent tombstone from your quest, optionally analyzing it with ndk-stack"
     Write-Output "`n-- Arguments --`n"
@@ -25,6 +28,8 @@ if ($help -eq $true) {
 
     exit
 }
+
+[void](Select-BigScreenAdbTarget "Beat Saber tombstone retrieval")
 
 $global:currentDate = get-date
 $global:recentDate = $Null

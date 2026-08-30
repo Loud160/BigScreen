@@ -231,13 +231,21 @@ if ($classification.State -eq "MIXED_OR_AMBIGUOUS") {
 }
 
 $priorReceipt = $null
+$retirementReceipt = $null
 if ($classification.State -eq "SOURCE_PARTIAL") {
     Assert-BigScreenPartialRecoverable $classification.PartialReceipt
     $priorReceipt = $classification.PartialReceipt
+    # The partial receipt describes the new plan. If the preceding complete
+    # receipt still exists, it remains the proof for paths retired by that new
+    # plan and must be replayed after an interrupted retirement pass.
+    $retirementReceipt = if ($classification.CompleteReceipt) {
+        $classification.CompleteReceipt
+    } else { $priorReceipt }
     Write-Output "A recoverable partial source deployment was found. Resuming from its preserved baseline."
 } elseif ($classification.State -eq "SOURCE_MANAGED") {
     Assert-BigScreenManagedReceiptSafe $classification.CompleteReceipt
     $priorReceipt = $classification.CompleteReceipt
+    $retirementReceipt = $priorReceipt
 } elseif ($classification.State -eq "LEGACY_SOURCE") {
     Write-Output ""
     Write-Host "A pre-receipt Big Screen source install was found." -ForegroundColor Yellow
@@ -273,7 +281,7 @@ Write-Output "Deploying Big Screen's native libraries and embedded downloader ru
 # are removed/restored only when the prior installed hash proves ownership.
 Install-BigScreenSourcePlan `
     -Receipt $receipt `
-    -PriorReceipt $priorReceipt `
+    -PriorReceipt $retirementReceipt `
     -CurrentPlan $deploymentPlan
 
 

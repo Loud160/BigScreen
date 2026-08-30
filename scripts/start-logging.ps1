@@ -25,6 +25,9 @@ Param(
     [Switch] $excludeHeader
 )
 
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "adb-target.ps1")
+
 if ($help -eq $true) {
     if ($excludeHeader -eq $false) {
         Write-Output "`"Start-Logging`" - Logs Beat Saber using `"adb logcat`""
@@ -40,14 +43,22 @@ if ($help -eq $true) {
     exit
 }
 
-$bspid = adb shell pidof com.beatgames.beatsaber
-$command = "adb logcat "
+[void](Select-BigScreenAdbTarget "live Beat Saber logging")
+
+function Get-BeatSaberProcessId {
+    $text = ((& adb shell pidof com.beatgames.beatsaber 2>&1) |
+        ForEach-Object { $_.ToString() }) -join "`n"
+    return $text.Trim()
+}
+
+$bspid = Get-BeatSaberProcessId
+$logcatArguments = @("logcat")
 
 if ($all -eq $false) {
     $loops = 0
     while ([string]::IsNullOrEmpty($bspid) -and $loops -lt 3) {
         Start-Sleep -Milliseconds 100
-        $bspid = adb shell pidof com.beatgames.beatsaber
+        $bspid = Get-BeatSaberProcessId
         $loops += 1
     }
 
@@ -56,14 +67,23 @@ if ($all -eq $false) {
         exit 1
     }
 
-    $command += "--pid $bspid"
+    $logcatArguments += @("--pid", $bspid)
 }
 
+$pattern = $null
 if ($all -eq $false) {
     $pattern = "("
     if ($self -eq $true) {
-        & $PSScriptRoot/validate-modjson.ps1
-        $modID = (Get-Content "./mod.json" -Raw | ConvertFrom-Json).id
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        Push-Location $repoRoot
+        try {
+            & $PSScriptRoot/validate-modjson.ps1
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } finally {
+            Pop-Location
+        }
+        $modID = (Get-Content (Join-Path $repoRoot "mod.json") -Raw |
+            ConvertFrom-Json).id
         $pattern += "$modID|"
     }
     if (![string]::IsNullOrEmpty($custom)) {
@@ -73,13 +93,35 @@ if ($all -eq $false) {
         $pattern = "( INFO| DEBUG| WARN| ERROR| CRITICAL|"
     }
     $pattern += "AndroidRuntime|CRASH|scotland2|Unity  )"
-    $command += " | Select-String -pattern `"$pattern`""
 }
 
+$outputPath = $null
 if (![string]::IsNullOrEmpty($file)) {
-    $command += " | Out-File -FilePath $PSScriptRoot\$file"
+    $outputPath = if ([IO.Path]::IsPathRooted($file)) {
+        $file
+    } else {
+        Join-Path $PSScriptRoot $file
+    }
 }
 
-Write-Output "Logging using Command `"$command`""
-adb logcat -c
-Invoke-Expression $command
+Write-Output (
+    "Logging selected Quest with adb {0}{1}{2}" -f
+    ($logcatArguments -join " "),
+    $(if ($pattern) { " and filter '$pattern'" } else { "" }),
+    $(if ($outputPath) { " into '$outputPath'" } else { "" }))
+& adb logcat -c
+if ($LASTEXITCODE -ne 0) { throw "ADB could not clear the current logcat buffer." }
+
+# Keep the live pipeline as real process arguments and PowerShell commands.
+# Caller-provided regex/file text is never evaluated as PowerShell code.
+if ($pattern -and $outputPath) {
+    & adb @logcatArguments 2>&1 |
+        Select-String -Pattern $pattern |
+        Out-File -LiteralPath $outputPath
+} elseif ($pattern) {
+    & adb @logcatArguments 2>&1 | Select-String -Pattern $pattern
+} elseif ($outputPath) {
+    & adb @logcatArguments 2>&1 | Out-File -LiteralPath $outputPath
+} else {
+    & adb @logcatArguments
+}

@@ -23,6 +23,12 @@ while (( $# > 0 )); do
         --clean)
             clean_build=true
             ;;
+        --yes|-y)
+            # The canonical bootstrap currently downloads only missing,
+            # hash-pinned inputs and performs no interactive approval prompt.
+            # Accept the documented compatibility flag so automation and the
+            # Windows wrapper can pass it without changing build behavior.
+            ;;
         --help|-h)
             cat <<'EOF'
 Usage: bash ./Build-QMOD-Linux.sh [--clean] [--yes]

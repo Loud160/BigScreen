@@ -67,6 +67,17 @@ jobs:
     - name: Build, test, audit, and package through the canonical pipeline
       run: bash ./Build-QMOD-Linux.sh
 
+    # The canonical Linux suite exercises the shared Python ownership policy.
+    # Run the Windows-facing PowerShell policy implementations as independent
+    # CI fixtures too, preventing host-specific deploy/package behavior from
+    # drifting without making PowerShell a local Linux build prerequisite.
+    - name: Verify Windows ownership and package policy fixtures
+      shell: pwsh
+      run: |
+        ./tests/SourceInstallOwnershipTests.ps1
+        ./tests/QuestDependencyCheckTests.ps1
+        ./tests/DeterministicZipTests.ps1
+
     - name: Get Library Name
       id: libname
       run: |
