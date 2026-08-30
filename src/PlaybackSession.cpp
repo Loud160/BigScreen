@@ -37,6 +37,69 @@ namespace BigScreen {
             "Big Screen Cinema Test 00 - Quest Effects Cycle";
         constexpr double CinemaCyclePhaseSeconds = 10.0;
         constexpr std::size_t CinemaCyclePhaseCount = 14;
+
+        bool NearlyEqual(float left, float right)
+        {
+            return std::abs(left - right) <= 0.0001f;
+        }
+
+        bool SameOptionalFloat(
+            const std::optional<float>& left,
+            const std::optional<float>& right)
+        {
+            if(left.has_value() != right.has_value())
+                return false;
+            return !left || NearlyEqual(*left, *right);
+        }
+
+        bool SameSurfaceShapeAndPresentation(
+            const MapVideoConfig& left,
+            const MapVideoConfig& right)
+        {
+            // World position/rotation/scale are deliberately absent. When
+            // every mesh/material input is unchanged, those three values can
+            // be applied directly without allocating replacement meshes.
+            return NearlyEqual(left.screenHeight, right.screenHeight) &&
+                SameOptionalFloat(
+                    left.screenWidthOverride,
+                    right.screenWidthOverride) &&
+                NearlyEqual(left.screenCurvature, right.screenCurvature) &&
+                SameOptionalFloat(
+                    left.cinemaCurvatureDegrees,
+                    right.cinemaCurvatureDegrees) &&
+                left.cinemaCurveYAxis == right.cinemaCurveYAxis &&
+                left.maintainAspectRatioWhenCurved ==
+                    right.maintainAspectRatioWhenCurved &&
+                left.screenSegments == right.screenSegments &&
+                left.letterboxTransparent == right.letterboxTransparent &&
+                left.opaqueScreenBody == right.opaqueScreenBody &&
+                NearlyEqual(left.videoOpacity, right.videoOpacity) &&
+                NearlyEqual(left.videoRotation, right.videoRotation) &&
+                NearlyEqual(left.videoZoom, right.videoZoom) &&
+                NearlyEqual(left.videoOffsetX, right.videoOffsetX) &&
+                NearlyEqual(left.videoOffsetY, right.videoOffsetY) &&
+                NearlyEqual(left.videoTilt, right.videoTilt) &&
+                left.stretchVideoToFit == right.stretchVideoToFit &&
+                left.colorBlending == right.colorBlending &&
+                left.vignette.has_value() == right.vignette.has_value();
+        }
+
+        bool SameVisualEffects(
+            const FrameVisualEffects& left,
+            const FrameVisualEffects& right)
+        {
+            return left.enabled == right.enabled &&
+                NearlyEqual(left.brightness, right.brightness) &&
+                NearlyEqual(left.contrast, right.contrast) &&
+                NearlyEqual(left.saturation, right.saturation) &&
+                NearlyEqual(left.hue, right.hue) &&
+                NearlyEqual(left.exposure, right.exposure) &&
+                NearlyEqual(left.gamma, right.gamma) &&
+                left.vignetteEnabled == right.vignetteEnabled &&
+                left.vignetteElliptical == right.vignetteElliptical &&
+                NearlyEqual(left.vignetteRadius, right.vignetteRadius) &&
+                NearlyEqual(left.vignetteSoftness, right.vignetteSoftness);
+        }
     }
 
     PlaybackSession& PlaybackSession::Instance()
@@ -294,13 +357,154 @@ namespace BigScreen {
 
     void PlaybackSession::RefreshDisplaySettings()
     {
-        // A surface must never outlive the effective configuration that
-        // created it. Menu setting changes normally arrive after the preview
-        // stopped playback, but this guard keeps future callers safe as well.
+        const auto previousConfig = config_;
+        const auto intendedContext = started_
+            ? context_
+            : PlaybackContext::None;
+        RebuildEffectiveConfig(intendedContext);
+
+        if(!started_ || environmentOnlySession_)
+            return;
+        if(!previousConfig || !config_ || !surface_.IsCreated())
+        {
+            config_ = previousConfig;
+            ErrorManager::Instance().ReportInternal(
+                "updating the active video screen",
+                "The current screen or effective configuration was unavailable. Playback kept its previous presentation.");
+            return;
+        }
+
+        const auto previousVisualEffects = VisualEffectsFor(*previousConfig);
+        const auto nextVisualEffects = VisualEffectsFor(*config_);
+        const bool transformOnly =
+            SameSurfaceShapeAndPresentation(*previousConfig, *config_);
+        if(transformOnly)
+        {
+            surface_.SetWorldTransform(
+                {
+                    config_->screenPosition.x,
+                    config_->screenPosition.y,
+                    config_->screenPosition.z},
+                UnityEngine::Quaternion::Euler({
+                    config_->screenRotation.x,
+                    config_->screenRotation.y,
+                    config_->screenRotation.z}));
+            surface_.SetWorldScale({
+                config_->screenScale.x,
+                config_->screenScale.y,
+                config_->screenScale.z});
+        }
+        else if(!surface_.UpdateGeometry(*config_))
+        {
+            // ScreenSurface publishes replacement meshes transactionally, so
+            // restoring the configuration is sufficient to keep the existing
+            // video, texture, and decoder running after a failed live update.
+            config_ = previousConfig;
+            ErrorManager::Instance().ReportInternal(
+                "updating the active video screen",
+                "Unity could not apply the new screen geometry. Playback kept the previous layout.");
+            return;
+        }
+
+        if(!SameVisualEffects(previousVisualEffects, nextVisualEffects))
+            decoder_.UpdateVisualEffects(nextVisualEffects);
+
+        const bool useAdditionalScreens =
+            MapperScreenPresentationActive() &&
+            !config_->additionalScreens.empty();
+        if(useAdditionalScreens)
+        {
+            // Existing mapper clones update in place. A count/topology change
+            // rebuilds only the lightweight shared-texture group—not FFmpeg,
+            // MediaCodec, the primary surface, or the playback clock.
+            if(!cinemaScreens_.UpdateGeometry(*config_) &&
+               !cinemaScreens_.Create(
+                   *config_,
+                   decoder_.Width(),
+                   decoder_.Height(),
+                   surface_.Texture()))
+            {
+                BigScreen::BigScreenLogger.error(
+                    "Cinema additional screens could not be refreshed live; continuing with the primary screen");
+            }
+        }
+        else
+        {
+            cinemaScreens_.Destroy();
+        }
+
+        const double mediaTime = config_->MediaTimeForSong(
+            lastTickSongTime_,
+            decoder_.DurationSeconds());
+        if(mediaTime < 0.0)
+        {
+            surface_.ShowLeadIn(config_->blackDuringLeadIn);
+            cinemaScreens_.ShowLeadIn(config_->blackDuringLeadIn);
+        }
+        else if(!showcase_.IsCreated())
+        {
+            surface_.SetVisible(firstFrameUploaded_);
+            cinemaScreens_.SetVisible(firstFrameUploaded_);
+        }
+
+        BigScreen::BigScreenLogger.info(
+            "Applied active video screen settings live without restarting playback");
+    }
+
+    void PlaybackSession::RefreshPipelineSettings()
+    {
+        // Decoder ABI/backend, decoded storage, and material-construction
+        // choices cannot be exchanged under a live worker. Keep their rebuild
+        // explicit so layout/timing callbacks cannot accidentally inherit it.
         if(started_)
             Stop();
-
         RebuildEffectiveConfig();
+    }
+
+    bool PlaybackSession::ApplyLibraryPreviewTiming(
+        double offsetSeconds,
+        double playbackRate,
+        bool fitToSong,
+        bool blackDuringLeadIn,
+        double songTimeSeconds)
+    {
+        if(!started_ || context_ != PlaybackContext::LibraryPreview ||
+           !baseConfig_ || !config_ || playbackFailed_ || !decoder_.IsOpen())
+            return false;
+
+        const bool mappingChanged =
+            std::abs(config_->offsetSeconds - offsetSeconds) > 0.000001 ||
+            std::abs(config_->playbackRate - playbackRate) > 0.000001;
+        const auto applyTiming = [&](MapVideoConfig& target)
+        {
+            target.offsetSeconds = offsetSeconds;
+            target.playbackRate = playbackRate;
+            target.fitToSong = fitToSong;
+            target.blackDuringLeadIn = blackDuringLeadIn;
+        };
+        applyTiming(*baseConfig_);
+        if(chromaPreviewBaseConfig_)
+            applyTiming(*chromaPreviewBaseConfig_);
+        applyTiming(*config_);
+
+        if(mappingChanged)
+        {
+            // Keep song audio and the last uploaded texture running. Restart
+            // means generation/queue invalidation plus an asynchronous seek in
+            // the existing backend; it does not close MediaCodec or FFmpeg.
+            ResetPresentationMeasurement(songTimeSeconds);
+            if(!RestartLibraryPreview(songTimeSeconds))
+                return false;
+        }
+        Tick(songTimeSeconds);
+        BigScreen::BigScreenLogger.info(
+            "Applied live Video Library timing at song time {:.3f}: offset {:.3f}s, speed {:.4f}x, fit {}, lead-in {}",
+            songTimeSeconds,
+            offsetSeconds,
+            playbackRate,
+            fitToSong,
+            blackDuringLeadIn ? "black" : "transparent");
+        return true;
     }
 
     bool PlaybackSession::ApplyLibraryPreviewEditorDisplay(
@@ -2103,7 +2307,7 @@ namespace BigScreen {
         lastFpsSongTime_ = songTimeSeconds;
         ResetAutomaticPerformanceController(songTimeSeconds);
         BigScreen::BigScreenLogger.info(
-            "Performance measurement rebased at song time {:.3f} after a Practice/Replay clock change",
+            "Performance measurement rebased at song time {:.3f} after a playback-clock or timing change",
             songTimeSeconds);
     }
 

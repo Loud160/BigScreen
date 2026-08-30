@@ -1268,7 +1268,8 @@ assert resolve_video_shader.index('FindVideoShader()') \
     < resolve_video_shader.index('UnityEngine::Shader::Find("UI/Default")')
 assert "UI/Default was unexpectedly missing" in screen_surface_source
 # The method toggle must exist in the Misc tab, persist through Settings,
-# and apply immediately to an active preview via the proven recreation path.
+# and apply immediately to an active preview via the explicit pipeline rebuild
+# path. Screen and timing controls are intentionally forbidden from using it.
 assert '"embeddedVideoShaderEnabled", true' in settings_source
 assert 'Replace(\n            document,\n            "embeddedVideoShaderEnabled",' \
     in settings_source
@@ -1277,7 +1278,7 @@ assert '"Embedded Video Shader"' in settings_menu_source
 assert 'SetEmbeddedVideoShaderEnabled(enabled);' in settings_menu_source
 embedded_shader_toggle = settings_menu_source.split(
     '"Embedded Video Shader"', 1)[1]
-assert 'ApplyDisplaySettingsAndRefreshPreview();' in \
+assert 'ApplyPipelineSettingsAndRefreshPreview();' in \
     embedded_shader_toggle.split('BSML::Lite::AddHoverHint', 1)[0]
 # The process-lifetime embedded shader cache must be a real GC/native lifetime
 # owner. A raw static Shader* can outlive its IL2CPP wrapper across scenes and
@@ -1399,6 +1400,7 @@ assert 'performanceParent, "↻"' not in settings_menu_source
 assert 'diagnosticsParent, "↻"' in settings_menu_source
 assert "performanceDiagnosticsToggle_->toggle->get_transform()" in settings_menu_source
 assert "ApplyDisplaySettingsAndRefreshPreview();" in settings_menu_source
+assert "ApplyPipelineSettingsAndRefreshPreview();" in settings_menu_source
 assert linux_build.count("BIGSCREEN_FFMPEG_VERSION=") == 2
 for warning in ("-Wall", "-Wextra", "-Wpedantic"):
     assert warning in cmake
@@ -2107,7 +2109,7 @@ for required_notice_case in (
 # Rebuilding the line must not remove or rewrite the operations it describes.
 # Downloads still update the independent progress bar, replacement publication
 # remains atomic, unfinished media keeps playback/timing controls locked, and
-# all four timing settings still persist and rebuild the preview.
+# all four timing settings still persist and update the active preview.
 assert "if(!suppressUrlCallback_)" in library_menu_source
 assert "const bool showProgress = thisDownload &&" in library_menu_source
 assert "downloadOperationInProgress && download.Active()" in library_menu_source
@@ -2129,8 +2131,8 @@ assert '"Video timing was not saved"' in library_menu_source
 
 # Toggle/reset synchronization controls publish immediately. Continuous
 # playback-speed and offset callbacks must instead schedule one debounced
-# persistence/restart operation; that operation publishes the final status line
-# only after the slider has settled.
+# persistence/in-place-seek operation; that operation publishes the final
+# status line only after the slider has settled.
 fit_toggle_callback = library_menu_source.split(
     'fitToggle_ = BSML::Lite::CreateToggle(', 1
 )[1].split('rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
@@ -2150,9 +2152,12 @@ assert "constexpr float TimingCommitDebounceSeconds = 0.25f;" in (
     library_menu_source
 )
 assert "bool VideoLibraryMenu::FlushPendingTimingCommit(" in library_menu_source
-assert "if(!SaveTiming())" in library_menu_source.split(
+timing_commit = library_menu_source.split(
     "bool VideoLibraryMenu::FlushPendingTimingCommit(", 1
 )[1].split("bool VideoLibraryMenu::SaveTiming()", 1)[0]
+assert "if(!SaveTiming())" in timing_commit
+assert "ApplyTimingToActivePreview();" in timing_commit
+assert "StartSelectedPreview();" not in timing_commit
 assert "FlushPendingTimingCommit(false);" in library_menu_source
 assert "MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);" in (
     library_menu_source
@@ -2160,6 +2165,19 @@ assert "MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);" in (
 assert library_menu_source.count("ExtendTimingControlRight(") >= 5
 assert "void VideoLibraryMenu::ResetPlaybackRate()" in library_menu_source
 assert "void VideoLibraryMenu::ResetVideoOffset()" in library_menu_source
+assert "bool VideoLibraryMenu::ApplyTimingToActivePreview()" in library_menu_source
+active_timing = library_menu_source.split(
+    "bool VideoLibraryMenu::ApplyTimingToActivePreview()", 1
+)[1].split("void VideoLibraryMenu::ResetPlaybackRate()", 1)[0]
+assert "playback.ApplyLibraryPreviewTiming(" in active_timing
+assert "StartSelectedPreview();" in active_timing  # failure recovery only
+assert "bool PlaybackSession::ApplyLibraryPreviewTiming(" in playback_source
+live_timing = playback_source.split(
+    "bool PlaybackSession::ApplyLibraryPreviewTiming(", 1
+)[1].split("bool PlaybackSession::ApplyLibraryPreviewEditorDisplay(", 1)[0]
+assert "RestartLibraryPreview(songTimeSeconds)" in live_timing
+assert "Stop();" not in live_timing
+assert "decoder_.Close" not in live_timing
 for timing_reset_body in (
     library_menu_source.split(
         "void VideoLibraryMenu::ResetPlaybackRate()", 1
@@ -2727,6 +2745,36 @@ assert "ResetMapperVisualEffects" in playback_source
 assert "ResetPresentationToDefaults" in (
     root / "src/ScreenPreview.cpp"
 ).read_text(encoding="utf-8")
+
+# Screen controls mutate the live Unity presentation and must never inherit the
+# decoder/material reconstruction reserved for FFmpeg, hardware, shader, and
+# YUV-storage settings.
+live_display_refresh = playback_source.split(
+    "void PlaybackSession::RefreshDisplaySettings()", 1
+)[1].split("void PlaybackSession::RefreshPipelineSettings()", 1)[0]
+assert "surface_.SetWorldTransform(" in live_display_refresh
+assert "surface_.UpdateGeometry(*config_)" in live_display_refresh
+assert "cinemaScreens_.UpdateGeometry(*config_)" in live_display_refresh
+assert "Stop();" not in live_display_refresh
+pipeline_refresh = playback_source.split(
+    "void PlaybackSession::RefreshPipelineSettings()", 1
+)[1].split("bool PlaybackSession::ApplyLibraryPreviewTiming(", 1)[0]
+assert "Stop();" in pipeline_refresh
+library_display_refresh = library_menu_source.split(
+    "void VideoLibraryMenu::RefreshDisplaySettings()", 1
+)[1].split("void VideoLibraryMenu::RefreshPipelineSettings()", 1)[0]
+assert "playback.RefreshDisplaySettings();" in library_display_refresh
+assert "StartSelectedPreview();" not in library_display_refresh
+library_pipeline_refresh = library_menu_source.split(
+    "void VideoLibraryMenu::RefreshPipelineSettings()", 1
+)[1].split("void VideoLibraryMenu::Deactivate()", 1)[0]
+assert "StartSelectedPreview();" in library_pipeline_refresh
+assert "bool UpdateGeometry(const MapVideoConfig& primary);" in (
+    root / "include/BigScreen/CinemaScreenGroup.hpp"
+).read_text(encoding="utf-8")
+assert "textureHasAuthoredAlpha_ = config.vignette.has_value();" in (
+    screen_surface_source
+)
 
 # The local-file picker is a center-screen browser. Potentially slow directory
 # enumeration and FFmpeg compatibility probes stay off Unity's UI thread, and

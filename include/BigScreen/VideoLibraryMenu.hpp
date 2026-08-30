@@ -92,6 +92,9 @@ namespace BigScreen {
         void Deactivate();
         void StopActivePreview();
         void RefreshDisplaySettings();
+        /// Recreates the active library preview only for settings whose
+        /// decoder or material resources are fixed at session creation.
+        void RefreshPipelineSettings();
         /// Opens the editor for an installed level by stable level ID. The
         /// optional navigation step is suppressed during a flow's first
         /// activation so HMUI can receive the editor as its initial right-side
@@ -172,12 +175,16 @@ namespace BigScreen {
         bool RecalculateFitToSongRate();
         bool SaveTiming();
         /// Continuous slider/arrow callbacks update their visible value first,
-        /// then coalesce manifest persistence and decoder restart until input
-        /// has been idle briefly. Navigation flushes the final value before the
-        /// selected map can change.
+        /// then coalesce manifest persistence and an in-place decoder seek
+        /// until input has been idle briefly. Navigation flushes the final
+        /// value before the selected map can change.
         void ScheduleTimingCommit(std::string completionNotice);
         bool FlushPendingTimingCommit(bool restartPreview = true);
         void CancelPendingTimingCommit();
+        /// Applies the editor's four timing values to the warmed preview. The
+        /// full initializer is retained only as recovery when no live preview
+        /// exists; normal edits never close FFmpeg or interrupt song audio.
+        bool ApplyTimingToActivePreview();
         /// Restores one synchronization value to the mapper-authored Cinema
         /// baseline when present, or to Big Screen's neutral default for maps
         /// without Cinema timing. The other timing controls remain unchanged.

@@ -1778,10 +1778,10 @@ namespace BigScreen {
         SettingsMenu::Instance().RefreshControls();
 
         auto& playback = PlaybackSession::Instance();
-        const bool restartPreview = playback.IsMenuPreviewActive();
+        // Layout changes mutate only the existing Unity presentation. Keep
+        // the song preview's decoder, texture, audio clock, and current frame
+        // alive instead of stopping and reopening the selected video.
         playback.RefreshDisplaySettings();
-        if(restartPreview)
-            playback.Start(PlaybackContext::MenuPreview);
     }
 
     void SelectionVideoToggle::BringHeaderControlsToFront()

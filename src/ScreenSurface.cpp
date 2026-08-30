@@ -1636,6 +1636,11 @@ namespace BigScreen {
         auto* previousVideoMesh = videoMesh_;
         const bool previousVideoCoversFrame = videoCoversFrame_;
         const bool previousOpaqueScreenBody = opaqueScreenBody_;
+        const bool previousTextureHasAuthoredAlpha =
+            textureHasAuthoredAlpha_;
+        const bool previousColorBlending = colorBlending_;
+        const bool previousLetterboxTransparent = letterboxTransparent_;
+        const float previousOpacity = opacity_;
         const float previousScreenWidth = screenWidth_;
         const float previousScreenHeight = screenHeight_;
         const auto previousGeometryConfig = geometryConfig_;
@@ -1658,6 +1663,8 @@ namespace BigScreen {
             videoMesh_ = previousVideoMesh;
             videoCoversFrame_ = previousVideoCoversFrame;
             opaqueScreenBody_ = previousOpaqueScreenBody;
+            textureHasAuthoredAlpha_ = previousTextureHasAuthoredAlpha;
+            colorBlending_ = previousColorBlending;
             screenWidth_ = previousScreenWidth;
             screenHeight_ = previousScreenHeight;
             geometryConfig_ = previousGeometryConfig;
@@ -1678,13 +1685,29 @@ namespace BigScreen {
             return false;
         }
 
-        if((config.letterboxTransparent != letterboxTransparent_ ||
-            std::abs(config.videoOpacity - opacity_) > 0.0001f) &&
+        textureHasAuthoredAlpha_ = config.vignette.has_value();
+#if BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
+        colorBlending_ = config.colorBlending.value_or(false);
+#else
+        colorBlending_ = false;
+#endif
+        const bool presentationChanged =
+            config.letterboxTransparent != letterboxTransparent_ ||
+            std::abs(config.videoOpacity - opacity_) > 0.0001f ||
+            textureHasAuthoredAlpha_ != previousTextureHasAuthoredAlpha ||
+            colorBlending_ != previousColorBlending;
+        if(presentationChanged &&
            !ApplyPresentation(
                config.letterboxTransparent,
                config.videoOpacity))
         {
             rollBackGeometry();
+            // ApplyPresentation resolves every dependency before committing,
+            // but restore the old mode explicitly so future shader changes
+            // cannot leave a partially updated live surface after failure.
+            ApplyPresentation(
+                previousLetterboxTransparent,
+                previousOpacity);
             return false;
         }
 

@@ -91,6 +91,53 @@ namespace BigScreen {
         }
     }
 
+    bool CinemaScreenGroup::UpdateGeometry(const MapVideoConfig& primary)
+    {
+        if(primary.additionalScreens.size() != screens_.size())
+            return false;
+
+        try
+        {
+            for(std::size_t index = 0; index < screens_.size(); ++index)
+            {
+                auto& screen = screens_[index];
+                if(!screen)
+                    return false;
+
+                const auto& authored = primary.additionalScreens[index];
+                MapVideoConfig config = primary;
+                config.additionalScreens.clear();
+                if(authored.position)
+                    config.screenPosition = *authored.position;
+                if(authored.rotation)
+                    config.screenRotation = *authored.rotation;
+                if(!screen->UpdateGeometry(config))
+                    return false;
+
+                // Create applies authored scale after constructing each clone;
+                // mirror that contract during live updates and explicitly
+                // restore Vector3.one when a new mapper state omits scale.
+                const auto scale = authored.scale.value_or(
+                    Float3{1.0f, 1.0f, 1.0f});
+                screen->SetWorldScale({scale.x, scale.y, scale.z});
+            }
+            return true;
+        }
+        catch(const std::exception& exception)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not update Cinema additional screens live: {}",
+                exception.what());
+            return false;
+        }
+        catch(...)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not update Cinema additional screens live because of an unknown native exception");
+            return false;
+        }
+    }
+
     void CinemaScreenGroup::Destroy()
     {
         for(auto& screen : screens_)

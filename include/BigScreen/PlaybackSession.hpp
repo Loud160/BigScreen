@@ -112,9 +112,25 @@ namespace BigScreen {
         bool ConfigurePreviewBeatmap(
             const std::string& characteristic,
             int difficulty);
-        /// Rebuilds the selected map's effective display configuration from
-        /// mapper-authored metadata and the latest global settings.
+        /// Applies the latest layout/material configuration to an existing
+        /// screen while retaining its decoder, texture, playback clock, and
+        /// currently displayed frame. Mesh-affecting settings rebuild only
+        /// the screen geometry; transform-only settings move it in place.
         void RefreshDisplaySettings();
+        /// Stops and rebuilds an active preview when a setting changes decoder
+        /// ABI, codec ownership, decoded storage, or screen-material creation.
+        /// Ordinary timing and layout controls must never use this path.
+        void RefreshPipelineSettings();
+        /// Replaces only the synchronization fields owned by the Video Library
+        /// editor. Playback audio keeps advancing; when the song-to-media
+        /// mapping changes, the existing decoder discards its old read-ahead
+        /// queue and asynchronously seeks while the last picture stays visible.
+        bool ApplyLibraryPreviewTiming(
+            double offsetSeconds,
+            double playbackRate,
+            bool fitToSong,
+            bool blackDuringLeadIn,
+            double songTimeSeconds);
         /// Temporarily applies the free-position editor's unsaved geometry to
         /// an active Video Library preview without restarting its decoder or
         /// audio. Returns false when the library preview does not own a live

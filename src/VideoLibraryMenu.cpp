@@ -1801,7 +1801,7 @@ namespace BigScreen {
                     if(rateSetting_) rateSetting_->set_Value(1.0f);
                     suppressTimingCallbacks_ = false;
                     terminalDownloadProgressLevelId_.clear();
-                    StartSelectedPreview();
+                    ApplyTimingToActivePreview();
                     RefreshDetails();
                     PublishEditorNotice(
                         "Fit to Song disabled. Playback speed reset to 1.00x.");
@@ -1924,7 +1924,7 @@ namespace BigScreen {
                 if(SaveTiming())
                 {
                     terminalDownloadProgressLevelId_.clear();
-                    StartSelectedPreview();
+                    ApplyTimingToActivePreview();
                     RefreshDetails();
                     PublishEditorNotice(enabled
                         ? "Lead-in background set to black."
@@ -4481,7 +4481,7 @@ namespace BigScreen {
             return false;
         terminalDownloadProgressLevelId_.clear();
         if(restartPreview)
-            StartSelectedPreview();
+            ApplyTimingToActivePreview();
         RefreshDetails();
         if(!completionNotice.empty())
             PublishEditorNotice(completionNotice);
@@ -4565,6 +4565,25 @@ namespace BigScreen {
         }
     }
 
+    bool VideoLibraryMenu::ApplyTimingToActivePreview()
+    {
+        auto& playback = PlaybackSession::Instance();
+        if(playback.ApplyLibraryPreviewTiming(
+               offset_,
+               rate_,
+               fitToSong_,
+               blackDuringLeadIn_,
+               previewSongTime_))
+            return true;
+
+        // A newly assigned video or a decoder that already failed may not own
+        // a live LibraryPreview session. Full initialization remains the
+        // bounded recovery path for that exceptional state; ordinary timing
+        // edits above never close the active decoder or stop song audio.
+        StartSelectedPreview();
+        return PlaybackSession::Instance().IsLibraryPreviewActive();
+    }
+
     void VideoLibraryMenu::ResetPlaybackRate()
     {
         if(!selected_)
@@ -4587,7 +4606,7 @@ namespace BigScreen {
             rateSetting_->set_Value(static_cast<float>(rate_));
         suppressTimingCallbacks_ = false;
         terminalDownloadProgressLevelId_.clear();
-        StartSelectedPreview();
+        ApplyTimingToActivePreview();
         RefreshDetails();
 
         std::ostringstream message;
@@ -4626,7 +4645,7 @@ namespace BigScreen {
         {
             if(!SaveTiming())
                 return;
-            StartSelectedPreview();
+            ApplyTimingToActivePreview();
         }
 
         suppressTimingCallbacks_ = true;
@@ -4699,7 +4718,7 @@ namespace BigScreen {
         suppressTimingCallbacks_ = true;
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         suppressTimingCallbacks_ = false;
-        StartSelectedPreview();
+        ApplyTimingToActivePreview();
         terminalDownloadProgressLevelId_.clear();
         RefreshDetails();
         std::ostringstream message;
@@ -5406,10 +5425,10 @@ namespace BigScreen {
 
     void VideoLibraryMenu::StartSelectedPreview()
     {
-        // A timing/display change can rebuild the preview while its audition is
-        // running. Pause the owned audio channel before discarding the warmed
-        // decoder, then resume only after the replacement session has uploaded
-        // its first synchronized picture.
+        // Source replacement and explicit pipeline changes can rebuild the
+        // preview while its audition is running. Pause the owned audio channel
+        // before discarding the warmed decoder, then resume only after the
+        // replacement session has uploaded its first synchronized picture.
         const bool resumeAfterPrewarm = previewPlaying_;
         if(resumeAfterPrewarm && IsAlive(previewAudioSource_) &&
            IsAlive(previewAudioClip_) && IsAlive(songPreviewPlayer_) &&
@@ -6482,13 +6501,27 @@ namespace BigScreen {
            !VideoLibrary::Instance().Describe(selected_).CanPlay())
             return;
 
-        // Curvature changes the screen mesh, so the active surface must be
-        // recreated. Reopen the library preview at its retained song time;
-        // sending the change through ScreenPreview would replace the playing
-        // frame with that settings preview's checkerboard pattern.
+        // ScreenSurface can transactionally replace mesh geometry around its
+        // existing texture. Position-only changes are applied directly to the
+        // transform. Neither path touches song audio, FFmpeg, MediaCodec, or
+        // the prepared read-ahead queue.
+        auto& playback = PlaybackSession::Instance();
+        playback.RefreshDisplaySettings();
+        if(playback.IsLibraryPreviewActive())
+            playback.Tick(previewSongTime_);
+    }
+
+    void VideoLibraryMenu::RefreshPipelineSettings()
+    {
+        if(!editorVisible_ || !selected_ ||
+           !VideoLibrary::Instance().Describe(selected_).CanPlay())
+            return;
+
+        // Codec ABI, hardware ownership, decoded-frame storage, and material
+        // selection are fixed when their resources are created. This is the
+        // only Settings-menu path that deliberately performs a full preview
+        // rebuild; layout and timing controls use their live paths instead.
         StartSelectedPreview();
-        if(PlaybackSession::Instance().IsLibraryPreviewActive())
-            PlaybackSession::Instance().Tick(previewSongTime_);
     }
 
     void VideoLibraryMenu::Deactivate()

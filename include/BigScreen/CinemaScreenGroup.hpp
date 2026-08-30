@@ -26,6 +26,11 @@ namespace BigScreen {
             int videoWidth,
             int videoHeight,
             UnityEngine::Texture* sharedTexture);
+        /// Applies mapper/picture geometry to the existing shared-texture
+        /// screens. This preserves decoder and texture ownership while Screen
+        /// tab controls change. A topology mismatch returns false so the owner
+        /// can rebuild just this lightweight presentation group.
+        bool UpdateGeometry(const MapVideoConfig& primary);
         void Destroy();
         void SetVisible(bool visible);
         void ShowLeadIn(bool black);

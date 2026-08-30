@@ -55,8 +55,8 @@ without mixing unrelated unfinished work.
 | Stage | Scope | Status | Commit | Quest result |
 | --- | --- | --- | --- | --- |
 | 1 | Beta correctness, privacy, and unsupported-mode gate | Quest validated | `94ab939` (combined Stage 1/2 checkpoint) | No obvious regression in the user's initial focused pass |
-| 2 | Unity screen-state and lifetime safety | Quest testing in progress | `94ab939` on `codex/fable-review-stage-2` | Ownership-safe deployment verified; user testing in progress |
-| 3 | Video Library cache and menu responsiveness | Automated verification passed | Stage 3 checkpoint on `codex/fable-review-stage-3` | Not deployed; Stage 3 QMOD-only build |
+| 2 | Unity screen-state and lifetime safety | Quest validated | `94ab939` on `codex/fable-review-stage-2` | User reported no regression in the focused Stage 2 pass |
+| 3 | Video Library cache and menu responsiveness | Quest validated | `537678b` plus the live-update correction on `codex/fable-review-stage-3` | On August 30, 2026, the user verified that menu timing and screen edits remained responsive without interrupting video playback and could not reproduce the prior crash |
 | 4 | Deployment, removal, and ownership parity | Planned | — | Pending |
 | 5 | Downloader operation cleanup and diagnostics | Planned | — | Pending |
 | 6 | Packaging, CI, and dependency reproducibility | Planned | — | Pending |
@@ -82,7 +82,7 @@ without mixing unrelated unfinished work.
 | M-3: unredacted exception diagnostics | Valid | Redact at the Python downloader boundary before status persistence, with a second persistence-boundary defense where appropriate. | 1 |
 | M-4: lead-in material changed before state commit | Valid | Complete all fallible preparation before mutating materials and committing lead-in state. | 2 |
 | M-5: inconsistent Unity liveness guards | Valid | Use shared `UnityW::isAlive` helpers for cross-frame screen, material, renderer, and transform access. | 2 |
-| M-6: timing sliders save and restart on every callback | Valid | Update visible values immediately, then debounce persistence and decoder restart for continuous slider motion. Toggle and reset actions can remain immediate. | 3 |
+| M-6: timing sliders save and restart on every callback | Valid | Update visible values immediately, debounce persistence, then update timing by flushing/seeking the existing decoder queue. Toggle and reset actions can remain immediate without rebuilding FFmpeg, MediaCodec, textures, or audio. | 3 |
 | M-7: JSON Issues synchronously parses the catalog | Valid | Build an issue index/count during incremental metadata prewarming. Show a preparing state instead of forcing a synchronous full scan. | 3 |
 | M-8: Linux deployment safety differs from PowerShell | Valid | Port partial-receipt recovery validation, managed-receipt checks, strict deployment retirement, and baseline restoration. Removal remains ownership-aware and intentionally hash-lenient for Big Screen-exclusive files. | 4 |
 | M-9: packaged-library list is triplicated | Valid | Treat `mod.template.json` as canonical, derive packaging inputs, and fail when CMake staging differs. | 6 |
@@ -267,7 +267,7 @@ be recorded against Stage 2, not inferred to describe the Stage 3 build.
 ### Implementation
 
 - Replace global descriptor-cache clearing with targeted invalidation.
-- Debounce continuous timing-slider persistence and preview restart.
+- Debounce continuous timing-slider persistence and in-place decoder seeking.
 - Maintain JSON-issue information during incremental metadata prewarming.
 - Cache Chroma difficulty parsing by an invalidatable file fingerprint.
 - Tighten CinemaScreen exact-ID matching.
@@ -279,7 +279,8 @@ be recorded against Stage 2, not inferred to describe the Stage 3 build.
    visible song title, thumbnail, error badge, and video badge is still correct.
 2. Scroll and use jump letters before and after editing several maps.
 3. Move offset and playback-speed sliders continuously. Values should update
-   smoothly; playback should restart only after movement settles.
+   smoothly; after movement settles the picture should seek to the new mapping
+   without pausing song audio or rebuilding the decoder/screen.
 4. Leave immediately after moving a slider, reopen the map, and verify the final
    value persisted.
 5. Open JSON Issues with a large library. Confirm there is no long UI freeze and
@@ -305,9 +306,9 @@ Implementation and automated verification completed on August 29, 2026.
 - Durable one-map library edits invalidate only that level's parsed descriptor.
   Full cache invalidation remains reserved for full manifest load/recovery.
 - Playback-speed and offset movement updates the visible controls immediately,
-  then coalesces persistence and preview restart until 250 ms after input
-  settles. Map changes, editor exit, metadata refresh, and menu deactivation
-  flush the final pending value before their navigation boundary.
+  then coalesces persistence and an in-place decoder seek until 250 ms after
+  input settles. Map changes, editor exit, metadata refresh, and menu
+  deactivation flush the final pending value before their navigation boundary.
 - Incremental catalog preparation now maintains an O(1)-updated Cinema JSON
   issue index. Its title button reports honest checked/total progress and its
   dialog reads the native index rather than synchronously parsing every map.
@@ -330,9 +331,80 @@ Automated evidence:
 - Artifact: `Big Screen.qmod`, 19,710,148 bytes.
 - SHA-256: `2755b5bedb22b46fa4f5e899939a748b94d3cd2d10a72ccf198746e0652dfc6a`.
 
-Quest result: pending. Stage 3 was built through the QMOD-only path. No ADB
-command, deployment, game launch, or headset log access was performed while the
-user tested Stage 2.
+### Quest regression and corrective implementation
+
+The exact `537678b` Stage 3 library was later deployed and verified by SHA-256
+before testing. Ordinary cache, row, and metadata behavior appeared correct,
+but repeatedly changing timing while previewing a 2560x1440 hardware-decoded
+video eventually ended Beat Saber with `SIGKILL`. Android `lmkd` kill records,
+the system memory-factor transition, and the absence of a tombstone established
+that this was a Quest low-memory kill rather than a native access violation.
+Screen recording, the 64 MiB read-ahead reserve, MediaCodec/driver allocations,
+GPU textures, and repeated full preview reconstruction collectively left too
+little system headroom. The Stage 3 debounce reduced reconstruction frequency,
+but its settled callback still reused `StartSelectedPreview`, which closed and
+recreated the complete high-resolution decoder and presentation session.
+
+The corrective implementation separates update ownership explicitly:
+
+- Offset, playback speed, Fit to Song, and lead-in background update the cached
+  timing in place. Mapping changes invalidate and seek the existing decoder's
+  read-ahead generation while audio continues and the last uploaded picture
+  remains visible until its replacement arrives.
+- Screen X/Y/distance/rotation changes update only the existing Unity transform.
+- Size, curvature, aspect, opacity, and picture-framing changes transactionally
+  replace meshes/material state around the existing decoded texture.
+- Cinema additional screens update their shared-texture geometry in place; a
+  changed clone count rebuilds only that lightweight presentation group.
+- FFmpeg version, hardware decoding, embedded shader, GPU conversion, and YUV
+  upload layout retain an explicit full-rebuild path because those choices are
+  fixed when decoder/material resources are created.
+- Live material updates now account for vignette-authored alpha and mapper
+  blending changes, and CPU visual-effect changes invalidate only prepared
+  pixels rather than the complete playback session.
+
+Corrective automated evidence:
+
+- Canonical host suite: 14/14 tests passed.
+- New repository invariants require timing and display paths to contain no
+  `Stop`, decoder close, or full preview initialization; pipeline toggles must
+  use the separately named reconstruction path.
+- Warning-clean full ARM64 Quest build and validated QMOD packaging: passed.
+- Artifact: `Big Screen.qmod`, 19,715,363 bytes.
+- SHA-256: `b6585cfad2e6e71244e9ae26156949dc91ac3f6b51605c5850a81f47b63747f5`.
+
+Focused Quest retest for this correction:
+
+1. Play a 1440p video in the Video Library and repeatedly change offset,
+   playback speed, Fit to Song, and lead-in background. Song audio must never
+   pause or restart. The picture may jump to its newly synchronized frame but
+   must not disappear or recreate the screen.
+2. While the same preview plays, change distance, X, Y, tilt, roll, and layout.
+   Movement must be continuous with no audio interruption or first-frame flash.
+3. Change size, curvature, Maintain Aspect Ratio, video rotation/zoom/X/Y/tilt,
+   opacity, stretch, and letterbox transparency. The current picture must stay
+   visible while the mesh changes.
+4. On Cinema maps with additional screens, toggle Respect Mapper Settings and
+   verify primary/additional panels appear, disappear, and update without
+   restarting playback.
+5. Separately toggle FFmpeg, hardware decoding, Embedded Video Shader, GPU
+   conversion, and Consolidated YUV Upload. These controls should still perform
+   one deliberate reconstruction and resume at the retained song position.
+6. Repeat the 1440p timing stress test while recording. Check that Beat Saber
+   remains alive and that logs show `Applied live Video Library timing` rather
+   than repeated decoder startup lines.
+
+### Corrective Quest result
+
+On August 30, 2026, the corrected Stage 3 build was installed through the
+ownership-safe source deployment path and its installed native-library hash was
+verified against the local build. The user tested the Video Library controls and
+reported that everything in the menu appeared to work correctly. Timing and
+screen changes no longer stopped the video, making continuous adjustment notably
+better to use, and no menu operation tested reproduced the earlier game crash.
+
+Stage 3 is therefore **Quest validated**. The code remains on
+`codex/fable-review-stage-3`; Stage 4 remains isolated on its separate branch.
 
 ## Stage 4 — Deployment, removal, and ownership parity
 

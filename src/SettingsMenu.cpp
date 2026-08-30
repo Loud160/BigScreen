@@ -194,6 +194,25 @@ namespace BigScreen {
             PlaybackSession::Instance().RefreshDisplaySettings();
             ScreenPreview::Instance().Refresh();
         }
+
+        void ApplyPipelineSettingsAndRefreshPreview()
+        {
+            auto& playback = PlaybackSession::Instance();
+            if(playback.IsLibraryPreviewActive())
+            {
+                VideoLibraryMenu::Instance().RefreshPipelineSettings();
+                return;
+            }
+
+            // The compact Solo song preview does not own VideoLibraryMenu's
+            // audio clock, so remember whether it must be resumed after the
+            // explicitly requested decoder/material reconstruction.
+            const bool restartMenuPreview = playback.IsMenuPreviewActive();
+            playback.RefreshPipelineSettings();
+            if(restartMenuPreview)
+                playback.Start(PlaybackContext::MenuPreview);
+            ScreenPreview::Instance().Refresh();
+        }
     }
 
     SettingsMenu& SettingsMenu::Instance()
@@ -742,7 +761,7 @@ namespace BigScreen {
                 // structures. Reopen an active library preview at its retained
                 // time; normal song-menu and gameplay sessions use the choice
                 // the next time they start.
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             ffmpeg9Toggle_,
@@ -759,7 +778,7 @@ namespace BigScreen {
                 // Reuse the proven preview recreation path so an active
                 // Video Library preview switches methods immediately;
                 // gameplay uses the selection on the next map.
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             embeddedVideoShaderToggle_,
@@ -784,7 +803,7 @@ namespace BigScreen {
             [](float value)
             {
                 Settings::Instance().SetNativeBloomLevel(value);
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
             });
         nativeBloomLevelSlider_->digits = 1;
         nativeBloomLevelSlider_->slider->UpdateVisuals();
@@ -828,7 +847,7 @@ namespace BigScreen {
                 // context opens. Reuse the proven preview recreation path so
                 // the experiment changes immediately in the Video Library,
                 // while gameplay adopts it only on the next map.
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             hardwareDecodingToggle_,
@@ -845,7 +864,7 @@ namespace BigScreen {
                 // selected when decoder/screen ownership begins. Recreate an
                 // active library preview through the established safe path;
                 // gameplay adopts the choice on the next map.
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
                 RefreshEnabledState();
             });
         BSML::Lite::AddHoverHint(
@@ -856,13 +875,13 @@ namespace BigScreen {
             performanceParent,
             "Consolidated YUV Upload",
             settings.ConsolidatedYuvUploadEnabled(),
-            [this](bool enabled)
+            [](bool enabled)
             {
                 Settings::Instance().SetConsolidatedYuvUploadEnabled(enabled);
                 // The decoder writes one packed allocation or three separate
                 // planes from the start of a session. Recreate only an active
                 // library preview so no old-layout frame can cross the switch.
-                ApplyDisplaySettingsAndRefreshPreview();
+                ApplyPipelineSettingsAndRefreshPreview();
             });
         BSML::Lite::AddHoverHint(
             consolidatedYuvUploadToggle_,
@@ -3719,10 +3738,10 @@ namespace BigScreen {
         PerformancePanel::Instance().SetEnabled(false);
         settings.Reset();
 
-        // Rebuild the selected song config before recreating the world screen.
-        // This is the missing live-effect step that left the displayed screen
-        // at its previous size even though the control correctly showed 1.0.
-        PlaybackSession::Instance().RefreshDisplaySettings();
+        // Master Reset includes decoder/material preferences as well as screen
+        // geometry. Route that exceptional all-settings operation through the
+        // explicit pipeline path; individual Screen controls remain live.
+        ApplyPipelineSettingsAndRefreshPreview();
 
         // Reset changes persistent values first, then RefreshControls mirrors
         // every toggle through UiUtility's callback-free AnimatedSwitchView
