@@ -594,6 +594,17 @@ def redact_external_message(value):
 def clean_error(value):
     return redact_external_message(value)[-700:]
 
+def youtube_verification_challenge(value):
+    """Recognize YouTube's network/IP bot challenge before generic sign-in."""
+    lower = clean_error(value).lower()
+    return (
+        "confirm you're not a bot" in lower or
+        'confirm you\u2019re not a bot' in lower or
+        'confirm you are not a bot' in lower or
+        'this helps protect our community' in lower or
+        ('unusual traffic' in lower and 'network' in lower) or
+        ('automated queries' in lower and 'network' in lower))
+
 def is_sdr(candidate):
     dynamic_range = str(candidate.get('dynamic_range') or 'SDR').upper()
     note = str(candidate.get('format_note') or '').upper()
@@ -698,6 +709,8 @@ def classify(value):
             'network administrator restrictions' in lower or
             ('video is restricted' in lower and 'administrator' in lower)):
         return 'failed', 'YouTube or the current network administrator has restricted access to this video.'
+    if youtube_verification_challenge(text):
+        return 'failed', 'YouTube is requiring additional verification for downloads from this network or may be temporarily blocking your current IP address.'
     if ('sign in to confirm your age' in lower or
             'confirm your age' in lower or
             'age-restricted' in lower):
@@ -762,6 +775,8 @@ def diagnostic_code(value):
             'network administrator restrictions' in lower or
             ('video is restricted' in lower and 'administrator' in lower)):
         return 'BS-DL-ACCESS-RESTRICTED'
+    if youtube_verification_challenge(lower):
+        return 'BS-DL-YOUTUBE-VERIFY'
     if 'private video' in lower:
         return 'BS-DL-ACCESS-PRIVATE'
     if ('sign in to confirm your age' in lower or
@@ -1352,6 +1367,8 @@ def classify(value):
             'network administrator restrictions' in lower or
             ('video is restricted' in lower and 'administrator' in lower)):
         return 'YouTube or the current network administrator has restricted access to this video.'
+    if youtube_verification_challenge(text):
+        return 'YouTube is requiring additional verification for downloads from this network or may be temporarily blocking your current IP address.'
     if 'private video' in lower:
         return 'This YouTube video is private and cannot be downloaded.'
     if ('sign in to confirm your age' in lower or 'confirm your age' in lower or
@@ -1404,6 +1421,8 @@ def diagnostic_code(value):
             'network administrator restrictions' in lower or
             ('video is restricted' in lower and 'administrator' in lower)):
         return 'BS-DL-ACCESS-RESTRICTED'
+    if youtube_verification_challenge(lower):
+        return 'BS-DL-YOUTUBE-VERIFY'
     if 'private video' in lower:
         return 'BS-DL-ACCESS-PRIVATE'
     if ('sign in to confirm your age' in lower or
@@ -1460,6 +1479,13 @@ try:
             'no_warnings': True,
             'noplaylist': True,
             'skip_download': True,
+            # Match the transfer worker's finite network policy. Without these
+            # bounds one dead metadata request can occupy Big Screen's single
+            # serialized operation queue for several minutes.
+            'socket_timeout': 15,
+            'retries': 3,
+            'fragment_retries': 3,
+            'extractor_retries': 3,
             # Keep metadata probing on the same August 2026 workaround/client
             # policy as the eventual
             # transfer. Otherwise the UI can offer Android-VR-only formats
@@ -2594,17 +2620,6 @@ os.replace(temporary, job['destination'])
             snapshot_.requestedHeight = request.requestedHeight;
             snapshot_.availableHeights = std::move(verifiedAvailableHeights);
         }
-        {
-            // PollStatusFile owns these throttle fields under this mutex. A
-            // previous operation's final status poll may still be completing
-            // while the next Start call initializes its state; serialize the
-            // reset so the std::string cannot receive concurrent writes.
-            std::scoped_lock statusReadLock(statusReadMutex_);
-            lastDiagnosticState_ = DownloadState::Idle;
-            lastDiagnosticProgressBucket_ = -1;
-            lastUnknownSizeDiagnostic_ = {};
-            lastDownloaderDiagnostic_.clear();
-        }
         BigScreen::BigScreenLogger.info(
             "Starting video download for '{}' ({})",
             request.songName,
@@ -3156,6 +3171,19 @@ os.replace(temporary, job['destination'])
                 exception.what();
             return false;
         }
+        {
+            // Every serialized operation can publish through the shared status
+            // mailbox, not only video transfers. Reset the diagnostic throttle
+            // at the single queue-ownership boundary so probes, showcase-map
+            // installs, and updater operations cannot inherit the preceding
+            // operation's final stage, progress bucket, or yt-dlp message.
+            // PollStatusFile owns these fields under statusReadMutex_.
+            std::scoped_lock statusReadLock(statusReadMutex_);
+            lastDiagnosticState_ = DownloadState::Idle;
+            lastDiagnosticProgressBucket_ = -1;
+            lastUnknownSizeDiagnostic_ = {};
+            lastDownloaderDiagnostic_.clear();
+        }
         operationWake_.notify_one();
         return true;
     }
@@ -3362,7 +3390,6 @@ os.replace(temporary, job['destination'])
             rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
             document.Accept(writer);
 
-            bool runtimeRolledBack = false;
             bool runtimeFailed = false;
             std::string pythonFailure;
             {
@@ -3383,104 +3410,16 @@ os.replace(temporary, job['destination'])
                 if(!globals || !result)
                 {
                     pythonFailure = TakePythonExceptionText();
-                    // A Python execution/import failure is an internal
-                    // downloader failure, unlike a private-video or network
-                    // error (the script publishes those normally). Restore the
-                    // one retained package and retry this job exactly once.
-                    const auto runtime = VideoLibrary::Instance().RuntimePath();
-                    const auto active = runtime / "yt-dlp-active";
-                    const auto previous = runtime / "yt-dlp-previous";
-                    std::error_code fileError;
-                    if(globals && std::filesystem::is_regular_file(previous, fileError))
-                    {
-                        std::string rejectedVersion;
-                        std::ifstream version(
-                            active.string() + ".version", std::ios::binary);
-                        if(version) std::getline(version, rejectedVersion);
-                        std::filesystem::remove(active, fileError);
-                        if(!fileError)
-                            std::filesystem::remove(
-                                active.string() + ".version", fileError);
-                        if(!fileError)
-                            std::filesystem::remove(
-                                active.string() + ".channel", fileError);
-                        if(!fileError)
-                            std::filesystem::rename(previous, active, fileError);
-                        if(!fileError && std::filesystem::is_regular_file(
-                               previous.string() + ".version", fileError))
-                            std::filesystem::rename(
-                                previous.string() + ".version",
-                                active.string() + ".version",
-                                fileError);
-                        if(!fileError && std::filesystem::is_regular_file(
-                               previous.string() + ".channel", fileError))
-                            std::filesystem::rename(
-                                previous.string() + ".channel",
-                                active.string() + ".channel",
-                                fileError);
-                        if(!fileError)
-                        {
-                            std::ofstream rejected(
-                                runtime / "yt-dlp-rejected.version",
-                                std::ios::binary | std::ios::trunc);
-                            rejected << (rejectedVersion.empty()
-                                ? "unknown"
-                                : rejectedVersion);
-                            std::string restoredVersionText(BundledYtDlpVersion);
-                            std::string restoredChannelText(
-                                BundledYtDlpChannel);
-                            std::ifstream restoredVersion(
-                                active.string() + ".version", std::ios::binary);
-                            if(restoredVersion)
-                                std::getline(
-                                    restoredVersion, restoredVersionText);
-                            std::ifstream restoredChannel(
-                                active.string() + ".channel", std::ios::binary);
-                            if(restoredChannel)
-                                std::getline(
-                                    restoredChannel, restoredChannelText);
-                            SetCurrentYtDlpIdentity(
-                                std::move(restoredVersionText),
-                                std::move(restoredChannelText));
-                            if(PyRun_SimpleString(
-                                   "import importlib, sys\n"
-                                   "importlib.invalidate_caches()\n"
-                                   "[sys.modules.pop(k, None) for k in list(sys.modules) if k == 'bigscreen_jsc_provider' or k == 'yt_dlp' or k.startswith('yt_dlp.') or k == 'yt_dlp_ejs' or k.startswith('yt_dlp_ejs.')]\n") == 0)
-                            {
-                                result.reset(PyRun_String(
-                                    DownloaderScript,
-                                    Py_file_input,
-                                    globals.get(),
-                                    globals.get()));
-                                runtimeRolledBack = result != nullptr;
-                            }
-                            if(!result)
-                            {
-                                const auto retryFailure =
-                                    TakePythonExceptionText();
-                                pythonFailure +=
-                                    "\nRetry after rollback:\n" + retryFailure;
-                            }
-                        }
-                        else
-                        {
-                            BigScreen::BigScreenLogger.error(
-                                "Could not restore the previous yt-dlp package: {}",
-                                fileError.message());
-                            ErrorManager::Instance().RecordError(
-                                "Restoring the previous yt-dlp package",
-                                fileError.message());
-                        }
-                    }
+                    // YouTube, network, and yt-dlp extractor failures are
+                    // caught inside DownloaderScript and published through the
+                    // status mailbox. Reaching this branch instead means the
+                    // interpreter, stdlib setup, job JSON, or status I/O itself
+                    // failed. Replacing yt-dlp cannot repair those failures.
+                    // Package activation and rollback remain transactional in
+                    // RunUpdater and the startup smoke test, where a rejected
+                    // package can be identified before it becomes active.
                 }
                 runtimeFailed = !result;
-            }
-
-            if(runtimeRolledBack)
-            {
-                std::scoped_lock noticeLock(mutex_);
-                updateNotice_ =
-                    "yt-dlp encountered an internal runtime error while starting a download. Big Screen restored the previous working downloader and retried the download once.";
             }
             if(runtimeFailed)
             {
@@ -3505,8 +3444,7 @@ os.replace(temporary, job['destination'])
             // because downloading and stream-remuxing HLS is far faster and
             // less lossy than decoding and re-encoding the complete video.
             // This helper is invoked only after Python already ran normally;
-            // runtime-package rollback therefore remains owned by the first
-            // attempt above rather than being duplicated recursively.
+            // it retries transport selection, not runtime-package activation.
             auto runFallbackDownload = [&](const std::string& excludedFormatId)
             {
                 std::error_code cleanupError;
@@ -4373,7 +4311,11 @@ os.replace(temporary, job['destination'])
 
     void DownloadManager::RunProbe(std::string levelId, std::string sourceUrl)
     {
-        bool failureRecorded = false;
+        // A metadata probe answers whether one URL is usable; it does not move
+        // video bytes and therefore must not change the consecutive *download*
+        // failure streak. Dead/private links remain visible through their own
+        // popup and diagnostic record, while only Run() calls
+        // RecordYouTubeDownloadOutcome after a real transfer attempt.
         try
         {
             const auto thumbnailPath =
@@ -4418,8 +4360,6 @@ os.replace(temporary, job['destination'])
                     pythonFailure);
                 SetFailure(
                     "The embedded downloader could not check this YouTube URL. Big Screen recorded the internal error; try again after restarting Beat Saber.");
-                RecordYouTubeDownloadOutcome(DownloadState::Failed);
-                failureRecorded = true;
                 return;
             }
 
@@ -4431,8 +4371,6 @@ os.replace(temporary, job['destination'])
             }
             if(terminalSnapshot.state == DownloadState::Failed)
             {
-                RecordYouTubeDownloadOutcome(DownloadState::Failed);
-                failureRecorded = true;
                 ErrorManager::Instance().RecordError(
                     "Checking a YouTube URL",
                     (terminalSnapshot.errorCode.empty()
@@ -4466,14 +4404,10 @@ os.replace(temporary, job['destination'])
         catch(const std::exception& exception)
         {
             SetFailure(std::string("URL check stopped: ") + exception.what());
-            if(!failureRecorded)
-                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
         catch(...)
         {
             SetFailure("URL check stopped because of an unexpected internal error.");
-            if(!failureRecorded)
-                RecordYouTubeDownloadOutcome(DownloadState::Failed);
         }
     }
 

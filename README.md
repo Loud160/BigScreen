@@ -69,7 +69,7 @@ the copyrighted song is not bundled in the QMOD.
 | Source | Workflow |
 |---|---|
 | **Mapper-provided video** | Read `bigscreen.json`, `cinema-video.json`, `video.json`, or playlist `customData.cinema`. Media/timing, geometry, color correction, vignette, and other supported presentation fields are read; map-driven bloom and soft-additive blending are currently ignored for stability. A URL-only map receives a Cinema-style download control on song selection. |
-| **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL (or type its 11-character video ID), verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
+| **YouTube** | Search by song and artist in the Quest browser, paste a normal or share URL (with or without `https://`) or type its 11-character video ID, verify its thumbnail, and choose an available 480p, 720p, 1080p, or 1440p source. |
 | **Local Quest storage** | Browse readable shared-storage folders and assign a compatible MP4 or WebM without renaming or copying it. Custom and WIP maps begin in their map folder; built-in songs begin in Big Screen's Video Import folder. |
 
 Only one downloaded source is assigned to a song at a time. Replacing it keeps

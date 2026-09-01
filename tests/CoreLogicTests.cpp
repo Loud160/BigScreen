@@ -37,6 +37,7 @@ int main()
 
     using BigScreen::CoreLogic::IsSupportedYouTubeUrl;
     using BigScreen::CoreLogic::IsValidYouTubeVideoId;
+    using BigScreen::CoreLogic::NormalizeYouTubeVideoInput;
 
     Expect(IsSupportedYouTubeUrl("https://www.youtube.com/watch?v=TcHvEFxk_78"),
            "normal YouTube watch URLs should be accepted");
@@ -54,6 +55,26 @@ int main()
            "non-YouTube video providers should stay blocked");
     Expect(IsValidYouTubeVideoId("TcHvEFxk_78"), "valid video IDs should be accepted");
     Expect(!IsValidYouTubeVideoId("abc"), "short video IDs should be rejected");
+    const auto typedId = NormalizeYouTubeVideoInput("TcHvEFxk_78");
+    Expect(typedId && *typedId ==
+               "https://www.youtube.com/watch?v=TcHvEFxk_78",
+           "an exact typed video ID should become a canonical HTTPS URL");
+    const auto schemeLessShare = NormalizeYouTubeVideoInput(
+        "youtu.be/TcHvEFxk_78");
+    Expect(schemeLessShare && *schemeLessShare == *typedId,
+           "a scheme-less youtu.be link should be accepted on Quest");
+    const auto trackedWatch = NormalizeYouTubeVideoInput(
+        "https://www.youtube.com/watch?si=share-token&v=TcHvEFxk_78&t=4");
+    Expect(trackedWatch && *trackedWatch == *typedId,
+           "tracking parameters should not alter the canonical video identity");
+    Expect(!NormalizeYouTubeVideoInput(
+               "https://youtu.be/TcHvEFxk_78extra"),
+           "visible junk appended to a short-link video ID should be rejected");
+    Expect(!NormalizeYouTubeVideoInput(
+               "https://www.youtube.com/watch?v=TcHvEFxk_78extra"),
+           "visible junk appended to a watch URL video ID should be rejected");
+    Expect(!NormalizeYouTubeVideoInput("some clipboard notes"),
+           "arbitrary pasted text remains editable but is not a valid video");
     using namespace BigScreen::CoreLogic;
     Expect(IsReleaseVersionNewer("0.7.0-alpha.1", "v0.7.0"),
            "a stable release supersedes the matching alpha build");
@@ -503,6 +524,20 @@ int main()
                rateLimitedDownload.message.find("Wait a few minutes") !=
                    std::string::npos,
            "rate-limit dialogs provide a useful retry instruction");
+    const auto verificationChallenge = DescribeDownloadFailure(
+        "BS-DL-YOUTUBE-VERIFY",
+        "YouTube is requiring additional verification for downloads from this network or may be temporarily blocking your current IP address.",
+        true);
+    Expect(verificationChallenge.title == "YouTube verification required" &&
+               verificationChallenge.message.find("different network") !=
+                   std::string::npos &&
+               verificationChallenge.message.find("wait several hours") !=
+                   std::string::npos &&
+               verificationChallenge.message.find("browser") ==
+                   std::string::npos &&
+               verificationChallenge.message.find("BS-DL-YOUTUBE-VERIFY") !=
+                   std::string::npos,
+           "YouTube bot challenges explain the temporary network/IP condition without suggesting browser sign-in");
     const auto unknownProbe = DescribeDownloadFailure({}, {}, true);
     Expect(unknownProbe.title == "Video check failed" &&
                unknownProbe.message.find("BS-DL-PROBE-001") !=

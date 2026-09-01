@@ -58,7 +58,7 @@ without mixing unrelated unfinished work.
 | 2 | Unity screen-state and lifetime safety | Quest validated | `94ab939` on `codex/fable-review-stage-2` | User reported no regression in the focused Stage 2 pass |
 | 3 | Video Library cache and menu responsiveness | Quest validated | `537678b` plus the live-update correction on `codex/fable-review-stage-3` | On August 30, 2026, the user verified that menu timing and screen edits remained responsive without interrupting video playback and could not reproduce the prior crash |
 | 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
-| 5 | Downloader operation cleanup and diagnostics | Planned | — | Pending |
+| 5 | Downloader operation cleanup and diagnostics | Quest validated | Stage 5 working tree on `codex/fable-review-stage-5` | User reported no issues in the focused downloader and URL-entry pass |
 | 6 | Packaging, CI, and dependency reproducibility | Planned | — | Pending |
 | 7 | GPU presentation-path overhead | Planned | — | Pending |
 | 8 | Catalog lifetime and transport-state consolidation | Planned | — | Pending |
@@ -522,6 +522,14 @@ Their policy paths remain covered by the automated cross-host fixtures.
 - Reset diagnostic throttling for every queued operation.
 - Preserve stable/nightly updater behavior, HLS fallback, remux, transcode, and
   three-failure guidance.
+- Distinguish YouTube's temporary network/IP verification challenge from videos
+  that genuinely require an account. The popup recommends changing networks,
+  waiting several hours, or checking for a yt-dlp update; it deliberately does
+  not suggest Meta Quest Browser sign-in.
+- Make clipboard paste a local field operation rather than a validator/network
+  action. Check accepts scheme-less YouTube links for the Quest keyboard, reads
+  the currently visible field text, canonicalizes the exact 11-character video
+  identity, and rejects junk appended to that identity.
 
 ### Focused Quest test after this stage
 
@@ -548,7 +556,39 @@ Their policy paths remain covered by the automated cross-host fixtures.
 
 ### Result
 
-Pending implementation and Quest testing.
+Implemented on `codex/fable-review-stage-5`. The implementation removes the unreachable transfer-time
+runtime rollback while retaining transactional updater activation and startup
+smoke-test rollback. Probe requests now use the same finite timeout/retry policy
+as transfers, probe failures no longer increment the consecutive real-download
+failure streak, every queued operation resets its diagnostic throttle, and
+normalization reports software validation only when that validation ran.
+
+The downloader now gives YouTube's guest/network verification challenge its own
+`BS-DL-YOUTUBE-VERIFY` support code and user-facing explanation instead of
+misreporting it as an account-required video. Automated coverage verifies the
+classification on both probe and transfer scripts and prevents browser-login
+advice from returning.
+
+The editor's **Paste** action now copies arbitrary clipboard text without
+silently starting a network request. **Check** accepts `youtu.be/...` and
+`youtube.com/...` without `https://`, consumes the visible input rather than a
+possibly stale committed value, and converts a valid link to a canonical HTTPS
+URL. Host tests cover scheme-less links, tracking parameters, raw IDs,
+arbitrary text, and malformed IDs with appended characters.
+
+Host validation on August 31, 2026 passed all 14 canonical tests, including the
+embedded downloader fixtures, core error-presentation checks, updater activation
+tests, and repository invariants. The ARM64 Quest build, dual-FFmpeg isolation
+check, and complete QMOD validation also passed. The final 19,715,746-byte
+QMOD had SHA-256
+`6d73ab06f76c59f802069c883bbe9743b3dd08c3e7b9355a3b4341c2b9d93d91`.
+The ownership-safe source deployment selected the only authorized Quest 2,
+verified every deployed payload, and installed `libbigscreen.so` with SHA-256
+`3628b6e1249147d0be6a9a494724e78f566b64ef1012b5a25f3eec3e69d8e557`.
+On September 1, 2026, the user completed the focused Quest pass and reported no
+issues. A real YouTube network/IP verification challenge remained unavailable
+to reproduce safely, so its exact yt-dlp wording and presentation remain covered
+by deterministic host tests rather than by deliberately provoking a block.
 
 ## Stage 6 — Packaging, CI, and dependency reproducibility
 

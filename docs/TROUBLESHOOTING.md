@@ -146,6 +146,13 @@ The short support code in the dialog matches the detailed entry in
 `error-history.log`; the raw yt-dlp output is kept in the log instead of being
 placed in an oversized headset popup.
 
+**YouTube verification required** (`BS-DL-YOUTUBE-VERIFY`) is different from a
+private or account-only video. YouTube may temporarily challenge downloads from
+the current public IP even when the video is public. Try a different network,
+wait several hours and try again, or check for a yt-dlp update if the problem
+continues. Signing into Meta Quest Browser does not sign Big Screen's embedded
+downloader into YouTube, so the dialog does not recommend browser sign-in.
+
 Inside Big Screen, a popup remains attached to the left, right, or center panel
 whose action opened it. Its visible surface and input blocker are moved back to
 the front after later menu refreshes, so another control cannot cover its
@@ -174,13 +181,14 @@ downloader initialization log names the bundled QuickJS-NG version. An
 incompatible yt-dlp update is rejected automatically and the prior downloader
 is restored on the next Beat Saber start.
 
-If three YouTube downloads fail consecutively, Big Screen performs a background
+If three actual YouTube transfers fail consecutively, Big Screen performs a background
 yt-dlp release check before showing guidance. A found update is offered as a
 possible compatibility fix. If no update is available, check again later from
 the Update tab; YouTube sometimes changes video delivery before a stable yt-dlp
 fix is published, and the optional nightly channel may receive that fix first.
 The notice does not mean every failed URL is an updater problem—private,
 restricted, removed, or region-limited videos can still fail independently.
+Checking an invalid URL does not increment this transfer-failure streak.
 
 Malformed map Cinema JSON is kept separate from the user's video assignment.
 The Video Library places a red **JSON ERROR** or amber **JSON WARNING** button

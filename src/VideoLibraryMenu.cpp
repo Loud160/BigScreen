@@ -575,12 +575,6 @@ namespace BigScreen {
                 player.unsafePtr());
         }
 
-        bool IsWebUrl(const std::string& value)
-        {
-            const auto lowered = Lower(value);
-            return lowered.starts_with("https://") || lowered.starts_with("http://");
-        }
-
         bool IsYouTubeUrl(const std::string& value)
         {
             const auto lowered = Lower(Trim(value));
@@ -602,20 +596,6 @@ namespace BigScreen {
             return isDomain("youtube.com") ||
                    isDomain("youtu.be") ||
                    isDomain("youtube-nocookie.com");
-        }
-
-        std::optional<std::string> NormalizeYouTubeInput(
-            const std::string& value)
-        {
-            const auto trimmed = Trim(value);
-            // Beat Saber's stock Quest keyboard does not expose ':' or '/'.
-            // Accepting YouTube's 11-character ID gives headset-only users a
-            // complete typing path while pasted full links remain unchanged.
-            if(CoreLogic::IsValidYouTubeVideoId(trimmed))
-                return "https://www.youtube.com/watch?v=" + trimmed;
-            if(IsYouTubeUrl(trimmed))
-                return trimmed;
-            return std::nullopt;
         }
 
         std::string EncodeUrlQuery(const std::string& value)
@@ -1468,7 +1448,7 @@ namespace BigScreen {
             urlEntryLayout->set_minHeight(8.0f);
         pasteUrlButton_ = BSML::Lite::CreateUIButton(
             urlEntryRow,
-            "Paste URL",
+            "Paste",
             {0.0f, 0.0f},
             {13.0f, 7.5f},
             [this]() { PasteUrlFromClipboard(); });
@@ -1623,7 +1603,7 @@ namespace BigScreen {
             "Enter a normal youtube.com video address or a youtu.be Share link. Big Screen checks the link before the Download Video button appears.");
         BSML::Lite::AddHoverHint(
             pasteUrlButton_,
-            "Pastes a YouTube address from the Quest clipboard and checks whether the video can be downloaded.");
+            "Pastes the current Quest clipboard text into the field. Use Check to validate a full link, a link without https://, or an 11-character YouTube video ID.");
 
         downloadConfirmModal_ = BSML::Lite::CreateModal(
             editorController,
@@ -3155,13 +3135,15 @@ namespace BigScreen {
             RefreshDetails();
             return;
         }
-        // The Quest keyboard can update InputFieldView's displayed value a
-        // frame before BSML forwards onValueChanged. Treat the field itself as
-        // authoritative when Check is pressed so a freshly typed address is
-        // never replaced by the previous C++ string.
+        // The Quest keyboard updates the visible TextMeshPro value before
+        // InputFieldView and BSML publish their committed callbacks. Check is a
+        // separate button, so consume exactly what the player can currently
+        // see instead of silently probing the previous saved/map URL.
         if(urlInput_)
         {
-            const auto displayedUrl = Trim(std::string(urlInput_->get_text()));
+            const auto displayedUrl = Trim(urlInputText_
+                ? std::string(urlInputText_->get_text())
+                : std::string(urlInput_->get_text()));
             if(displayedUrl != url_)
             {
                 url_ = displayedUrl;
@@ -3169,13 +3151,13 @@ namespace BigScreen {
                 RefreshUrlTextColor();
             }
         }
-        const auto normalizedUrl = NormalizeYouTubeInput(url_);
+        const auto normalizedUrl = CoreLogic::NormalizeYouTubeVideoInput(url_);
         if(!normalizedUrl)
         {
             terminalDownloadProgressLevelId_.clear();
             PublishEditorNotice(url_.empty()
                 ? "Enter a YouTube link or 11-character video ID first."
-                : "Paste a YouTube link or type its 11-character video ID.");
+                : "Enter a YouTube link (https:// is optional) or an exact 11-character video ID.");
             RefreshDetails();
             return;
         }
@@ -3465,26 +3447,20 @@ namespace BigScreen {
             {
                 terminalDownloadProgressLevelId_.clear();
                 PublishEditorNotice(
-                    "The Quest clipboard is empty. Copy a YouTube link first.");
-                RefreshDetails();
-                return;
-            }
-            if(!IsWebUrl(clipboard))
-            {
-                terminalDownloadProgressLevelId_.clear();
-                PublishEditorNotice(
-                    "Clipboard text is not a valid web address.");
+                    "The Quest clipboard is empty.");
                 RefreshDetails();
                 return;
             }
 
             url_ = clipboard;
             mapperProvidedUrl_ = false;
+            probedUrl_.clear();
+            terminalDownloadProgressLevelId_.clear();
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
             RefreshUrlTextColor();
-            BeginUrlProbe();
+            RefreshDetails();
         }
         catch(const std::exception& error)
         {

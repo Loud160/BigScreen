@@ -294,6 +294,7 @@ for option in (
     "'extractor_retries': 3",
 ):
     assert option in download_script
+    assert option in probe_script
 
 # Android VR media URLs began requiring a Google Video Server PO token in
 # August 2026. Both the probe and transfer must use yt-dlp's current default
@@ -846,5 +847,38 @@ assert download["diagnostic_code"](generic_unavailable) == \
     "BS-DL-VIDEO-UNAVAILABLE"
 assert probe["diagnostic_code"](generic_unavailable) == \
     "BS-DL-VIDEO-UNAVAILABLE"
+
+# YouTube uses a sign-in-shaped message when it temporarily challenges a
+# network/IP for suspected automated traffic. That condition is not evidence
+# that the public video itself requires an account and must win before the
+# generic sign-in classifier on both the probe and transfer paths.
+verification_challenge = (
+    "ERROR: [youtube] abc: Sign in to confirm you\u2019re not a bot. "
+    "This helps protect our community."
+)
+assert download["diagnostic_code"](verification_challenge) == \
+    "BS-DL-YOUTUBE-VERIFY"
+assert probe["diagnostic_code"](verification_challenge) == \
+    "BS-DL-YOUTUBE-VERIFY"
+download_verification_message = download["classify"](
+    verification_challenge
+)[1]
+probe_verification_message = probe["classify"](verification_challenge)
+for message in (download_verification_message, probe_verification_message):
+    assert "additional verification" in message.lower(), message
+    assert "temporarily blocking" in message.lower(), message
+    assert "browser" not in message.lower(), message
+
+actual_signin_requirement = "ERROR: Login required to view this video"
+assert download["diagnostic_code"](actual_signin_requirement) == \
+    "BS-DL-ACCESS-SIGNIN"
+assert probe["diagnostic_code"](actual_signin_requirement) == \
+    "BS-DL-ACCESS-SIGNIN"
+
+# The old in-Run rollback retried a condition that DownloaderScript catches and
+# publishes normally. Runtime package rollback belongs to updater activation
+# and its startup smoke test, not to a video-transfer interpreter failure.
+assert "runtimeRolledBack" not in source
+assert "Retry after rollback:" not in source
 
 print("Embedded downloader scripts and HTTP explanations passed.")

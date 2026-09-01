@@ -1056,6 +1056,108 @@ namespace BigScreen::CoreLogic {
         });
     }
 
+    /// Normalizes the forms a Quest user can reasonably paste or type into
+    /// Big Screen's URL field. Beat Saber's keyboard omits ':' and '/', so a
+    /// scheme-less youtube.com/youtu.be address is completed as HTTPS. The
+    /// returned URL contains only the exact 11-character video identity; this
+    /// prevents yt-dlp's tolerant extractor from silently accepting visible
+    /// junk appended to the ID.
+    inline std::optional<std::string> NormalizeYouTubeVideoInput(
+        std::string_view value)
+    {
+        while(!value.empty() && std::isspace(
+                  static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while(!value.empty() && std::isspace(
+                  static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+        if(value.empty())
+            return std::nullopt;
+        if(IsValidYouTubeVideoId(value))
+            return "https://www.youtube.com/watch?v=" + std::string(value);
+
+        std::string candidate(value);
+        if(candidate.find("://") == std::string::npos)
+            candidate.insert(0, "https://");
+        if(!IsSupportedYouTubeUrl(candidate))
+            return std::nullopt;
+
+        constexpr std::string_view Scheme = "https://";
+        const auto hostStart = Scheme.size();
+        const auto hostEnd = candidate.find_first_of("/?#", hostStart);
+        if(hostEnd == std::string::npos)
+            return std::nullopt;
+        std::string host = candidate.substr(hostStart, hostEnd - hostStart);
+        std::transform(host.begin(), host.end(), host.begin(),
+            [](unsigned char character)
+            {
+                return static_cast<char>(std::tolower(character));
+            });
+        const auto isHostOrSubdomain = [&host](std::string_view domain)
+        {
+            return host == domain ||
+                (host.size() > domain.size() &&
+                 host.ends_with(std::string(".") + std::string(domain)));
+        };
+        const auto canonical = [](std::string_view id)
+            -> std::optional<std::string>
+        {
+            if(!IsValidYouTubeVideoId(id))
+                return std::nullopt;
+            return "https://www.youtube.com/watch?v=" + std::string(id);
+        };
+
+        const std::string_view remainder(candidate.data() + hostEnd,
+                                         candidate.size() - hostEnd);
+        if(isHostOrSubdomain("youtu.be"))
+        {
+            if(remainder.empty() || remainder.front() != '/')
+                return std::nullopt;
+            const auto idEnd = remainder.find_first_of("/?#", 1);
+            return canonical(remainder.substr(1, idEnd == std::string_view::npos
+                ? remainder.size() - 1
+                : idEnd - 1));
+        }
+
+        const auto queryStart = remainder.find('?');
+        if(queryStart != std::string_view::npos)
+        {
+            auto query = remainder.substr(queryStart + 1);
+            if(const auto fragment = query.find('#');
+               fragment != std::string_view::npos)
+                query = query.substr(0, fragment);
+            while(!query.empty())
+            {
+                const auto separator = query.find('&');
+                const auto pair = query.substr(0, separator);
+                const auto equals = pair.find('=');
+                if(equals != std::string_view::npos &&
+                   pair.substr(0, equals) == "v")
+                    return canonical(pair.substr(equals + 1));
+                if(separator == std::string_view::npos)
+                    break;
+                query.remove_prefix(separator + 1);
+            }
+        }
+
+        auto path = remainder.substr(0, queryStart);
+        if(const auto fragment = path.find('#'); fragment != std::string_view::npos)
+            path = path.substr(0, fragment);
+        if(path.empty() || path.front() != '/')
+            return std::nullopt;
+        path.remove_prefix(1);
+        const auto separator = path.find('/');
+        if(separator == std::string_view::npos)
+            return std::nullopt;
+        const auto route = path.substr(0, separator);
+        if(route != "embed" && route != "shorts" && route != "live")
+            return std::nullopt;
+        auto id = path.substr(separator + 1);
+        if(id.find('/') != std::string_view::npos)
+            return std::nullopt;
+        return canonical(id);
+    }
+
     /// Returns the next temporary presentation limit for Automatic
     /// Performance. The saved menu value is a ceiling, so the first reduction
     /// begins below the video's effective source cadence rather than walking
@@ -1649,6 +1751,15 @@ namespace BigScreen::CoreLogic {
             result.title = "Members-only video";
             result.shortReason = "This video requires channel membership.";
             action = "Choose a public video that does not require sign-in.";
+        }
+        else if(code == "BS-DL-YOUTUBE-VERIFY")
+        {
+            result.title = "YouTube verification required";
+            result.shortReason =
+                "YouTube is challenging downloads from this network.";
+            action =
+                "Try a different network, wait several hours and try again, "
+                "or check for a yt-dlp update if the problem continues.";
         }
         else if(code == "BS-DL-ACCESS-SIGNIN" ||
                 code == "BS-DL-ACCESS-PREMIUM" ||

@@ -259,8 +259,11 @@ cancellation state rather than waiting for the full timeout.
 
 ## Error handling changes
 
-The current broad sign-in classifier should be split before or alongside this
-work. At minimum, distinguish:
+The broad sign-in classifier was split during Fable review remediation Stage 5.
+Big Screen now reports YouTube's guest-session/network challenge separately as
+`BS-DL-YOUTUBE-VERIFY`, without suggesting that Meta Quest Browser sign-in will
+affect the embedded downloader. Future token-provider work must preserve that
+distinction and additionally distinguish:
 
 - the video genuinely requires an account;
 - the video is private, removed, region-blocked, or age-restricted;
@@ -270,11 +273,11 @@ work. At minimum, distinguish:
 - YouTube rejected the generated token;
 - the ordinary fallback route also failed.
 
-A dedicated support code such as `BS-DL-YOUTUBE-BOT-CHECK` should explain that
-the video may still be public and that repeated retries may make the challenge
-last longer. The message can suggest waiting, changing networks, checking
-yt-dlp updates, or assigning a local video. It should not claim that signing
-into Meta Quest Browser will sign Big Screen into YouTube.
+The existing `BS-DL-YOUTUBE-VERIFY` support code explains that the video may
+still be public and suggests waiting, changing networks, or checking yt-dlp
+updates. It does not claim that signing into Meta Quest Browser will sign Big
+Screen into YouTube. A future provider should extend this classification rather
+than replacing it with another generic sign-in error.
 
 Provider failures should use their own stable support code and should not be
 misreported as a removed or account-only video.

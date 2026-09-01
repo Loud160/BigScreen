@@ -536,7 +536,9 @@ namespace BigScreen {
         // hard failure so DownloadManager can retry a different transport
         // instead of publishing a questionable stream into the library.
         std::string softwareError;
-        if(isMpegTs && requestedHeight <= 1080 &&
+        const bool softwareValidationAttempted =
+            isMpegTs && requestedHeight <= 1080;
+        if(softwareValidationAttempted &&
            CanDecodeSoftwareFrame(downloadedPath, softwareError))
         {
             result.state = VideoNormalizationState::SoftwareDecoderRequired;
@@ -551,9 +553,16 @@ namespace BigScreen {
         result.detail = directValidationFailure;
         if(!result.detail.empty())
             result.detail += " ";
-        result.detail += (remuxError.empty()
+        result.detail += remuxError.empty()
             ? "The H.264 stream could not be converted to MP4."
-            : remuxError) + " Software validation also failed: " + softwareError;
+            : remuxError;
+        if(softwareValidationAttempted)
+        {
+            result.detail += " Software validation also failed";
+            if(!softwareError.empty())
+                result.detail += ": " + softwareError;
+            result.detail += ".";
+        }
         return result;
     }
 }

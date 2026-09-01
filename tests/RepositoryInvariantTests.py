@@ -1657,7 +1657,13 @@ assert "automaticYtDlpReleaseCheckStarted_" in download_manager_header
 assert 'BundledYtDlpVersion = "2026.08.19"' in download_manager_header
 assert 'BundledYtDlpChannel = "stable"' in download_manager_header
 assert 'std::string(BundledYtDlpChannel)' in download_manager_header
-assert download_manager_source.count("BundledYtDlpChannel") >= 5
+# The shipped baseline still supplies identity for obsolete-package recovery,
+# no-active-runtime startup, and both startup smoke-test rollback exits. Do not
+# count the removed transfer-time retry: a Python job failure cannot safely
+# identify the active yt-dlp package as its cause.
+assert download_manager_source.count("BundledYtDlpChannel") >= 4
+assert "runtimeRolledBack" not in download_manager_source
+assert "Retry after rollback:" not in download_manager_source
 assert 'YTDLP_VERSION = "2026.08.19"' in canonical_build_pipeline
 assert "yt-dlp/yt-dlp/releases/download" in canonical_build_pipeline
 assert '1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6' in (
@@ -2196,7 +2202,8 @@ url_probe_body = library_menu_source.split(
     "void VideoLibraryMenu::BeginUrlProbe()", 1
 )[1].split("void VideoLibraryMenu::BeginDownload()", 1)[0]
 assert "urlInput_->get_text()" in url_probe_body
-assert "NormalizeYouTubeInput(url_)" in url_probe_body
+assert "CoreLogic::NormalizeYouTubeVideoInput(url_)" in url_probe_body
+assert "urlInputText_->get_text()" in url_probe_body
 lead_in_callback = library_menu_source.split(
     'blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1
 )[1].split('timingRows_.push_back(', 1)[0]
