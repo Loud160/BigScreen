@@ -60,7 +60,7 @@ without mixing unrelated unfinished work.
 | 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
 | 5 | Downloader operation cleanup and diagnostics | Quest validated | Stage 5 working tree on `codex/fable-review-stage-5` | User reported no issues in the focused downloader and URL-entry pass |
 | 6 | Packaging, CI, and dependency reproducibility | Automated verification passed; final MBF test deferred | `b848661` on `codex/fable-review-stage-6` | Final clean MBF/package validation intentionally deferred until all remediation stages are complete |
-| 7 | GPU presentation-path overhead | Awaiting Quest test | Stage 7 checkpoint on `codex/fable-review-stage-7` | Pending |
+| 7 | GPU presentation-path overhead | Awaiting Quest test | `dd48f1d` on `codex/fable-review-stage-7` | Stage 7 source payload installed and hash-verified on the Quest 2; focused visual/performance pass pending |
 | 8 | Catalog lifetime and transport-state consolidation | Planned | — | Pending |
 | 9 | Documentation and contained low-risk cleanup | Planned | — | Pending |
 
@@ -742,7 +742,13 @@ compiled and linked successfully, dual-FFmpeg ELF isolation passed, and the
 complete QMOD validated. The 19,721,738-byte package has SHA-256
 `6bc6e43bcdc01cb7b16f8080c4f9dd79fdfb9b0aa0e55e5d405e6ad18ca08ef8`.
 Visual equivalence and performance impact remain awaiting the focused Quest 2
-pass described above.
+pass described above. The ownership-safe source installer selected the only
+authorized Quest 2, installed and verified `libbigscreen.so` with SHA-256
+`08153c1ecd1e3c1615429eb88f84dc4055ebcbb2f915ed1c577657a0a9686af8`,
+and wrote a complete source receipt for commit `dd48f1d`. It also attempted the
+normal Beat Saber launch; the headset had no running Beat Saber process during
+the immediate read-only follow-up, so startup and runtime behavior remain part
+of the user's focused pass rather than an automated claim.
 
 ## Stage 8 — Catalog lifetime and transport-state consolidation
 
