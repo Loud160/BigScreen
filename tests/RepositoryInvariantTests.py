@@ -255,6 +255,37 @@ assert "RenderTexture::set_active(gpuTexture_);" in screen_surface_source
 assert "GL::Clear(true, true, UnityEngine::Color::get_black());" in (
     screen_surface_source
 )
+# The GPU YUV path is called once per presented video frame. Property names
+# must be converted to Unity IDs once, and invariant material/texture state
+# must be skipped rather than resent through managed-string overloads.
+gpu_hot_properties = (
+    "_PlaneU",
+    "_PlaneV",
+    "_PackedLayout",
+    "_PackedChromaSize",
+    "_YuvOffset",
+    "_YuvRow0",
+    "_YuvRow1",
+    "_YuvRow2",
+    "_QuarterTurns",
+    "_ColorRow0",
+    "_ColorRow1",
+    "_ColorRow2",
+    "_ColorBias",
+    "_ColorCorrectionEnabled",
+    "_InverseGamma",
+    "_VignetteEnabled",
+    "_VignetteElliptical",
+    "_VignetteRadius",
+    "_VignetteSoftness",
+)
+for property_name in gpu_hot_properties:
+    assert f'Shader::PropertyToID("{property_name}")' in screen_surface_source
+    for setter in ("SetTexture", "SetVector", "SetFloat"):
+        assert f'{setter}("{property_name}"' not in screen_surface_source
+assert "InvalidateGpuMaterialStateCache" in screen_surface_source
+assert "gpuMaterialPropertyWritesAvoided_" in screen_surface_source
+assert '"GPU presentation cache:' in screen_surface_source
 cinema_environment_source = (root / "src/CinemaEnvironment.cpp").read_text(
     encoding="utf-8"
 )

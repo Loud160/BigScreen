@@ -26,7 +26,7 @@ changed during that verification.
   `.part` file, and identity metadata must be discarded when the player leaves
   the originating map. A successful completed download is not removed.
 - Public GitHub releases continue to contain the QMOD only. Native debug
-  binaries may be retained as private GitHub Actions artifacts for crash
+  binaries may be retained as short-lived Actions-only artifacts for crash
   symbolization, but must not be added to public release assets.
 - Disabled experimental bloom/color work is intentionally preserved. Review
   cleanup must not remove that work merely because it is compiled out.
@@ -59,8 +59,8 @@ without mixing unrelated unfinished work.
 | 3 | Video Library cache and menu responsiveness | Quest validated | `537678b` plus the live-update correction on `codex/fable-review-stage-3` | On August 30, 2026, the user verified that menu timing and screen edits remained responsive without interrupting video playback and could not reproduce the prior crash |
 | 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
 | 5 | Downloader operation cleanup and diagnostics | Quest validated | Stage 5 working tree on `codex/fable-review-stage-5` | User reported no issues in the focused downloader and URL-entry pass |
-| 6 | Packaging, CI, and dependency reproducibility | Planned | — | Pending |
-| 7 | GPU presentation-path overhead | Planned | — | Pending |
+| 6 | Packaging, CI, and dependency reproducibility | Automated verification passed; final MBF test deferred | `b848661` on `codex/fable-review-stage-6` | Final clean MBF/package validation intentionally deferred until all remediation stages are complete |
+| 7 | GPU presentation-path overhead | Awaiting Quest test | Stage 7 checkpoint on `codex/fable-review-stage-7` | Pending |
 | 8 | Catalog lifetime and transport-state consolidation | Planned | — | Pending |
 | 9 | Documentation and contained low-risk cleanup | Planned | — | Pending |
 
@@ -711,7 +711,38 @@ assets.
 
 ### Result
 
-Pending implementation and Quest performance testing.
+Implemented on `codex/fable-review-stage-7`. Both GPU YUV shaders now share
+nineteen `Shader::PropertyToID` values initialized once per game process, so
+ordinary uploads no longer convert property names into managed strings on the
+per-frame Unity path. Three-plane uploads bind their U/V textures only when the
+material or either texture is created or replaced. An explicit replacement bit
+also covers the rare case where Unity reuses the same native address for a new
+texture.
+
+Conversion matrix/range/rotation, packed-atlas dimensions, and the complete
+visual-effect snapshot are committed to cache only after every Unity property
+call in that group succeeds. A partial IL2CPP exception therefore leaves the
+group dirty and retryable. Replacing the material—including the live
+packed-to-three-plane fallback—invalidates property and binding state without
+losing the session counters.
+
+For a stable three-plane video, the first frame applies fifteen material
+properties and two chroma bindings; later frames avoid all seventeen. For a
+stable packed video, the first frame applies seventeen material properties;
+later frames avoid all seventeen. Changes to color metadata, rotation, packed
+dimensions, or mapper effects still invalidate and update only their affected
+group. Teardown writes one normal log summary containing uploaded frames plus
+applied/avoided material writes and chroma bindings. These counters are not
+added to the live panel or end-of-map summary, preserving their established
+meaning and per-frame cost.
+
+Automated verification passed on September 1, 2026: all 14 canonical host
+tests and the new hot-path repository safeguards passed, the ARM64 Quest target
+compiled and linked successfully, dual-FFmpeg ELF isolation passed, and the
+complete QMOD validated. The 19,721,738-byte package has SHA-256
+`6bc6e43bcdc01cb7b16f8080c4f9dd79fdfb9b0aa0e55e5d405e6ad18ca08ef8`.
+Visual equivalence and performance impact remain awaiting the focused Quest 2
+pass described above.
 
 ## Stage 8 — Catalog lifetime and transport-state consolidation
 

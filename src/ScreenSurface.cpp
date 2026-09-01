@@ -74,6 +74,74 @@ namespace BigScreen {
     namespace {
         constexpr float Pi = 3.14159265358979323846f;
 
+        struct GpuShaderPropertyIds {
+            std::int32_t planeU;
+            std::int32_t planeV;
+            std::int32_t packedLayout;
+            std::int32_t packedChromaSize;
+            std::int32_t yuvOffset;
+            std::int32_t yuvRow0;
+            std::int32_t yuvRow1;
+            std::int32_t yuvRow2;
+            std::int32_t quarterTurns;
+            std::int32_t colorRow0;
+            std::int32_t colorRow1;
+            std::int32_t colorRow2;
+            std::int32_t colorBias;
+            std::int32_t colorCorrectionEnabled;
+            std::int32_t inverseGamma;
+            std::int32_t vignetteEnabled;
+            std::int32_t vignetteElliptical;
+            std::int32_t vignetteRadius;
+            std::int32_t vignetteSoftness;
+        };
+
+        const GpuShaderPropertyIds& GpuShaderProperties()
+        {
+            // PropertyToID still crosses IL2CPP and creates a managed string,
+            // but this function-local static performs that work exactly once
+            // per game process rather than about nineteen times per video
+            // frame. Both conversion shaders use the same property names.
+            static const GpuShaderPropertyIds properties{
+                UnityEngine::Shader::PropertyToID("_PlaneU"),
+                UnityEngine::Shader::PropertyToID("_PlaneV"),
+                UnityEngine::Shader::PropertyToID("_PackedLayout"),
+                UnityEngine::Shader::PropertyToID("_PackedChromaSize"),
+                UnityEngine::Shader::PropertyToID("_YuvOffset"),
+                UnityEngine::Shader::PropertyToID("_YuvRow0"),
+                UnityEngine::Shader::PropertyToID("_YuvRow1"),
+                UnityEngine::Shader::PropertyToID("_YuvRow2"),
+                UnityEngine::Shader::PropertyToID("_QuarterTurns"),
+                UnityEngine::Shader::PropertyToID("_ColorRow0"),
+                UnityEngine::Shader::PropertyToID("_ColorRow1"),
+                UnityEngine::Shader::PropertyToID("_ColorRow2"),
+                UnityEngine::Shader::PropertyToID("_ColorBias"),
+                UnityEngine::Shader::PropertyToID("_ColorCorrectionEnabled"),
+                UnityEngine::Shader::PropertyToID("_InverseGamma"),
+                UnityEngine::Shader::PropertyToID("_VignetteEnabled"),
+                UnityEngine::Shader::PropertyToID("_VignetteElliptical"),
+                UnityEngine::Shader::PropertyToID("_VignetteRadius"),
+                UnityEngine::Shader::PropertyToID("_VignetteSoftness")};
+            return properties;
+        }
+
+        bool SameVisualEffects(
+            const FrameVisualEffects& left,
+            const FrameVisualEffects& right)
+        {
+            return left.enabled == right.enabled &&
+                left.brightness == right.brightness &&
+                left.contrast == right.contrast &&
+                left.saturation == right.saturation &&
+                left.hue == right.hue &&
+                left.exposure == right.exposure &&
+                left.gamma == right.gamma &&
+                left.vignetteEnabled == right.vignetteEnabled &&
+                left.vignetteElliptical == right.vignetteElliptical &&
+                left.vignetteRadius == right.vignetteRadius &&
+                left.vignetteSoftness == right.vignetteSoftness;
+        }
+
         // Unity scene teardown leaves ordinary IL2CPP pointers non-null after
         // their managed objects have been destroyed (Unity's "fake null").
         // Every deferred cleanup path must therefore verify liveness before it
@@ -2133,7 +2201,53 @@ namespace BigScreen {
         DestroyIfAlive(gpuConversionMaterial_);
         gpuConversionMaterial_ = material;
         gpuYuvUploadLayout_ = layout;
+        // The new material has no inherited property or texture state. Do not
+        // erase the session counters: a packed-to-planar fallback should still
+        // report the complete session's avoided work.
+        InvalidateGpuMaterialStateCache();
         return true;
+    }
+
+    void ScreenSurface::InvalidateGpuMaterialStateCache()
+    {
+        gpuConversionStateValid_ = false;
+        gpuVisualEffectsStateValid_ = false;
+        gpuPackedLayoutStateValid_ = false;
+        gpuBoundUTexture_ = nullptr;
+        gpuBoundVTexture_ = nullptr;
+    }
+
+    void ScreenSurface::ResetGpuPresentationCache()
+    {
+        InvalidateGpuMaterialStateCache();
+        gpuColorMatrix_ = VideoColorMatrix::Bt601;
+        gpuFullRange_ = false;
+        gpuDisplayQuarterTurns_ = 0;
+        gpuVisualEffects_ = {};
+        gpuPackedAtlasWidth_ = 0;
+        gpuPackedAtlasHeight_ = 0;
+        gpuPackedSourceWidth_ = 0;
+        gpuPackedSourceHeight_ = 0;
+        gpuPackedChromaWidth_ = 0;
+        gpuPackedChromaHeight_ = 0;
+        gpuUploadedFrames_ = 0;
+        gpuMaterialPropertyWrites_ = 0;
+        gpuMaterialPropertyWritesAvoided_ = 0;
+        gpuTextureBindings_ = 0;
+        gpuTextureBindingsAvoided_ = 0;
+    }
+
+    void ScreenSurface::LogGpuPresentationCache() const
+    {
+        if(gpuUploadedFrames_ == 0)
+            return;
+        BigScreen::BigScreenLogger.info(
+            "GPU presentation cache: {} uploaded frames; material property writes {} applied, {} avoided; chroma texture bindings {} applied, {} avoided",
+            gpuUploadedFrames_,
+            gpuMaterialPropertyWrites_,
+            gpuMaterialPropertyWritesAvoided_,
+            gpuTextureBindings_,
+            gpuTextureBindingsAvoided_);
     }
 
     bool ScreenSurface::FallbackToThreePlaneYuv(std::string reason)
@@ -2264,8 +2378,11 @@ namespace BigScreen {
 
         const auto ensurePlane = [](UnityEngine::Texture2D*& texture,
                                     int width,
-                                    int height)
+                                    int height,
+                                    bool* replaced)
         {
+            if(replaced)
+                *replaced = false;
             if(UnityW<UnityEngine::Texture2D>::isAlive(texture) &&
                texture->get_width() == width &&
                texture->get_height() == height)
@@ -2281,11 +2398,18 @@ namespace BigScreen {
                 return false;
             texture->set_filterMode(UnityEngine::FilterMode::Bilinear);
             texture->set_wrapMode(UnityEngine::TextureWrapMode::Clamp);
+            if(replaced)
+                *replaced = true;
             return true;
         };
-        if(!ensurePlane(yTexture_, frame.sourceWidth, frame.sourceHeight) ||
-           !ensurePlane(uTexture_, chromaWidth, chromaHeight) ||
-           !ensurePlane(vTexture_, chromaWidth, chromaHeight))
+        bool uReplaced = false;
+        bool vReplaced = false;
+        if(!ensurePlane(
+               yTexture_, frame.sourceWidth, frame.sourceHeight, nullptr) ||
+           !ensurePlane(
+               uTexture_, chromaWidth, chromaHeight, &uReplaced) ||
+           !ensurePlane(
+               vTexture_, chromaWidth, chromaHeight, &vReplaced))
             return false;
 
         const auto uploadPlane = [](UnityEngine::Texture2D* texture,
@@ -2299,11 +2423,34 @@ namespace BigScreen {
         uploadPlane(yTexture_, frame.y);
         uploadPlane(uTexture_, frame.u);
         uploadPlane(vTexture_, frame.v);
-        gpuConversionMaterial_->SetTexture("_PlaneU", uTexture_);
-        gpuConversionMaterial_->SetTexture("_PlaneV", vTexture_);
+        const auto& properties = GpuShaderProperties();
+        // A recreated Unity texture can reuse the same native address. Include
+        // the explicit replacement flag so pointer equality cannot suppress a
+        // required material rebind after scene teardown or size changes.
+        if(uReplaced || gpuBoundUTexture_ != uTexture_)
+        {
+            gpuConversionMaterial_->SetTexture(properties.planeU, uTexture_);
+            gpuBoundUTexture_ = uTexture_;
+            ++gpuTextureBindings_;
+        }
+        else
+        {
+            ++gpuTextureBindingsAvoided_;
+        }
+        if(vReplaced || gpuBoundVTexture_ != vTexture_)
+        {
+            gpuConversionMaterial_->SetTexture(properties.planeV, vTexture_);
+            gpuBoundVTexture_ = vTexture_;
+            ++gpuTextureBindings_;
+        }
+        else
+        {
+            ++gpuTextureBindingsAvoided_;
+        }
         ConfigureGpuConversionMaterial(frame);
         UnityEngine::Graphics::Blit(
             yTexture_, gpuTexture_, gpuConversionMaterial_);
+        ++gpuUploadedFrames_;
         return true;
     }
 
@@ -2357,135 +2504,213 @@ namespace BigScreen {
                 const_cast<std::uint8_t*>(frame.packedYuv.data())),
             static_cast<std::int32_t>(frame.packedYuv.size()));
         packedYuvTexture_->Apply(false, false);
-        gpuConversionMaterial_->SetVector(
-            "_PackedLayout",
-            {static_cast<float>(atlasWidth),
-             static_cast<float>(atlasHeight),
-             static_cast<float>(frame.sourceWidth),
-             static_cast<float>(frame.sourceHeight)});
-        gpuConversionMaterial_->SetVector(
-            "_PackedChromaSize",
-            {static_cast<float>(chromaWidth),
-             static_cast<float>(chromaHeight),
-             0.0f,
-             0.0f});
+        const bool packedLayoutChanged = !gpuPackedLayoutStateValid_ ||
+            gpuPackedAtlasWidth_ != atlasWidth ||
+            gpuPackedAtlasHeight_ != atlasHeight ||
+            gpuPackedSourceWidth_ != frame.sourceWidth ||
+            gpuPackedSourceHeight_ != frame.sourceHeight ||
+            gpuPackedChromaWidth_ != chromaWidth ||
+            gpuPackedChromaHeight_ != chromaHeight;
+        if(packedLayoutChanged)
+        {
+            const auto& properties = GpuShaderProperties();
+            gpuConversionMaterial_->SetVector(
+                properties.packedLayout,
+                {static_cast<float>(atlasWidth),
+                 static_cast<float>(atlasHeight),
+                 static_cast<float>(frame.sourceWidth),
+                 static_cast<float>(frame.sourceHeight)});
+            gpuConversionMaterial_->SetVector(
+                properties.packedChromaSize,
+                {static_cast<float>(chromaWidth),
+                 static_cast<float>(chromaHeight),
+                 0.0f,
+                 0.0f});
+            // Commit only after every Unity call succeeds. If an IL2CPP call
+            // throws, the next frame retries the complete property group.
+            gpuPackedLayoutStateValid_ = true;
+            gpuPackedAtlasWidth_ = atlasWidth;
+            gpuPackedAtlasHeight_ = atlasHeight;
+            gpuPackedSourceWidth_ = frame.sourceWidth;
+            gpuPackedSourceHeight_ = frame.sourceHeight;
+            gpuPackedChromaWidth_ = chromaWidth;
+            gpuPackedChromaHeight_ = chromaHeight;
+            gpuMaterialPropertyWrites_ += 2;
+        }
+        else
+        {
+            gpuMaterialPropertyWritesAvoided_ += 2;
+        }
         ConfigureGpuConversionMaterial(frame);
         UnityEngine::Graphics::Blit(
             packedYuvTexture_, gpuTexture_, gpuConversionMaterial_);
+        ++gpuUploadedFrames_;
         return true;
     }
 
     void ScreenSurface::ConfigureGpuConversionMaterial(
         const VideoFrame& frame)
     {
-        float kr = 0.299f;
-        float kb = 0.114f;
-        switch(frame.colorMatrix)
+        const auto& properties = GpuShaderProperties();
+        const bool conversionChanged = !gpuConversionStateValid_ ||
+            gpuColorMatrix_ != frame.colorMatrix ||
+            gpuFullRange_ != frame.fullRange ||
+            gpuDisplayQuarterTurns_ != frame.displayQuarterTurns;
+        if(conversionChanged)
         {
-            case VideoColorMatrix::Bt709: kr = 0.2126f; kb = 0.0722f; break;
-            case VideoColorMatrix::Fcc: kr = 0.30f; kb = 0.11f; break;
-            case VideoColorMatrix::Smpte240: kr = 0.212f; kb = 0.087f; break;
-            case VideoColorMatrix::Bt2020: kr = 0.2627f; kb = 0.0593f; break;
-            case VideoColorMatrix::Bt601: break;
+            float kr = 0.299f;
+            float kb = 0.114f;
+            switch(frame.colorMatrix)
+            {
+                case VideoColorMatrix::Bt709:
+                    kr = 0.2126f;
+                    kb = 0.0722f;
+                    break;
+                case VideoColorMatrix::Fcc:
+                    kr = 0.30f;
+                    kb = 0.11f;
+                    break;
+                case VideoColorMatrix::Smpte240:
+                    kr = 0.212f;
+                    kb = 0.087f;
+                    break;
+                case VideoColorMatrix::Bt2020:
+                    kr = 0.2627f;
+                    kb = 0.0593f;
+                    break;
+                case VideoColorMatrix::Bt601:
+                    break;
+            }
+            const float kg = 1.0f - kr - kb;
+            const float yScale = frame.fullRange ? 1.0f : 255.0f / 219.0f;
+            const float cScale = frame.fullRange ? 1.0f : 255.0f / 224.0f;
+            gpuConversionMaterial_->SetVector(
+                properties.yuvOffset,
+                {frame.fullRange ? 0.0f : -16.0f / 255.0f,
+                 -128.0f / 255.0f,
+                 -128.0f / 255.0f,
+                 0.0f});
+            gpuConversionMaterial_->SetVector(
+                properties.yuvRow0,
+                {yScale, 0.0f, 2.0f * (1.0f - kr) * cScale, 0.0f});
+            gpuConversionMaterial_->SetVector(
+                properties.yuvRow1,
+                {yScale,
+                 -2.0f * kb * (1.0f - kb) / kg * cScale,
+                 -2.0f * kr * (1.0f - kr) / kg * cScale,
+                 0.0f});
+            gpuConversionMaterial_->SetVector(
+                properties.yuvRow2,
+                {yScale, 2.0f * (1.0f - kb) * cScale, 0.0f, 0.0f});
+            gpuConversionMaterial_->SetFloat(
+                properties.quarterTurns,
+                static_cast<float>(frame.displayQuarterTurns));
+            // Commit after all five properties are applied; a partial Unity
+            // exception must leave this group dirty for the next frame.
+            gpuConversionStateValid_ = true;
+            gpuColorMatrix_ = frame.colorMatrix;
+            gpuFullRange_ = frame.fullRange;
+            gpuDisplayQuarterTurns_ = frame.displayQuarterTurns;
+            gpuMaterialPropertyWrites_ += 5;
         }
-        const float kg = 1.0f - kr - kb;
-        const float yScale = frame.fullRange ? 1.0f : 255.0f / 219.0f;
-        const float cScale = frame.fullRange ? 1.0f : 255.0f / 224.0f;
-        gpuConversionMaterial_->SetVector(
-            "_YuvOffset",
-            {frame.fullRange ? 0.0f : -16.0f / 255.0f,
-             -128.0f / 255.0f,
-             -128.0f / 255.0f,
-             0.0f});
-        gpuConversionMaterial_->SetVector(
-            "_YuvRow0",
-            {yScale, 0.0f, 2.0f * (1.0f - kr) * cScale, 0.0f});
-        gpuConversionMaterial_->SetVector(
-            "_YuvRow1",
-            {yScale,
-             -2.0f * kb * (1.0f - kb) / kg * cScale,
-             -2.0f * kr * (1.0f - kr) / kg * cScale,
-             0.0f});
-        gpuConversionMaterial_->SetVector(
-            "_YuvRow2",
-            {yScale, 2.0f * (1.0f - kb) * cScale, 0.0f, 0.0f});
-        gpuConversionMaterial_->SetFloat(
-            "_QuarterTurns",
-            static_cast<float>(frame.displayQuarterTurns));
+        else
+        {
+            gpuMaterialPropertyWritesAvoided_ += 5;
+        }
 
         const auto& effects = frame.visualEffects;
-        constexpr float EffectEpsilon = 0.0001f;
-        const bool colorCorrection = effects.enabled && (
-            std::abs(effects.brightness - 1.0f) > EffectEpsilon ||
-            std::abs(effects.contrast - 1.0f) > EffectEpsilon ||
-            std::abs(effects.saturation - 1.0f) > EffectEpsilon ||
-            std::abs(effects.hue) > EffectEpsilon ||
-            std::abs(effects.exposure - 1.0f) > EffectEpsilon ||
-            std::abs(effects.gamma - 1.0f) > EffectEpsilon);
-        constexpr float Luma[3] = {0.299f, 0.587f, 0.114f};
-        const float hueRadians = effects.hue * Pi / 180.0f;
-        const float cosine = std::cos(hueRadians);
-        const float sine = std::sin(hueRadians);
-        const float hue[3][3] = {
-            {Luma[0] + (1-Luma[0])*cosine - Luma[0]*sine,
-             Luma[1] - Luma[1]*cosine - Luma[1]*sine,
-             Luma[2] - Luma[2]*cosine + (1-Luma[2])*sine},
-            {Luma[0] - Luma[0]*cosine + 0.143f*sine,
-             Luma[1] + (1-Luma[1])*cosine + 0.140f*sine,
-             Luma[2] - Luma[2]*cosine - 0.283f*sine},
-            {Luma[0] - Luma[0]*cosine - (1-Luma[0])*sine,
-             Luma[1] - Luma[1]*cosine + Luma[1]*sine,
-             Luma[2] + (1-Luma[2])*cosine + Luma[2]*sine}};
-        float combined[3][3]{};
-        for(int output = 0; output < 3; ++output)
+        const bool visualEffectsChanged = !gpuVisualEffectsStateValid_ ||
+            !SameVisualEffects(gpuVisualEffects_, effects);
+        if(visualEffectsChanged)
         {
-            for(int input = 0; input < 3; ++input)
+            constexpr float EffectEpsilon = 0.0001f;
+            const bool colorCorrection = effects.enabled && (
+                std::abs(effects.brightness - 1.0f) > EffectEpsilon ||
+                std::abs(effects.contrast - 1.0f) > EffectEpsilon ||
+                std::abs(effects.saturation - 1.0f) > EffectEpsilon ||
+                std::abs(effects.hue) > EffectEpsilon ||
+                std::abs(effects.exposure - 1.0f) > EffectEpsilon ||
+                std::abs(effects.gamma - 1.0f) > EffectEpsilon);
+            constexpr float Luma[3] = {0.299f, 0.587f, 0.114f};
+            const float hueRadians = effects.hue * Pi / 180.0f;
+            const float cosine = std::cos(hueRadians);
+            const float sine = std::sin(hueRadians);
+            const float hue[3][3] = {
+                {Luma[0] + (1-Luma[0])*cosine - Luma[0]*sine,
+                 Luma[1] - Luma[1]*cosine - Luma[1]*sine,
+                 Luma[2] - Luma[2]*cosine + (1-Luma[2])*sine},
+                {Luma[0] - Luma[0]*cosine + 0.143f*sine,
+                 Luma[1] + (1-Luma[1])*cosine + 0.140f*sine,
+                 Luma[2] - Luma[2]*cosine - 0.283f*sine},
+                {Luma[0] - Luma[0]*cosine - (1-Luma[0])*sine,
+                 Luma[1] - Luma[1]*cosine + Luma[1]*sine,
+                 Luma[2] + (1-Luma[2])*cosine + Luma[2]*sine}};
+            float combined[3][3]{};
+            for(int output = 0; output < 3; ++output)
             {
-                for(int intermediate = 0; intermediate < 3; ++intermediate)
+                for(int input = 0; input < 3; ++input)
                 {
-                    const float saturation =
-                        (output == intermediate ? effects.saturation : 0.0f) +
-                        (1.0f - effects.saturation) * Luma[intermediate];
-                    combined[output][input] +=
-                        saturation * hue[intermediate][input];
+                    for(int intermediate = 0; intermediate < 3;
+                        ++intermediate)
+                    {
+                        const float saturation =
+                            (output == intermediate
+                                ? effects.saturation
+                                : 0.0f) +
+                            (1.0f - effects.saturation) * Luma[intermediate];
+                        combined[output][input] +=
+                            saturation * hue[intermediate][input];
+                    }
                 }
             }
-        }
-        const float gain = effects.brightness * effects.exposure *
-            effects.contrast;
-        const float contrastBias = 0.5f * (1.0f - effects.contrast);
-        float biases[3]{};
-        for(int output = 0; output < 3; ++output)
-        {
-            for(int input = 0; input < 3; ++input)
+            const float gain = effects.brightness * effects.exposure *
+                effects.contrast;
+            const float contrastBias = 0.5f * (1.0f - effects.contrast);
+            float biases[3]{};
+            const std::array<std::int32_t, 3> colorRows{
+                properties.colorRow0,
+                properties.colorRow1,
+                properties.colorRow2};
+            for(int output = 0; output < 3; ++output)
             {
-                biases[output] += combined[output][input] * contrastBias;
-                combined[output][input] *= gain;
+                for(int input = 0; input < 3; ++input)
+                {
+                    biases[output] +=
+                        combined[output][input] * contrastBias;
+                    combined[output][input] *= gain;
+                }
+                gpuConversionMaterial_->SetVector(
+                    colorRows[output],
+                    {combined[output][0], combined[output][1],
+                     combined[output][2], 0.0f});
             }
-            const auto property = output == 0 ? "_ColorRow0" :
-                output == 1 ? "_ColorRow1" : "_ColorRow2";
             gpuConversionMaterial_->SetVector(
-                property,
-                {combined[output][0], combined[output][1],
-                 combined[output][2], 0.0f});
+                properties.colorBias,
+                {biases[0], biases[1], biases[2], 0.0f});
+            gpuConversionMaterial_->SetFloat(
+                properties.colorCorrectionEnabled,
+                colorCorrection ? 1.0f : 0.0f);
+            gpuConversionMaterial_->SetFloat(
+                properties.inverseGamma,
+                1.0f / std::max(effects.gamma, 0.00001f));
+            gpuConversionMaterial_->SetFloat(
+                properties.vignetteEnabled,
+                effects.enabled && effects.vignetteEnabled ? 1.0f : 0.0f);
+            gpuConversionMaterial_->SetFloat(
+                properties.vignetteElliptical,
+                effects.vignetteElliptical ? 1.0f : 0.0f);
+            gpuConversionMaterial_->SetFloat(
+                properties.vignetteRadius, effects.vignetteRadius);
+            gpuConversionMaterial_->SetFloat(
+                properties.vignetteSoftness, effects.vignetteSoftness);
+            gpuVisualEffectsStateValid_ = true;
+            gpuVisualEffects_ = effects;
+            gpuMaterialPropertyWrites_ += 10;
         }
-        gpuConversionMaterial_->SetVector(
-            "_ColorBias", {biases[0], biases[1], biases[2], 0.0f});
-        gpuConversionMaterial_->SetFloat(
-            "_ColorCorrectionEnabled", colorCorrection ? 1.0f : 0.0f);
-        gpuConversionMaterial_->SetFloat(
-            "_InverseGamma",
-            1.0f / std::max(effects.gamma, 0.00001f));
-        gpuConversionMaterial_->SetFloat(
-            "_VignetteEnabled",
-            effects.enabled && effects.vignetteEnabled ? 1.0f : 0.0f);
-        gpuConversionMaterial_->SetFloat(
-            "_VignetteElliptical",
-            effects.vignetteElliptical ? 1.0f : 0.0f);
-        gpuConversionMaterial_->SetFloat(
-            "_VignetteRadius", effects.vignetteRadius);
-        gpuConversionMaterial_->SetFloat(
-            "_VignetteSoftness", effects.vignetteSoftness);
+        else
+        {
+            gpuMaterialPropertyWritesAvoided_ += 10;
+        }
     }
 
     void ScreenSurface::ShowLeadIn(bool black)
@@ -3285,6 +3510,9 @@ namespace BigScreen {
 
     void ScreenSurface::Destroy()
     {
+        // Log once at the session boundary rather than adding any work or
+        // changing the values shown by the live/end-of-map performance panel.
+        LogGpuPresentationCache();
         // Unregister BEFORE the video object is destroyed so the bloom
         // pre-pass never draws a dying surface during the same frame.
         // BLOOM EXPERIMENT DISABLED (2026-08-18): registration is compiled
@@ -3345,6 +3573,7 @@ namespace BigScreen {
         gpuConversionActive_ = false;
         gpuYuvUploadLayout_ = GpuYuvUploadLayout::ThreePlane;
         gpuYuvUploadFallback_.reset();
+        ResetGpuPresentationCache();
         screenWidth_ = 0.0f;
         screenHeight_ = 0.0f;
         letterboxTransparent_ = false;

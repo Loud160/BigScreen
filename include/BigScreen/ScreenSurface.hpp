@@ -151,6 +151,9 @@ namespace BigScreen {
         bool UploadYuv420(const VideoFrame& frame);
         bool UploadPackedYuv420(const VideoFrame& frame);
         void ConfigureGpuConversionMaterial(const VideoFrame& frame);
+        void InvalidateGpuMaterialStateCache();
+        void ResetGpuPresentationCache();
+        void LogGpuPresentationCache() const;
         bool CreateBackgroundMaterial(bool letterboxTransparent);
         /// UI/Default cannot use independent RGB/alpha blend equations. This
         /// invisible pass follows the video mesh and clears only framebuffer
@@ -217,6 +220,31 @@ namespace BigScreen {
         UnityEngine::Texture2D* packedYuvTexture_ = nullptr;
         UnityEngine::RenderTexture* gpuTexture_ = nullptr;
         UnityEngine::Material* gpuConversionMaterial_ = nullptr;
+        // The GPU conversion material is stable for a video session. Cache
+        // every invariant property snapshot so ordinary frames upload pixels
+        // without rebuilding matrices, allocating managed property-name
+        // strings, or resending identical state through IL2CPP. A material
+        // replacement invalidates these values without erasing session totals.
+        bool gpuConversionStateValid_ = false;
+        VideoColorMatrix gpuColorMatrix_ = VideoColorMatrix::Bt601;
+        bool gpuFullRange_ = false;
+        int gpuDisplayQuarterTurns_ = 0;
+        bool gpuVisualEffectsStateValid_ = false;
+        FrameVisualEffects gpuVisualEffects_{};
+        bool gpuPackedLayoutStateValid_ = false;
+        int gpuPackedAtlasWidth_ = 0;
+        int gpuPackedAtlasHeight_ = 0;
+        int gpuPackedSourceWidth_ = 0;
+        int gpuPackedSourceHeight_ = 0;
+        int gpuPackedChromaWidth_ = 0;
+        int gpuPackedChromaHeight_ = 0;
+        UnityEngine::Texture2D* gpuBoundUTexture_ = nullptr;
+        UnityEngine::Texture2D* gpuBoundVTexture_ = nullptr;
+        std::uint64_t gpuUploadedFrames_ = 0;
+        std::uint64_t gpuMaterialPropertyWrites_ = 0;
+        std::uint64_t gpuMaterialPropertyWritesAvoided_ = 0;
+        std::uint64_t gpuTextureBindings_ = 0;
+        std::uint64_t gpuTextureBindingsAvoided_ = 0;
         UnityEngine::GameObject* crackObject_ = nullptr;
         UnityEngine::Mesh* crackMesh_ = nullptr;
         UnityEngine::Material* crackMaterial_ = nullptr;
