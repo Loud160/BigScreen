@@ -17,6 +17,17 @@ $script:SourceInstallRoot = "$($script:BigScreenModData)/BigScreen/SourceInstall
 $script:CompleteReceiptPath = "$($script:SourceInstallRoot)/source-install.json"
 $script:PartialReceiptPath = "$($script:SourceInstallRoot)/source-install.partial.json"
 $script:BaselineRoot = "$($script:SourceInstallRoot)/Baseline"
+$script:BigScreenRecursiveRemovalRoots = @(
+    "$($script:BigScreenModData)/BigScreen/Runtime",
+    "$($script:BigScreenModData)/BigScreen/Videos",
+    $script:SourceInstallRoot
+)
+$script:BigScreenPreservedUserPaths = @(
+    "$($script:BigScreenModData)/BigScreen/Thumbnails",
+    "$($script:BigScreenModData)/BigScreen/Video Import",
+    "$($script:BigScreenModData)/BigScreen/library.json",
+    "$($script:BigScreenModData)/BigScreen/Logs"
+)
 $script:LegacyRuntimeMarkers = @(
     "python314.zip",
     "yt-dlp-shipped",
@@ -85,6 +96,17 @@ function Invoke-BigScreenAdb {
         throw "ADB failed: adb $($Arguments -join ' ')`n$text"
     }
     [pscustomobject]@{ ExitCode = $code; Text = $text }
+}
+
+function Remove-BigScreenOwnedTree([string]$Path) {
+    # Recursive removal is limited to this script's compile-time allowlist.
+    # Receipt-owned files remain per-file operations; user imports, library
+    # metadata, thumbnails, and logs are named separately above and can never
+    # enter this helper through a manifest or receipt.
+    if ($script:BigScreenRecursiveRemovalRoots -notcontains $Path) {
+        throw "Refusing unexpected recursive Big Screen cleanup target: $Path"
+    }
+    [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$Path'"))
 }
 
 function Assert-BigScreenRemotePath([string]$Path) {
@@ -590,7 +612,7 @@ function Remove-BigScreenLegacyRuntimePayload {
     if ($runtimeRoot -ne $expected) {
         throw "Refusing unexpected legacy runtime cleanup target: $runtimeRoot"
     }
-    [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$runtimeRoot'"))
+    Remove-BigScreenOwnedTree $runtimeRoot
     if (Test-BigScreenRemoteDirectory $runtimeRoot) {
         throw "Legacy cleanup could not remove Big Screen's private Runtime directory."
     }

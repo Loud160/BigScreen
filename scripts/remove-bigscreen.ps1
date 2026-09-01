@@ -211,7 +211,7 @@ if ($RemoveVideos) {
     if ($videosPath -ne $expectedVideosPath) {
         throw "Refusing unexpected downloaded-video cleanup target: $videosPath"
     }
-    [void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$videosPath'"))
+    Remove-BigScreenOwnedTree $videosPath
     if (Test-BigScreenRemoteDirectory $videosPath) {
         throw "Big Screen's downloaded-video directory could not be removed."
     }
@@ -222,7 +222,7 @@ if ($RemoveVideos) {
 
 # This exact directory contains only source ownership receipts and their
 # baseline backups. User media and Logs are sibling paths and are untouched.
-[void](Invoke-BigScreenAdb @("shell", "rm -rf -- '$($script:SourceInstallRoot)'"))
+Remove-BigScreenOwnedTree $script:SourceInstallRoot
 Write-Output ""
 Write-Output "Big Screen source installation removed."
 Write-Output "Map-folder videos, Video Import files, library data, thumbnails, logs, and other user data were preserved."

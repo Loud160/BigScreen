@@ -24,9 +24,11 @@ on:
         - 'dev/*'
         - 'feat/*'
         - 'fix/*'
+        - 'codex/**'
 
-# Tagged builds publish the validated QMOD and native debug artifacts through
-# GitHub's release API. The default read-only token cannot create that release.
+# Tagged builds publish only the validated QMOD through GitHub's release API.
+# The unstripped native binary remains a short-lived Actions artifact for
+# crash symbolization and is never attached to the public release.
 permissions:
   contents: write
 
@@ -62,10 +64,17 @@ jobs:
       id: version
       run: |
         echo "TAG=${GITHUB_REF#refs/tags/}" >> ${GITHUB_OUTPUT}
-        echo "VERSION=${GITHUB_REF#refs/tags/v}" >> ${GITHUB_OUTPUT}
+
+    - name: Validate release tag against tracked package metadata
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: python3 ./scripts/build_pipeline.py validate-release --tag "${{ steps.version.outputs.TAG }}"
 
     - name: Build, test, audit, and package through the canonical pipeline
       run: bash ./Build-QMOD-Linux.sh
+
+    - name: Validate release tag against the packaged manifest
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: python3 ./scripts/build_pipeline.py validate-release --tag "${{ steps.version.outputs.TAG }}" --qmod "./Big Screen.qmod"
 
     # The canonical Linux suite exercises the shared Python ownership policy.
     # Run the Windows-facing PowerShell policy implementations as independent
@@ -78,20 +87,19 @@ jobs:
         ./tests/QuestDependencyCheckTests.ps1
         ./tests/DeterministicZipTests.ps1
 
-    - name: Get Library Name
-      id: libname
+    - name: Verify release and symbol outputs
       run: |
         library="lib${module_id}.so"
         test -f "./build/${library}"
         test -f "./build/debug/${library}"
-        echo "NAME=${library}" >> ${GITHUB_OUTPUT}
 
-    - name: Upload artifact
+    - name: Upload Actions-only native debug symbols
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: ${{ steps.libname.outputs.NAME }}
-        path: ./build/${{ steps.libname.outputs.NAME }}
+        name: Big-Screen-native-debug-symbols-${{ github.sha }}
+        path: ./build/debug/libbigscreen.so
         if-no-files-found: error
+        retention-days: 14
 
     - name: Upload qmod artifact
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -100,8 +108,7 @@ jobs:
         path: ./${{ env.qmod_name }}.qmod
         if-no-files-found: error
 
-    # if we had a tag, we should make a release
-    - name: Upload release artifacts
+    - name: Publish QMOD-only release
       if: startsWith(github.ref, 'refs/tags/v')
       id: upload_file_release
       uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2

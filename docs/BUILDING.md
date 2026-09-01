@@ -385,7 +385,12 @@ rejects cross-version FFmpeg libraries/symbols, and requires each backend's
 exported factory. `scripts/validate-ffmpeg-elf.ps1` remains available as a
 Windows-facing diagnostic wrapper for the same release boundary.
 
-The generated `mod.json` must report the same version as `qpm.json`, `qpm.shared.json`, and `mod.template.json`, the exact package version, all required libraries, and every runtime file copy.
+The generated `mod.json` must report the same version as `qpm.json`,
+`qpm.shared.json`, and `mod.template.json`, the exact package version, all
+required libraries, and every runtime file copy. `mod.template.json` is the one
+authoritative packaged-library list; packaging fails if generated manifest
+order/content or CMake's staged root `.so` set differs. A tagged CI build also
+requires the exact `v<version>` tag before it can publish a release.
 
 ## Source deployment ownership and QMOD managers
 
@@ -462,7 +467,12 @@ When the controller launch gate prevents unattended Beat Saber startup, compile 
 documentation files, and uses pinned Node/pnpm tooling to rebuild yt-dlp plus
 yt-dlp-ejs from source and compare the full payload with the shipped release.
 `build-ndk.yml` invokes `Build-QMOD-Linux.sh`, which restores the pinned QPM and
-NDK inputs, creates the validated deterministic QMOD, and uploads artifacts.
+NDK inputs, verifies every QPM-restored native input by SHA-256, creates the
+validated deterministic QMOD, and uploads it as a normal Actions artifact.
+The unstripped `build/debug/libbigscreen.so` is retained separately for 14 days
+as an Actions-only crash-symbol artifact; it is never a public release asset.
+Tagged releases publish only the QMOD as a custom binary asset, while GitHub's
+standard corresponding-source archives remain available automatically.
 Third-party actions are pinned to commit SHAs. Changing the NDK requires
 synchronized QPM metadata, CI, FFmpeg, one clean dual-runtime build, and
 headset regression testing.

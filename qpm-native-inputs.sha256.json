@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "name": "libbeatsaber-hook.debug.so",
+      "sha256": "a050783e7d6712d6a1d7814a0d0035b0b16453887d3329fd6348dafbed1e6f23",
+      "sourceUrl": "https://github.com/QuestPackageManager/beatsaber-hook/releases/download/v6.4.2/debug_libbeatsaber-hook.so"
+    },
+    {
+      "name": "libbeatsaber-hook.so",
+      "sha256": "b13ebc4809f02c787ef5e2d4ecf0a100c56a9dd390c4395da33e73bf2fbf2b1b",
+      "sourceUrl": "https://github.com/QuestPackageManager/beatsaber-hook/releases/download/v6.4.2/libbeatsaber-hook.so"
+    },
+    {
+      "name": "libbsml.debug.so",
+      "sha256": "4b8fe59de4859868335457a3e9c0d8fc1d0a5610e45e93e4292ae63d55bbd513",
+      "sourceUrl": "https://github.com/bsq-ports/Quest-BSML/releases/download/v0.4.55/debug_libbsml.so"
+    },
+    {
+      "name": "libbsml.so",
+      "sha256": "38327abdd35121bc18cd5f55d82579e63e5f480a66c16be9435016e2e861f81a",
+      "sourceUrl": "https://github.com/bsq-ports/Quest-BSML/releases/download/v0.4.55/libbsml.so"
+    },
+    {
+      "name": "libcustom-types.debug.so",
+      "sha256": "b1313be38489445c9a575674b7f703d83299fa8cc3123d05d1d017aa4b93c224",
+      "sourceUrl": "https://github.com/QuestPackageManager/Il2CppQuestTypePatching/releases/download/v0.18.4/debug_libcustom-types.so"
+    },
+    {
+      "name": "libcustom-types.so",
+      "sha256": "526c2682e28a59ff0a07f88dac6447c1fe850de145fe9414960e2b47a035045b",
+      "sourceUrl": "https://github.com/QuestPackageManager/Il2CppQuestTypePatching/releases/download/v0.18.4/libcustom-types.so"
+    },
+    {
+      "name": "libsl2.debug.so",
+      "sha256": "18c3985f6ecd1d2317a4f70313fdeb58cb1ee91a9ecd7833ee144b7a93790ead",
+      "sourceUrl": "https://github.com/sc2ad/scotland2/releases/download/v0.1.7/debug_libsl2.so"
+    },
+    {
+      "name": "libsl2.so",
+      "sha256": "3c34627ede42c9281a0d28147bc222424c5dc451263a14c7a9ab6a88331890fe",
+      "sourceUrl": "https://github.com/sc2ad/scotland2/releases/download/v0.1.7/libsl2.so"
+    },
+    {
+      "name": "libsongcore.debug.so",
+      "sha256": "a479df9c597ae25e34214c331977baf3fe6a5532487022ee8631a44ec259930e",
+      "sourceUrl": "https://github.com/raineaeternal/Quest-SongCore/releases/download/v1.1.26/debug_libsongcore.so"
+    },
+    {
+      "name": "libsongcore.so",
+      "sha256": "3c97708936093db43817b59243ef808b5eabdef89ec17abf8fd1095487a9b2aa",
+      "sourceUrl": "https://github.com/raineaeternal/Quest-SongCore/releases/download/v1.1.26/libsongcore.so"
+    }
+  ]
+}

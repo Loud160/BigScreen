@@ -226,10 +226,37 @@ Remove-BigScreenRetiredReceiptFiles `
     @()
 
 $remover = Get-Content -LiteralPath (Join-Path $root "scripts/remove-bigscreen.ps1") -Raw
-foreach ($protected in @("BigScreen/Thumbnails", "BigScreen/Video Import", "library.json", "BigScreen/Logs")) {
-    if ($remover -match [regex]::Escape("rm") + ".*" + [regex]::Escape($protected)) {
-        throw "Removal script contains a deletion path for protected user data: $protected"
-    }
+$expectedProtected = @(
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Thumbnails",
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import",
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/library.json",
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs"
+)
+$expectedRemovalRoots = @(
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Runtime",
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Videos",
+    "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/SourceInstall"
+)
+if (Compare-Object $expectedProtected $script:BigScreenPreservedUserPaths) {
+    throw "The explicit preserved-user-data path set changed."
+}
+if (Compare-Object $expectedRemovalRoots $script:BigScreenRecursiveRemovalRoots) {
+    throw "The recursive-removal allowlist changed."
+}
+if (@($script:BigScreenPreservedUserPaths | Where-Object {
+        $script:BigScreenRecursiveRemovalRoots -contains $_
+    }).Count -ne 0) {
+    throw "A protected user-data path entered the recursive-removal allowlist."
+}
+$protectedRemovalRejected = $false
+try {
+    Remove-BigScreenOwnedTree $expectedProtected[0]
+} catch {
+    $protectedRemovalRejected = $_.Exception.Message -match
+        "Refusing unexpected recursive Big Screen cleanup target"
+}
+if (-not $protectedRemovalRejected) {
+    throw "The recursive-removal helper did not reject a protected path."
 }
 if ($remover -match 'rm\s+-rf\s+[^\r\n]*BigScreen[\x27\x22]?\s*$') {
     throw "Removal script contains a broad BigScreen data-root deletion."

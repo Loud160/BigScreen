@@ -266,6 +266,9 @@ cinema_interop_source = (root / "src/CinemaInterop.cpp").read_text(
 )
 qpm = json.loads((root / "qpm.json").read_text(encoding="utf-8"))
 qpm_shared = json.loads((root / "qpm.shared.json").read_text(encoding="utf-8"))
+qpm_native_pins = json.loads(
+    (root / "qpm-native-inputs.sha256.json").read_text(encoding="utf-8")
+)
 mod_json = json.loads((root / "mod.json").read_text(encoding="utf-8"))
 
 # Big Screen's outbound license, section 7 terms, inbound contribution grant,
@@ -313,7 +316,16 @@ assert mod_template["author"] == "Loud160 (AKA Whisp)"
 assert qpm["info"]["url"] == "https://github.com/Loud160/BigScreen"
 assert mod_template["packageVersion"] == "1.40.8_7379"
 assert qpm["version"] == mod_template["version"]
+assert qpm["info"]["version"] == mod_template["version"]
 assert qpm_shared["config"]["version"] == mod_template["version"]
+assert qpm_shared["config"]["info"]["version"] == mod_template["version"]
+assert mod_json["version"] == mod_template["version"]
+assert mod_json["libraryFiles"] == mod_template["libraryFiles"]
+assert qpm_native_pins["schemaVersion"] == 1
+assert len(qpm_native_pins["files"]) == 10
+assert len({entry["name"] for entry in qpm_native_pins["files"]}) == 10
+assert all(re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+           for entry in qpm_native_pins["files"])
 
 # Cinema compatibility maps are manual developer fixtures. They must remain
 # available for side-by-side testing without ever becoming QMOD content or a
@@ -581,6 +593,10 @@ for pipeline_marker in (
     "write_deterministic_zip",
     "prepare_downloader",
     "sync_runtime_manifest",
+    "authoritative_library_files",
+    "validate_staged_native_payload",
+    "validate_project_versions",
+    "validate_qpm_native_inputs",
     "SOURCE_DATE_EPOCH",
 ):
     assert pipeline_marker in canonical_build_pipeline
@@ -594,6 +610,10 @@ for pipeline_test_marker in (
 assert linux_bootstrap.index('> "${repository_root}/ndkpath.txt"') < \
     linux_bootstrap.index('"${qpm_executable}" restore')
 assert "ctest --test-dir" in linux_test
+assert "verify-qpm-inputs" in linux_bootstrap
+assert "libpaper2_scotland2.so" not in linux_bootstrap
+assert "libcustom-types.so" in linux_bootstrap
+assert "will not be registered" in host_test_cmake
 
 # Windows and native Linux must package identical release bytes from the same
 # source and pinned inputs. Keep source enumeration, compiler paths/build IDs,
@@ -3347,9 +3367,22 @@ assert "QuestPackageManager/QPM.CLI/releases/download" in linux_bootstrap
 assert "qpm-linux-x64-musl.zip" in linux_bootstrap
 assert "permissions:\n  contents: write" in build_workflow
 assert 'library="lib${module_id}.so"' in build_workflow
+assert "validate-release --tag" in build_workflow
+assert "--qmod \"./Big Screen.qmod\"" in build_workflow
+assert "Big-Screen-native-debug-symbols-${{ github.sha }}" in build_workflow
+assert "./build/debug/libbigscreen.so" in build_workflow
+assert "retention-days: 14" in build_workflow
+assert "'codex/**'" in build_workflow
 release_files = build_workflow.split("files: |", 1)[1].split("env:", 1)[0]
 assert "Big Screen.qmod" not in release_files  # expression uses qmod_name
 assert "./build/" not in release_files
+assert "debug" not in release_files.lower()
+for policy_suite in (
+    "SourceInstallOwnershipTests.ps1",
+    "QuestDependencyCheckTests.ps1",
+    "DeterministicZipTests.ps1",
+):
+    assert policy_suite in core_workflow
 assert '"cmake", "-Wno-deprecated", "-G", "Ninja"' in canonical_build_pipeline
 assert 'run_with_heartbeat(["cmake", "--build"' in canonical_build_pipeline
 assert "computers; please wait" not in strip_script

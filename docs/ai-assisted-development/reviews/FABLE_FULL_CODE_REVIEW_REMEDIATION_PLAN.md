@@ -596,7 +596,8 @@ by deterministic host tests rather than by deliberately provoking a block.
 
 - Make the manifest library list authoritative and cross-check staged files.
 - Enforce Git tag, QPM, manifest, and release version agreement.
-- Keep public releases QMOD-only; upload unstripped symbols privately in Actions.
+- Keep public releases QMOD-only; upload unstripped symbols as a short-lived
+  Actions-only artifact rather than as a release asset.
 - Wire currently orphaned test suites into CI.
 - Verify hashes for QPM-restored native inputs.
 - Strengthen protected-path tests and explicitly report optional test skips.
@@ -612,8 +613,8 @@ by deterministic host tests rather than by deliberately provoking a block.
 5. Push a non-release branch and confirm CI artifacts are named clearly.
 6. Test a release tag in a safe release workflow: a version mismatch must fail;
    a valid tag must publish only the QMOD as a public binary asset.
-7. Confirm private debug symbols are downloadable from the Actions run for crash
-   analysis but absent from the public release.
+7. Confirm the short-lived debug-symbol artifact is downloadable from the
+   Actions run for crash analysis but absent from the public release.
 
 ### Most likely regression signs
 
@@ -625,7 +626,56 @@ by deterministic host tests rather than by deliberately provoking a block.
 
 ### Result
 
-Pending implementation and package testing.
+Implemented on `codex/fable-review-stage-6`. `mod.template.json` is now the
+authoritative native-library declaration: package creation refuses a staged
+root-library set that is missing, duplicates, or adds a declared native input,
+and generated `mod.json` validation requires exact agreement with the template.
+Release validation also requires the template, generated manifest, top-level
+QPM metadata, shared QPM metadata, Git tag, and packaged manifest to identify
+the same version.
+
+The ten QPM-restored release/debug native inputs used by the build are pinned in
+`qpm-native-inputs.sha256.json`. Linux bootstrap and Windows/WSL preflight now
+verify those hashes after both fresh restores and cache hits. The stale Paper2
+cache-readiness check was replaced with the actual `custom-types` input. A
+changed or unexpected QPM native input therefore stops the build before it can
+be linked silently.
+
+The release workflow now publishes only the QMOD as a release binary asset.
+The unstripped `libbigscreen.so` is retained for 14 days as a clearly named
+Actions artifact for crash analysis and is not attached to the GitHub release.
+The release workflow validates the tag against repository metadata before the
+build and validates the finished QMOD against the tag before publishing.
+Previously orphaned source-ownership, Quest-dependency, and deterministic-ZIP
+PowerShell suites now run in core CI on every push.
+
+Recursive removal is guarded by explicit, shared allowlists. Tests assert the
+only removable Big Screen trees are `Runtime`, `Videos`, and `SourceInstall`,
+while `Thumbnails`, `Video Import`, `library.json`, and `Logs` remain protected
+unless an explicit user choice uses the appropriate non-recursive path.
+Optional CMake-backed host tests now identify themselves as intentionally
+skipped when their prerequisites are unavailable rather than disappearing from
+the result.
+
+Host and package verification on September 1, 2026 passed all 14 canonical
+tests with no optional suites skipped, plus the source-ownership,
+Quest-dependency, and deterministic-ZIP PowerShell fixtures. The ten QPM input
+hashes matched, both workflow files parsed as YAML, and the release gate rejected
+`v0.7.0-alpha.99` while accepting `v0.7.0-alpha.13`. Windows and native-Linux
+one-click launchers independently produced the same 19,715,746-byte QMOD with
+SHA-256
+`6d73ab06f76c59f802069c883bbe9743b3dd08c3e7b9355a3b4341c2b9d93d91`.
+Archive inspection found 96 unique entries, all 16 declared native binaries,
+all 79 declared runtime copy sources, no missing or unexpected entries, and no
+debug-symbol payload.
+
+No Quest payload behavior was intentionally changed in this stage. The focused
+MBF install/download/preview/gameplay pass, separate source-deploy ownership
+pass, and live GitHub Actions/tag-release checks remain pending because they
+require an explicit headset install or remote push/tag authorization. A public
+repository's Actions artifact is Actions-only and short-lived, not confidential;
+the important release invariant is that symbols are absent from public release
+assets.
 
 ## Stage 7 — GPU presentation-path overhead
 

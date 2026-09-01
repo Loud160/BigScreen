@@ -45,6 +45,17 @@ COMPLETE_RECEIPT = f"{SOURCE_ROOT}/source-install.json"
 PARTIAL_RECEIPT = f"{SOURCE_ROOT}/source-install.partial.json"
 BASELINE_ROOT = f"{SOURCE_ROOT}/Baseline"
 RUNTIME_ROOT = f"{MOD_DATA}/BigScreen/Runtime"
+RECURSIVE_REMOVAL_ROOTS = frozenset({
+    RUNTIME_ROOT,
+    f"{MOD_DATA}/BigScreen/Videos",
+    SOURCE_ROOT,
+})
+PRESERVED_USER_PATHS = frozenset({
+    f"{MOD_DATA}/BigScreen/Thumbnails",
+    f"{MOD_DATA}/BigScreen/Video Import",
+    f"{MOD_DATA}/BigScreen/library.json",
+    f"{MOD_DATA}/BigScreen/Logs",
+})
 QUEST_READY_TIMEOUT_SECONDS = 30.0
 QUEST_READY_POLL_SECONDS = 0.5
 
@@ -69,6 +80,13 @@ def safe_remote(path: str) -> str:
     ):
         raise QuestToolError(f"Unsafe Quest path in Big Screen metadata: {path}")
     return path
+
+
+def remove_owned_tree(adb: "Adb", path: str) -> None:
+    """Recursively remove only one compile-time Big Screen-owned directory."""
+    if path not in RECURSIVE_REMOVAL_ROOTS:
+        raise QuestToolError(f"Refusing unexpected recursive cleanup target: {path}")
+    adb.shell(f"rm -rf -- '{path}'")
 
 
 class Adb:
@@ -599,7 +617,7 @@ def deploy() -> None:
         for path in private_paths:
             adb.shell(f"rm -f -- '{safe_remote(path)}'")
         if adb.directory_exists(RUNTIME_ROOT):
-            adb.shell(f"rm -rf -- '{RUNTIME_ROOT}'")
+            remove_owned_tree(adb, RUNTIME_ROOT)
         prior = None
     receipt = make_receipt(adb, plan, current, prior)
     adb.write_json(receipt, PARTIAL_RECEIPT)
@@ -711,7 +729,7 @@ def remove(
         for path in state["legacy"]:
             adb.shell(f"rm -f -- '{safe_remote(path)}'")
         if adb.directory_exists(RUNTIME_ROOT):
-            adb.shell(f"rm -rf -- '{RUNTIME_ROOT}'")
+            remove_owned_tree(adb, RUNTIME_ROOT)
     if failed:
         raise QuestToolError(f"Big Screen files could not be removed from the Quest: {failed}")
     # Receipt-owned runtime files have been reconciled above. Remove only the
@@ -725,13 +743,13 @@ def remove(
         print("Big Screen settings were preserved.")
     if remove_videos:
         videos = f"{MOD_DATA}/BigScreen/Videos"
-        adb.shell(f"rm -rf -- '{safe_remote(videos)}'")
+        remove_owned_tree(adb, videos)
         if adb.directory_exists(videos):
             raise QuestToolError("Big Screen's downloaded-video directory could not be removed.")
         print("Big Screen-managed downloaded videos were removed by explicit request.")
     else:
         print("Big Screen-managed downloaded videos were preserved.")
-    adb.shell(f"rm -rf -- '{SOURCE_ROOT}'")
+    remove_owned_tree(adb, SOURCE_ROOT)
     print("Source installation removed. Map-folder videos, Video Import files, and logs were preserved.")
     if state["state"] == "MIXED_OR_AMBIGUOUS":
         print(

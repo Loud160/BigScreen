@@ -3,10 +3,13 @@
 ## Source and metadata
 
 - [ ] Working tree contains only intended changes.
-- [ ] Version matches in `qpm.json`, `qpm.shared.json`, `mod.template.json`, changelog, and tag.
+- [ ] Version matches in `qpm.json`, `qpm.shared.json`, `mod.template.json`,
+      changelog, and tag. The canonical package and tagged CI paths enforce the
+      machine-readable fields and exact `v<version>` tag automatically.
 - [ ] `packageVersion` exactly matches the tested Beat Saber APK.
 - [ ] Public description, screenshots/video, and compatibility statement are current.
-- [ ] Third-party artifact versions/hashes and notices were reviewed.
+- [ ] Third-party artifact versions/hashes and notices were reviewed, including
+      `qpm-native-inputs.sha256.json` whenever QPM dependencies change.
 - [ ] `LICENSE`, `LICENSE-ADDITIONAL-TERMS.md`, `NOTICE`, contribution policy,
       and packaged runtime notices match the release.
 - [ ] The canonical public source URL is present in project/release metadata
@@ -66,6 +69,8 @@
       video-removal test deletes only `BigScreen/Videos`, never map-folder or
       Video Import files.
 - [ ] CI passes on the release commit/tag.
+- [ ] The release contains no custom binary asset except `Big Screen.qmod`;
+      unstripped native symbols appear only in the short-lived Actions artifact.
 
 ## Headset regression
 

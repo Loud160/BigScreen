@@ -293,13 +293,15 @@ inputs:
 - Android NDK r27d (`27.3.13750724`) from Google's Android repository;
 - Google Android SDK Platform Tools 37.0.0 for Linux, only when an ADB-enabled
   launcher is used and no existing ADB can be found;
-- QPM dependencies locked by `qpm.shared.json`;
+- QPM dependencies locked by `qpm.shared.json`, with every restored native
+  linker input checked against `qpm-native-inputs.sha256.json`;
 - FFmpeg 4.4.8 and 9.0.1 source from ffmpeg.org;
 - pinned x264 source for FFmpeg 9's last-resort software H.264 encoder;
 - the pinned Android CPython, yt-dlp, certifi, QuickJS-NG, and validation
   artifacts documented in [DEPENDENCIES.md](DEPENDENCIES.md).
 
-Direct archives are SHA-256 verified before use. Project-owned toolchains are
+Direct archives and QPM-restored native linker inputs are SHA-256 verified
+before use. Project-owned toolchains are
 cached under `~/.cache/bigscreen-toolchains`, FFmpeg sources/build trees under
 `~/.cache/bigscreen-ffmpeg`, and portable runtime inputs under the repository's
 ignored `.cache/dependencies` directory. Set `BIGSCREEN_TOOLCHAIN_ROOT` or

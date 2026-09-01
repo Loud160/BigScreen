@@ -125,7 +125,7 @@ if [[ "${restored_host}" == "linux" ]] &&
    [[ -f "${repository_root}/qpm_defines.cmake" ]] &&
    [[ -f "${repository_root}/extern/libs/libbeatsaber-hook.so" ]] &&
    [[ -f "${repository_root}/extern/libs/libbsml.so" ]] &&
-   [[ -f "${repository_root}/extern/libs/libpaper2_scotland2.so" ]] &&
+   [[ -f "${repository_root}/extern/libs/libcustom-types.so" ]] &&
    [[ -f "${repository_root}/extern/libs/libsl2.so" ]] &&
    [[ -f "${repository_root}/extern/libs/libsongcore.so" ]] &&
    [[ -f "${repository_root}/extern/includes/rapidjson/rapidjson/include/rapidjson/document.h" ]]; then
@@ -166,6 +166,14 @@ else
     printf 'linux' > "${qpm_host_stamp}"
     printf '%s\n' "${qpm_lock_hash}" > "${qpm_lock_stamp}"
 fi
+
+# QPM locks versions and URLs, but it does not record content digests for the
+# restored native libraries. Verify the reviewed release/debug bytes after
+# every bootstrap, including cache hits, before any of them enter the linker.
+(
+    cd "${repository_root}"
+    python3 "${script_dir}/build_pipeline.py" verify-qpm-inputs
+)
 
 printf '\nLinux build bootstrap complete.\n'
 printf '  QPM: %s\n' "${qpm_executable}"

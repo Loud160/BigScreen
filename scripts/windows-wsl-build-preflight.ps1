@@ -206,10 +206,11 @@ grep -qx "linux" "$root/.cache/qpm-restore-host.txt" &&
 [[ -f "$root/qpm_defines.cmake" ]] &&
 [[ -f "$root/extern/libs/libbeatsaber-hook.so" ]] &&
 [[ -f "$root/extern/libs/libbsml.so" ]] &&
-[[ -f "$root/extern/libs/libpaper2_scotland2.so" ]] &&
+[[ -f "$root/extern/libs/libcustom-types.so" ]] &&
 [[ -f "$root/extern/libs/libsl2.so" ]] &&
 [[ -f "$root/extern/libs/libsongcore.so" ]] &&
-[[ -f "$root/extern/includes/rapidjson/rapidjson/include/rapidjson/document.h" ]]
+[[ -f "$root/extern/includes/rapidjson/rapidjson/include/rapidjson/document.h" ]] &&
+python3 "$root/scripts/build_pipeline.py" verify-qpm-inputs >/dev/null
 '@
     & $WslExecutable -d $DistroName -e bash -lc $probe bigscreen-audit `
         $linuxRootLines[0] $ExpectedLockHash 2>$null

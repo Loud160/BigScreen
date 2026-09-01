@@ -237,8 +237,13 @@ artifacts and is intended for a reviewed dependency update or cache repair.
 After a successful QPM restore, the bootstrap records the SHA-256 of
 `qpm.shared.json` in ignored `.cache/qpm-restore.sha256`. It skips QPM entirely
 while that stamp matches and every required generated header/library remains
-present. Changing the lockfile, deleting the stamp, or removing a required QPM
-input causes the next approved run to restore the package set again.
+present. The tracked `qpm-native-inputs.sha256.json` then verifies every release
+and debug `.so` restored into QPM's link directory against a reviewed SHA-256
+and confirms each source URL still appears in `qpm.shared.json`. This check runs
+on both fresh restores and cache hits. Changing the lockfile, deleting the
+stamp, removing a required input, adding an unreviewed QPM library, or changing
+any restored bytes prevents those inputs from reaching the linker until the
+dependency update and pin set are reviewed together.
 
 Deleting ignored `.cache/dependencies`, QPM's NDK cache, or the WSL toolchain
 cache makes the corresponding dependencies missing and causes the next

@@ -24,6 +24,12 @@ jobs:
             ninja-build pkg-config python3 unzip xz-utils
       - name: Run the canonical Linux validation suite
         run: bash ./scripts/test-linux.sh
+      - name: Run Windows-facing ownership and package policy fixtures
+        shell: pwsh
+        run: |
+          ./tests/SourceInstallOwnershipTests.ps1
+          ./tests/QuestDependencyCheckTests.ps1
+          ./tests/DeterministicZipTests.ps1
       - name: Validate public files
         run: test -f LICENSE && test -f LICENSE-ADDITIONAL-TERMS.md && test -f NOTICE && test -f INBOUND_LICENSE.md && test -f DCO.txt && test -f CONTRIBUTING.md && test -f THIRD_PARTY_NOTICES.md && test -f docs/README.md && test -f docs/SETTINGS.md && test -f docs/INSTALLATION.md && test -f docs/BUILDING.md && test -f scripts/build-downloader-from-source.ps1 && test -f scripts/build_downloader_runtime.py
 

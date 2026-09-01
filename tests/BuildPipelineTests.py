@@ -32,6 +32,8 @@ def load(name: str, path: pathlib.Path):
 
 pipeline = load("bigscreen_build_pipeline", root / "scripts" / "build_pipeline.py")
 policy = load("bigscreen_quest_policy", root / "scripts" / "quest_policy.py")
+sys.path.insert(0, str(root / "scripts"))
+quest_tool = load("bigscreen_quest_tool", root / "scripts" / "quest_tool.py")
 
 
 assert not policy.version_satisfies("4.6.4", "^4.8.0")
@@ -138,6 +140,21 @@ manifest = {
     "fileCopies": [],
 }
 pipeline.validate_schema_contract(manifest)
+assert pipeline.require_matching_versions({"template": "1.2.3", "qpm": "1.2.3"}) == "1.2.3"
+assert pipeline.require_matching_versions(
+    {"template": "1.2.3", "qpm": "1.2.3"}, "v1.2.3"
+) == "1.2.3"
+for versions, tag in (
+    ({}, None),
+    ({"template": None, "qpm": None}, None),
+    ({"template": "1.2.3", "qpm": "1.2.4"}, None),
+    ({"template": "1.2.3", "qpm": "1.2.3"}, "v1.2.4"),
+):
+    try:
+        pipeline.require_matching_versions(versions, tag)
+        raise AssertionError("Mismatched package/release versions were accepted.")
+    except pipeline.BuildError:
+        pass
 for invalid in (
     dict(manifest, version="not-semver"),
     dict(manifest, id="bad id"),
@@ -181,28 +198,67 @@ with tempfile.TemporaryDirectory(prefix="BigScreen-PipelineTests-") as temporary
     except pipeline.BuildError as error:
         assert "Duplicate ZIP entry" in str(error)
 
+    payload = directory / "payload"
+    payload.mkdir()
+    for name in ("libtest.so", "libdependency.so"):
+        (payload / name).write_bytes(name.encode("utf-8"))
+    payload_manifest = {
+        "modFiles": ["libtest.so"],
+        "libraryFiles": ["libdependency.so"],
+    }
+    pipeline.validate_staged_native_payload(payload_manifest, payload)
+    (payload / "libunexpected.so").write_bytes(b"unexpected")
+    try:
+        pipeline.validate_staged_native_payload(payload_manifest, payload)
+        raise AssertionError("An undeclared staged native library was accepted.")
+    except pipeline.BuildError as error:
+        assert "unexpected" in str(error)
+
+# The bootstrap runs this before invoking the linker. Run it again through the
+# policy suite so a stale pin file, QPM URL, restored file set, or digest fails
+# ordinary CI even when bootstrap behavior is later refactored.
+pipeline.validate_qpm_native_inputs()
+
 remover = (root / "scripts" / "remove-bigscreen.ps1").read_text(encoding="utf-8")
 python_tool = (root / "scripts" / "quest_tool.py").read_text(encoding="utf-8")
-protected = (
-    "BigScreen/Thumbnails", "BigScreen/Video Import",
-    "library.json", "BigScreen/Logs",
-)
-for script_text in (remover, python_tool):
-    # Search complete commands, including multiline PowerShell expressions,
-    # rather than assuming the protected path appears on the same source line
-    # as rm. Bound the command-sized window so later explanatory text cannot be
-    # mistaken for part of an earlier deletion command.
-    for path in protected:
-        assert not __import__("re").search(
-            r"rm\s+-r[fF]?\b.{0,256}" + __import__("re").escape(path),
-            script_text,
-            __import__("re").IGNORECASE | __import__("re").DOTALL,
-        )
-    assert "BigScreen/Videos" in script_text
+protected = {
+    f"{quest_tool.MOD_DATA}/BigScreen/Thumbnails",
+    f"{quest_tool.MOD_DATA}/BigScreen/Video Import",
+    f"{quest_tool.MOD_DATA}/BigScreen/library.json",
+    f"{quest_tool.MOD_DATA}/BigScreen/Logs",
+}
+assert quest_tool.PRESERVED_USER_PATHS == protected
+assert protected.isdisjoint(quest_tool.RECURSIVE_REMOVAL_ROOTS)
+assert quest_tool.RECURSIVE_REMOVAL_ROOTS == {
+    quest_tool.RUNTIME_ROOT,
+    f"{quest_tool.MOD_DATA}/BigScreen/Videos",
+    quest_tool.SOURCE_ROOT,
+}
+
+class RefusingAdb:
+    def shell(self, _command):
+        raise AssertionError("ADB must not run for a path outside the allowlist.")
+
+try:
+    quest_tool.remove_owned_tree(
+        RefusingAdb(), f"{quest_tool.MOD_DATA}/BigScreen/Thumbnails"
+    )
+    raise AssertionError("A preserved user path entered recursive removal.")
+except quest_tool.QuestToolError:
+    pass
+
+assert "$script:BigScreenRecursiveRemovalRoots" in remover + (
+    root / "scripts" / "source-install-ownership.ps1"
+).read_text(encoding="utf-8")
+assert "$script:BigScreenPreservedUserPaths" in (
+    root / "scripts" / "source-install-ownership.ps1"
+).read_text(encoding="utf-8")
+assert "Remove-BigScreenOwnedTree" in remover
+assert python_tool.count('adb.shell(f"rm -rf') == 1
 assert "Also remove Big Screen's downloaded videos?" in remover
 assert 'BigScreen/Videos"' in remover
 assert "expectedVideosPath" in remover
-assert "rm -rf -- '$($script:SourceInstallRoot)'" in remover
-assert "rm -rf -- '{SOURCE_ROOT}'" in python_tool
+assert "Remove-BigScreenOwnedTree $script:SourceInstallRoot" in remover
+assert "remove_owned_tree(adb, SOURCE_ROOT)" in python_tool
 
 print("Canonical build pipeline, ownership, dependency, and deterministic ZIP tests passed.")

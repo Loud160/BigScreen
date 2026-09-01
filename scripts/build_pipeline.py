@@ -39,6 +39,7 @@ CACHE = ROOT / ".cache"
 DEPENDENCIES = CACHE / "dependencies"
 BUILD = ROOT / "build"
 RUNTIME_STAGE = BUILD / "downloader"
+QPM_NATIVE_INPUTS = ROOT / "qpm-native-inputs.sha256.json"
 
 QUICKJS_VERSION = "0.16.1"
 QUICKJS_SHA256 = "153f1940c5f61a59ab62703a6d13cf71ba0b2d2ba597683fe5315f14a64ed782"
@@ -72,24 +73,6 @@ SCHEMA_SHA256 = "2de429724eae87554700b9eee31380fdd38a27afe135db0c2a124d5268e4c2e
 SCHEMA_URL = (
     "https://raw.githubusercontent.com/Lauriethefish/QuestPatcher.QMod/"
     f"{SCHEMA_REVISION}/QuestPatcher.QMod/Resources/qmod.schema.json"
-)
-
-REQUIRED_LIBRARIES = (
-    "libbigscreen-ffmpeg44-backend.so",
-    "libbigscreen-ffmpeg9-backend.so",
-    "libavformat-bigscreen44.so",
-    "libavcodec-bigscreen44.so",
-    "libavutil-bigscreen44.so",
-    "libswscale-bigscreen44.so",
-    "libavformat-bigscreen9.so",
-    "libavcodec-bigscreen9.so",
-    "libavutil-bigscreen9.so",
-    "libswscale-bigscreen9.so",
-    "libbeatsaber-hook.so",
-    "libpython3.14.so",
-    "libssl_python.so",
-    "libcrypto_python.so",
-    "libsqlite3_python.so",
 )
 
 RUNTIME_FILES = (
@@ -596,6 +579,178 @@ def expected_dependencies(shared: dict) -> list[dict]:
     return expected
 
 
+def authoritative_library_files(template: dict) -> list[str]:
+    """Return the one tracked list of native libraries shipped in the QMOD."""
+    libraries = template.get("libraryFiles")
+    if (
+        not isinstance(libraries, list)
+        or not libraries
+        or not all(isinstance(name, str) and name for name in libraries)
+    ):
+        raise BuildError("mod.template.json must declare a non-empty libraryFiles array.")
+    if len(libraries) != len(set(libraries)):
+        raise BuildError("mod.template.json libraryFiles contains duplicate entries.")
+    for name in libraries:
+        if pathlib.PurePosixPath(name).name != name or not name.endswith(".so"):
+            raise BuildError(f"Unsafe packaged library name in mod.template.json: {name!r}")
+    return list(libraries)
+
+
+def require_matching_versions(
+    versions: dict[str, object], release_tag: str | None = None
+) -> str:
+    """Require every project-owned version field and an optional tag to agree."""
+    if not versions:
+        raise BuildError("No Big Screen version metadata was supplied for validation.")
+    missing = [name for name, value in versions.items() if value is None or value == ""]
+    if missing:
+        raise BuildError(
+            "Big Screen version metadata is missing required fields: "
+            + ", ".join(missing)
+        )
+    normalized = {name: str(value) for name, value in versions.items()}
+    values = set(normalized.values())
+    if len(values) != 1:
+        detail = ", ".join(f"{name}={value!r}" for name, value in normalized.items())
+        raise BuildError(f"Big Screen version metadata disagrees: {detail}")
+    version = next(iter(values))
+    if release_tag is not None:
+        if release_tag != f"v{version}":
+            raise BuildError(
+                f"Release tag {release_tag!r} does not match project version "
+                f"{version!r}; expected 'v{version}'."
+            )
+    return version
+
+
+def validate_project_versions(
+    release_tag: str | None = None, manifest: dict | None = None
+) -> str:
+    """Validate QPM, template, generated manifest, and release-tag identity."""
+    template = json.loads((ROOT / "mod.template.json").read_text(encoding="utf-8"))
+    qpm = json.loads((ROOT / "qpm.json").read_text(encoding="utf-8"))
+    shared = json.loads((ROOT / "qpm.shared.json").read_text(encoding="utf-8"))
+    versions: dict[str, object] = {
+        "mod.template.json.version": template.get("version"),
+        "qpm.json.version": qpm.get("version"),
+        "qpm.json.info.version": qpm.get("info", {}).get("version"),
+        "qpm.shared.json.config.version": shared.get("config", {}).get("version"),
+        "qpm.shared.json.config.info.version": (
+            shared.get("config", {}).get("info", {}).get("version")
+        ),
+    }
+    if manifest is not None:
+        versions["mod.json.version"] = manifest.get("version")
+    version = require_matching_versions(versions, release_tag)
+    print(f"Project version metadata agrees on {version}.")
+    return version
+
+
+def validate_staged_native_payload(
+    manifest: dict, build_directory: pathlib.Path = BUILD
+) -> None:
+    """Require CMake's staged root libraries to exactly match the manifest."""
+    expected = {
+        name
+        for field in ("modFiles", "lateModFiles", "libraryFiles")
+        for name in manifest.get(field, [])
+        if name.endswith(".so")
+    }
+    actual = {path.name for path in build_directory.glob("*.so") if path.is_file()}
+    if expected != actual:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        raise BuildError(
+            "CMake's staged native payload differs from mod.template.json/"
+            f"mod.json (missing={missing}, unexpected={unexpected})."
+        )
+    print(f"CMake staged exactly {len(actual)} manifest-declared native libraries.")
+
+
+def _qpm_link_urls(value: object) -> set[str]:
+    urls: set[str] = set()
+    if isinstance(value, dict):
+        for name, child in value.items():
+            if name in {"soLink", "debugSoLink"} and isinstance(child, str):
+                urls.add(child)
+            else:
+                urls.update(_qpm_link_urls(child))
+    elif isinstance(value, list):
+        for child in value:
+            urls.update(_qpm_link_urls(child))
+    return urls
+
+
+def validate_qpm_native_inputs(
+    shared_path: pathlib.Path = ROOT / "qpm.shared.json",
+    pins_path: pathlib.Path = QPM_NATIVE_INPUTS,
+    libraries_directory: pathlib.Path = ROOT / "extern" / "libs",
+) -> None:
+    """Verify every QPM-restored native link input against reviewed bytes."""
+    shared = json.loads(require_file(shared_path).read_text(encoding="utf-8"))
+    pins = json.loads(require_file(pins_path).read_text(encoding="utf-8"))
+    if pins.get("schemaVersion") != 1 or not isinstance(pins.get("files"), list):
+        raise BuildError("qpm-native-inputs.sha256.json has an unsupported format.")
+    expected: dict[str, dict] = {}
+    known_urls = _qpm_link_urls(shared)
+    for entry in pins["files"]:
+        if not isinstance(entry, dict) or set(entry) != {"name", "sha256", "sourceUrl"}:
+            raise BuildError("A QPM native-input pin is incomplete or has unknown fields.")
+        name = entry["name"]
+        digest = entry["sha256"]
+        source_url = entry["sourceUrl"]
+        if (
+            not isinstance(name, str)
+            or pathlib.PurePosixPath(name).name != name
+            or not name.endswith(".so")
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(source_url, str)
+            or source_url not in known_urls
+        ):
+            raise BuildError(f"Invalid or stale QPM native-input pin: {entry!r}")
+        if name in expected:
+            raise BuildError(f"Duplicate QPM native-input pin: {name}")
+        expected[name] = entry
+
+    # Big Screen stages libpython itself from its separately pinned CPython
+    # archive. Every other native library in extern/libs is restored by QPM and
+    # must be represented here, including debug variants that QPM adds to the
+    # generated link list.
+    actual_names = {
+        path.name
+        for path in libraries_directory.glob("*.so")
+        if path.name != "libpython3.14.so"
+    }
+    if actual_names != set(expected):
+        raise BuildError(
+            "QPM restored native inputs differ from the reviewed pin set "
+            f"(missing={sorted(set(expected) - actual_names)}, "
+            f"unexpected={sorted(actual_names - set(expected))})."
+        )
+    for name, entry in expected.items():
+        path = require_file(libraries_directory / name)
+        actual = sha256(path)
+        if actual != entry["sha256"]:
+            raise BuildError(
+                f"SHA-256 mismatch for QPM-restored {name}. Expected "
+                f"{entry['sha256']}, received {actual}."
+            )
+    print(f"Verified {len(expected)} QPM-restored native inputs by SHA-256.")
+
+
+def validate_release(tag: str, qmod_path: pathlib.Path | None = None) -> None:
+    manifest = None
+    if qmod_path is not None:
+        with zipfile.ZipFile(require_file(qmod_path)) as archive:
+            try:
+                manifest = json.loads(archive.read("mod.json").decode("utf-8"))
+            except KeyError as error:
+                raise BuildError("Release QMOD does not contain mod.json.") from error
+    version = validate_project_versions(tag, manifest)
+    print(f"Release tag and package identity validated for v{version}.")
+
+
 def validate_manifest(manifest_path: pathlib.Path = ROOT / "mod.json") -> dict:
     raw = require_file(manifest_path).read_bytes()
     if raw.startswith(b"\xef\xbb\xbf"):
@@ -610,6 +765,7 @@ def validate_manifest(manifest_path: pathlib.Path = ROOT / "mod.json") -> dict:
     validate_schema_contract(manifest)
     template = json.loads((ROOT / "mod.template.json").read_text(encoding="utf-8"))
     shared = json.loads((ROOT / "qpm.shared.json").read_text(encoding="utf-8"))
+    validate_project_versions(manifest=manifest)
     substitutions = {
         "${mod_name}": shared["config"]["info"]["name"],
         "${mod_id}": shared["config"]["info"]["id"],
@@ -631,6 +787,12 @@ def validate_manifest(manifest_path: pathlib.Path = ROOT / "mod.json") -> dict:
                 raise BuildError(
                     f"mod.json dependency '{identifier}' has stale {name} metadata."
                 )
+    expected_libraries = authoritative_library_files(template)
+    if manifest.get("libraryFiles") != expected_libraries:
+        raise BuildError(
+            "mod.json libraryFiles does not exactly match the authoritative "
+            "mod.template.json list. Run 'qpm qmod manifest'."
+        )
     print("Pinned QMOD schema, identity, target, and dependency validation passed.")
     return manifest
 
@@ -868,18 +1030,16 @@ def package_qmod(name: str | None = None) -> pathlib.Path:
     prepare_downloader()
     manifest = generate_manifest()
     validate_elf(BUILD)
-    template = json.loads((ROOT / "mod.template.json").read_text(encoding="utf-8"))
-    manifest["version"] = template["version"]
     manifest["dependencies"] = [
         dependency for dependency in manifest.get("dependencies", [])
         if dependency.get("id") != "hollywood"
     ]
-    manifest["libraryFiles"] = list(REQUIRED_LIBRARIES)
     stage_notices()
     manifest, runtime_sources = sync_runtime_manifest(manifest)
     mod_path = ROOT / "mod.json"
     write_json(mod_path, manifest)
     validate_manifest(mod_path)
+    validate_staged_native_payload(manifest, BUILD)
     qmod_name = name or manifest["name"]
     if pathlib.Path(qmod_name).name != qmod_name or not qmod_name.strip():
         raise BuildError("QMOD name must be one valid file name without a directory path.")
@@ -892,10 +1052,7 @@ def package_qmod(name: str | None = None) -> pathlib.Path:
         entries.append(pathlib.Path(cover).name)
     for field in ("modFiles", "lateModFiles", "libraryFiles"):
         for filename in manifest.get(field, []):
-            candidate = BUILD / filename
-            if not candidate.is_file():
-                candidate = ROOT / "extern" / "libs" / filename
-            sources.append(require_file(candidate))
+            sources.append(require_file(BUILD / filename))
             entries.append(filename)
     sources.extend(runtime_sources)
     entries.extend(source.name for source in runtime_sources)
@@ -926,6 +1083,10 @@ def main() -> int:
     subcommands.add_parser("prepare-runtime")
     subcommands.add_parser("generate-manifest")
     subcommands.add_parser("validate-manifest")
+    subcommands.add_parser("verify-qpm-inputs")
+    release_parser = subcommands.add_parser("validate-release")
+    release_parser.add_argument("--tag", required=True)
+    release_parser.add_argument("--qmod", type=pathlib.Path)
     build_parser = subcommands.add_parser("build-native")
     build_parser.add_argument("--clean", action="store_true")
     package_parser = subcommands.add_parser("package")
@@ -943,6 +1104,10 @@ def main() -> int:
             generate_manifest()
         elif args.command == "validate-manifest":
             validate_manifest()
+        elif args.command == "verify-qpm-inputs":
+            validate_qpm_native_inputs()
+        elif args.command == "validate-release":
+            validate_release(args.tag, args.qmod)
         elif args.command == "build-native":
             build_native(args.clean)
         elif args.command == "package":

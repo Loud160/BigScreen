@@ -7,6 +7,7 @@
 # see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 $mod = "./mod.json"
 $modTemplate = "./mod.template.json"
+$qpmPackage = "./qpm.json"
 $qpmShared = "./qpm.shared.json"
 . (Join-Path $PSScriptRoot "file-hash.ps1")
 
@@ -100,6 +101,31 @@ $shared = if (Test-Path -LiteralPath $qpmShared) {
 } else {
     $null
 }
+$qpm = if (Test-Path -LiteralPath $qpmPackage) {
+    Get-Content $qpmPackage -Raw | ConvertFrom-Json -ErrorAction Stop
+} else {
+    $null
+}
+if (-not $shared -or -not $qpm) {
+    Write-Output "Error: qpm.json and qpm.shared.json are required package metadata."
+    exit 1
+}
+$versionFields = [ordered]@{
+    "mod.template.json.version" = [string]$template.version
+    "mod.json.version" = [string]$parsed.version
+    "qpm.json.version" = [string]$qpm.version
+    "qpm.json.info.version" = [string]$qpm.info.version
+    "qpm.shared.json.config.version" = [string]$shared.config.version
+    "qpm.shared.json.config.info.version" = [string]$shared.config.info.version
+}
+$versionValues = @($versionFields.Values | Sort-Object -Unique)
+if ($versionValues.Count -ne 1) {
+    Write-Output "Error: Big Screen version metadata disagrees:"
+    $versionFields.GetEnumerator() | ForEach-Object {
+        Write-Output "  $($_.Key) = $($_.Value)"
+    }
+    exit 1
+}
 foreach ($property in @("name", "id", "author", "version", "packageId", "packageVersion")) {
     $expected = [string]$template.$property
     if ($expected -eq '${mod_name}' -and $shared) {
@@ -112,6 +138,12 @@ foreach ($property in @("name", "id", "author", "version", "packageId", "package
         Write-Output "Error: mod.json field '$property' is stale (expected '$expected', found '$($parsed.$property)'). Run 'qpm qmod manifest'."
         exit 1
     }
+}
+$expectedLibraries = @($template.libraryFiles) | ConvertTo-Json -Compress
+$actualLibraries = @($parsed.libraryFiles) | ConvertTo-Json -Compress
+if ($actualLibraries -ne $expectedLibraries) {
+    Write-Output "Error: mod.json libraryFiles does not exactly match the authoritative mod.template.json list. Run 'qpm qmod manifest'."
+    exit 1
 }
 
 # QPM derives QMOD dependencies from restored packages that publish a modLink,
