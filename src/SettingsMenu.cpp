@@ -99,6 +99,23 @@ namespace BigScreen {
         constexpr float ResetGlyphTextSize = 6.0f;
         constexpr float ResetButtonSize = 7.0f;
 
+        // These controls are created once but their hints are rewritten when
+        // undocked editing enables or disables the rows. Keep the ordinary
+        // descriptions in one place so the creation and refresh paths cannot
+        // silently drift apart.
+        constexpr const char* DistanceHint =
+            "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled.";
+        constexpr const char* HorizontalHint =
+            "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled.";
+        constexpr const char* VerticalHint =
+            "Moves the screen down with negative values and up with positive values. The expanded range lets even an 8x screen clear the menu floor. Free positioning replaces this control while Undock Screen is enabled.";
+        constexpr const char* TiltHint =
+            "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled.";
+        constexpr const char* SizeHint =
+            "Multiplies the active screen canvas. Flat and curved screens allow values from 0.5 to 8.0, and a playing preview remains visible while resizing. The resize handle replaces this control for an undocked screen.";
+        constexpr const char* FreePositionHint =
+            "This control is unavailable while the screen is unlocked. Move or resize the screen directly, then save or cancel positioning to use this slider again.";
+
         constexpr float VideoOffsetToZoomSlider(float offset)
         {
             return 1.75f + (offset * 1.25f);
@@ -117,16 +134,10 @@ namespace BigScreen {
 #if BIGSCREEN_ENABLE_LOGGER_CRASH_TEST
         constexpr std::string_view LoggerBackendTestName() noexcept
         {
-            switch(ActiveLoggerBackendMode)
-            {
-                case LoggerBackendMode::PaperOnly:
-                    return "PAPER";
-                case LoggerBackendMode::NativeOnly:
-                    return "NATIVE";
-                case LoggerBackendMode::Dual:
-                    return "DUAL";
-            }
-            return "INVALID";
+            // Big Screen now has one first-party logging backend. Paper2 may
+            // remain loaded for dependencies, but it is never a Big Screen
+            // sink and therefore is not a crash-test mode.
+            return "NATIVE";
         }
 
         [[noreturn]] void RunDeliberateLoggerCrashTest() noexcept
@@ -1594,7 +1605,7 @@ namespace BigScreen {
         distanceSetting_->digits = 0;
         distanceHint_ = BSML::Lite::AddHoverHint(
             distanceSetting_,
-            "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled.");
+            DistanceHint);
 
         horizontalSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -1613,7 +1624,7 @@ namespace BigScreen {
             });
         horizontalHint_ = BSML::Lite::AddHoverHint(
             horizontalSetting_,
-            "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled.");
+            HorizontalHint);
 
         verticalSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -1632,7 +1643,7 @@ namespace BigScreen {
             });
         verticalHint_ = BSML::Lite::AddHoverHint(
             verticalSetting_,
-            "Moves the screen down with negative values and up with positive values. The expanded range lets even an 8x screen clear the menu floor. Free positioning replaces this control while Undock Screen is enabled.");
+            VerticalHint);
 
         tiltSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -1651,7 +1662,7 @@ namespace BigScreen {
             });
         tiltHint_ = BSML::Lite::AddHoverHint(
             tiltSetting_,
-            "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled.");
+            TiltHint);
 
         sizeSetting_ = BSML::Lite::CreateSliderSetting(
             screenContainer,
@@ -1675,7 +1686,7 @@ namespace BigScreen {
         sizeSetting_->slider->UpdateVisuals();
         sizeHint_ = BSML::Lite::AddHoverHint(
             sizeSetting_,
-            "Multiplies the screen's physical size. Flat and curved screens allow values from 0.5 to 8.0. The resize handle replaces this control for an undocked screen.");
+            SizeHint);
 
         curvedScreenToggle_ = BSML::Lite::CreateToggle(
             screenContainer,
@@ -3244,28 +3255,26 @@ namespace BigScreen {
         // descriptions would imply that the controls should still respond.
         // Explain that the unlocked screen's direct manipulation replaces
         // these controls until the user saves or cancels positioning.
-        const char* freePositionHint =
-            "This control is unavailable while the screen is unlocked. Move or resize the screen directly, then save or cancel positioning to use this slider again.";
         if(distanceHint_)
             distanceHint_->set_text(dockedGeometryEnabled
-                ? "Moves the screen closer with negative values and farther away with positive values. Free positioning replaces this control while Undock Screen is enabled."
-                : freePositionHint);
+                ? DistanceHint
+                : FreePositionHint);
         if(horizontalHint_)
             horizontalHint_->set_text(dockedGeometryEnabled
-                ? "Moves the screen left with negative values and right with positive values. Free positioning replaces this control while Undock Screen is enabled."
-                : freePositionHint);
+                ? HorizontalHint
+                : FreePositionHint);
         if(verticalHint_)
             verticalHint_->set_text(dockedGeometryEnabled
-                ? "Moves the screen down with negative values and up with positive values. Free positioning replaces this control while Undock Screen is enabled."
-                : freePositionHint);
+                ? VerticalHint
+                : FreePositionHint);
         if(tiltHint_)
             tiltHint_->set_text(dockedGeometryEnabled
-                ? "Adjusts the screen's vertical viewing angle in degrees. Free positioning replaces this control while Undock Screen is enabled."
-                : freePositionHint);
+                ? TiltHint
+                : FreePositionHint);
         if(sizeHint_)
             sizeHint_->set_text(dockedGeometryEnabled
-                ? "Multiplies the map-authored screen size. Flat and curved screens allow values from 0.5 to 8.0, and a playing preview remains visible while resizing. The resize handle replaces this control for an undocked screen."
-                : freePositionHint);
+                ? SizeHint
+                : FreePositionHint);
         if(curvedScreenToggle_)
             curvedScreenToggle_->set_interactable(enabled);
         if(screenLayoutDropdown_)

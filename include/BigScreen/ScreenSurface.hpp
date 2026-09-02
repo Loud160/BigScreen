@@ -30,8 +30,6 @@ namespace UnityEngine {
     struct Quaternion;
     struct Vector3;
 }
-namespace TMPro { class TextMeshPro; }
-
 namespace BigScreen {
     /// Owns the small set of Unity objects used to display decoded video.
     ///
@@ -78,9 +76,6 @@ namespace BigScreen {
         /// the surface entirely when transparent lead-in is selected.
         void ShowLeadIn(bool black);
         bool Upload(const VideoFrame& frame);
-        /// Updates a small world-space diagnostics label attached to the
-        /// screen. Passing an empty string removes it immediately.
-        void SetDiagnosticsText(const std::string& text);
         /// Moves the complete surface without rebuilding either mesh. The
         /// undocked editor calls this every frame while a controller is held.
         void SetWorldTransform(
@@ -259,8 +254,6 @@ namespace BigScreen {
         // renderer. Root their wrappers throughout that dormant interval.
         std::shared_ptr<void> fractureMeshRoot_;
         std::shared_ptr<void> fractureSnapshotRoot_;
-        UnityEngine::GameObject* diagnosticsObject_ = nullptr;
-        TMPro::TextMeshPro* diagnosticsText_ = nullptr;
         float screenWidth_ = 0.0f;
         float screenHeight_ = 0.0f;
         int textureWidth_ = 0;
@@ -278,9 +271,10 @@ namespace BigScreen {
         // Cinema-style frame glow state. Only the primary surface registers
         // with the bloom pre-pass (shared showcase clones would each run two
         // Kawase blurs per camera per frame). mapperBloom_ carries the map's
-        // authored `bloom` value, defaulting to Cinema's neutral 1.0.
+        // authored `bloom` value when that experiment is compiled in. The
+        // disabled release path keeps this neutral at zero.
         bool bloomRegistered_ = false;
-        float mapperBloom_ = 1.0f;
+        float mapperBloom_ = 0.0f;
         // True while the video material runs on Unity's UI/Default shader,
         // which premultiplies by final alpha inside its fragment stage. The
         // black lead-in must then use an opaque-black TINT over the shared

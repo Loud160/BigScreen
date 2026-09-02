@@ -436,6 +436,9 @@ assert '"BIGSCREEN_ENABLE_LOGGER_CRASH_TEST", "OFF"' in canonical_build_pipeline
 assert "LOGGER_CRASH_TEST_FINAL" in settings_menu_source
 assert "std::abort();" in settings_menu_source
 assert "ShowModalInFront(loggerCrashTestModal_)" in settings_menu_source
+assert "LoggerBackendMode" not in settings_menu_source
+assert "ActiveLoggerBackendMode" not in settings_menu_source
+assert 'return "NATIVE";' in settings_menu_source
 assert "libpaper2_scotland2" in qpm_cmake
 assert "BIGSCREEN_QPM_LINK_LIBRARIES" in qpm_cmake
 assert not (root / "src/NativeLogger.cpp").exists()
@@ -456,6 +459,47 @@ assert "Big Screen still declares Paper2 in DT_NEEDED" in canonical_build_pipeli
 assert "Big Screen exposes a Paper compatibility symbol" in canonical_build_pipeline
 assert "fmt::format(" in logger_header
 assert "std::source_location" in logger_header
+
+# Stage 9 keeps the disabled Cinema-bloom experiment available without
+# retaining dead diagnostics UI or contradictory dormant state. Upload must
+# trust ApplyPresentation's completed texture commit instead of writing the
+# exact same binding again.
+assert "SetDiagnosticsText" not in screen_surface_header
+assert "SetDiagnosticsText" not in screen_surface_source
+assert "diagnosticsObject_" not in screen_surface_header
+assert "diagnosticsText_" not in screen_surface_header
+assert "float mapperBloom_ = 0.0f;" in screen_surface_header
+assert "mapperBloom_ = 1.0f;" not in screen_surface_source
+lead_in_upload = screen_surface_source.split(
+    "bool ScreenSurface::Upload(const VideoFrame& frame)", 1
+)[1].split("bool ScreenSurface::UploadRgba", 1)[0]
+assert "ApplyPresentation(letterboxTransparent_, opacity_)" in lead_in_upload
+assert "material_->set_mainTexture(texture_);" not in lead_in_upload
+
+# The five docked geometry hints are shared by creation and state refresh.
+# This prevents a later copy edit from describing different behavior depending
+# on whether RefreshEnabledState has run.
+for hint_name in (
+    "DistanceHint", "HorizontalHint", "VerticalHint", "TiltHint", "SizeHint",
+):
+    assert settings_menu_source.count(hint_name) == 3
+assert settings_menu_source.count("FreePositionHint") == 6
+
+# Download entry points must reject a managed level whose native level ID is
+# unavailable before constructing std::string from that managed pointer.
+start_or_cancel = library_menu_source.split(
+    "void VideoLibraryMenu::StartOrCancelDownload()", 1
+)[1].split("void VideoLibraryMenu::DownloadResolutionPressed", 1)[0]
+request_resolution = library_menu_source.split(
+    "void VideoLibraryMenu::RequestResolutionDownload(int height)", 1
+)[1].split("void VideoLibraryMenu::ConfirmPendingResolutionDownload", 1)[0]
+start_resolution = library_menu_source.split(
+    "void VideoLibraryMenu::StartResolutionDownload(int height)", 1
+)[1].split("void VideoLibraryMenu::PasteUrlFromClipboard", 1)[0]
+for guarded_download_path in (
+    start_or_cancel, request_resolution, start_resolution,
+):
+    assert "!selected_->levelID" in guarded_download_path
 assert "paper2_scotland2/shared/paperlog.hpp" not in logger_source
 assert "Paper::" not in logger_source
 assert "NativeLogger::Instance().Log" in logger_source
@@ -3367,6 +3411,20 @@ assert "catch(const VideoLibraryPersistenceError& exception)" in \
 assert "api.github.com/repos/Loud160/BigScreen/releases/latest" in privacy_text
 assert "once in the background" in privacy_text
 assert "does not download or install its own updates" in privacy_text
+
+# Maintained documentation must describe the currently shipped logger,
+# accepted local-file extensions, and supported Quest family consistently.
+architecture_text = (root / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
+settings_doc = (root / "docs/SETTINGS.md").read_text(encoding="utf-8")
+mapper_format = (root / "docs/MAPPER_FORMAT.md").read_text(encoding="utf-8")
+installation_doc = (root / "docs/INSTALLATION.md").read_text(encoding="utf-8")
+assert "only when Paper is not already doing so" not in architecture_text
+assert "native-only versus Paper-only" not in architecture_text
+assert "MP4/MOV or Matroska/WebM" not in architecture_text
+assert "without disabling Paper logs" not in settings_doc
+assert "MP4/MOV or VP8/VP9 in\nWebM/Matroska" not in mapper_format
+assert "array\nare recognized" not in mapper_format
+assert "Quest 2, Quest 3, or Quest 3S" in installation_doc
 
 # Retained menu visits reuse immutable/static presentation assets and cache
 # expensive scene-wide environment lookups instead of repeating them whenever

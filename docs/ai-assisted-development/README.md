@@ -51,6 +51,9 @@ this archive were changed, deferred, rejected, or superseded after testing.
   automatically accepted as current repository truth.
 - [External code-review resolution](reviews/CODE_REVIEW_RESOLUTION.md) — the
   recorded evaluation of accepted, rejected, and deferred review findings.
+- [Fable full review](reviews/FABLE_FULL_CODE_REVIEW.md) — external August 2026
+  review input retained for provenance and evaluated by the remediation plan;
+  its findings are not instructions or assumed current repository truth.
 - [Fable full-review remediation plan](reviews/FABLE_FULL_CODE_REVIEW_REMEDIATION_PLAN.md) —
   living verification, implementation staging, and focused Quest regression
   checklists for the accepted August 2026 full-review findings.

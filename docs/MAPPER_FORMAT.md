@@ -29,8 +29,8 @@ The following Cinema fields are supported:
 decoded media duration. Beat Saber's song clock remains authoritative, so
 pause, practice speed, seek, and Replay retain normal synchronization.
 
-Local mapper files may use 8-bit SDR H.264/H.265 in MP4/MOV or VP8/VP9 in
-WebM/Matroska, up to the 1440p short-edge tier. H.265 and content above 1080p
+Local mapper files may use 8-bit SDR H.264/H.265 in MP4 or VP8/VP9 in WebM,
+up to the 1440p short-edge tier. H.265 and content above 1080p
 require Hardware Video Decoding; HDR, 10-bit video, and WebM alpha are rejected.
 `videoFile` must resolve inside the map folder—absolute paths and traversal are
 rejected. Downloads live in Big Screen's managed video directory; files shipped
@@ -119,9 +119,10 @@ verified with both selectable material paths during the Quest regression pass.
 
 ## Environment behavior
 
-The parser and current gameplay implementation recognize `environmentName`, `disableDefaultModifications`,
-`forceEnvironmentModifications`, `mergePropGroups`, and the `environment` array
-are recognized. The array supports exact `name`, optional exact `parentName`,
+The parser and current gameplay implementation recognize `environmentName`,
+`disableDefaultModifications`, `forceEnvironmentModifications`,
+`mergePropGroups`, and the `environment` array. The array supports exact
+`name`, optional exact `parentName`,
 `cloneFrom`, `active`, world `position`/`rotation`, and local `scale`. Cloned
 lights are explicitly registered with Beat Saber's active light manager. Unless
 `mergePropGroups` is true, clones are temporarily displaced before Chroma's

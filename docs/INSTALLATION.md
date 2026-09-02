@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Meta Quest 2 or Quest 3.
+- Meta Quest 2, Quest 3, or Quest 3S.
 - A modded standalone Quest installation of **Beat Saber 1.40.8 (`1.40.8_7379`)**.
 - The QMOD's declared shared dependencies: beatsaber-hook 6.4.2+, SongCore
   1.1.23+, BSML 0.4.54+, and custom-types 0.18.3+, within

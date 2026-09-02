@@ -277,7 +277,7 @@ keeps the prompt frontmost, and retries rather than orphaning its blocker.
 
 The local-video browser follows the same boundary. Unity renders immutable
 directory snapshots on the center screen, while a worker thread enumerates the
-folder and opens compatible MP4/MOV or Matroska/WebM containers through FFmpeg. Custom/WIP songs start at their
+folder and probes compatible MP4 or WebM files through FFmpeg. Custom/WIP songs start at their
 map folder; other songs start at the automatically created Video Import folder.
 Navigation is confined to `/sdcard`. A selected file is referenced in place as
 user-owned media. Replacing or unlinking an assignment never deletes it; the
@@ -309,8 +309,9 @@ the project-owned `BigScreenLogger` facade, which formats a record once and
 routes it to Big Screen's private native backend. Paper2 may remain loaded for
 other shared dependencies, but Big Screen neither initializes nor calls it.
 
-The native backend writes logcat directly only when Paper is not already doing
-so, then moves file work to one owned writer thread. Producers take a short
+The native backend writes every accepted record to Android logcat immediately,
+independent of whether another dependency has loaded Paper2, then moves file
+work to one owned writer thread. Producers take a short
 queue lock and never open, rotate, append, or flush a file themselves. Both
 bytes and entries are bounded; warnings and errors have a reserved margin and
 may evict older lower-severity records under pressure. Dropped records are
@@ -329,9 +330,10 @@ failures.
 The writer is joinable and its state has process lifetime. Reinitialization
 first stops and joins the old writer; shutdown stops acceptance, drains queued
 records, flushes, closes the file, and joins before owned state can disappear.
-Late calls fail open and do not touch destroyed state. Quest validation must
-still confirm shutdown behavior and measure native-only versus Paper-only
-overhead before the external Paper dependency is removed.
+Late calls fail open and do not touch destroyed state. Quest validation covered
+normal operation, explicit flushes, shutdown, and deliberate crash-tail
+retention before Big Screen's direct Paper2 dependency was removed. Other
+shared dependencies remain free to use Paper2 under their own contracts.
 
 Frame-preparation timing uses cumulative session counters, not an exponential
 moving average. Each prepared picture records decoder-worker thread CPU time

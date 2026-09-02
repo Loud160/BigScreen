@@ -339,7 +339,8 @@ namespace BigScreen {
         float performancePanelRotationZ_ = 0.0f;
         bool powerBenchmarkEnabled_ = false;
         // Crash-oriented menu/download session logs are enabled on a fresh
-        // install. This does not change Paper, error, or performance logging.
+        // install. This does not change the general native log, error history,
+        // or performance logging.
         bool detailedDiagnosticLoggingEnabled_ = true;
         bool nightlyDownloaderUpdates_ = false;
         bool savePending_ = false;

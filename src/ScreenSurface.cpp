@@ -31,14 +31,10 @@
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/Settings.hpp"
 #include "main.hpp"
-#include "TMPro/TextAlignmentOptions.hpp"
-#include "TMPro/TextMeshPro.hpp"
 #include "UnityEngine/AssetBundle.hpp"
 #include "UnityEngine/Color.hpp"
-#include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/SceneManagement/Scene.hpp"
 #include "UnityEngine/SceneManagement/SceneManager.hpp"
-#include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/GL.hpp"
 #include "UnityEngine/Graphics.hpp"
@@ -1899,21 +1895,6 @@ namespace BigScreen {
         }
 #endif
 
-        // Diagnostics is an overlay inside the lower part of the screen. Its
-        // RectTransform is centered on X, so placing the object at the old
-        // lower-left coordinate shifted half of the text rectangle outside
-        // the canvas. Keep the entire rectangle within the visible mesh.
-        if(diagnosticsObject_)
-        {
-            diagnosticsObject_->get_transform()->set_localPosition({
-                0.0f,
-                -screenHeight_ * 0.36f,
-                -0.08f});
-            if(diagnosticsText_)
-                diagnosticsText_->get_rectTransform()->set_sizeDelta({
-                    screenWidth_ * 11.5f,
-                    screenHeight_ * 3.0f});
-        }
         return true;
     }
 
@@ -2358,7 +2339,6 @@ namespace BigScreen {
                 leadInBlack_ = previousLeadInBlack;
                 return false;
             }
-            material_->set_mainTexture(texture_);
         }
 
         if(frame.storage == VideoFrameStorage::Yuv420PackedAtlas)
@@ -3606,14 +3586,11 @@ namespace BigScreen {
         if(bloomRegistered_)
         {
             CinemaBloomRenderer::Instance().UnregisterSource(videoObject_);
-            bloomRegistered_ = false;
         }
 #endif
         bloomRegistered_ = false;
-        mapperBloom_ = 1.0f;
+        mapperBloom_ = 0.0f;
         DestroyFractureResources();
-        DestroyIfAlive(diagnosticsObject_);
-        diagnosticsText_ = nullptr;
         // Destroying the GameObject also destroys its MeshFilter and Renderer.
         // Mesh, material, and texture were created as standalone Unity objects,
         // so they are released explicitly when gameplay ends or a level changes.
@@ -3687,60 +3664,4 @@ namespace BigScreen {
         deformationWasApplied_ = false;
     }
 
-    void ScreenSurface::SetDiagnosticsText(const std::string& text)
-    {
-        if(text.empty())
-        {
-            DestroyIfAlive(diagnosticsObject_);
-            diagnosticsText_ = nullptr;
-            return;
-        }
-        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_))
-            return;
-        if(diagnosticsObject_ &&
-           !UnityW<UnityEngine::GameObject>::isAlive(diagnosticsObject_))
-        {
-            diagnosticsObject_ = nullptr;
-            diagnosticsText_ = nullptr;
-        }
-        if(!diagnosticsObject_)
-        {
-            diagnosticsObject_ = UnityEngine::GameObject::New_ctor(
-                "Big Screen Performance Information");
-            diagnosticsObject_->set_layer(gameObject_->get_layer());
-            auto transform = diagnosticsObject_->get_transform();
-            transform->SetParent(gameObject_->get_transform(), false);
-            // The text rectangle spans almost the full canvas width and is
-            // centered at this transform. Center X and keep its lower edge
-            // just inside the video frame so flat, curved, enlarged, and
-            // undocked layouts all show the same readable overlay.
-            transform->set_localPosition({
-                0.0f,
-                -screenHeight_ * 0.36f,
-                -0.08f});
-            transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
-            transform->set_localScale({0.08f, 0.08f, 0.08f});
-            diagnosticsText_ = diagnosticsObject_->AddComponent<TMPro::TextMeshPro*>();
-            if(!diagnosticsText_)
-            {
-                UnityEngine::Object::Destroy(diagnosticsObject_);
-                diagnosticsObject_ = nullptr;
-                return;
-            }
-            diagnosticsText_->set_font(BSML::Helpers::GetMainTextFont());
-            diagnosticsText_->set_fontSize(4.0f);
-            diagnosticsText_->set_alignment(TMPro::TextAlignmentOptions::BottomLeft);
-            diagnosticsText_->set_color(UnityEngine::Color::get_white());
-            diagnosticsText_->get_rectTransform()->set_sizeDelta({
-                screenWidth_ * 11.5f,
-                screenHeight_ * 3.0f});
-        }
-        if(UnityW<TMPro::TextMeshPro>::isAlive(diagnosticsText_))
-            diagnosticsText_->set_text(text);
-        else
-        {
-            DestroyIfAlive(diagnosticsObject_);
-            diagnosticsText_ = nullptr;
-        }
-    }
 }

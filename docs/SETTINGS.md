@@ -242,7 +242,7 @@ On requests Android MediaCodec for H.264, H.265/HEVC, VP8, or VP9 from whichever
 
 Experimental. On keeps MediaCodec or FFmpeg decoding into CPU-readable 8-bit SDR 4:2:0, but transports tightly packed Y/U/V planes instead of creating a full RGBA picture on the decoder worker. Unity uploads the three planes and performs YUV-to-RGB conversion, container rotation, mapper color correction, and vignette in one offscreen GPU pass. The resulting RGBA texture remains shared by the main screen, mapper-authored additional screens, and the Showcase, so canvas movement, curves, deformation, cracks, shatter, and snapshots remain available. This is not a zero-copy decoder and does not change the thumbnail picker.
 
-Only YUV420P/YUVJ420P and NV12 frames use this path. An unsupported decoded layout, missing conversion shader, or failed Unity texture/RenderTexture setup automatically and permanently returns that playback session to the normal CPU RGBA path; the reason is written to diagnostics. Changing this switch recreates an active Video Library preview and affects gameplay on the next map. Quest 2 is the validated acceptance target; Quest 3/3S validation follows before stable release.
+Only YUV420P/YUVJ420P and NV12 frames use this path. An unsupported decoded layout, missing conversion shader, or failed Unity texture/RenderTexture setup automatically and permanently returns that playback session to the normal CPU RGBA path; the reason is written to diagnostics. Changing this switch recreates an active Video Library preview and affects gameplay on the next map. Quest 2 remains the primary local acceptance target; community testing on Quest 3 and Quest 3S has not identified a headset-specific regression, and the complete matrix remains part of stable-release validation.
 
 Big Screen stores a settings-migration version in its configuration. The first release with this default forces GPU Video Conversion on once for an existing installation, even when an earlier experimental build saved it as off. After that one-time migration, later changes made by the user are preserved normally. Future migrations can retire an experimental control or change one specific default without resetting unrelated screen, environment, or playback settings.
 
@@ -307,7 +307,7 @@ separate session for each Download action, including resolution cancellation.
 Important actions are flushed immediately; rapid slider movement is recorded
 as one initial/final change. Big Screen retains the ten newest Menu sessions
 and ten newest Download sessions under `BigScreen/Logs/Sessions`. Turning this
-off prevents new session files without disabling Paper logs, error history,
+off prevents new session files without disabling the general native log, error history,
 performance history, or crash collection. Reset to Defaults restores it to On.
 
 ## Song-selection header controls

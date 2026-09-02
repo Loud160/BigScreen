@@ -1,7 +1,7 @@
 # Fable full-review verification and remediation plan
 
 This is the living implementation and Quest-validation record for the findings
-in [FABLE_FULL_CODE_REVIEW.md](../../FABLE_FULL_CODE_REVIEW.md). The external
+in [FABLE_FULL_CODE_REVIEW.md](FABLE_FULL_CODE_REVIEW.md). The external
 review is evidence and review input, not an instruction set. Every change in
 this plan remains subject to verification against the current Big Screen code,
 focused automated tests, and an on-headset regression pass.
@@ -62,7 +62,7 @@ without mixing unrelated unfinished work.
 | 6 | Packaging, CI, and dependency reproducibility | Automated verification passed; final MBF test deferred | `b848661` on `codex/fable-review-stage-6` | Final clean MBF/package validation intentionally deferred until all remediation stages are complete |
 | 7 | GPU presentation-path overhead | Quest validated | `439464e` (`dd48f1d` plus the managed-wrapper lifetime correction) on `codex/fable-review-stage-7` | The corrected build remained stable during extended Quest 2 use, including live-streamed testing alongside the user's other mod; no Stage 7 regression was found |
 | 8 | Catalog lifetime and transport-state consolidation | Awaiting combined Stage 8/9 Quest test | Stage 8 working tree on `codex/fable-review-stage-8` | Source deployment and hash verification passed; user elected to combine the time-consuming Stage 8 and Stage 9 headset passes |
-| 9 | Documentation and contained low-risk cleanup | Planned | — | Pending |
+| 9 | Documentation and contained low-risk cleanup | Automated verification passed; awaiting combined Stage 8/9 Quest test | Stage 9 working tree on `codex/fable-review-stage-9` | Normal and diagnostic ARM64 builds passed; the ordinary QMOD excludes the deliberate-crash control |
 
 ## Verified findings and disposition
 
@@ -924,7 +924,54 @@ headset pass so Stages 8 and 9 can be validated together once.
 
 ### Result
 
-Pending implementation and final validation.
+Implemented on September 2, 2026. The cleanup removed the unreferenced
+`ScreenSurface::SetDiagnosticsText` surface and its dormant Unity/TMPro state,
+removed one redundant texture binding after `ApplyPresentation`, and normalized
+the preserved default-off Cinema bloom experiment to one zero-valued inactive
+state. The bloom implementation itself remains behind
+`BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM`; this stage did not enable it or
+delete that future-work source.
+
+The two download sites identified by the review and their shared request entry
+point now reject a selected managed level without a native level ID before
+constructing `std::string`.
+SettingsMenu's distance, horizontal, vertical, tilt, size, and undocked-state
+hover descriptions now come from one canonical set of literals used by both UI
+creation and enabled-state refresh. The optional logger crash-test build now
+identifies Big Screen's only active backend as Native Logger Quest instead of
+referencing deleted Paper-transition enums.
+
+Maintained documentation now describes the actual MP4/WebM local browser,
+unconditional Big Screen logcat mirroring, removal of Big Screen's direct
+Paper2 dependency, Quest 2/3/3S support status, and mapper environment grammar.
+The external Fable review was moved beside the other AI-assisted independent
+reviews and linked from that section's index; it is no longer mixed with
+canonical user documentation.
+
+Verification completed before headset deployment:
+
+- all 15 host/decoder/script/repository tests passed;
+- the PowerShell source-ownership, Quest-dependency, and deterministic-QMOD
+  suites passed independently;
+- `BIGSCREEN_ENABLE_LOGGER_CRASH_TEST=ON` compiled and linked for Quest ARM64;
+- the ordinary build was restored to
+  `BIGSCREEN_ENABLE_LOGGER_CRASH_TEST:BOOL=OFF`, and its stripped library does
+  not contain the `TEST LOGGER CRASH` UI string;
+- the normal QMOD is 19,728,962 bytes with SHA-256
+  `41923d0d0f7884e367709fbb5b94012a3ed4948374fb5280a183227a9cd19b5a`;
+- the normal ARM64 `libbigscreen.so` has SHA-256
+  `4b9caec0f79cccd215cf892431a3b83ffe947ccf58899906271fa90a9c39bac7`.
+
+The deliberate-crash package was compile-tested but was not installed: the
+same Native Logger Quest crash-tail path had already been validated during the
+logger migration, and putting the destructive control on the combined
+regression headset would create needless risk. The ordinary Stage 9 build was
+then source-deployed over Stage 8 to the Quest 2. The deployment script
+verified the installed `libbigscreen.so` at the same SHA-256 shown above and
+verified every packaged runtime payload. Its automatic Beat Saber launch was
+intercepted by Quest OS's controller-required dialog, so this records
+installation integrity rather than a claim of interactive runtime validation.
+The combined end-to-end Stage 8/9 pass remains with the user.
 
 ## Completion rule
 

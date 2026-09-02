@@ -12,8 +12,10 @@ GPU Video Conversion now defaults on after Quest 2 A/B testing confirmed the
 corrected picture matches the CPU path while materially reducing frame
 preparation time. Existing settings files are promoted once through the
 versioned settings migration ledger; users may still turn the option off after
-that migration. Quest 3/3S testing remains required before a stable release.
-Its supported scope is 8-bit SDR YUV420P,
+that migration. Quest 2 remains the primary local acceptance headset, while
+community testing on Quest 3 and Quest 3S has not identified a headset-specific
+regression. The complete stable-release matrix is still required. Its supported
+scope is 8-bit SDR YUV420P,
 YUVJ420P, and NV12. Unsupported pixel layouts, color matrices, or Unity GPU
 resources are designed to fall back permanently to CPU RGBA for that playback
 session.

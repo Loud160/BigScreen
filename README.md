@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Meta%20Quest%202%20%7C%203-00b2ff">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Meta%20Quest%202%20%7C%203%20%7C%203S-00b2ff">
   <img alt="Beat Saber" src="https://img.shields.io/badge/Beat%20Saber-1.40.8-orange">
   <img alt="Language" src="https://img.shields.io/badge/language-C%2B%2B20-blue">
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-yellow">

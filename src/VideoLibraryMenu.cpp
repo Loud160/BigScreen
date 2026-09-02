@@ -3299,7 +3299,7 @@ namespace BigScreen {
     {
         auto& downloader = DownloadManager::Instance();
         const auto current = downloader.Snapshot();
-        if(!selected_)
+        if(!selected_ || !selected_->levelID)
         {
             terminalDownloadProgress_.Reset();
             PublishEditorNotice("Select a song before downloading a video.");
@@ -3359,7 +3359,8 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RequestResolutionDownload(int height)
     {
-        if(!selected_ || height < 1 || height > 1440)
+        if(!selected_ || !selected_->levelID ||
+           height < 1 || height > 1440)
             return;
 
         auto& diagnostics = DiagnosticSessionLogger::Instance();
@@ -3445,7 +3446,7 @@ namespace BigScreen {
     void VideoLibraryMenu::StartResolutionDownload(int height)
     {
         auto& downloader = DownloadManager::Instance();
-        if(!selected_)
+        if(!selected_ || !selected_->levelID)
             return;
         const auto selectedLevelId = std::string(selected_->levelID);
         url_ = Trim(url_);

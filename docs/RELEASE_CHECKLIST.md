@@ -113,7 +113,7 @@
       retained position, affects the next gameplay decoder, and the overlay /
       results identify the runtime actually used.
 - [ ] Repeated identical-map runs compare the default FFmpeg 9.0.1 runtime with
-      FFmpeg 4.4.8 on Quest 2 and Quest 3.
+      FFmpeg 4.4.8 on Quest 2, Quest 3, and Quest 3S.
 - [ ] Hardware Video Decoding off reports Software and matches prior playback.
 - [ ] Hardware Video Decoding on reports Hardware for compatible H.264 on both
       FFmpeg runtimes; colors, crop edges, pause, seek, practice speed, Replay,
