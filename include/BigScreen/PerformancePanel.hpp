@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace BSML { class FloatingScreen; }
@@ -85,6 +86,7 @@ namespace BigScreen {
         enum class Context { None, Menu, Gameplay };
         Context context_ = Context::None;
         BSML::FloatingScreen* screen_ = nullptr;
+        std::shared_ptr<void> screenRoot_;
         HMUI::ImageView* background_ = nullptr;
         HMUI::ImageView* headsetCard_ = nullptr;
         HMUI::ImageView* videoCard_ = nullptr;

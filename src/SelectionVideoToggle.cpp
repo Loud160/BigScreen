@@ -67,11 +67,21 @@
 #include "bsml/shared/BSML/FloatingScreen/FloatingScreen.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
     namespace {
         using UiUtility::SetToggleWithoutNotification;
+
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtr<T>>(object));
+        }
 
         // The three global controls live on their own slim floating canvas.
         // Children of Beat Saber's main canvas outside its rect still render
@@ -761,6 +771,7 @@ namespace BigScreen {
         displayedResolutionHeights_.clear();
         confirmResolutionButton_ = nullptr;
         selectedLevel_ = nullptr;
+        selectedLevelRoot_.reset();
         selectedLevelId_.clear();
         selectedDescriptor_ = {};
         selectedLevelHasVideo_ = false;
@@ -941,6 +952,14 @@ namespace BigScreen {
         // global switch itself never depends on which level is selected.
         if(levelId == selectedLevelId_)
         {
+            // SongCore can publish a new managed wrapper for the same stable
+            // level ID after a library refresh. Rebind and root that current
+            // wrapper before any later frame dereferences selection metadata.
+            if(level && level != selectedLevel_)
+            {
+                selectedLevel_ = level;
+                selectedLevelRoot_ = RootManagedObject(level);
+            }
             SynchronizeSelectedBeatmapPreview(true);
             RefreshUi();
             return;
@@ -955,6 +974,10 @@ namespace BigScreen {
             resolutionModal_->Hide();
         selectedLevelId_ = levelId;
         selectedLevel_ = level;
+        if(level)
+            selectedLevelRoot_ = RootManagedObject(level);
+        else
+            selectedLevelRoot_.reset();
         returnPreviewAudioClip_ = nullptr;
         returnPreviewMusicVolume_ = 1.0f;
         restartSelectedSongAudio_ = false;
@@ -1033,6 +1056,7 @@ namespace BigScreen {
             // user changes selection before re-enabling Big Screen.
             selectedLevelId_.clear();
             selectedLevel_ = nullptr;
+            selectedLevelRoot_.reset();
             selectedDescriptor_ = {};
             selectedLevelHasVideo_ = false;
             returnPreviewAudioClip_ = nullptr;

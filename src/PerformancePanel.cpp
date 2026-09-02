@@ -39,9 +39,19 @@
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 
 namespace BigScreen {
     namespace {
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtrUnity<T>>(object));
+        }
+
         // BSML floating-screen sizes use UI units at approximately 50 units
         // per world meter. The panel is FIXED SIZE and never resizes: the
         // content is laid out to fit these numbers, not the other way
@@ -240,7 +250,8 @@ namespace BigScreen {
         settings.Flush();
         try
         {
-            if(!screen_)
+            if(!screenRoot_ ||
+               !UnityW<BSML::FloatingScreen>::isAlive(screen_))
                 return;
             screen_->get_transform()->SetPositionAndRotation(
                 {settings.PerformancePanelPositionX(),
@@ -295,6 +306,9 @@ namespace BigScreen {
     {
         try
         {
+            if(!screenRoot_ ||
+               !UnityW<BSML::FloatingScreen>::isAlive(screen_))
+                return;
             const bool live = data != nullptr;
             const PerformancePanelData zero{};
             const PerformancePanelData& d = live ? *data : zero;
@@ -380,7 +394,9 @@ namespace BigScreen {
     {
         try
         {
-            if(!screen_ || !screen_->handle)
+            if(!screenRoot_ ||
+               !UnityW<BSML::FloatingScreen>::isAlive(screen_) ||
+               !screen_->handle)
                 return;
             auto* handle = screen_->handle
                 ->GetComponent<BSML::FloatingScreenHandle*>();
@@ -428,7 +444,9 @@ namespace BigScreen {
     {
         try
         {
-            if(!screen_ || context_ == Context::None)
+            if(!screenRoot_ ||
+               !UnityW<BSML::FloatingScreen>::isAlive(screen_) ||
+               context_ == Context::None)
                 return;
             const auto position = screen_->get_transform()->get_position();
             const auto rotation = screen_->get_transform()->get_eulerAngles();
@@ -477,6 +495,7 @@ namespace BigScreen {
             false);
         if(!screen_)
             return false;
+        screenRoot_ = RootManagedObject(screen_);
 
         screen_->get_gameObject()->set_name("Big Screen Performance Panel");
         // Use the native handle path proven by the undocked screen editor. Its
@@ -849,7 +868,8 @@ namespace BigScreen {
     {
         try
         {
-            if(screen_)
+            if(screenRoot_ &&
+               UnityW<BSML::FloatingScreen>::isAlive(screen_))
                 UnityEngine::Object::Destroy(screen_->get_gameObject());
         }
         catch(...)
@@ -858,6 +878,7 @@ namespace BigScreen {
             // every pointer prevents a stale Unity object from being reused.
         }
         screen_ = nullptr;
+        screenRoot_.reset();
         rowFailureLogged_ = false;
         interactionFailureLogged_ = false;
         background_ = nullptr;

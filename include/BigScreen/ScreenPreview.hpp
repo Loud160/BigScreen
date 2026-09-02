@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <array>
+#include <memory>
 
 #include "BigScreen/MapVideoConfig.hpp"
 #include "BigScreen/ScreenSurface.hpp"
@@ -46,7 +47,7 @@ namespace BigScreen {
         /// Captures controller movement before the layout selector changes.
         void StageCurrentUndockedPlacement();
         void TickUndockedEditor();
-        bool IsUndockedEditing() const { return editorScreen_ != nullptr; }
+        bool IsUndockedEditing() const;
 
     private:
         ScreenPreview() = default;
@@ -60,6 +61,7 @@ namespace BigScreen {
         /// Keeps a live Video Library preview attached to the editor while
         /// placing its rendered pixels behind the editor's grab controls.
         bool ApplyLibraryPreviewEditorDisplay(bool rebuildGeometry);
+        bool EditorObjectsAlive() const;
 
         std::optional<MapVideoConfig> baseConfig_;
         // ActivateCurrentState follows PlaybackSession's already-resolved
@@ -73,6 +75,8 @@ namespace BigScreen {
         ScreenSurface surface_;
         BSML::FloatingScreen* editorScreen_ = nullptr;
         BSML::FloatingScreen* resizeHandleScreen_ = nullptr;
+        std::shared_ptr<void> editorScreenRoot_;
+        std::shared_ptr<void> resizeHandleScreenRoot_;
         std::array<HMUI::ImageView*, 4> editorBorders_{};
         HMUI::ImageView* editorMoveBar_ = nullptr;
         TMPro::TextMeshProUGUI* editorInstructions_ = nullptr;

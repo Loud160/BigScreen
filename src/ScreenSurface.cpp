@@ -74,6 +74,15 @@ namespace BigScreen {
     namespace {
         constexpr float Pi = 3.14159265358979323846f;
 
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtr<T, true>>(object));
+        }
+
         struct GpuShaderPropertyIds {
             std::int32_t planeU;
             std::int32_t planeV;
@@ -1673,6 +1682,18 @@ namespace BigScreen {
             undeformedVideoUvs_ = unityUvs;
             dynamicVideoUvs_ = ArrayW<UnityEngine::Vector2>(uvs.size());
             std::copy(uvs.begin(), uvs.end(), dynamicVideoUvs_.begin());
+            undeformedVideoVerticesRoot_ = RootManagedObject(
+                reinterpret_cast<Array<UnityEngine::Vector3>*>(
+                    undeformedVideoVertices_.convert()));
+            dynamicVideoVerticesRoot_ = RootManagedObject(
+                reinterpret_cast<Array<UnityEngine::Vector3>*>(
+                    dynamicVideoVertices_.convert()));
+            undeformedVideoUvsRoot_ = RootManagedObject(
+                reinterpret_cast<Array<UnityEngine::Vector2>*>(
+                    undeformedVideoUvs_.convert()));
+            dynamicVideoUvsRoot_ = RootManagedObject(
+                reinterpret_cast<Array<UnityEngine::Vector2>*>(
+                    dynamicVideoUvs_.convert()));
         }
         deformationWasApplied_ = false;
         return true;
@@ -1720,6 +1741,13 @@ namespace BigScreen {
         auto previousDynamicVideoVertices = std::move(dynamicVideoVertices_);
         auto previousUndeformedVideoUvs = std::move(undeformedVideoUvs_);
         auto previousDynamicVideoUvs = std::move(dynamicVideoUvs_);
+        const auto previousUndeformedVideoVerticesRoot =
+            undeformedVideoVerticesRoot_;
+        const auto previousDynamicVideoVerticesRoot =
+            dynamicVideoVerticesRoot_;
+        const auto previousUndeformedVideoUvsRoot =
+            undeformedVideoUvsRoot_;
+        const auto previousDynamicVideoUvsRoot = dynamicVideoUvsRoot_;
         const bool previousDeformationWasApplied = deformationWasApplied_;
         mesh_ = nullptr;
         videoMesh_ = nullptr;
@@ -1744,6 +1772,23 @@ namespace BigScreen {
             dynamicVideoVertices_ = std::move(previousDynamicVideoVertices);
             undeformedVideoUvs_ = std::move(previousUndeformedVideoUvs);
             dynamicVideoUvs_ = std::move(previousDynamicVideoUvs);
+            if(previousUndeformedVideoVerticesRoot)
+                undeformedVideoVerticesRoot_ =
+                    previousUndeformedVideoVerticesRoot;
+            else
+                undeformedVideoVerticesRoot_.reset();
+            if(previousDynamicVideoVerticesRoot)
+                dynamicVideoVerticesRoot_ = previousDynamicVideoVerticesRoot;
+            else
+                dynamicVideoVerticesRoot_.reset();
+            if(previousUndeformedVideoUvsRoot)
+                undeformedVideoUvsRoot_ = previousUndeformedVideoUvsRoot;
+            else
+                undeformedVideoUvsRoot_.reset();
+            if(previousDynamicVideoUvsRoot)
+                dynamicVideoUvsRoot_ = previousDynamicVideoUvsRoot;
+            else
+                dynamicVideoUvsRoot_.reset();
             deformationWasApplied_ = previousDeformationWasApplied;
         };
         if(!CreateMesh(config, aspectRatio) || !mesh_ ||
@@ -2199,7 +2244,9 @@ namespace BigScreen {
         if(!material)
             return false;
         DestroyIfAlive(gpuConversionMaterial_);
+        gpuConversionMaterialRoot_.reset();
         gpuConversionMaterial_ = material;
+        gpuConversionMaterialRoot_ = RootManagedObject(material);
         gpuYuvUploadLayout_ = layout;
         // The new material has no inherited property or texture state. Do not
         // erase the session counters: a packed-to-planar fallback should still
@@ -3037,6 +3084,8 @@ namespace BigScreen {
         DestroyIfAlive(crackTexture_);
         DestroyIfAlive(fractureMesh_);
         DestroyIfAlive(fractureSnapshot_);
+        fractureMeshRoot_.reset();
+        fractureSnapshotRoot_.reset();
         fracturePattern_ = {};
         fractureRevealGroups_.clear();
         fractureVertexMetadata_.clear();
@@ -3049,6 +3098,10 @@ namespace BigScreen {
         dynamicFractureVertices_ = nullptr;
         fractureUvs_ = nullptr;
         dynamicCrackVertices_ = nullptr;
+        fractureBaseVerticesRoot_.reset();
+        dynamicFractureVerticesRoot_.reset();
+        fractureUvsRoot_.reset();
+        dynamicCrackVerticesRoot_.reset();
         fracturePrepared_ = false;
         preparedFractureImpactCount_ = 0;
     }
@@ -3068,6 +3121,11 @@ namespace BigScreen {
             fracture.impacts.size(),
             preparedFractureImpacts_.size()});
         bool sameConfiguration = fracturePrepared_ &&
+            fractureMeshRoot_ && fractureSnapshotRoot_ &&
+            UnityW<UnityEngine::Mesh>::isAlive(fractureMesh_) &&
+            UnityW<UnityEngine::Texture2D>::isAlive(fractureSnapshot_) &&
+            fractureBaseVerticesRoot_ && dynamicFractureVerticesRoot_ &&
+            fractureUvsRoot_ && dynamicCrackVerticesRoot_ &&
             requested.seed == preparedFractureSettings_.seed &&
             requested.pieceCount == preparedFractureSettings_.pieceCount &&
             requested.spokeCount == preparedFractureSettings_.spokeCount &&
@@ -3087,7 +3145,8 @@ namespace BigScreen {
             return true;
 
         DestroyFractureResources();
-        if(!prepareDeformation_ || !videoObject_ || !material_ || !texture_)
+        if(!prepareDeformation_ || !PresentationObjectsAlive() ||
+           !UnityW<UnityEngine::Texture>::isAlive(texture_))
             return false;
 
         fracturePattern_ = CoreLogic::GenerateFracturePattern(requested);
@@ -3140,18 +3199,31 @@ namespace BigScreen {
         fractureBaseVertices_ = ArrayW<UnityEngine::Vector3>(vertexCount);
         dynamicFractureVertices_ = ArrayW<UnityEngine::Vector3>(vertexCount);
         fractureUvs_ = ArrayW<UnityEngine::Vector2>(vertexCount);
+        fractureBaseVerticesRoot_ = RootManagedObject(
+            reinterpret_cast<Array<UnityEngine::Vector3>*>(
+                fractureBaseVertices_.convert()));
+        dynamicFractureVerticesRoot_ = RootManagedObject(
+            reinterpret_cast<Array<UnityEngine::Vector3>*>(
+                dynamicFractureVertices_.convert()));
+        fractureUvsRoot_ = RootManagedObject(
+            reinterpret_cast<Array<UnityEngine::Vector2>*>(
+                fractureUvs_.convert()));
         ArrayW<std::int32_t> unityTriangles(triangles.size());
         std::copy(uvs.begin(), uvs.end(), fractureUvs_.begin());
         std::copy(triangles.begin(), triangles.end(), unityTriangles.begin());
         fractureMesh_ = UnityEngine::Mesh::New_ctor();
         if(!fractureMesh_)
             return false;
+        fractureMeshRoot_ = RootManagedObject(fractureMesh_);
         fractureMesh_->set_vertices(fractureBaseVertices_);
         fractureMesh_->set_uv(fractureUvs_);
         fractureMesh_->set_triangles(unityTriangles);
 
         const std::size_t edgeCount = fracturePattern_.edges.size();
         dynamicCrackVertices_ = ArrayW<UnityEngine::Vector3>(edgeCount * 4);
+        dynamicCrackVerticesRoot_ = RootManagedObject(
+            reinterpret_cast<Array<UnityEngine::Vector3>*>(
+                dynamicCrackVertices_.convert()));
         ArrayW<UnityEngine::Vector2> crackUvs(edgeCount * 4);
         ArrayW<std::int32_t> crackTriangles(edgeCount * 6);
         for(std::size_t edge = 0; edge < edgeCount; ++edge)
@@ -3214,6 +3286,7 @@ namespace BigScreen {
             false, false);
         if(!fractureSnapshot_)
             return false;
+        fractureSnapshotRoot_ = RootManagedObject(fractureSnapshot_);
 
         preparedFractureSettings_ = requested;
         preparedFractureImpactCount_ = impactCount;
@@ -3230,7 +3303,9 @@ namespace BigScreen {
         double songTimeSeconds,
         double realTimeSeconds)
     {
-        if(!crackMesh_ || !crackObject_ || !dynamicCrackVertices_)
+        if(!UnityW<UnityEngine::Mesh>::isAlive(crackMesh_) ||
+           !UnityW<UnityEngine::GameObject>::isAlive(crackObject_) ||
+           !dynamicCrackVerticesRoot_)
             return false;
         constexpr float CrackHalfWidth = 0.045f;
         // Every Voronoi seam is an independent quad. Butt-ended quads leave
@@ -3281,7 +3356,7 @@ namespace BigScreen {
         }
         crackMesh_->set_vertices(dynamicCrackVertices_);
         crackMesh_->RecalculateBounds();
-        if(crackMaterial_)
+        if(UnityW<UnityEngine::Material>::isAlive(crackMaterial_))
             crackMaterial_->set_color({1.0f, 1.0f, 1.0f,
                 std::clamp(fracture.crackOpacity, 0.0f, 1.0f)});
         crackObject_->SetActive(true);
@@ -3294,7 +3369,11 @@ namespace BigScreen {
         double songTimeSeconds,
         double realTimeSeconds)
     {
-        if(!fractureMesh_ || !fractureBaseVertices_ || !fractureUvs_)
+        if(!fractureMeshRoot_ || !fractureSnapshotRoot_ ||
+           !UnityW<UnityEngine::Mesh>::isAlive(fractureMesh_) ||
+           !UnityW<UnityEngine::Texture2D>::isAlive(fractureSnapshot_) ||
+           !fractureBaseVerticesRoot_ || !dynamicFractureVerticesRoot_ ||
+           !fractureUvsRoot_ || !PresentationObjectsAlive())
             return false;
         const float cover = CoreLogic::DeformationAutoCoverScale(
             screenWidth_, screenHeight_, deformation);
@@ -3334,8 +3413,10 @@ namespace BigScreen {
     bool ScreenSurface::UpdateFractureVertices(
         const CoreLogic::FractureEffectSettings& fracture)
     {
-        if(!fractureMesh_ || !fractureBaseVertices_ ||
-           !dynamicFractureVertices_)
+        if(!fractureMeshRoot_ ||
+           !UnityW<UnityEngine::Mesh>::isAlive(fractureMesh_) ||
+           !fractureBaseVerticesRoot_ ||
+           !dynamicFractureVerticesRoot_)
             return false;
         const float separation = std::clamp(fracture.separation, 0.0f, 1.0f);
         const auto impact = fracture.pattern.impactPoint;
@@ -3441,17 +3522,21 @@ namespace BigScreen {
            fracture.phase == CoreLogic::FracturePhase::Inactive)
         {
             if(fractureMeshActive_ || fractureSnapshotActive_ ||
-               (crackObject_ && crackObject_->get_activeSelf()))
+               (UnityW<UnityEngine::GameObject>::isAlive(crackObject_) &&
+                crackObject_->get_activeSelf()))
                 RestoreWholeVideoMesh();
             return true;
         }
+        if(!PresentationObjectsAlive())
+            return false;
         if(!PrepareFracture(fracture))
             return false;
 
         if(fracture.phase == CoreLogic::FracturePhase::Prepared)
         {
             if(fractureMeshActive_ || fractureSnapshotActive_ ||
-               (crackObject_ && crackObject_->get_activeSelf()))
+               (UnityW<UnityEngine::GameObject>::isAlive(crackObject_) &&
+                crackObject_->get_activeSelf()))
                 RestoreWholeVideoMesh();
             return true;
         }
@@ -3479,7 +3564,7 @@ namespace BigScreen {
             material_->set_mainTexture(texture_);
             fractureSnapshotActive_ = false;
         }
-        if(crackObject_)
+        if(UnityW<UnityEngine::GameObject>::isAlive(crackObject_))
             crackObject_->SetActive(false);
         if(!fractureMeshActive_)
         {
@@ -3543,6 +3628,7 @@ namespace BigScreen {
             DestroyIfAlive(vTexture_);
             DestroyIfAlive(packedYuvTexture_);
             DestroyIfAlive(gpuConversionMaterial_);
+            gpuConversionMaterialRoot_.reset();
             if(UnityW<UnityEngine::RenderTexture>::isAlive(gpuTexture_))
             {
                 if(gpuTexture_->IsCreated())
@@ -3558,6 +3644,7 @@ namespace BigScreen {
             vTexture_ = nullptr;
             packedYuvTexture_ = nullptr;
             gpuConversionMaterial_ = nullptr;
+            gpuConversionMaterialRoot_.reset();
             gpuTexture_ = nullptr;
         }
         texture_ = nullptr;
@@ -3592,6 +3679,10 @@ namespace BigScreen {
         dynamicVideoVertices_ = nullptr;
         undeformedVideoUvs_ = nullptr;
         dynamicVideoUvs_ = nullptr;
+        undeformedVideoVerticesRoot_.reset();
+        dynamicVideoVerticesRoot_.reset();
+        undeformedVideoUvsRoot_.reset();
+        dynamicVideoUvsRoot_.reset();
         prepareDeformation_ = false;
         deformationWasApplied_ = false;
     }
@@ -3600,14 +3691,18 @@ namespace BigScreen {
     {
         if(text.empty())
         {
-            if(diagnosticsObject_)
-                UnityEngine::Object::Destroy(diagnosticsObject_);
-            diagnosticsObject_ = nullptr;
+            DestroyIfAlive(diagnosticsObject_);
             diagnosticsText_ = nullptr;
             return;
         }
-        if(!gameObject_)
+        if(!UnityW<UnityEngine::GameObject>::isAlive(gameObject_))
             return;
+        if(diagnosticsObject_ &&
+           !UnityW<UnityEngine::GameObject>::isAlive(diagnosticsObject_))
+        {
+            diagnosticsObject_ = nullptr;
+            diagnosticsText_ = nullptr;
+        }
         if(!diagnosticsObject_)
         {
             diagnosticsObject_ = UnityEngine::GameObject::New_ctor(
@@ -3640,6 +3735,12 @@ namespace BigScreen {
                 screenWidth_ * 11.5f,
                 screenHeight_ * 3.0f});
         }
-        diagnosticsText_->set_text(text);
+        if(UnityW<TMPro::TextMeshPro>::isAlive(diagnosticsText_))
+            diagnosticsText_->set_text(text);
+        else
+        {
+            DestroyIfAlive(diagnosticsObject_);
+            diagnosticsText_ = nullptr;
+        }
     }
 }

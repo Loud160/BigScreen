@@ -1,9 +1,10 @@
 # Paper2-Independent Logging Plan
 
-Status: native logger cutover completed on `codex/first-party-logger`; Big
-Screen's direct Paper2 dependency has been removed
+Status: native logger cutover completed; Big Screen's direct Paper2 dependency
+has been removed, and the proven implementation is now consumed from Native
+Logger Quest as a private static source dependency
 
-Last reviewed: August 26, 2026
+Last reviewed: September 1, 2026
 
 ## Purpose
 
@@ -38,6 +39,14 @@ The native backend currently provides:
 - dropped-record accounting and a later warning summary;
 - source filename, line, severity, timestamp, and producer-thread identity;
 - host tests for lifecycle, rotation, bounded overflow, and concurrent writers.
+
+The implementation now lives in the public
+[Native Logger Quest](https://github.com/Loud160/NativeLoggerQuest) repository.
+The canonical Big Screen build reads its official current-source manifest,
+downloads the immutable commit archive named there, verifies its SHA-256, and
+compiles it statically into `libbigscreen.so`. Big Screen retains a zero-cost
+source compatibility header, its established `BigScreen` tag, paths, options,
+and lifecycle. There is no separately installed logger `.so` or QMOD.
 
 The active files are:
 
@@ -402,13 +411,15 @@ avoidable symbol, initialization, file-ownership, and package-removal risks.
 
 ## Recommended decision
 
-The selected design is a small first-party logger directly inside Big Screen,
-not another generally distributed shared logging library. It preserves the
-existing call shape, keeps routine file I/O on one bounded background worker,
-and retains logcat and all purpose-specific diagnostic files. Paper has been
-removed from Big Screen's direct runtime, link, and QMOD dependency graph after
-dual and native-only Quest validation; transitive dependency metadata remains
-where other libraries legitimately require it.
+The selected design remains a small first-party logger statically compiled
+inside each consuming mod, not a separately distributed shared logging
+runtime. Its source is maintained centrally as Native Logger Quest so fixes
+can reach Big Screen and future mods without copying files between projects.
+It preserves the existing call shape, keeps routine file I/O on one bounded
+background worker, and retains logcat and all purpose-specific diagnostic
+files. Paper has been removed from Big Screen's direct runtime, link, and QMOD
+dependency graph after dual and native-only Quest validation; transitive
+dependency metadata remains where other libraries legitimately require it.
 
 This provides the durable outcome sought by the change: Big Screen can no
 longer fail to load because another QMOD installed a different Paper2 version,

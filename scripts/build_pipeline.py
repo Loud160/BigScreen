@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import uuid
 import zipfile
@@ -40,6 +41,14 @@ DEPENDENCIES = CACHE / "dependencies"
 BUILD = ROOT / "build"
 RUNTIME_STAGE = BUILD / "downloader"
 QPM_NATIVE_INPUTS = ROOT / "qpm-native-inputs.sha256.json"
+
+NATIVE_LOGGER_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/Loud160/NativeLoggerQuest/"
+    "main/native-logger-current.json"
+)
+NATIVE_LOGGER_ARCHIVE_PREFIX = (
+    "https://github.com/Loud160/NativeLoggerQuest/archive/"
+)
 
 QUICKJS_VERSION = "0.16.1"
 QUICKJS_SHA256 = "153f1940c5f61a59ab62703a6d13cf71ba0b2d2ba597683fe5315f14a64ed782"
@@ -180,6 +189,191 @@ def download(url: str, destination: pathlib.Path, expected_hash: str, label: str
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def validate_native_logger_manifest(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise BuildError("Native Logger Quest's current-source manifest is not an object.")
+    if value.get("schemaVersion") != 1 or value.get("name") != "Native Logger Quest":
+        raise BuildError("Native Logger Quest's current-source manifest has an unknown schema.")
+
+    version = value.get("version")
+    revision = value.get("revision")
+    archive_url = value.get("archiveUrl")
+    archive_hash = value.get("archiveSha256")
+    source_directory = value.get("sourceDirectory")
+    if not isinstance(version, str) or not re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version
+    ):
+        raise BuildError("Native Logger Quest's current version is invalid.")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise BuildError("Native Logger Quest's current revision is invalid.")
+    expected_url = f"{NATIVE_LOGGER_ARCHIVE_PREFIX}{revision}.zip"
+    if archive_url != expected_url:
+        raise BuildError(
+            "Native Logger Quest's archive must be the immutable official commit archive."
+        )
+    if not isinstance(archive_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", archive_hash):
+        raise BuildError("Native Logger Quest's archive SHA-256 is invalid.")
+    if source_directory != f"NativeLoggerQuest-{revision}":
+        raise BuildError("Native Logger Quest's archive root does not match its revision.")
+    return value
+
+
+def fetch_native_logger_manifest(cache_path: pathlib.Path) -> dict:
+    request = urllib.request.Request(
+        NATIVE_LOGGER_MANIFEST_URL,
+        headers={"User-Agent": "BigScreen-source-build"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = response.read(64 * 1024 + 1)
+        if len(payload) > 64 * 1024:
+            raise BuildError("Native Logger Quest's current-source manifest is unexpectedly large.")
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        if not cache_path.is_file():
+            raise BuildError(
+                "Native Logger Quest's current version could not be checked and no "
+                "verified cached manifest is available."
+            ) from error
+        print(
+            "Native Logger Quest's current version could not be checked; "
+            "using the last verified cached manifest."
+        )
+        payload = cache_path.read_bytes()
+
+    try:
+        manifest = validate_native_logger_manifest(json.loads(payload.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BuildError("Native Logger Quest's current-source manifest is invalid JSON.") from error
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_name(cache_path.name + f".write.{os.getpid()}")
+    temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, cache_path)
+    return manifest
+
+
+def extract_native_logger_archive(
+    archive_path: pathlib.Path,
+    destination: pathlib.Path,
+    expected_root: str,
+) -> None:
+    maximum_files = 512
+    maximum_bytes = 16 * 1024 * 1024
+    total_bytes = 0
+    names: set[str] = set()
+    with zipfile.ZipFile(archive_path) as archive:
+        infos = archive.infolist()
+        if len(infos) > maximum_files:
+            raise BuildError("Native Logger Quest's source archive contains too many entries.")
+        for info in infos:
+            name = info.filename
+            path = pathlib.PurePosixPath(name)
+            if (
+                not name
+                or "\\" in name
+                or name.startswith("/")
+                or ".." in path.parts
+                or not path.parts
+                or path.parts[0] != expected_root
+                or name in names
+            ):
+                raise BuildError(f"Unsafe Native Logger Quest archive entry: {name!r}")
+            names.add(name)
+            unix_mode = (info.external_attr >> 16) & 0xFFFF
+            if (unix_mode & 0o170000) == 0o120000:
+                raise BuildError(f"Native Logger Quest archive contains a symlink: {name!r}")
+            total_bytes += info.file_size
+            if total_bytes > maximum_bytes:
+                raise BuildError("Native Logger Quest's source archive is unexpectedly large.")
+            target = destination.joinpath(*path.parts)
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
+def source_tree_sha256(source: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    files = sorted(path for path in source.rglob("*") if path.is_file())
+    for path in files:
+        relative = path.relative_to(source).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(bytes.fromhex(sha256(path)))
+    return digest.hexdigest()
+
+
+def prepare_native_logger(force: bool = False) -> tuple[pathlib.Path, dict]:
+    migrate_dependency_cache()
+    root = DEPENDENCIES / "native-logger-quest"
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = fetch_native_logger_manifest(root / "current.json")
+    revision = manifest["revision"]
+    archive = root / f"NativeLoggerQuest-{revision}.zip"
+    source = root / "source"
+    ready_path = root / "resolved.json"
+    if force:
+        archive.unlink(missing_ok=True)
+    download(
+        manifest["archiveUrl"],
+        archive,
+        manifest["archiveSha256"],
+        f"Native Logger Quest {manifest['version']} ({revision[:12]})",
+    )
+
+    required = (
+        pathlib.Path("CMakeLists.txt"),
+        pathlib.Path("include/NativeLoggerQuest/NativeLogger.hpp"),
+        pathlib.Path("src/NativeLogger.cpp"),
+        pathlib.Path("src/Paper2AbortBridge.cpp"),
+    )
+    resolved = None
+    if ready_path.is_file():
+        try:
+            resolved = json.loads(ready_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            resolved = None
+    source_complete = all((source / relative).is_file() for relative in required)
+    source_hash = source_tree_sha256(source) if source_complete else None
+    cache_matches = (
+        isinstance(resolved, dict)
+        and resolved.get("manifest") == manifest
+        and resolved.get("sourceTreeSha256") == source_hash
+    )
+    if force or not source_complete or not cache_matches:
+        if source.exists():
+            remove_fixed_child(source, root)
+        staging = root / f"extract-{uuid.uuid4().hex}"
+        staging.mkdir()
+        try:
+            extract_native_logger_archive(
+                archive, staging, manifest["sourceDirectory"]
+            )
+            extracted = staging / manifest["sourceDirectory"]
+            for relative in required:
+                require_file(extracted / relative)
+            shutil.move(str(extracted), str(source))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        source_hash = source_tree_sha256(source)
+        ready_path.write_text(
+            json.dumps(
+                {"manifest": manifest, "sourceTreeSha256": source_hash}, indent=2
+            ) + "\n",
+            encoding="utf-8",
+        )
+
+    for relative in required:
+        require_file(source / relative)
+    print(
+        f"Prepared Native Logger Quest {manifest['version']} "
+        f"at revision {revision[:12]} in {source}"
+    )
+    return source, manifest
 
 
 def prepare_quickjs(force: bool = False) -> pathlib.Path:
@@ -982,6 +1176,7 @@ def clean_or_reset_build(clean: bool) -> None:
 
 def build_native(clean: bool = False) -> None:
     clean_or_reset_build(clean)
+    native_logger_source, native_logger_manifest = prepare_native_logger()
     prepare_quickjs()
     prepare_downloader()
     environment = os.environ.copy()
@@ -1011,7 +1206,12 @@ def build_native(clean: bool = False) -> None:
     run_with_heartbeat(["cmake", "--build", str(BUILD)], ROOT, environment)
     validate_elf(BUILD)
     library = require_file(BUILD / "libbigscreen.so")
-    inputs = [path for root in (ROOT / "src", ROOT / "include") for path in root.rglob("*") if path.is_file()]
+    inputs = [
+        path
+        for source_root in (ROOT / "src", ROOT / "include", native_logger_source)
+        for path in source_root.rglob("*")
+        if path.is_file()
+    ]
     inputs.append(ROOT / "CMakeLists.txt")
     newest = max(path.stat().st_mtime_ns for path in inputs)
     if library.stat().st_mtime_ns < newest:
@@ -1020,7 +1220,9 @@ def build_native(clean: bool = False) -> None:
         )
     stamp.write_text(
         f"completedUtc={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
-        f"binarySha256={sha256(library)}",
+        f"binarySha256={sha256(library)}\n"
+        f"nativeLoggerVersion={native_logger_manifest['version']}\n"
+        f"nativeLoggerRevision={native_logger_manifest['revision']}",
         encoding="utf-8",
     )
 
@@ -1080,6 +1282,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("prepare-quickjs")
+    native_logger_parser = subcommands.add_parser("prepare-native-logger")
+    native_logger_parser.add_argument("--force", action="store_true")
     subcommands.add_parser("prepare-runtime")
     subcommands.add_parser("generate-manifest")
     subcommands.add_parser("validate-manifest")
@@ -1097,6 +1301,8 @@ def main() -> int:
     try:
         if args.command == "prepare-quickjs":
             prepare_quickjs()
+        elif args.command == "prepare-native-logger":
+            prepare_native_logger(args.force)
         elif args.command == "prepare-runtime":
             prepare_quickjs()
             prepare_downloader()

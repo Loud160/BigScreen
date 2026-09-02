@@ -30,6 +30,14 @@ generated lock file. Each dependency remains subject to its own license. Big
 Screen does not claim authorship of those external libraries or generated Beat
 Saber headers.
 
+Big Screen's first-party native logger was extracted into the separately
+maintained [Native Logger Quest](https://github.com/Loud160/NativeLoggerQuest)
+repository so the same implementation can be reused by other Quest mods. That
+source retains Big Screen's copyright, GPLv3 licensing, attribution, and
+provenance terms. Big Screen fetches a SHA-256-verified immutable source
+revision during the build and statically compiles it into `libbigscreen.so`;
+it is not a separately installed runtime dependency.
+
 The downloader additionally compiles the official QuickJS-NG 0.16.1
 amalgamated source into Big Screen under its MIT license. The exact release URL
 and SHA-256 are pinned in `scripts/fetch-quickjs-ng.ps1`; none of that upstream

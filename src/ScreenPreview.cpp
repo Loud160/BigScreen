@@ -34,10 +34,20 @@
 #include "bsml/shared/BSML-Lite/Creation/Misc.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Text.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "main.hpp"
 
 namespace BigScreen {
     namespace {
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtrUnity<T>>(object));
+        }
+
         constexpr int PreviewTextureWidth = 512;
         constexpr int PreviewTextureHeight = 288;
         constexpr float UiUnitsPerMeter = 50.0f;
@@ -157,6 +167,18 @@ namespace BigScreen {
             }();
             return pattern;
         }
+    }
+
+    bool ScreenPreview::EditorObjectsAlive() const
+    {
+        return editorScreenRoot_ && resizeHandleScreenRoot_ &&
+            UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) &&
+            UnityW<BSML::FloatingScreen>::isAlive(resizeHandleScreen_);
+    }
+
+    bool ScreenPreview::IsUndockedEditing() const
+    {
+        return EditorObjectsAlive();
     }
 
     ScreenPreview& ScreenPreview::Instance()
@@ -484,6 +506,7 @@ namespace BigScreen {
             false);
         if(!editorScreen_)
             return false;
+        editorScreenRoot_ = RootManagedObject(editorScreen_);
         editorScreen_->get_gameObject()->set_name("Big Screen Undocked Editor");
         // A Full handle is technically draggable, but BSML deliberately does
         // not render it. It also sits behind every editor control, making the
@@ -574,6 +597,7 @@ namespace BigScreen {
             0.0f, false);
         if(!resizeHandleScreen_)
             return false;
+        resizeHandleScreenRoot_ = RootManagedObject(resizeHandleScreen_);
         resizeHandleScreen_->get_gameObject()->set_name(
             "Big Screen Undocked Resize Handle");
         // Reuse the exact native Top handle that successfully moves the main
@@ -632,7 +656,9 @@ namespace BigScreen {
 
     void ScreenPreview::UpdateEditorOverlayLayout()
     {
-        if(!editorScreen_ || !editorConfig_ ||
+        if(!editorScreenRoot_ ||
+           !UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) ||
+           !editorConfig_ ||
            !editorConfig_->screenWidthOverride)
             return;
         const float width =
@@ -717,7 +743,7 @@ namespace BigScreen {
 
     void ScreenPreview::PlaceResizeHandle()
     {
-        if(!editorScreen_ || !resizeHandleScreen_ || !editorConfig_ ||
+        if(!EditorObjectsAlive() || !editorConfig_ ||
            !editorConfig_->screenWidthOverride)
             return;
         const float halfWidth =
@@ -734,7 +760,9 @@ namespace BigScreen {
 
     bool ScreenPreview::ApplyLibraryPreviewEditorDisplay(bool rebuildGeometry)
     {
-        if(!editorScreen_ || !editorConfig_ ||
+        if(!editorScreenRoot_ ||
+           !UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) ||
+           !editorConfig_ ||
            !PlaybackSession::Instance().IsLibraryPreviewActive())
             return false;
 
@@ -758,7 +786,7 @@ namespace BigScreen {
 
     void ScreenPreview::TickUndockedEditor()
     {
-        if(!editorScreen_ || !resizeHandleScreen_ || !editorConfig_)
+        if(!EditorObjectsAlive() || !editorConfig_)
             return;
         if(!Settings::Instance().ModEnabled())
         {
@@ -830,7 +858,9 @@ namespace BigScreen {
 
     void ScreenPreview::SaveUndockedEditing()
     {
-        if(!editorScreen_ || !editorConfig_ ||
+        if(!editorScreenRoot_ ||
+           !UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) ||
+           !editorConfig_ ||
            !editorConfig_->screenWidthOverride)
             return;
         const auto position = editorScreen_->get_transform()->get_position();
@@ -855,7 +885,7 @@ namespace BigScreen {
 
     void ScreenPreview::CancelUndockedEditing()
     {
-        if(!editorScreen_ && !resizeHandleScreen_)
+        if(!editorScreenRoot_ && !resizeHandleScreenRoot_)
             return;
         Settings::Instance().CancelScreenEditTransaction();
         const bool libraryPreviewActive =
@@ -871,7 +901,9 @@ namespace BigScreen {
 
     void ScreenPreview::StageCurrentUndockedPlacement()
     {
-        if(!editorScreen_ || !editorConfig_ ||
+        if(!editorScreenRoot_ ||
+           !UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) ||
+           !editorConfig_ ||
            !editorConfig_->screenWidthOverride)
             return;
         const auto position = editorScreen_->get_transform()->get_position();
@@ -886,7 +918,9 @@ namespace BigScreen {
 
     void ScreenPreview::RefreshUndockedEditingFromSettings()
     {
-        if(!editorScreen_ || !editorConfig_ || !editorAppliedLayout_ ||
+        if(!editorScreenRoot_ ||
+           !UnityW<BSML::FloatingScreen>::isAlive(editorScreen_) ||
+           !editorConfig_ || !editorAppliedLayout_ ||
            !editorConfig_->screenWidthOverride)
             return;
 
@@ -960,12 +994,16 @@ namespace BigScreen {
 
     void ScreenPreview::DestroyEditorUi()
     {
-        if(resizeHandleScreen_)
+        if(resizeHandleScreenRoot_ &&
+           UnityW<BSML::FloatingScreen>::isAlive(resizeHandleScreen_))
             UnityEngine::Object::Destroy(resizeHandleScreen_->get_gameObject());
-        if(editorScreen_)
+        if(editorScreenRoot_ &&
+           UnityW<BSML::FloatingScreen>::isAlive(editorScreen_))
             UnityEngine::Object::Destroy(editorScreen_->get_gameObject());
         resizeHandleScreen_ = nullptr;
         editorScreen_ = nullptr;
+        resizeHandleScreenRoot_.reset();
+        editorScreenRoot_.reset();
         editorBorders_.fill(nullptr);
         editorMoveBar_ = nullptr;
         editorInstructions_ = nullptr;

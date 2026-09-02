@@ -60,7 +60,7 @@ without mixing unrelated unfinished work.
 | 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
 | 5 | Downloader operation cleanup and diagnostics | Quest validated | Stage 5 working tree on `codex/fable-review-stage-5` | User reported no issues in the focused downloader and URL-entry pass |
 | 6 | Packaging, CI, and dependency reproducibility | Automated verification passed; final MBF test deferred | `b848661` on `codex/fable-review-stage-6` | Final clean MBF/package validation intentionally deferred until all remediation stages are complete |
-| 7 | GPU presentation-path overhead | Awaiting Quest test | `dd48f1d` on `codex/fable-review-stage-7` | Stage 7 source payload installed and hash-verified on the Quest 2; focused visual/performance pass pending |
+| 7 | GPU presentation-path overhead | Quest validated | `dd48f1d` plus the managed-wrapper lifetime correction on `codex/fable-review-stage-7` | The corrected build remained stable during extended Quest 2 use, including live-streamed testing alongside the user's other mod; no Stage 7 regression was found |
 | 8 | Catalog lifetime and transport-state consolidation | Planned | — | Pending |
 | 9 | Documentation and contained low-risk cleanup | Planned | — | Pending |
 
@@ -749,6 +749,63 @@ and wrote a complete source receipt for commit `dd48f1d`. It also attempted the
 normal Beat Saber launch; the headset had no running Beat Saber process during
 the immediate read-only follow-up, so startup and runtime behavior remain part
 of the user's focused pass rather than an automated claim.
+
+The first focused pass then completed the full Showcase and previewed an
+ordinary video through the cached GPU path, producing normal cache summaries.
+At 13:08 on September 1, selecting another map from the Video Library caused a
+native `SIGSEGV`. The symbolized stack was
+`VideoLibraryMenu::Tick -> RefreshVisibleRowPresentation ->
+RefreshRowVideoThumbnail -> Sprite.get_rect`. This was not a shader-property or
+decoder fault: the native thumbnail LRU retained raw managed `Sprite*` wrappers,
+which did not keep an unbound cached sprite reachable by the IL2CPP garbage
+collector. The cache now owns each wrapper through `SafePtrUnity<Sprite>` while
+preserving the existing 64-entry LRU, explicit Unity-object destruction, and
+visible-cell retirement rules. A repository invariant prevents the cache from
+returning to raw wrapper ownership. All 14 host tests pass after the correction;
+the repaired Quest build still requires the same focused visual/runtime retest.
+
+### Stage 7 lifetime follow-up
+
+A read-only search for the same ownership class found that the initial sprite
+fix was necessary but not sufficient. A `SafePtrUnity` root inside the active
+LRU did not protect a sprite during the one-layout-pass retirement handoff, and
+several other objects were intentionally retained in native fields across Unity
+frames without an explicit managed root. The follow-up keeps the renderer and
+decoder behavior unchanged while closing those boundaries:
+
+- both active and retired thumbnail entries now own rooted sprite wrappers;
+- catalog rows retain only native strings and stable level IDs, resolving the
+  current SongCore/repository object only when Unity work is required;
+- the one actively edited map and the song-selection/local-browser selections
+  root their managed `BeatmapLevel` wrapper for the visible operation;
+- official/custom preview-loading `Task` objects remain rooted until completion
+  is consumed or teardown clears them;
+- the GPU conversion material, prepared fracture mesh/snapshot, and reusable
+  deformation/fracture arrays remain rooted for every cross-frame dereference;
+- the performance panel and undocked editor retain their floating-screen
+  wrapper and verify Unity fake-null state before transition-time access; and
+- fracture and diagnostics paths now reject destroyed presentation objects
+  instead of dereferencing them during scene teardown.
+
+Repository invariants cover the ownership rules. All 14 host tests and the
+ARM64 Quest build pass after this follow-up. Quest validation should focus on:
+
+1. Play the Miku preview, return to the browser, scroll across thumbnail and
+   no-thumbnail rows, open another map, then repeat several times.
+2. Let a thumbnail arrive or replace a thumbnail while its row is visible,
+   then leave and reopen the browser.
+3. Preview one official map and one custom map long enough for their different
+   asynchronous audio paths to complete; leave the editor during each load.
+4. Open/close the performance panel and enter/leave screen positioning during
+   menu transitions.
+5. Play the complete Showcase so deformation, cracks, shatter, and prepared
+   fracture resources cross the same lifetime boundaries.
+
+On September 2, 2026, the user accepted Stage 7 after extended Quest 2 use while
+testing another mod and live streaming from the headset. No crash, visual
+regression, stale thumbnail, transition fault, or other Stage 7 issue was found.
+Together with the focused Showcase/preview coverage and the verified native log
+from the extracted Native Logger Quest integration, Stage 7 is Quest validated.
 
 ## Stage 8 — Catalog lifetime and transport-state consolidation
 

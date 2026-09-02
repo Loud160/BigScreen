@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -18,7 +19,6 @@
 #include "UnityEngine/Vector2.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "beatsaber-hook/shared/utils/typedefs-array.hpp"
-#include <string>
 
 namespace UnityEngine {
     class GameObject;
@@ -220,6 +220,10 @@ namespace BigScreen {
         UnityEngine::Texture2D* packedYuvTexture_ = nullptr;
         UnityEngine::RenderTexture* gpuTexture_ = nullptr;
         UnityEngine::Material* gpuConversionMaterial_ = nullptr;
+        // Unlike renderer-owned display materials, the conversion material is
+        // used only by native Graphics::Blit calls. Nothing in Unity's scene
+        // graph keeps its IL2CPP wrapper reachable between frames.
+        std::shared_ptr<void> gpuConversionMaterialRoot_;
         // The GPU conversion material is stable for a video session. Cache
         // every invariant property snapshot so ordinary frames upload pixels
         // without rebuilding matrices, allocating managed property-name
@@ -251,6 +255,10 @@ namespace BigScreen {
         UnityEngine::Texture2D* crackTexture_ = nullptr;
         UnityEngine::Mesh* fractureMesh_ = nullptr;
         UnityEngine::Texture2D* fractureSnapshot_ = nullptr;
+        // Fracture resources are prepared before they are attached to a live
+        // renderer. Root their wrappers throughout that dormant interval.
+        std::shared_ptr<void> fractureMeshRoot_;
+        std::shared_ptr<void> fractureSnapshotRoot_;
         UnityEngine::GameObject* diagnosticsObject_ = nullptr;
         TMPro::TextMeshPro* diagnosticsText_ = nullptr;
         float screenWidth_ = 0.0f;
@@ -294,6 +302,12 @@ namespace BigScreen {
         ArrayW<UnityEngine::Vector3> dynamicVideoVertices_{};
         ArrayW<UnityEngine::Vector2> undeformedVideoUvs_{};
         ArrayW<UnityEngine::Vector2> dynamicVideoUvs_{};
+        // ArrayW is only a convenient raw wrapper, not a GC root. Showcase
+        // deformation dereferences these arrays across many frames.
+        std::shared_ptr<void> undeformedVideoVerticesRoot_;
+        std::shared_ptr<void> dynamicVideoVerticesRoot_;
+        std::shared_ptr<void> undeformedVideoUvsRoot_;
+        std::shared_ptr<void> dynamicVideoUvsRoot_;
         CoreLogic::FracturePattern fracturePattern_{};
         CoreLogic::FracturePatternSettings preparedFractureSettings_{};
         // Reuse the public settings array type instead of duplicating its
@@ -318,6 +332,10 @@ namespace BigScreen {
         ArrayW<UnityEngine::Vector3> dynamicFractureVertices_{};
         ArrayW<UnityEngine::Vector2> fractureUvs_{};
         ArrayW<UnityEngine::Vector3> dynamicCrackVertices_{};
+        std::shared_ptr<void> fractureBaseVerticesRoot_;
+        std::shared_ptr<void> dynamicFractureVerticesRoot_;
+        std::shared_ptr<void> fractureUvsRoot_;
+        std::shared_ptr<void> dynamicCrackVerticesRoot_;
         bool fracturePrepared_ = false;
         bool fractureMeshActive_ = false;
         bool fractureShapeCaptured_ = false;

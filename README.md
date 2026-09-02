@@ -340,8 +340,9 @@ bash ./Build-QMOD-Linux.sh
 
 Git is convenient for cloning and updates but is not required for a downloaded
 GitHub source archive. The build downloads and verifies only missing pinned
-project inputs, including QPM 1.5.11, Android NDK r27d, FFmpeg, QuickJS-NG, and
-the embedded downloader runtime. Valid caches are reused on later runs. The
+project inputs, including QPM 1.5.11, Android NDK r27d, FFmpeg, QuickJS-NG,
+[Native Logger Quest](https://github.com/Loud160/NativeLoggerQuest), and the
+embedded downloader runtime. Valid caches are reused on later runs. The
 first clean build needs internet access, several gigabytes of free space, and
 time to compile both FFmpeg versions.
 
@@ -360,8 +361,9 @@ files already exist.
 | custom-types | `^0.18.3` | [QuestPackageManager/Il2CppQuestTypePatching](https://github.com/QuestPackageManager/Il2CppQuestTypePatching) |
 
 Those projects may install and use Paper2 through their own dependency
-manifests. Big Screen uses its private first-party logger and does not declare,
-link, initialize, replace, or globally intercept Paper2.
+manifests. Big Screen statically compiles its first-party Native Logger Quest
+library into `libbigscreen.so`; it installs no separate logger runtime and does
+not declare, link, initialize, replace, or globally intercept Paper2.
 
 Deployment ignores attached phones and tablets, verifies that the selected
 device is a Meta/Oculus Quest with Beat Saber installed, and asks which headset

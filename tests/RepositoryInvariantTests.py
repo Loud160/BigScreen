@@ -130,8 +130,21 @@ logger_header = (root / "include/BigScreen/Logger.hpp").read_text(
 native_logger_header = (root / "include/BigScreen/NativeLogger.hpp").read_text(
     encoding="utf-8")
 logger_source = (root / "src/Logger.cpp").read_text(encoding="utf-8")
-native_logger_source = (root / "src/NativeLogger.cpp").read_text(
-    encoding="utf-8")
+native_logger_dependency_root = (
+    root / ".cache/dependencies/native-logger-quest/source"
+)
+native_logger_source = (
+    native_logger_dependency_root / "src/NativeLogger.cpp"
+).read_text(encoding="utf-8")
+native_logger_dependency_header = (
+    native_logger_dependency_root / "include/NativeLoggerQuest/NativeLogger.hpp"
+).read_text(encoding="utf-8")
+native_hook_bridge = (
+    native_logger_dependency_root / "src/Paper2AbortBridge.cpp"
+).read_text(encoding="utf-8")
+native_logger_cmake = (
+    native_logger_dependency_root / "CMakeLists.txt"
+).read_text(encoding="utf-8")
 native_logger_tests = (root / "tests/NativeLoggerTests.cpp").read_text(
     encoding="utf-8")
 dependency_diagnostics_source = (
@@ -196,6 +209,12 @@ thumbnail_picker_source = (root / "src/ThumbnailPickerMenu.cpp").read_text(
 main_source = (root / "src/main.cpp").read_text(encoding="utf-8")
 screen_surface_source = (root / "src/ScreenSurface.cpp").read_text(
     encoding="utf-8")
+screen_surface_header = (
+    root / "include/BigScreen/ScreenSurface.hpp"
+).read_text(encoding="utf-8")
+screen_preview_header = (
+    root / "include/BigScreen/ScreenPreview.hpp"
+).read_text(encoding="utf-8")
 video_shader_source = (
     root / "tools/video-shader/Assets/BigScreenVideo.shader"
 ).read_text(encoding="utf-8")
@@ -410,14 +429,20 @@ assert "std::abort();" in settings_menu_source
 assert "ShowModalInFront(loggerCrashTestModal_)" in settings_menu_source
 assert "libpaper2_scotland2" in qpm_cmake
 assert "BIGSCREEN_QPM_LINK_LIBRARIES" in qpm_cmake
-native_hook_bridge = (root / "src/NativeHookLoggerBridge.cpp").read_text(
-    encoding="utf-8")
-assert "--wrap=paper2_queue_log_bytes_ffi" in cmake
-assert "--wrap=paper2_wait_for_flush" in cmake
+assert not (root / "src/NativeLogger.cpp").exists()
+assert not (root / "src/NativeHookLoggerBridge.cpp").exists()
+assert "NativeLoggerQuest::NativeLoggerQuest" in cmake
+assert "native_logger_quest_enable_paper2_abort_bridge" in cmake
+assert "NATIVE_LOGGER_MANIFEST_URL" in canonical_build_pipeline
+assert "prepare_native_logger()" in canonical_build_pipeline
+assert "archiveSha256" in canonical_build_pipeline
+assert "prepare-native-logger" in linux_test
+assert "--wrap=paper2_queue_log_bytes_ffi" in native_logger_cmake
+assert "--wrap=paper2_wait_for_flush" in native_logger_cmake
 assert "__wrap_paper2_queue_log_bytes_ffi" in native_hook_bridge
 assert "__wrap_paper2_wait_for_flush" in native_hook_bridge
 assert 'visibility("hidden")' in native_hook_bridge
-assert "Other mods keep using the real Paper2 supplied for their own declared" in cmake
+assert "cannot replace or intercept" in native_logger_cmake
 assert "Big Screen still declares Paper2 in DT_NEEDED" in canonical_build_pipeline
 assert "Big Screen exposes a Paper compatibility symbol" in canonical_build_pipeline
 assert "fmt::format(" in logger_header
@@ -426,9 +451,10 @@ assert "paper2_scotland2/shared/paperlog.hpp" not in logger_source
 assert "Paper::" not in logger_source
 assert "NativeLogger::Instance().Log" in logger_source
 assert "bigscreen-native.log" in logger_source
-assert "5u * 1024u * 1024u" in native_logger_header
-assert "1024u * 1024u" in native_logger_header
-assert "2048u" in native_logger_header
+assert "using NativeLogger = NativeLoggerQuest::NativeLogger" in native_logger_header
+assert "5u * 1024u * 1024u" in native_logger_dependency_header
+assert "1024u * 1024u" in native_logger_dependency_header
+assert "2048u" in native_logger_dependency_header
 assert "std::condition_variable" in native_logger_source
 assert "std::deque<Record>" in native_logger_source
 assert "writer.join()" in native_logger_source
@@ -882,6 +908,8 @@ for preflight_contract in (
     "CPython 3.14.7 Android ARM64",
     "stable yt-dlp 2026.08.19",
     "QuickJS-NG 0.16.1",
+    "Native Logger Quest verified source",
+    "current-source manifest is still checked",
     "ADB and Quest access (QMOD-only build selected)",
     "Visual Studio",
 ):
@@ -1847,6 +1875,20 @@ assert "thumbnailTickCounter_" in library_menu_source
 assert "TableView_LayoutCellForIdx" in main_source
 assert "NotifySongListCellBound(self);" in main_source
 assert "RefreshVisibleRowPresentation(false);" in library_menu_source
+# Thumbnail sprites live in a native LRU across HMUI's virtualized cell
+# bindings. A raw Sprite* is not an IL2CPP GC root and can become a dangling
+# wrapper between refreshes, so every cached entry must retain a SafePtrUnity.
+thumbnail_cache_type = library_menu_source.split(
+    "struct CachedVideoThumbnail", 1
+)[1].split("};", 1)[0]
+assert "SafePtrUnity<UnityEngine::Sprite> sprite;" in thumbnail_cache_type
+assert "UnityEngine::Sprite* sprite" not in thumbnail_cache_type
+assert "SafePtrUnity<UnityEngine::Sprite>> RetiredVideoThumbnailSprites" in (
+    library_menu_source
+)
+assert "#include \"beatsaber-hook/shared/utils/typedefs-wrappers.hpp\"" in (
+    library_menu_source
+)
 thumbnail_refresh_body = library_menu_source.split(
     "void VideoLibraryMenu::RefreshVisibleRowThumbnails()", 1
 )[1].split("void VideoLibraryMenu::NotifySongListCellBound", 1)[0]
@@ -2041,7 +2083,8 @@ assert "editorNoticeModel_" not in refresh_details
 select_row = library_menu_source.split(
     "void VideoLibraryMenu::SelectRow(int row)", 1
 )[1].split("bool VideoLibraryMenu::OpenEditorForLevelId(", 1)[0]
-assert "SelectLevel(visible_[row]->level, true);" in select_row
+assert "ResolveInstalledLevel(visible_[row]->levelId)" in select_row
+assert "SelectLevel(level, true);" in select_row
 select_level = library_menu_source.split(
     "void VideoLibraryMenu::SelectLevel(", 1
 )[1].split("void VideoLibraryMenu::ShowBrowser()", 1)[0]
@@ -2052,9 +2095,34 @@ assert select_level.index("ShowEditor();") < (
     select_level.index("OpenEditorNotice();")
 )
 assert "bool VideoLibraryMenu::OpenEditorForLevelId(" in library_menu_source
-assert "candidate.levelId == levelId" in library_menu_source
+assert "GlobalNamespace::BeatmapLevel* ResolveInstalledLevel(" in (
+    library_menu_source
+)
 assert "SongCore::API::Loading::GetLevelByLevelID(" in library_menu_source
 assert "repository->GetBeatmapLevelById(" in library_menu_source
+assert "GlobalNamespace::BeatmapLevel* level" not in (
+    library_menu_header.split("struct SongLibraryItem", 1)[1].split("};", 1)[0]
+)
+assert "std::shared_ptr<void> selectedLevelRoot_;" in library_menu_header
+assert "levelDataLoadTaskRoot_" in library_menu_header
+assert "audioLoadTaskRoot_" in library_menu_header
+assert "levelDataLoadTaskRoot_ = RootManagedObject(" in library_menu_source
+assert "audioLoadTaskRoot_ = RootManagedObject(audioLoadTask_)" in (
+    library_menu_source
+)
+
+# Unity/IL2CPP wrappers stored only in native ScreenSurface state must remain
+# rooted for every cross-frame dereference. Scene transitions can invalidate
+# their native object first, so the presentation/editor panels also retain a
+# fake-null-aware root for their floating-screen owner.
+assert "gpuConversionMaterialRoot_" in screen_surface_header
+assert "fractureMeshRoot_" in screen_surface_header
+assert "fractureSnapshotRoot_" in screen_surface_header
+assert "undeformedVideoVerticesRoot_" in screen_surface_header
+assert "dynamicFractureVerticesRoot_" in screen_surface_header
+assert "screenRoot_" in performance_panel_header
+assert "editorScreenRoot_" in screen_preview_header
+assert "resizeHandleScreenRoot_" in screen_preview_header
 open_editor_notice = library_menu_source.split(
     "void VideoLibraryMenu::OpenEditorNotice()", 1
 )[1].split("void VideoLibraryMenu::CloseEditorNotice()", 1)[0]

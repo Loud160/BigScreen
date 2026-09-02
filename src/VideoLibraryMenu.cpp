@@ -109,6 +109,7 @@
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-utils-exceptions.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "main.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
@@ -283,8 +284,20 @@ namespace BigScreen {
         // YouTube thumbnail. Beat Saber's song/album cover is deliberately not
         // consulted: a blank row therefore means that song has no video.
         struct CachedVideoThumbnail {
-            UnityEngine::Sprite* sprite = nullptr;
+            // This native LRU outlives individual HMUI cell bindings. A raw
+            // Sprite* does not keep its managed IL2CPP wrapper reachable, so
+            // the GC could reclaim an unbound thumbnail and leave a pointer
+            // that still appeared to have a Unity m_CachedPtr. Root the
+            // wrapper for the full cache-entry lifetime; the underlying Unity
+            // object is still explicitly destroyed on eviction.
+            SafePtrUnity<UnityEngine::Sprite> sprite;
             std::uint64_t lastUse = 0;
+
+            CachedVideoThumbnail(
+                UnityEngine::Sprite* value,
+                std::uint64_t use)
+                : sprite(value), lastUse(use)
+            {}
         };
         constexpr std::size_t MaximumCachedVideoThumbnails = 64;
         std::uint64_t VideoThumbnailUseCounter = 0;
@@ -295,7 +308,13 @@ namespace BigScreen {
         // visible virtualized cell still refers to it. Explicit invalidation
         // retires a bound sprite and releases it after the next binding pass.
         std::unordered_set<UnityEngine::Sprite*> BoundVideoThumbnailSprites;
-        std::unordered_set<UnityEngine::Sprite*> RetiredVideoThumbnailSprites;
+        // A retired sprite can remain bound to an HMUI cell for one more
+        // layout pass after leaving the LRU. Keep its managed wrapper rooted
+        // until that cell releases it; transferring only the raw pointer here
+        // would recreate the same GC hole the cache root is meant to close.
+        std::unordered_map<
+            UnityEngine::Sprite*,
+            SafePtrUnity<UnityEngine::Sprite>> RetiredVideoThumbnailSprites;
 
         struct RowVideoThumbnail {
             bool hasVideo = false;
@@ -316,6 +335,35 @@ namespace BigScreen {
         void CacheVideoThumbnail(
             const std::string& path,
             UnityEngine::Sprite* sprite);
+
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtr<T>>(object));
+        }
+
+        GlobalNamespace::BeatmapLevel* ResolveInstalledLevel(
+            std::string_view levelId)
+        {
+            if(levelId.empty())
+                return nullptr;
+            if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(
+                   std::string(levelId)))
+                return custom;
+            auto* container = BSML::Helpers::GetDiContainer();
+            auto* model = container
+                ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
+                : nullptr;
+            auto* repository = model
+                ? model->__cordl_internal_get__allExistingBeatmapLevelsRepository()
+                : nullptr;
+            return repository
+                ? repository->GetBeatmapLevelById(StringW(std::string(levelId)))
+                : nullptr;
+        }
 
         void RefreshRowVideoThumbnail(
             const std::string& levelId,
@@ -403,12 +451,14 @@ namespace BigScreen {
             if(const auto cached = VideoThumbnailSprites.find(path);
                cached != VideoThumbnailSprites.end())
             {
-                if(UnityW<UnityEngine::Sprite>::isAlive(cached->second.sprite))
+                if(cached->second.sprite)
                 {
-                    if(BoundVideoThumbnailSprites.contains(cached->second.sprite))
-                        RetiredVideoThumbnailSprites.emplace(cached->second.sprite);
+                    auto* sprite = cached->second.sprite.ptr();
+                    if(BoundVideoThumbnailSprites.contains(sprite))
+                        RetiredVideoThumbnailSprites.emplace(
+                            sprite, cached->second.sprite);
                     else
-                        UnityEngine::Object::Destroy(cached->second.sprite);
+                        UnityEngine::Object::Destroy(sprite);
                 }
                 VideoThumbnailSprites.erase(cached);
             }
@@ -420,15 +470,13 @@ namespace BigScreen {
             const auto found = VideoThumbnailSprites.find(path);
             if(found == VideoThumbnailSprites.end())
                 return nullptr;
-            if(!UnityW<UnityEngine::Sprite>::isAlive(found->second.sprite))
+            if(!found->second.sprite)
             {
-                BoundVideoThumbnailSprites.erase(found->second.sprite);
-                RetiredVideoThumbnailSprites.erase(found->second.sprite);
                 VideoThumbnailSprites.erase(found);
                 return nullptr;
             }
             found->second.lastUse = ++VideoThumbnailUseCounter;
-            return found->second.sprite;
+            return found->second.sprite.ptr();
         }
 
         void CacheVideoThumbnail(
@@ -443,8 +491,9 @@ namespace BigScreen {
                 for(auto candidate = VideoThumbnailSprites.begin();
                     candidate != VideoThumbnailSprites.end(); ++candidate)
                 {
-                    if(BoundVideoThumbnailSprites.contains(
-                           candidate->second.sprite))
+                    if(candidate->second.sprite &&
+                       BoundVideoThumbnailSprites.contains(
+                           candidate->second.sprite.ptr()))
                         continue;
                     if(oldest == VideoThumbnailSprites.end() ||
                        candidate->second.lastUse < oldest->second.lastUse)
@@ -456,28 +505,37 @@ namespace BigScreen {
                 // evictable again.
                 if(oldest != VideoThumbnailSprites.end())
                 {
-                    if(UnityW<UnityEngine::Sprite>::isAlive(
-                           oldest->second.sprite))
-                    {
-                        UnityEngine::Object::Destroy(oldest->second.sprite);
-                    }
+                    if(oldest->second.sprite)
+                        UnityEngine::Object::Destroy(
+                            oldest->second.sprite.ptr());
                     FailedVideoThumbnailLoads.erase(oldest->first);
                     VideoThumbnailSprites.erase(oldest);
                 }
             }
             if(const auto previous = VideoThumbnailSprites.find(path);
-               previous != VideoThumbnailSprites.end() &&
-               previous->second.sprite != sprite)
+               previous != VideoThumbnailSprites.end())
             {
-                if(UnityW<UnityEngine::Sprite>::isAlive(previous->second.sprite))
+                if(previous->second.sprite &&
+                   previous->second.sprite.ptr() == sprite)
                 {
-                    if(BoundVideoThumbnailSprites.contains(previous->second.sprite))
-                        RetiredVideoThumbnailSprites.emplace(previous->second.sprite);
-                    else
-                        UnityEngine::Object::Destroy(previous->second.sprite);
+                    previous->second.lastUse = ++VideoThumbnailUseCounter;
+                    return;
                 }
+                if(previous->second.sprite)
+                {
+                    auto* previousSprite = previous->second.sprite.ptr();
+                    if(BoundVideoThumbnailSprites.contains(previousSprite))
+                        RetiredVideoThumbnailSprites.emplace(
+                            previousSprite, previous->second.sprite);
+                    else
+                        UnityEngine::Object::Destroy(previousSprite);
+                }
+                // CachedVideoThumbnail intentionally owns a GC root and is not
+                // assignable. Remove the old entry before constructing the
+                // replacement so that root lifetime is explicit.
+                VideoThumbnailSprites.erase(previous);
             }
-            VideoThumbnailSprites.insert_or_assign(
+            VideoThumbnailSprites.emplace(
                 path,
                 CachedVideoThumbnail{sprite, ++VideoThumbnailUseCounter});
         }
@@ -487,14 +545,14 @@ namespace BigScreen {
             for(auto retired = RetiredVideoThumbnailSprites.begin();
                 retired != RetiredVideoThumbnailSprites.end();)
             {
-                auto* sprite = *retired;
+                auto* sprite = retired->first;
                 if(BoundVideoThumbnailSprites.contains(sprite))
                 {
                     ++retired;
                     continue;
                 }
-                if(UnityW<UnityEngine::Sprite>::isAlive(sprite))
-                    UnityEngine::Object::Destroy(sprite);
+                if(retired->second)
+                    UnityEngine::Object::Destroy(retired->second.ptr());
                 retired = RetiredVideoThumbnailSprites.erase(retired);
             }
         }
@@ -729,8 +787,7 @@ namespace BigScreen {
             std::unordered_set<std::string> songs;
             for(const auto* item : rows)
             {
-                const auto* level = item ? item->level : nullptr;
-                if(!level) continue;
+                if(!item) continue;
 
                 // Beat Saber can expose more than one repository row for the
                 // same musical work (for example, difficulty-specific data).
@@ -1022,8 +1079,8 @@ namespace BigScreen {
             (void)identity;
             try
             {
-                if(UnityW<UnityEngine::Sprite>::isAlive(cached.sprite))
-                    UnityEngine::Object::Destroy(cached.sprite);
+                if(cached.sprite)
+                    UnityEngine::Object::Destroy(cached.sprite.ptr());
             }
             catch(...)
             {
@@ -1031,12 +1088,13 @@ namespace BigScreen {
             }
         }
         VideoThumbnailSprites.clear();
-        for(auto* sprite : RetiredVideoThumbnailSprites)
+        for(auto& [sprite, root] : RetiredVideoThumbnailSprites)
         {
             try
             {
-                if(UnityW<UnityEngine::Sprite>::isAlive(sprite))
-                    UnityEngine::Object::Destroy(sprite);
+                (void)sprite;
+                if(root)
+                    UnityEngine::Object::Destroy(root.ptr());
             }
             catch(...)
             {
@@ -2503,7 +2561,6 @@ namespace BigScreen {
         const std::string normalizedName = Lower(name);
         const std::string normalizedAuthor = Lower(author);
         catalogBuildItems_.push_back({
-            level,
             group,
             levelId,
             name,
@@ -2636,6 +2693,11 @@ namespace BigScreen {
                 return false;
             catalog_ = std::move(sortedCatalog);
             catalogBuildPhase_ = CatalogBuildPhase::Idle;
+            if(!selectedLevelId_.empty())
+            {
+                selected_ = ResolveInstalledLevel(selectedLevelId_);
+                selectedLevelRoot_ = RootManagedObject(selected_);
+            }
 
             // Recovery runs only after a damaged/missing library manifest;
             // the normal path returns immediately. It must remain on Unity's
@@ -2644,7 +2706,8 @@ namespace BigScreen {
             std::vector<GlobalNamespace::BeatmapLevel*> installedLevels;
             installedLevels.reserve(catalog_.size());
             for(const auto& item : catalog_)
-                installedLevels.push_back(item.level);
+                if(auto* level = ResolveInstalledLevel(item.levelId))
+                    installedLevels.push_back(level);
             VideoLibrary::Instance().RecoverManagedFiles(installedLevels);
 
             std::array<int, 4> groupCounts{};
@@ -2682,7 +2745,15 @@ namespace BigScreen {
             // already records ordinary rejected Cinema JSON as a map-specific
             // diagnostic and returns the usable non-mapper state.
             auto& item = catalog_[catalogPrewarmIndex_++];
-            auto* level = item.level;
+            auto* level = ResolveInstalledLevel(item.levelId);
+            if(!level)
+            {
+                BigScreen::BigScreenLogger.warn(
+                    "Skipped video-library descriptor because level '{}' is no longer installed",
+                    item.levelId);
+                catalogMetadataPreparedCount_ = catalogPrewarmIndex_;
+                continue;
+            }
             try
             {
                 const auto descriptor =
@@ -2903,7 +2974,8 @@ namespace BigScreen {
     void VideoLibraryMenu::SelectRow(int row)
     {
         if(row < 0 || row >= static_cast<int>(visible_.size())) return;
-        SelectLevel(visible_[row]->level, true);
+        if(auto* level = ResolveInstalledLevel(visible_[row]->levelId))
+            SelectLevel(level, true);
     }
 
     bool VideoLibraryMenu::OpenEditorForLevelId(
@@ -2913,34 +2985,11 @@ namespace BigScreen {
         if(levelId.empty())
             return false;
 
-        const auto item = std::find_if(
-            catalog_.begin(),
-            catalog_.end(),
-            [levelId](const SongLibraryItem& candidate)
-            {
-                return candidate.levelId == levelId;
-            });
-        GlobalNamespace::BeatmapLevel* level = item != catalog_.end()
-            ? item->level
-            : SongCore::API::Loading::GetLevelByLevelID(
-                std::string(levelId));
-        if(!level)
-        {
-            // Configure Video can be invoked before a multi-thousand-song
-            // catalog finishes its bounded capture. Resolve this one requested
-            // official level through the repository's ID index instead of
-            // blocking the UI until the full scan completes.
-            auto* container = BSML::Helpers::GetDiContainer();
-            auto* model = container
-                ? container->Resolve<GlobalNamespace::BeatmapLevelsModel*>()
-                : nullptr;
-            auto* repository = model
-                ? model->__cordl_internal_get__allExistingBeatmapLevelsRepository()
-                : nullptr;
-            if(repository)
-                level = repository->GetBeatmapLevelById(
-                    StringW(std::string(levelId)));
-        }
+        // Configure Video can be invoked before a multi-thousand-song catalog
+        // finishes capture. Resolve the requested map from the current
+        // SongCore/repository generation rather than retaining a wrapper from
+        // an older catalog generation.
+        auto* level = ResolveInstalledLevel(levelId);
         if(!level)
         {
             BigScreen::BigScreenLogger.warn(
@@ -2979,6 +3028,10 @@ namespace BigScreen {
         if(PlaybackSession::Instance().IsLibraryPreviewActive())
             PlaybackSession::Instance().Stop();
         selected_ = level;
+        selectedLevelId_ = level->levelID
+            ? std::string(level->levelID)
+            : std::string{};
+        selectedLevelRoot_ = RootManagedObject(level);
         DiagnosticSessionLogger::Instance().MenuEvent(
             "song_selected", "VideoLibraryMenu", {
                 {"levelId", selected_ && selected_->levelID
@@ -3657,7 +3710,8 @@ namespace BigScreen {
         if(row < 0 || row >= static_cast<int>(visible_.size()) ||
            !visible_[row])
             return;
-        ShowMapperMetadataIssue(visible_[row]->level);
+        if(auto* level = ResolveInstalledLevel(visible_[row]->levelId))
+            ShowMapperMetadataIssue(level);
     }
 
     void VideoLibraryMenu::ShowMapperMetadataIssue(
@@ -4199,11 +4253,10 @@ namespace BigScreen {
                 continue;
 
             auto* item = visible_[row];
-            auto* level = item ? item->level : nullptr;
-            if(!level || !level->levelID) continue;
+            if(!item || item->levelId.empty()) continue;
             auto* cellInfo = list_->data[row];
             if(!cellInfo) continue;
-            const std::string levelId(level->levelID);
+            const std::string& levelId = item->levelId;
             const auto metadata = RowVideoThumbnails.find(levelId);
             const bool hasVideo = metadata != RowVideoThumbnails.end() &&
                 metadata->second.hasVideo;
@@ -4366,10 +4419,9 @@ namespace BigScreen {
                row >= list_->data->get_Count())
                 continue;
             auto* item = visible_[row];
-            auto* level = item ? item->level : nullptr;
-            if(!level || !level->levelID) continue;
+            if(!item || item->levelId.empty()) continue;
 
-            const std::string levelId(level->levelID);
+            const std::string& levelId = item->levelId;
             const auto metadata = RowVideoThumbnails.find(levelId);
             auto coverImage = levelCell->__cordl_internal_get__coverImage();
             const bool hasVideo = metadata != RowVideoThumbnails.end() &&
@@ -5497,8 +5549,11 @@ namespace BigScreen {
                     // cancellation was requested. Always obtain .NET's real,
                     // zero-source CancellationToken.None value instead.
                     System::Threading::CancellationToken::get_None());
+                levelDataLoadTaskRoot_ = RootManagedObject(
+                    levelDataLoadTask_);
                 if(!levelDataLoadTask_)
                 {
+                    levelDataLoadTaskRoot_.reset();
                     officialSongAudioLoader_ = nullptr;
                     terminalDownloadProgressLevelId_.clear();
                     PublishPreviewNotice(
@@ -5518,6 +5573,7 @@ namespace BigScreen {
             catch(const std::exception& error)
             {
                 levelDataLoadTask_ = nullptr;
+                levelDataLoadTaskRoot_.reset();
                 officialSongAudioLoader_ = nullptr;
                 terminalDownloadProgressLevelId_.clear();
                 PublishPreviewNotice(
@@ -5541,8 +5597,10 @@ namespace BigScreen {
         // Beat Saber 1.40.8 owns preview-audio cancellation internally and no
         // longer accepts a caller-provided CancellationToken.
         audioLoadTask_ = previewMediaData_->GetPreviewAudioClip();
+        audioLoadTaskRoot_ = RootManagedObject(audioLoadTask_);
         if(!audioLoadTask_)
         {
+            audioLoadTaskRoot_.reset();
             terminalDownloadProgressLevelId_.clear();
             PublishPreviewNotice(
                 "Beat Saber could not start loading preview audio.");
@@ -5558,6 +5616,7 @@ namespace BigScreen {
         officialSongAudioLoader_ = nullptr;
         officialSongLevelData_ = nullptr;
         levelDataLoadTask_ = nullptr;
+        levelDataLoadTaskRoot_.reset();
         if(!loader || !levelData)
             return;
 
@@ -5874,6 +5933,7 @@ namespace BigScreen {
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
+        audioLoadTaskRoot_.reset();
         previewMediaData_ = nullptr;
         audioLoadLevelId_.clear();
 
@@ -5913,6 +5973,7 @@ namespace BigScreen {
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
+        audioLoadTaskRoot_.reset();
         previewMediaData_ = nullptr;
         audioLoadLevelId_.clear();
         ReleaseOfficialSongAudio();
@@ -6203,6 +6264,8 @@ namespace BigScreen {
           if(editorVisible_ && levelDataLoadTask_ &&
              levelDataLoadTask_->get_IsCompleted())
           {
+            auto completedTaskRoot = std::move(levelDataLoadTaskRoot_);
+            (void)completedTaskRoot;
             auto* completedTask = levelDataLoadTask_;
             levelDataLoadTask_ = nullptr;
             const bool selectionStillMatches = selected_ && selected_->levelID &&
@@ -6218,8 +6281,10 @@ namespace BigScreen {
                         GlobalNamespace::AudioClipAsyncLoaderExtensions::LoadSong(
                             officialSongAudioLoader_,
                             officialSongLevelData_);
+                    audioLoadTaskRoot_ = RootManagedObject(audioLoadTask_);
                     if(!audioLoadTask_)
                     {
+                        audioLoadTaskRoot_.reset();
                         terminalDownloadProgressLevelId_.clear();
                         PublishPreviewNotice(
                             "Beat Saber could not start loading full song audio.");
@@ -6262,6 +6327,8 @@ namespace BigScreen {
 
           if(editorVisible_ && audioLoadTask_ && audioLoadTask_->get_IsCompleted())
           {
+            auto completedTaskRoot = std::move(audioLoadTaskRoot_);
+            (void)completedTaskRoot;
             auto* completedTask = audioLoadTask_;
             audioLoadTask_ = nullptr;
             if(completedTask->get_IsCompletedSuccessfully() && selected_ &&

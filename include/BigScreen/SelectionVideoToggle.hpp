@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -193,6 +194,7 @@ namespace BigScreen {
         // active game's detail view owns this reference; every view teardown
         // clears it before the owning menu hierarchy can be replaced.
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
+        std::shared_ptr<void> selectedLevelRoot_;
         std::string selectedLevelId_;
         // A failed worker remains in a terminal state until another task is
         // started. Remember the exact failure already presented so the

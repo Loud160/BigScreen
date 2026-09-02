@@ -7,85 +7,16 @@
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #pragma once
 
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <filesystem>
-#include <memory>
-#include <string>
+#include "NativeLoggerQuest/NativeLogger.hpp"
 
 namespace BigScreen {
-    enum class LogSeverity : std::uint8_t {
-        Debug,
-        Info,
-        Warning,
-        Error,
-        Critical,
-    };
-
-    struct LogSource {
-        // LoggerFacade supplies std::source_location strings, whose storage is
-        // static for the process lifetime. Keeping these non-owning avoids two
-        // extra allocations on every producer call; direct native-backend
-        // callers must provide strings that outlive the asynchronous write.
-        const char* file = "";
-        const char* function = "";
-        std::uint_least32_t line = 0;
-    };
-
-    struct NativeLoggerOptions {
-        std::filesystem::path activePath;
-        std::filesystem::path previousPath;
-        std::size_t maxFileBytes = 5u * 1024u * 1024u;
-        std::size_t maxQueueBytes = 1024u * 1024u;
-        std::size_t maxQueueEntries = 2048u;
-        std::size_t urgentReserveBytes = 128u * 1024u;
-        std::size_t urgentReserveEntries = 128u;
-        std::chrono::milliseconds reopenInterval{5000};
-        bool emitToLogcat = true;
-    };
-
-    struct NativeLoggerStatistics {
-        std::uint64_t acceptedMessages = 0;
-        std::uint64_t fileMessages = 0;
-        std::uint64_t droppedMessages = 0;
-        std::uint64_t fileFailures = 0;
-        std::uint64_t rotations = 0;
-        std::size_t peakQueueBytes = 0;
-        std::size_t peakQueueEntries = 0;
-    };
-
-    /// Big Screen's private general-purpose logger backend.
-    ///
-    /// Calls emit immediately to Android logcat and enqueue one already-
-    /// formatted record for the owned file-writer thread. The queue and files
-    /// are bounded, all methods fail open, and no exception is allowed to
-    /// escape into a hook, Unity callback, decoder worker, or download worker.
-    class NativeLogger final {
-      public:
-        static NativeLogger& Instance() noexcept;
-
-        NativeLogger(const NativeLogger&) = delete;
-        NativeLogger& operator=(const NativeLogger&) = delete;
-
-        bool Initialize(
-            NativeLoggerOptions options,
-            std::string sessionHeader) noexcept;
-        void Log(
-            LogSeverity severity,
-            std::string message,
-            LogSource source = {}) noexcept;
-        bool Flush(std::chrono::milliseconds timeout) noexcept;
-        void Shutdown() noexcept;
-
-        [[nodiscard]] bool IsInitialized() const noexcept;
-        [[nodiscard]] NativeLoggerStatistics Statistics() const noexcept;
-
-      private:
-        NativeLogger() noexcept;
-        ~NativeLogger();
-
-        struct Impl;
-        std::unique_ptr<Impl> impl_;
-    };
+    // Keep Big Screen's established source-level names stable while the
+    // implementation is supplied by the reusable, statically linked library.
+    // This is a zero-cost type alias: existing call sites, file paths, queue
+    // limits, and initialization/shutdown behavior are unchanged.
+    using LogSeverity = NativeLoggerQuest::LogSeverity;
+    using LogSource = NativeLoggerQuest::LogSource;
+    using NativeLoggerOptions = NativeLoggerQuest::NativeLoggerOptions;
+    using NativeLoggerStatistics = NativeLoggerQuest::NativeLoggerStatistics;
+    using NativeLogger = NativeLoggerQuest::NativeLogger;
 }

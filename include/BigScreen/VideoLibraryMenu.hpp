@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -48,7 +49,6 @@ namespace BigScreen {
     enum class SongLibraryFilter { All, Custom, Wip, Ost, Dlc, Video };
 
     struct SongLibraryItem {
-        GlobalNamespace::BeatmapLevel* level = nullptr;
         SongLibraryGroup group = SongLibraryGroup::Ost;
         // Snapshot immutable menu metadata once. Re-reading managed IL2CPP
         // strings while sorting/filtering thousands of rows is unnecessary
@@ -362,7 +362,12 @@ namespace BigScreen {
         HMUI::HoverHint* leadInTimingHint_ = nullptr;
         std::vector<SongLibraryItem> catalog_;
         std::vector<SongLibraryItem*> visible_;
+        // Catalog rows contain native snapshots only. The active selection is
+        // re-resolved by this stable ID and roots exactly one managed wrapper
+        // while the editor can use it across frames.
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;
+        std::string selectedLevelId_;
+        std::shared_ptr<void> selectedLevelRoot_;
         GlobalNamespace::IPreviewMediaData* previewMediaData_ = nullptr;
         // Unity can destroy menu audio objects during a flow transition while
         // their IL2CPP wrappers remain non-null. UnityW makes every truth test
@@ -376,6 +381,11 @@ namespace BigScreen {
         System::Threading::Tasks::Task_1<GlobalNamespace::LoadBeatmapLevelDataResult>*
             levelDataLoadTask_ = nullptr;
         System::Threading::Tasks::Task_1<UnityW<UnityEngine::AudioClip>>* audioLoadTask_ = nullptr;
+        // Async Tasks are managed objects with no Unity native owner. These
+        // roots remain alive until Tick consumes the completion or teardown
+        // cancels the request.
+        std::shared_ptr<void> levelDataLoadTaskRoot_;
+        std::shared_ptr<void> audioLoadTaskRoot_;
         GlobalNamespace::AudioClipAsyncLoader* officialSongAudioLoader_ = nullptr;
         GlobalNamespace::IBeatmapLevelData* officialSongLevelData_ = nullptr;
         UnityW<UnityEngine::AudioClip> previewAudioClip_ = nullptr;

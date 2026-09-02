@@ -321,6 +321,10 @@ function Get-PrerequisiteState {
         YtDlpReady = (Test-RepositoryPath ".cache\dependencies\downloader\yt-dlp-2026.08.19")
         CertifiReady = (Test-RepositoryPath ".cache\dependencies\downloader\certifi-2026.7.22-py3-none-any.whl")
         QuickJsReady = (Test-RepositoryPath ".cache\dependencies\quickjs-ng\quickjs-0.16.1.ready")
+        NativeLoggerReady = (
+            (Test-RepositoryPath ".cache\dependencies\native-logger-quest\resolved.json") -and
+            (Test-RepositoryPath ".cache\dependencies\native-logger-quest\source\CMakeLists.txt")
+        )
         AdbPath = if ($IncludeDeployment) { Find-Adb } else { $null }
         DeploymentRequested = [bool] $IncludeDeployment
         ShaderReady = (Test-RepositoryPath "assets\bigscreen_video_shader")
@@ -388,6 +392,8 @@ function Show-PrerequisiteState {
         "download the pinned Python Package Index wheel into .cache"
     Write-StateLine $State.QuickJsReady "QuickJS-NG 0.16.1 source (.cache/dependencies/quickjs-ng)" `
         "download the pinned GitHub archive into .cache"
+    Write-StateLine $State.NativeLoggerReady "Native Logger Quest verified source (.cache/dependencies/native-logger-quest)" `
+        "check the official current manifest and download its immutable SHA-256-verified source archive"
     if ($State.DeploymentRequested) {
         Write-StateLine ([bool]$State.AdbPath) `
             $(if ($State.AdbPath) { "ADB: $($State.AdbPath)" } else { "Google Android Platform Tools 37.0.0" }) `
@@ -411,7 +417,7 @@ function Show-PrerequisiteState {
         $State.QpmInputsReady -and $State.Ffmpeg44Ready -and
         $State.Ffmpeg9Ready -and $State.PythonReady -and
         $State.YtDlpReady -and $State.CertifiReady -and
-        $State.QuickJsReady -and
+        $State.QuickJsReady -and $State.NativeLoggerReady -and
         (-not $State.DeploymentRequested -or $State.AdbPath))
 
     Write-Host ""
@@ -434,6 +440,7 @@ function Show-PrerequisiteState {
     }
     if (-not $downloadNeeded) {
         Write-Host "All pinned project downloads required by the normal build are already cached." -ForegroundColor Green
+        Write-Host "Native Logger Quest's small current-source manifest is still checked when the build starts; a newer immutable archive is downloaded only when its published revision changes."
     }
     Write-Host "============================================================"
 }

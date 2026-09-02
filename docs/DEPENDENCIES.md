@@ -162,6 +162,7 @@ archives are rejected if their committed checksum does not match.
 | x264 software H.264 encoder | commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` | `https://github.com/mirror/x264/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz` | Linux/WSL source cache; statically linked into the FFmpeg 9 `libavcodec` runtime | Pinned SHA-256; GPL-2.0-or-later; 8-bit 4:2:0 library build with CLI/OpenCL disabled. Used only after the player approves last-resort conversion and Android's hardware path cannot complete it. |
 | CPython Android runtime | 3.14.7 ARM64 | `https://www.python.org/ftp/python/3.14.7/python-3.14.7-aarch64-linux-android.tar.gz` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 and required-file validation; runtime libraries and standard library are packaged. |
 | QuickJS-NG amalgamation | 0.16.1 | `https://github.com/quickjs-ng/quickjs/releases/download/v0.16.1/quickjs-amalgam.zip` | `.cache/dependencies/quickjs-ng` | Pinned SHA-256; compiled into Big Screen for yt-dlp's JavaScript challenge solver. |
+| Native Logger Quest | Current published source manifest | `https://github.com/Loud160/NativeLoggerQuest` | `.cache/dependencies/native-logger-quest` | The official current manifest selects an immutable commit archive and SHA-256. The source is statically compiled into `libbigscreen.so`; no logger QMOD or shared runtime is installed. A verified cached revision remains usable when GitHub is temporarily unavailable. |
 | miniz deterministic compressor source | 3.1.2 | Tracked snapshot from `https://github.com/richgel999/miniz/releases/tag/3.1.2` | `tools/deterministic-zip/vendor/miniz-3.1.2`; compiled utility cached under `.cache/build-tools/deterministic-zip` | MIT-licensed source and notice are included in the repository. Build-only; produces standard ZIP/DEFLATE streams for `python314.zip` and the QMOD, and is not packaged. No separate download or installation. |
 | yt-dlp | stable 2026.08.19 | `https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 plus archive-content validation. Stable 2026.08.19 contains the YouTube recovery that temporarily required nightly 2026.08.18.122307. |
 | yt-dlp-ejs | 0.8.0 | Bundled inside the verified yt-dlp release above | Inside the yt-dlp package | Version and both solver payloads are required before packaging. No separate normal-build download. |
@@ -173,6 +174,14 @@ The exact SHA-256 values live beside the URLs in:
 - `scripts/install-pinned-ndk.sh`
 - `scripts/build-ffmpeg-lgpl.sh`
 - `scripts/build_pipeline.py`
+
+Native Logger Quest intentionally uses a small moving manifest rather than a
+hard-coded Big Screen revision. Publishing a logger update changes that
+manifest to point at a reviewed immutable commit archive and its SHA-256; every
+consumer therefore receives the current shared implementation on its next
+online build without downloading arbitrary branch contents. The exact resolved
+version and revision are printed during preparation and recorded in Big
+Screen's successful-build stamp.
 
 Do not update a version or checksum independently. Review the upstream release,
 license, ABI, expected contents, and build configuration together.

@@ -65,7 +65,8 @@ FIRST-RUN NETWORK DOWNLOADS
 ------------------------------------------------------------
 This build downloads only missing or invalid pinned inputs, including QPM
 packages, Android NDK r27d, FFmpeg 4.4.8 and 9.0.1 source, the embedded
-CPython/yt-dlp runtime, QuickJS-NG, and portable ADB when no ADB is installed.
+CPython/yt-dlp runtime, QuickJS-NG, Native Logger Quest source, and portable
+ADB when no ADB is installed.
 Direct archives are checked against pinned SHA-256 values. A first build can
 download several gigabytes and take a while while FFmpeg compiles.
 ------------------------------------------------------------

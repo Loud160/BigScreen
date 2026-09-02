@@ -42,6 +42,7 @@
 #include "bsml/shared/BSML/Components/ExternalComponents.hpp"
 #include "bsml/shared/BSML/Components/ModalView.hpp"
 #include "bsml/shared/Helpers/utilities.hpp"
+#include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "songcore/shared/SongLoader/CustomBeatmapLevel.hpp"
 #include "main.hpp"
@@ -49,6 +50,15 @@
 namespace BigScreen {
     namespace {
         using UiUtility::EnsureLayout;
+
+        template<class T>
+        std::shared_ptr<void> RootManagedObject(T* object)
+        {
+            if(!object)
+                return {};
+            return std::static_pointer_cast<void>(
+                std::make_shared<SafePtr<T>>(object));
+        }
 
         constexpr float PanelWidth = 124.0f;
         constexpr float BrowserListWidth = PanelWidth - 4.0f;
@@ -112,6 +122,7 @@ namespace BigScreen {
         CancelScan();
         controller_ = nullptr;
         selectedLevel_ = nullptr;
+        selectedLevelRoot_.reset();
         onCancel_ = {};
         onAssigned_ = {};
         title_ = nullptr;
@@ -312,6 +323,10 @@ namespace BigScreen {
     void LocalVideoBrowserMenu::Show(GlobalNamespace::BeatmapLevel* level)
     {
         selectedLevel_ = level;
+        if(level)
+            selectedLevelRoot_ = RootManagedObject(level);
+        else
+            selectedLevelRoot_.reset();
         selectedPath_.clear();
         if(title_)
         {

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import pathlib
+import re
 import sys
 import tempfile
 import zipfile
@@ -166,6 +167,34 @@ for invalid in (
     except pipeline.BuildError:
         pass
 
+logger_revision = "a" * 40
+logger_manifest = {
+    "schemaVersion": 1,
+    "name": "Native Logger Quest",
+    "version": "1.2.3",
+    "revision": logger_revision,
+    "archiveUrl": (
+        "https://github.com/Loud160/NativeLoggerQuest/archive/"
+        f"{logger_revision}.zip"
+    ),
+    "archiveSha256": "b" * 64,
+    "sourceDirectory": f"NativeLoggerQuest-{logger_revision}",
+}
+assert pipeline.validate_native_logger_manifest(logger_manifest) == logger_manifest
+for invalid_logger_manifest in (
+    dict(logger_manifest, revision="main"),
+    dict(logger_manifest, archiveSha256="not-a-hash"),
+    dict(logger_manifest, archiveUrl="https://example.com/logger.zip"),
+    dict(logger_manifest, sourceDirectory="different-root"),
+):
+    try:
+        pipeline.validate_native_logger_manifest(invalid_logger_manifest)
+        raise AssertionError(
+            f"Unsafe Native Logger Quest manifest was accepted: {invalid_logger_manifest}"
+        )
+    except pipeline.BuildError:
+        pass
+
 with tempfile.TemporaryDirectory(prefix="BigScreen-PipelineTests-") as temporary:
     directory = pathlib.Path(temporary)
     first = directory / "first.bin"
@@ -197,6 +226,44 @@ with tempfile.TemporaryDirectory(prefix="BigScreen-PipelineTests-") as temporary
         raise AssertionError("Duplicate ZIP entries were not rejected.")
     except pipeline.BuildError as error:
         assert "Duplicate ZIP entry" in str(error)
+
+    logger_archive = directory / "logger.zip"
+    logger_extract = directory / "logger-extract"
+    logger_extract.mkdir()
+    with zipfile.ZipFile(logger_archive, "w") as archive:
+        archive.writestr(
+            f"NativeLoggerQuest-{logger_revision}/CMakeLists.txt",
+            "cmake_minimum_required(VERSION 3.20)\n",
+        )
+    pipeline.extract_native_logger_archive(
+        logger_archive,
+        logger_extract,
+        f"NativeLoggerQuest-{logger_revision}",
+    )
+    extracted_logger_file = (
+        logger_extract
+        / f"NativeLoggerQuest-{logger_revision}"
+        / "CMakeLists.txt"
+    )
+    assert extracted_logger_file.is_file()
+    extracted_logger_root = extracted_logger_file.parent
+    first_tree_hash = pipeline.source_tree_sha256(extracted_logger_root)
+    assert re.fullmatch(r"[0-9a-f]{64}", first_tree_hash)
+    extracted_logger_file.write_text("changed\n", encoding="utf-8")
+    assert pipeline.source_tree_sha256(extracted_logger_root) != first_tree_hash
+
+    unsafe_logger_archive = directory / "unsafe-logger.zip"
+    with zipfile.ZipFile(unsafe_logger_archive, "w") as archive:
+        archive.writestr("../outside.txt", "unsafe")
+    try:
+        pipeline.extract_native_logger_archive(
+            unsafe_logger_archive,
+            directory / "unsafe-extract",
+            f"NativeLoggerQuest-{logger_revision}",
+        )
+        raise AssertionError("A traversal entry in the logger archive was accepted.")
+    except pipeline.BuildError as error:
+        assert "Unsafe Native Logger Quest archive entry" in str(error)
 
     payload = directory / "payload"
     payload.mkdir()

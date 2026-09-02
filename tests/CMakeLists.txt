@@ -31,18 +31,32 @@ if(NOT MSVC)
 endif()
 
 find_package(Threads REQUIRED)
+set(BIGSCREEN_NATIVE_LOGGER_SOURCE
+    "${CMAKE_CURRENT_LIST_DIR}/../.cache/dependencies/native-logger-quest/source")
+if(NOT EXISTS "${BIGSCREEN_NATIVE_LOGGER_SOURCE}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Native Logger Quest is not prepared. Run scripts/build_pipeline.py prepare-native-logger first.")
+endif()
+set(NATIVE_LOGGER_QUEST_TAG "BigScreen" CACHE STRING "" FORCE)
+set(NATIVE_LOGGER_QUEST_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(
+    "${BIGSCREEN_NATIVE_LOGGER_SOURCE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/native-logger-quest")
+
 add_executable(
     bigscreen-native-logger-tests
-    NativeLoggerTests.cpp
-    ../src/NativeLogger.cpp)
+    NativeLoggerTests.cpp)
 target_compile_features(bigscreen-native-logger-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-native-logger-tests PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../include")
-target_link_libraries(bigscreen-native-logger-tests PRIVATE Threads::Threads)
+target_link_libraries(bigscreen-native-logger-tests PRIVATE
+    NativeLoggerQuest::NativeLoggerQuest)
 add_test(NAME bigscreen-native-logger-tests COMMAND bigscreen-native-logger-tests)
 if(NOT MSVC)
     target_compile_options(bigscreen-native-logger-tests PRIVATE
-        -Wall -Wextra -Wpedantic -Werror)
+        -UNDEBUG -Wall -Wextra -Wpedantic -Werror)
+else()
+    target_compile_options(bigscreen-native-logger-tests PRIVATE /UNDEBUG)
 endif()
 
 add_executable(

@@ -60,6 +60,7 @@ export PATH="$(dirname "${qpm_executable}"):${PATH}"
 
 (
     cd "${repository_root}"
+    python3 "${script_dir}/build_pipeline.py" prepare-native-logger
     python3 "${script_dir}/build_pipeline.py" prepare-quickjs
     cmake -S "${repository_root}/tests" \
         -B "${repository_root}/build-host-tests-linux"

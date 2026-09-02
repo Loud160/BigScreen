@@ -11,6 +11,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -74,6 +75,7 @@ namespace BigScreen {
 
         HMUI::ViewController* controller_ = nullptr;
         GlobalNamespace::BeatmapLevel* selectedLevel_ = nullptr;
+        std::shared_ptr<void> selectedLevelRoot_;
         std::function<void()> onCancel_;
         std::function<void(const std::string&)> onAssigned_;
         TMPro::TextMeshProUGUI* title_ = nullptr;

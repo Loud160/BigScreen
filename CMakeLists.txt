@@ -104,6 +104,24 @@ list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]FrameDecoder\\.cpp$")
 # to the conservative FFmpeg 4 compatibility runtime.
 list(FILTER cpp_file_list EXCLUDE REGEX "[/\\\\]VideoTranscoder\\.cpp$")
 
+# Native Logger Quest is fetched and SHA-256 verified by the canonical build
+# pipeline, then compiled into libbigscreen.so as a private static library. It
+# remains a build-time source dependency: no logger QMOD or shared runtime is
+# installed on the headset, and Big Screen keeps its existing log paths,
+# record tag, queue limits, and lifecycle through its small compatibility
+# header under include/BigScreen.
+set(BIGSCREEN_NATIVE_LOGGER_SOURCE
+        ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/native-logger-quest/source)
+if(NOT EXISTS ${BIGSCREEN_NATIVE_LOGGER_SOURCE}/CMakeLists.txt)
+        message(FATAL_ERROR
+                "Native Logger Quest is not prepared. Run scripts/build_pipeline.py prepare-native-logger or use a supported root build launcher.")
+endif()
+set(NATIVE_LOGGER_QUEST_TAG "BigScreen" CACHE STRING "" FORCE)
+set(NATIVE_LOGGER_QUEST_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(
+        ${BIGSCREEN_NATIVE_LOGGER_SOURCE}
+        ${CMAKE_CURRENT_BINARY_DIR}/native-logger-quest)
+
 set(BIGSCREEN_FFMPEG44_DIR
         ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/ffmpeg-lgpl)
 set(BIGSCREEN_FFMPEG9_DIR
@@ -181,6 +199,10 @@ add_library(
         ${CMAKE_CURRENT_SOURCE_DIR}/.cache/dependencies/quickjs-ng/source/quickjs-amalgam.c
 )
 
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+        NativeLoggerQuest::NativeLoggerQuest)
+native_logger_quest_enable_paper2_abort_bridge(${CMAKE_PROJECT_NAME})
+
 # Preserve the incomplete Cinema bloom/color-blending implementation without
 # allowing it to enter release builds accidentally. Developers can opt into a
 # dedicated investigation build explicitly; the shipped default remains off.
@@ -188,16 +210,6 @@ option(BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM
         "Compile the unfinished Cinema bloom experiment" OFF)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM=$<BOOL:${BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM}>)
-
-# beatsaber-hook's inline abort helpers currently issue two Paper2 C-ABI calls.
-# Redirect just libbigscreen.so's references to a hidden first-party bridge,
-# then remove QPM's transitive Paper library link in the deferred dependency
-# setup. Other mods keep using the real Paper2 supplied for their own declared
-# dependencies; Big Screen neither exports replacement symbols nor interposes
-# on calls made by another shared object.
-target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
-        "-Wl,--wrap=paper2_queue_log_bytes_ffi"
-        "-Wl,--wrap=paper2_wait_for_flush")
 
 # Deliberately crashing Beat Saber is useful only while validating the private
 # logger's crash-tail persistence. Keep the control absent from every ordinary
