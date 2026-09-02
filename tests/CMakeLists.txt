@@ -74,6 +74,20 @@ if(NOT MSVC)
 endif()
 
 add_executable(
+    bigscreen-video-library-state-tests
+    VideoLibraryMenuStateTests.cpp)
+target_compile_features(bigscreen-video-library-state-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-video-library-state-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include")
+add_test(
+    NAME bigscreen-video-library-state-tests
+    COMMAND bigscreen-video-library-state-tests)
+if(NOT MSVC)
+    target_compile_options(bigscreen-video-library-state-tests PRIVATE
+        -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(
     bigscreen-downloader-activation-tests
     DownloaderActivationTests.cpp)
 target_compile_features(bigscreen-downloader-activation-tests PRIVATE cxx_std_20)

@@ -17,6 +17,7 @@
 
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/DownloadRequestPolicy.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/ErrorManager.hpp"
 #include "BigScreen/MenuFlowCoordinator.hpp"
@@ -1504,23 +1505,18 @@ namespace BigScreen {
 
         auto& downloader = DownloadManager::Instance();
         const auto& descriptor = selectedDescriptor_;
-        DownloadRequest request;
-        request.levelId = descriptor.levelId;
-        request.songName = descriptor.songName;
-        request.songAuthor = descriptor.songAuthor;
-        request.sourceUrl = *descriptor.downloadUrl;
-        request.origin = descriptor.downloadOrigin;
-        request.explicitContentAllowed =
-            UiUtility::ExplicitContentAllowed();
-        request.requestedHeight = height;
-        request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
-        if(descriptor.mapperDefinition)
-        {
-            request.offsetSeconds = descriptor.mapperDefinition->offsetSeconds;
-            request.playbackRate = descriptor.mapperDefinition->playbackRate;
-            request.fitToSong = descriptor.mapperDefinition->fitToSong;
-            request.blackDuringLeadIn = descriptor.mapperDefinition->blackDuringLeadIn;
-        }
+        auto request = MakeVideoDownloadRequest(
+            descriptor.levelId,
+            descriptor.songName,
+            descriptor.songAuthor,
+            *descriptor.downloadUrl,
+            descriptor.downloadOrigin,
+            UiUtility::ExplicitContentAllowed(),
+            descriptor.mapperDefinition
+                ? &*descriptor.mapperDefinition
+                : nullptr,
+            height,
+            Settings::Instance().PlaybackFpsLimit());
         std::string error;
         if(!downloader.Start(std::move(request), error))
         {

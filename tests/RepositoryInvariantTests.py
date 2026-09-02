@@ -185,6 +185,15 @@ video_editor_notice_model = (
 video_editor_notice_tests = (
     root / "tests/VideoEditorNoticeModelTests.cpp"
 ).read_text(encoding="utf-8")
+video_library_menu_state = (
+    root / "include/BigScreen/VideoLibraryMenuState.hpp"
+).read_text(encoding="utf-8")
+download_request_policy = (
+    root / "include/BigScreen/DownloadRequestPolicy.hpp"
+).read_text(encoding="utf-8")
+video_library_menu_state_tests = (
+    root / "tests/VideoLibraryMenuStateTests.cpp"
+).read_text(encoding="utf-8")
 host_test_cmake = (root / "tests/CMakeLists.txt").read_text(encoding="utf-8")
 frame_decoder_header = (root / "include/BigScreen/FrameDecoder.hpp").read_text(
     encoding="utf-8"
@@ -1920,14 +1929,11 @@ assert "downloader.IsReady() && !release.Active()" not in settings_menu_source
 # list. Backend support alone is insufficient: otherwise the old single button
 # silently sends DownloadRequest's default 1080p value for every source.
 assert "std::vector<int> availableHeights" in download_manager_header
-assert "request.requestedHeight = height" in library_menu_source
-assert "request.requestedHeight = height" in selection_toggle_source
-assert "request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit()" in (
-    library_menu_source
-)
-assert "request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit()" in (
-    selection_toggle_source
-)
+assert "request.requestedHeight = requestedHeight" in download_request_policy
+assert "request.maximumSourceFps = maximumSourceFps" in download_request_policy
+for download_ui_source in (library_menu_source, selection_toggle_source):
+    assert "MakeVideoDownloadRequest(" in download_ui_source
+    assert "Settings::Instance().PlaybackFpsLimit())" in download_ui_source
 assert "download.availableHeights" in library_menu_source
 assert "snapshot.availableHeights" in selection_toggle_source
 assert "verifiedAvailableHeights" in download_manager_source
@@ -2083,7 +2089,9 @@ assert "editorNoticeModel_" not in refresh_details
 select_row = library_menu_source.split(
     "void VideoLibraryMenu::SelectRow(int row)", 1
 )[1].split("bool VideoLibraryMenu::OpenEditorForLevelId(", 1)[0]
-assert "ResolveInstalledLevel(visible_[row]->levelId)" in select_row
+assert "item->catalogGeneration != catalogGeneration_" in select_row
+assert "visibleCatalogGeneration_ != catalogGeneration_" in select_row
+assert "ResolveInstalledLevel(item->levelId)" in select_row
 assert "SelectLevel(level, true);" in select_row
 select_level = library_menu_source.split(
     "void VideoLibraryMenu::SelectLevel(", 1
@@ -2102,6 +2110,16 @@ assert "SongCore::API::Loading::GetLevelByLevelID(" in library_menu_source
 assert "repository->GetBeatmapLevelById(" in library_menu_source
 assert "GlobalNamespace::BeatmapLevel* level" not in (
     library_menu_header.split("struct SongLibraryItem", 1)[1].split("};", 1)[0]
+)
+assert "std::uint64_t catalogGeneration" in (
+    library_menu_header.split("struct SongLibraryItem", 1)[1].split("};", 1)[0]
+)
+assert "NextCatalogGeneration.fetch_add(" in library_menu_source
+assert "audioLoadCatalogGeneration_ == selectedCatalogGeneration_" in (
+    library_menu_source
+)
+assert "selectedCatalogGeneration_ == catalogGeneration_" in (
+    library_menu_source
 )
 assert "std::shared_ptr<void> selectedLevelRoot_;" in library_menu_header
 assert "levelDataLoadTaskRoot_" in library_menu_header
@@ -2143,7 +2161,7 @@ for cleared_notice_state in (
     "editorTransferKind_ = EditorTransferKind::None;",
     "editorTransferCancellationRequested_ = false;",
     "pendingDownloadRefreshLevelId_.clear();",
-    "terminalDownloadProgressLevelId_.clear();",
+    "terminalDownloadProgress_.Reset();",
     "editorNoticePaintPending_ = false;",
     "editorNoticePaintAfterFrame_ = -1;",
     "DestroyEditorNoticeSurface();",
@@ -2214,6 +2232,31 @@ assert 'PublishPreviewNotice("Loading song audio...")' not in (
     request_selected_audio
 )
 assert "bigscreen-video-editor-notice-tests" in host_test_cmake
+assert "bigscreen-video-library-state-tests" in host_test_cmake
+assert "enum class PreviewTransportState" in video_library_menu_state
+assert "class TerminalDownloadProgressOwner final" in video_library_menu_state
+for obsolete_preview_flag in (
+    "previewPlaying_",
+    "previewPaused_",
+    "playWhenAudioReady_",
+    "playWhenVideoReady_",
+    "previewPreRollPending_",
+    "previewClockValid_",
+):
+    assert obsolete_preview_flag not in library_menu_header
+    assert obsolete_preview_flag not in library_menu_source
+for required_state_case in (
+    "switching wait stages cannot leave overlapping boolean states",
+    "stopping clears transport, pre-roll, and clock together",
+    "terminal progress is owned by exactly one map",
+    "shared request policy copies the active timing configuration",
+):
+    assert required_state_case in video_library_menu_state_tests
+assert "inline DownloadRequest MakeVideoDownloadRequest(" in (
+    download_request_policy
+)
+assert library_menu_source.count("MakeVideoDownloadRequest(") == 1
+assert selection_toggle_source.count("MakeVideoDownloadRequest(") == 1
 for required_notice_case in (
     "a newly opened map starts with a blank notice",
     "a delayed terminal event cannot overwrite a newer user action",
@@ -2788,7 +2831,7 @@ assert "bool FirstFrameUploaded() const" in playback_header
 assert "BeginLibraryPreviewMeasurement" in playback_header
 assert "maySamplePlaybackFrame" in playback_source
 assert "context_ == PlaybackContext::Gameplay\n                        ? gameplayLastNoteTime_\n                        : std::nullopt" in playback_source
-assert "playWhenVideoReady_" in library_menu_source
+assert "PreviewTransportState::WaitingForVideo" in library_menu_source
 assert "bool RestartLibraryPreview(double songTimeSeconds);" in playback_header
 assert "libraryPreviewRestartGeneration_ = decoder_.Restart(" in playback_source
 assert "libraryPreviewRestartPending_" in playback_source
@@ -2804,7 +2847,7 @@ assert preview_loop.index("playback.RestartLibraryPreview(previewSongTime_)") < 
 stop_preview_audio = library_menu_source.split(
     "void VideoLibraryMenu::StopPreviewAudio(bool returnToMenuMusic)", 1
 )[1].split("void VideoLibraryMenu::RecoverInvalidPreviewAudio", 1)[0]
-assert "ClearPreviewPreRoll();" in stop_preview_audio
+assert "previewTransport_.Stop();" in stop_preview_audio
 assert "AdvanceSmoothedPreviewClock" in library_menu_source
 assert "playbackControlsTickCounter_ >= 6" in library_menu_source
 assert "downloadActive || periodicDownloadWasActive_" in library_menu_source
@@ -2856,7 +2899,9 @@ assert "library.DeleteLocalVideoFile(" in library_menu_source
 assert "descriptor.hasMapperLocalFile" in library_menu_source
 assert "const MapVideoConfig* EditorTimingConfig(" in library_menu_source
 assert "if(descriptor.mapperDefinition)" in library_menu_source
-assert library_menu_source.count("const auto* timing = EditorTimingConfig(descriptor);") >= 2
+assert "void VideoLibraryMenu::ApplyDescriptorToEditor(" in library_menu_source
+assert library_menu_source.count(
+    "const auto* timing = EditorTimingConfig(descriptor);") == 1
 assert "offset_ = timing ? timing->offsetSeconds : 0.0;" in library_menu_source
 assert "std::vector<UnityEngine::GameObject*> timingRows_;" in library_menu_header
 assert "mapperTimingWaitingForVideo" in library_menu_source

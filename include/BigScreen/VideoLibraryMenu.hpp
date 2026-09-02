@@ -20,6 +20,7 @@
 
 #include "BigScreen/VideoEditorNoticeModel.hpp"
 #include "BigScreen/VideoLibrary.hpp"
+#include "BigScreen/VideoLibraryMenuState.hpp"
 #include "beatsaber-hook/shared/utils/typedefs.h"
 
 namespace BSML {
@@ -50,6 +51,7 @@ namespace BigScreen {
 
     struct SongLibraryItem {
         SongLibraryGroup group = SongLibraryGroup::Ost;
+        std::uint64_t catalogGeneration = 0;
         // Snapshot immutable menu metadata once. Re-reading managed IL2CPP
         // strings while sorting/filtering thousands of rows is unnecessary
         // interop work and was amplified on large SongCore libraries.
@@ -166,6 +168,12 @@ namespace BigScreen {
             std::string title,
             std::string detail);
         void RefreshLocalVideoStatus();
+        /// Applies one descriptor snapshot to every editable URL/timing field.
+        /// Selection, mapper refresh, deletion, and persistence rollback all
+        /// use this path so one control cannot retain values from an older map.
+        void ApplyDescriptorToEditor(
+            const VideoDescriptor& descriptor,
+            bool refreshUrl = true);
         /// Handles the two explicit confirmation choices. Unlinking always
         /// removes the assignment only; deletion additionally removes the
         /// active physical file after VideoLibrary validates its ownership
@@ -270,7 +278,7 @@ namespace BigScreen {
         std::string pendingDownloadRefreshLevelId_;
         // Terminal probe/failure/cancellation progress remains visible until a
         // new editor action begins, independently from any status-text model.
-        std::string terminalDownloadProgressLevelId_;
+        TerminalDownloadProgressOwner terminalDownloadProgress_;
         VideoEditorNoticeModel editorNoticeModel_;
         VideoEditorNoticeModel::VisitToken editorNoticeVisit_;
         VideoEditorNoticeModel::TransferToken editorTransferNotice_;
@@ -368,6 +376,7 @@ namespace BigScreen {
         GlobalNamespace::BeatmapLevel* selected_ = nullptr;
         std::string selectedLevelId_;
         std::shared_ptr<void> selectedLevelRoot_;
+        std::uint64_t selectedCatalogGeneration_ = 0;
         GlobalNamespace::IPreviewMediaData* previewMediaData_ = nullptr;
         // Unity can destroy menu audio objects during a flow transition while
         // their IL2CPP wrappers remain non-null. UnityW makes every truth test
@@ -398,6 +407,7 @@ namespace BigScreen {
         std::string completedVideoThumbnailIdentity_;
         std::string refreshedDownloadIdentity_;
         std::string audioLoadLevelId_;
+        std::uint64_t audioLoadCatalogGeneration_ = 0;
         UnityEngine::Sprite* loadedThumbnailSprite_ = nullptr;
         double offset_ = 0.0;
         double rate_ = 1.0;
@@ -406,23 +416,12 @@ namespace BigScreen {
         bool blackDuringLeadIn_ = false;
         bool active_ = false;
         bool editorVisible_ = false;
-        bool previewPlaying_ = false;
-        bool previewPaused_ = false;
-        bool playWhenAudioReady_ = false;
+        PreviewTransport previewTransport_;
         // Opening FFmpeg and producing the first drawable picture must finish
         // before the audition clock begins. Otherwise the decoder chases audio
         // that is already advancing and the diagnostics correctly report the
         // resulting media-timestamp gaps as skipped frames.
-        bool playWhenVideoReady_ = false;
-        // Initial Play and every automatic loop wait briefly before releasing
-        // audio. This is deliberately menu-preview state rather than decoder
-        // state: gameplay already prewarms during its scene transition.
-        bool previewPreRollPending_ = false;
-        double previewPreRollReadyRealtime_ = 0.0;
         bool previewMeasurementStarted_ = false;
-        bool previewClockValid_ = false;
-        double smoothedPreviewSongTime_ = 0.0;
-        double previewClockRealtime_ = 0.0;
         bool suppressScrubberCallback_ = false;
         float scrubberFollowResumeTime_ = 0.0f;
         bool suppressTimingCallbacks_ = false;
@@ -468,6 +467,13 @@ namespace BigScreen {
         std::size_t catalogBuildLevelIndex_ = 0;
         std::size_t catalogBuildSongCoreIndex_ = 0;
         std::uint64_t catalogBuildGeneration_ = 0;
+        // SongCore may replace every managed level wrapper in one refresh.
+        // The native catalog remains keyed by stable IDs, while these epochs
+        // prevent old visible-row callbacks or selected wrappers from being
+        // accepted after a newer SongCore generation becomes authoritative.
+        std::uint64_t catalogGeneration_ = 0;
+        std::uint64_t publishedCatalogGeneration_ = 0;
+        std::uint64_t visibleCatalogGeneration_ = 0;
         int pendingDownloadHeight_ = 0;
     };
 }

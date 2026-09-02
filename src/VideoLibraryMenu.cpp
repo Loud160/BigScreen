@@ -31,6 +31,7 @@
 #include <unordered_set>
 
 #include "BigScreen/DownloadManager.hpp"
+#include "BigScreen/DownloadRequestPolicy.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
@@ -234,7 +235,11 @@ namespace BigScreen {
             return worker;
         }
 
-        std::atomic<std::uint64_t> NextCatalogBuildGeneration{0};
+        // The sorter outlives the retained menu object. A globally monotonic
+        // generation prevents a result queued before ForgetUi/recreation from
+        // colliding with a new menu instance that starts its local fields over.
+        std::atomic<std::uint64_t> NextCatalogGeneration{0};
+
         // Keep the UI slider normalized and translate its position to song
         // time. One thousand positions are comfortably finer than a controller
         // can place the handle in VR and work for songs of any duration.
@@ -1517,7 +1522,7 @@ namespace BigScreen {
                 url_ = Trim(std::string(value));
                 if(!suppressUrlCallback_)
                 {
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     mapperProvidedUrl_ = false;
                     RefreshUrlTextColor();
                 }
@@ -1838,7 +1843,7 @@ namespace BigScreen {
                     suppressTimingCallbacks_ = true;
                     if(rateSetting_) rateSetting_->set_Value(1.0f);
                     suppressTimingCallbacks_ = false;
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     ApplyTimingToActivePreview();
                     RefreshDetails();
                     PublishEditorNotice(
@@ -1961,7 +1966,7 @@ namespace BigScreen {
                 blackDuringLeadIn_ = enabled;
                 if(SaveTiming())
                 {
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     ApplyTimingToActivePreview();
                     RefreshDetails();
                     PublishEditorNotice(enabled
@@ -2396,7 +2401,7 @@ namespace BigScreen {
                 pendingLocalDeletePath_.clear();
                 if(!sameAssignment)
                 {
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     RefreshDetails();
                     PublishEditorNotice(
                         "The assigned video changed. Nothing was deleted.");
@@ -2532,8 +2537,7 @@ namespace BigScreen {
         catalogBuildPackIndex_ = 0;
         catalogBuildLevelIndex_ = 0;
         catalogBuildSongCoreIndex_ = 0;
-        catalogBuildGeneration_ =
-            NextCatalogBuildGeneration.fetch_add(1) + 1;
+        catalogBuildGeneration_ = catalogGeneration_;
         catalogBuildPhase_ = CatalogBuildPhase::Repository;
         catalogPrewarmModelReady_ = false;
         catalogPrewarmIndex_ = 0;
@@ -2562,6 +2566,7 @@ namespace BigScreen {
         const std::string normalizedAuthor = Lower(author);
         catalogBuildItems_.push_back({
             group,
+            catalogBuildGeneration_,
             levelId,
             name,
             author,
@@ -2692,11 +2697,13 @@ namespace BigScreen {
                    catalogBuildGeneration_, sortedCatalog))
                 return false;
             catalog_ = std::move(sortedCatalog);
+            publishedCatalogGeneration_ = catalogBuildGeneration_;
             catalogBuildPhase_ = CatalogBuildPhase::Idle;
             if(!selectedLevelId_.empty())
             {
                 selected_ = ResolveInstalledLevel(selectedLevelId_);
                 selectedLevelRoot_ = RootManagedObject(selected_);
+                selectedCatalogGeneration_ = catalogGeneration_;
             }
 
             // Recovery runs only after a damaged/missing library manifest;
@@ -2827,6 +2834,7 @@ namespace BigScreen {
         }
 
         visible_.clear();
+        visibleCatalogGeneration_ = publishedCatalogGeneration_;
         if(!list_) return;
         // Keep the managed row objects allocated by the initial cheap catalog
         // pass. Metadata completion, filter changes, and editor returns update
@@ -2973,8 +2981,26 @@ namespace BigScreen {
 
     void VideoLibraryMenu::SelectRow(int row)
     {
-        if(row < 0 || row >= static_cast<int>(visible_.size())) return;
-        if(auto* level = ResolveInstalledLevel(visible_[row]->levelId))
+        if(row < 0 || row >= static_cast<int>(visible_.size()))
+            return;
+
+        const auto* item = visible_[row];
+        if(!item || item->catalogGeneration != catalogGeneration_ ||
+           visibleCatalogGeneration_ != catalogGeneration_)
+        {
+            // SongCore replaces its managed BeatmapLevel wrappers when it
+            // refreshes. A cell from the preceding catalog may still receive
+            // one final click before HMUI rebinds the list, so reject that
+            // obsolete row instead of opening whatever now occupies its old
+            // managed address.
+            BigScreen::BigScreenLogger.debug(
+                "Ignored a Video Library row from catalog generation {} while generation {} is active",
+                item ? item->catalogGeneration : 0,
+                catalogGeneration_);
+            return;
+        }
+
+        if(auto* level = ResolveInstalledLevel(item->levelId))
             SelectLevel(level, true);
     }
 
@@ -3032,6 +3058,7 @@ namespace BigScreen {
             ? std::string(level->levelID)
             : std::string{};
         selectedLevelRoot_ = RootManagedObject(level);
+        selectedCatalogGeneration_ = catalogGeneration_;
         DiagnosticSessionLogger::Instance().MenuEvent(
             "song_selected", "VideoLibraryMenu", {
                 {"levelId", selected_ && selected_->levelID
@@ -3046,7 +3073,7 @@ namespace BigScreen {
                 ? std::string(selected_->levelID) : std::string("no level id"));
         previewSongTime_ = 0.0;
         pendingDownloadRefreshLevelId_.clear();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         if(selected_ && selected_->levelID)
         {
             const auto download = DownloadManager::Instance().Snapshot();
@@ -3069,27 +3096,7 @@ namespace BigScreen {
             UpdateCatalogMetadataIssue(*item, descriptor);
             RefreshBrowserMetadataIssueButton();
         }
-        const auto* timing = EditorTimingConfig(descriptor);
-        url_ = descriptor.downloadUrl.value_or("");
-        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
-            descriptor.downloadOrigin == VideoOrigin::Mapper;
-        offset_ = timing ? timing->offsetSeconds : 0.0;
-        rate_ = timing ? timing->playbackRate : 1.0;
-        fitToSong_ = timing ? timing->fitToSong : false;
-        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
-        if(urlInput_)
-        {
-            suppressUrlCallback_ = true;
-            urlInput_->SetText(url_);
-            suppressUrlCallback_ = false;
-            RefreshUrlTextColor();
-        }
-        suppressTimingCallbacks_ = true;
-        if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
-        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
-        SetToggleWithoutNotification(fitToggle_, fitToSong_);
-        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
-        suppressTimingCallbacks_ = false;
+        ApplyDescriptorToEditor(descriptor);
         RefreshLocalVideoStatus();
         if(navigateToEditor)
             ShowEditor();
@@ -3119,7 +3126,7 @@ namespace BigScreen {
         CloseEditorNotice();
         editorVisible_ = false;
         pendingDownloadRefreshLevelId_.clear();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         StopPreviewAudio(true);
         // Returning from the selected-map child page relinquishes the video,
         // not only its audio. Stop closes the decoder and synchronously clears
@@ -3177,12 +3184,45 @@ namespace BigScreen {
             : VideoOrigin::Mapper;
     }
 
+    void VideoLibraryMenu::ApplyDescriptorToEditor(
+        const VideoDescriptor& descriptor,
+        bool refreshUrl)
+    {
+        const auto* timing = EditorTimingConfig(descriptor);
+        if(refreshUrl)
+        {
+            url_ = descriptor.downloadUrl.value_or("");
+            mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
+                descriptor.downloadOrigin == VideoOrigin::Mapper;
+            if(urlInput_)
+            {
+                suppressUrlCallback_ = true;
+                urlInput_->SetText(url_);
+                suppressUrlCallback_ = false;
+            }
+            RefreshUrlTextColor();
+        }
+
+        offset_ = timing ? timing->offsetSeconds : 0.0;
+        rate_ = timing ? timing->playbackRate : 1.0;
+        fitToSong_ = timing ? timing->fitToSong : false;
+        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
+        suppressTimingCallbacks_ = true;
+        if(offsetSetting_)
+            offsetSetting_->set_Value(static_cast<float>(offset_));
+        if(rateSetting_)
+            rateSetting_->set_Value(static_cast<float>(rate_));
+        SetToggleWithoutNotification(fitToggle_, fitToSong_);
+        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
+        suppressTimingCallbacks_ = false;
+    }
+
     void VideoLibraryMenu::BeginUrlProbe()
     {
         ClearThumbnail();
         if(!selected_ || !selected_->levelID)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice(
                 "Select a song before checking a YouTube link.");
             RefreshDetails();
@@ -3207,7 +3247,7 @@ namespace BigScreen {
         const auto normalizedUrl = CoreLogic::NormalizeYouTubeVideoInput(url_);
         if(!normalizedUrl)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice(url_.empty()
                 ? "Enter a YouTube link or 11-character video ID first."
                 : "Enter a YouTube link (https:// is optional) or an exact 11-character video ID.");
@@ -3233,7 +3273,7 @@ namespace BigScreen {
             url_,
             error))
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice(error.empty()
                 ? "The YouTube link could not be checked."
                 : error);
@@ -3242,7 +3282,7 @@ namespace BigScreen {
         {
             ownedDownloadLevelId_ = std::string(selected_->levelID);
             pendingDownloadRefreshLevelId_ = std::string(selected_->levelID);
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             // Bind the asynchronous probe result to the exact text currently
             // in the field. Clearing or replacing that text invalidates this
             // identity, preventing a completed older probe from restoring a
@@ -3261,7 +3301,7 @@ namespace BigScreen {
         const auto current = downloader.Snapshot();
         if(!selected_)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice("Select a song before downloading a video.");
             RefreshDetails();
             return;
@@ -3293,7 +3333,7 @@ namespace BigScreen {
             }
             else
             {
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 PublishEditorNotice(
                     "Another downloader task is already running.");
             }
@@ -3411,36 +3451,37 @@ namespace BigScreen {
         url_ = Trim(url_);
         if(url_.empty())
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice("Enter a YouTube link first.");
             RefreshDetails();
             return;
         }
         if(!IsYouTubeUrl(url_))
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice("Use a youtube.com or youtu.be link.");
             RefreshDetails();
             return;
         }
-        DownloadRequest request;
-        request.levelId = selectedLevelId;
-        request.songName = selected_->songName
-            ? std::string(selected_->songName)
-            : std::string("Unknown Song");
-        request.songAuthor = selected_->songAuthorName
-            ? std::string(selected_->songAuthorName)
-            : std::string{};
-        request.sourceUrl = url_;
-        request.origin = VideoOrigin::User;
-        request.explicitContentAllowed =
-            UiUtility::ExplicitContentAllowed();
-        request.offsetSeconds = offset_;
-        request.playbackRate = rate_;
-        request.fitToSong = fitToSong_;
-        request.blackDuringLeadIn = blackDuringLeadIn_;
-        request.requestedHeight = height;
-        request.maximumSourceFps = Settings::Instance().PlaybackFpsLimit();
+        MapVideoConfig editorTiming;
+        editorTiming.offsetSeconds = offset_;
+        editorTiming.playbackRate = rate_;
+        editorTiming.fitToSong = fitToSong_;
+        editorTiming.blackDuringLeadIn = blackDuringLeadIn_;
+        auto request = MakeVideoDownloadRequest(
+            selectedLevelId,
+            selected_->songName
+                ? std::string(selected_->songName)
+                : std::string("Unknown Song"),
+            selected_->songAuthorName
+                ? std::string(selected_->songAuthorName)
+                : std::string{},
+            url_,
+            VideoOrigin::User,
+            UiUtility::ExplicitContentAllowed(),
+            &editorTiming,
+            height,
+            Settings::Instance().PlaybackFpsLimit());
         std::string error;
         BigScreen::BigScreenLogger.info(
             "Download {}p button pressed for {}",
@@ -3456,7 +3497,7 @@ namespace BigScreen {
             const std::string failureMessage = error.empty()
                 ? "The download could not be started."
                 : error;
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             BigScreen::BigScreenLogger.error(
                 "Could not start download for {}: {}",
                 selectedLevelId,
@@ -3473,7 +3514,7 @@ namespace BigScreen {
                     {"height", std::to_string(height)}});
             ownedDownloadLevelId_ = selectedLevelId;
             pendingDownloadRefreshLevelId_ = selectedLevelId;
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             // The same URL and tier can legitimately produce the same title,
             // byte count, and deterministic paths as the previous download.
             // Clear the per-transfer presentation identities when a new job
@@ -3498,7 +3539,7 @@ namespace BigScreen {
                 clipboardValue ? std::string(clipboardValue) : std::string{});
             if(clipboard.empty())
             {
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 PublishEditorNotice(
                     "The Quest clipboard is empty.");
                 RefreshDetails();
@@ -3508,7 +3549,7 @@ namespace BigScreen {
             url_ = clipboard;
             mapperProvidedUrl_ = false;
             probedUrl_.clear();
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             suppressUrlCallback_ = true;
             urlInput_->SetText(url_);
             suppressUrlCallback_ = false;
@@ -3521,7 +3562,7 @@ namespace BigScreen {
             ErrorManager::Instance().RecordError(
                 "Reading the Quest clipboard",
                 error.what());
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice("The Quest clipboard could not be read.");
             RefreshDetails();
         }
@@ -3531,7 +3572,7 @@ namespace BigScreen {
     {
         if(!selected_ || !selected_->levelID)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice(
                 "Select a song before refreshing mapper settings.");
             RefreshDetails();
@@ -3554,30 +3595,9 @@ namespace BigScreen {
             UpdateCatalogMetadataIssue(*item, descriptor);
             RefreshBrowserMetadataIssueButton();
         }
-        const auto* timing = EditorTimingConfig(descriptor);
-        url_ = descriptor.downloadUrl.value_or("");
-        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
-            descriptor.downloadOrigin == VideoOrigin::Mapper;
-        offset_ = timing ? timing->offsetSeconds : 0.0;
-        rate_ = timing ? timing->playbackRate : 1.0;
-        fitToSong_ = timing ? timing->fitToSong : false;
-        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
+        ApplyDescriptorToEditor(descriptor);
 
-        if(urlInput_)
-        {
-            suppressUrlCallback_ = true;
-            urlInput_->SetText(url_);
-            suppressUrlCallback_ = false;
-            RefreshUrlTextColor();
-        }
-        suppressTimingCallbacks_ = true;
-        if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
-        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
-        SetToggleWithoutNotification(fitToggle_, fitToSong_);
-        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
-        suppressTimingCallbacks_ = false;
-
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         RefreshLocalVideoStatus();
         StartSelectedPreview();
         RefreshDetails();
@@ -3782,7 +3802,7 @@ namespace BigScreen {
         const auto query = Trim(song + (artist.empty() ? "" : " " + artist));
         if(query.empty())
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishEditorNotice(
                 "This song does not provide enough information to search.");
             RefreshDetails();
@@ -3846,7 +3866,7 @@ namespace BigScreen {
             intent->Dispose();
             uri->Dispose();
             uriClass->Dispose();
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             BigScreen::BigScreenLogger.info(
                 "Opened YouTube search for '{}'",
                 query);
@@ -3854,7 +3874,7 @@ namespace BigScreen {
         }
         catch(const std::exception& error)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             BigScreen::BigScreenLogger.error(
                 "Could not launch YouTube search '{}': {}",
                 url,
@@ -3866,7 +3886,7 @@ namespace BigScreen {
         }
         catch(...)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             BigScreen::BigScreenLogger.error(
                 "Could not launch YouTube search '{}'",
                 url);
@@ -3957,14 +3977,14 @@ namespace BigScreen {
             RefreshUrlTextColor();
         }
         ClearThumbnail();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         DiagnosticSessionLogger::Instance().MenuEvent(
             "video_assigned", "LocalVideoBrowser", {
                 {"levelId", std::string(selected_->levelID)},
                 {"fileName", fileName},
                 {"origin", "local"}});
         previewSongTime_ = 0.0;
-        playWhenAudioReady_ = true;
+        previewTransport_.Set(PreviewTransportState::WaitingForAudio);
         RefreshLocalVideoStatus();
         RequestSelectedAudio();
         StartSelectedPreview();
@@ -3986,7 +4006,7 @@ namespace BigScreen {
             loadedThumbnailSprite_ = nullptr;
             loadedThumbnailPath_.clear();
         }
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         RefreshDetails();
         RebuildVisibleRows(true);
         PublishEditorNotice("Video thumbnail updated.");
@@ -4036,7 +4056,7 @@ namespace BigScreen {
         {
             if(!removedDescriptor.playableConfig)
             {
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 RefreshDetails();
                 PublishEditorNotice("No removable video file was found.");
                 return;
@@ -4069,7 +4089,7 @@ namespace BigScreen {
 
         if(!removed)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishEditorNotice("This song has no video assignment to remove.");
             return;
@@ -4092,7 +4112,7 @@ namespace BigScreen {
                         ? "The local file could not be deleted. Its assignment was restored."
                         : deleteError + " Its assignment was restored.")
                     : "The local file could not be deleted and remains on the Quest, but its assignment could not be restored. Select it again with Show File Browser.";
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 ErrorManager::Instance().RecordError(
                     "Deleting a local video", deletionFailureMessage);
                 RefreshDetails();
@@ -4142,29 +4162,9 @@ namespace BigScreen {
             }
         }
         ClearThumbnail();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
-        const auto* timing = EditorTimingConfig(descriptor);
-        url_ = descriptor.downloadUrl.value_or("");
-        mapperProvidedUrl_ = descriptor.downloadUrl.has_value() &&
-            descriptor.downloadOrigin == VideoOrigin::Mapper;
-        offset_ = timing ? timing->offsetSeconds : 0.0;
-        rate_ = timing ? timing->playbackRate : 1.0;
-        fitToSong_ = timing ? timing->fitToSong : false;
-        blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
-        if(urlInput_)
-        {
-            suppressUrlCallback_ = true;
-            urlInput_->SetText(url_);
-            suppressUrlCallback_ = false;
-            RefreshUrlTextColor();
-        }
-        suppressTimingCallbacks_ = true;
-        if(offsetSetting_) offsetSetting_->set_Value(static_cast<float>(offset_));
-        if(rateSetting_) rateSetting_->set_Value(static_cast<float>(rate_));
-        SetToggleWithoutNotification(fitToggle_, fitToSong_);
-        SetToggleWithoutNotification(blackLeadInToggle_, blackDuringLeadIn_);
-        suppressTimingCallbacks_ = false;
+        ApplyDescriptorToEditor(descriptor);
         RefreshLocalVideoStatus();
         RefreshDetails();
         StartSelectedPreview();
@@ -4176,7 +4176,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "The video assignment could not be saved. Check free storage and Quest file access; the previous library state was restored.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().RecordError(
                 "Persisting a removed video assignment", exception.what());
             ErrorManager::Instance().ReportUserVisible(
@@ -4188,7 +4188,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "The video assignment could not be saved. The previous library state was restored.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().ReportInternal(
                 "removing a video assignment", exception.what());
             ErrorManager::Instance().ReportUserVisible(
@@ -4200,7 +4200,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "The video assignment could not be saved. The previous library state was restored.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().ReportInternal(
                 "removing a video assignment", "Unknown native exception");
             ErrorManager::Instance().ReportUserVisible(
@@ -4507,7 +4507,7 @@ namespace BigScreen {
 
         if(!SaveTiming())
             return false;
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         if(restartPreview)
             ApplyTimingToActivePreview();
         RefreshDetails();
@@ -4524,20 +4524,7 @@ namespace BigScreen {
         {
             const auto descriptor =
                 VideoLibrary::Instance().Describe(selected_);
-            const auto* timing = EditorTimingConfig(descriptor);
-            offset_ = timing ? timing->offsetSeconds : 0.0;
-            rate_ = timing ? timing->playbackRate : 1.0;
-            fitToSong_ = timing ? timing->fitToSong : false;
-            blackDuringLeadIn_ = timing ? timing->blackDuringLeadIn : false;
-            suppressTimingCallbacks_ = true;
-            if(offsetSetting_)
-                offsetSetting_->set_Value(static_cast<float>(offset_));
-            if(rateSetting_)
-                rateSetting_->set_Value(static_cast<float>(rate_));
-            SetToggleWithoutNotification(fitToggle_, fitToSong_);
-            SetToggleWithoutNotification(
-                blackLeadInToggle_, blackDuringLeadIn_);
-            suppressTimingCallbacks_ = false;
+            ApplyDescriptorToEditor(descriptor);
         };
         try
         {
@@ -4553,7 +4540,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "Timing could not be saved. Check free storage and Quest file access; the previous values remain active.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().RecordError(
                 "Persisting video timing", exception.what());
             ErrorManager::Instance().ReportUserVisible(
@@ -4567,7 +4554,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "Timing could not be saved. The previous values remain active.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().ReportInternal(
                 "saving video timing", exception.what());
             ErrorManager::Instance().ReportUserVisible(
@@ -4581,7 +4568,7 @@ namespace BigScreen {
         {
             constexpr std::string_view failureMessage =
                 "Timing could not be saved. The previous values remain active.";
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             ErrorManager::Instance().ReportInternal(
                 "saving video timing", "Unknown native exception");
             ErrorManager::Instance().ReportUserVisible(
@@ -4633,7 +4620,7 @@ namespace BigScreen {
         if(rateSetting_)
             rateSetting_->set_Value(static_cast<float>(rate_));
         suppressTimingCallbacks_ = false;
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         ApplyTimingToActivePreview();
         RefreshDetails();
 
@@ -4680,7 +4667,7 @@ namespace BigScreen {
         if(offsetSetting_)
             offsetSetting_->set_Value(static_cast<float>(offset_));
         suppressTimingCallbacks_ = false;
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         RefreshDetails();
 
         std::ostringstream message;
@@ -4695,14 +4682,14 @@ namespace BigScreen {
     {
         if(!selected_)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishEditorNotice("Select a song before using Fit to Song.");
             return false;
         }
         if(selected_->songDuration <= 0.0f)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishEditorNotice("Fit to Song needs a valid song duration.");
             return false;
@@ -4710,7 +4697,7 @@ namespace BigScreen {
         const auto descriptor = VideoLibrary::Instance().Describe(selected_);
         if(!descriptor.playableConfig || descriptor.playableConfig->declaredDurationSeconds <= 0.0)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishEditorNotice("Fit to Song needs a valid video duration.");
             return false;
@@ -4738,7 +4725,7 @@ namespace BigScreen {
             return false;
         if(!SaveTiming())
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishEditorNotice("Fit to Song could not save the new speed.");
             return false;
@@ -4747,7 +4734,7 @@ namespace BigScreen {
         SetToggleWithoutNotification(fitToggle_, fitToSong_);
         suppressTimingCallbacks_ = false;
         ApplyTimingToActivePreview();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         RefreshDetails();
         std::ostringstream message;
         message << std::fixed << std::setprecision(2)
@@ -4800,7 +4787,7 @@ namespace BigScreen {
         editorTransferKind_ = EditorTransferKind::None;
         editorTransferCancellationRequested_ = false;
         pendingDownloadRefreshLevelId_.clear();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         editorNoticePaintPending_ = false;
         editorNoticePaintAfterFrame_ = -1;
         DestroyEditorNoticeSurface();
@@ -4811,7 +4798,7 @@ namespace BigScreen {
     {
         if(!selected_ || !selected_->levelID || !editorNoticeVisit_)
             return std::nullopt;
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         auto revision = editorNoticeModel_.Publish(
             editorNoticeVisit_,
             std::string(selected_->levelID),
@@ -4870,7 +4857,7 @@ namespace BigScreen {
             return;
         editorTransferNotice_ = *token;
         editorTransferKind_ = kind;
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         if(editorNoticeModel_.PublishTransfer(
                editorTransferNotice_, std::move(initialMessage)))
             QueueEditorNoticePaint();
@@ -5231,9 +5218,9 @@ namespace BigScreen {
                  download.state == DownloadState::Failed ||
                  download.state == DownloadState::Cancelled);
             if(retainsTerminalProgress)
-                terminalDownloadProgressLevelId_ = selectedLevelId;
+                terminalDownloadProgress_.RetainFor(selectedLevelId);
             else
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
             pendingDownloadRefreshLevelId_.clear();
         }
 
@@ -5263,7 +5250,7 @@ namespace BigScreen {
             // Probe results and failures remain visible because their next
             // action (choose a tier, retry, or resume) is still on this page.
             const bool showTerminalProgress =
-                terminalDownloadProgressLevelId_ == selectedLevelId &&
+                terminalDownloadProgress_.IsRetainedFor(selectedLevelId) &&
                 (download.state == DownloadState::ProbeCompleted ||
                  download.state == DownloadState::Failed ||
                  download.state == DownloadState::Cancelled);
@@ -5457,21 +5444,22 @@ namespace BigScreen {
         // preview while its audition is running. Pause the owned audio channel
         // before discarding the warmed decoder, then resume only after the
         // replacement session has uploaded its first synchronized picture.
-        const bool resumeAfterPrewarm = previewPlaying_;
+        const bool resumeAfterPrewarm =
+            previewTransport_.Is(PreviewTransportState::Playing);
         if(resumeAfterPrewarm && IsAlive(previewAudioSource_) &&
            IsAlive(previewAudioClip_) && IsAlive(songPreviewPlayer_) &&
            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
            ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
         {
             songPreviewPlayer_->PauseCurrentChannel();
-            previewPlaying_ = false;
-            previewPaused_ = true;
+            previewTransport_.Set(PreviewTransportState::Paused);
         }
 
         auto& playback = PlaybackSession::Instance();
         playback.Stop();
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
         {
+            previewTransport_.Stop();
             ScreenPreview::Instance().ActivateCurrentState();
             return;
         }
@@ -5488,7 +5476,8 @@ namespace BigScreen {
         {
             playback.Tick(previewSongTime_);
             if(resumeAfterPrewarm)
-                playWhenVideoReady_ = true;
+                previewTransport_.Set(
+                    PreviewTransportState::WaitingForVideo);
         }
     }
 
@@ -5497,16 +5486,19 @@ namespace BigScreen {
         if(!selected_ || !selected_->levelID)
             return;
         const std::string levelId(selected_->levelID);
-        if(IsAlive(previewAudioClip_) && audioLoadLevelId_ == levelId)
+        if(IsAlive(previewAudioClip_) && audioLoadLevelId_ == levelId &&
+           audioLoadCatalogGeneration_ == selectedCatalogGeneration_)
             return;
         if((audioLoadTask_ || levelDataLoadTask_) &&
-           audioLoadLevelId_ == levelId)
+           audioLoadLevelId_ == levelId &&
+           audioLoadCatalogGeneration_ == selectedCatalogGeneration_)
             return;
 
         ReleaseOfficialSongAudio();
         previewAudioClip_ = nullptr;
         previewAudioSource_ = nullptr;
         audioLoadLevelId_ = levelId;
+        audioLoadCatalogGeneration_ = selectedCatalogGeneration_;
 
         // SongCore's custom preview provider returns the complete song file,
         // which is why custom-map previews already run to the real song end.
@@ -5527,7 +5519,7 @@ namespace BigScreen {
                 if(!model || !officialSongAudioLoader_)
                 {
                     officialSongAudioLoader_ = nullptr;
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     PublishPreviewNotice(
                         "Beat Saber could not provide full song audio.");
                     return;
@@ -5555,7 +5547,7 @@ namespace BigScreen {
                 {
                     levelDataLoadTaskRoot_.reset();
                     officialSongAudioLoader_ = nullptr;
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     PublishPreviewNotice(
                         "Beat Saber could not start loading this song.");
                 }
@@ -5575,7 +5567,7 @@ namespace BigScreen {
                 levelDataLoadTask_ = nullptr;
                 levelDataLoadTaskRoot_.reset();
                 officialSongAudioLoader_ = nullptr;
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 PublishPreviewNotice(
                     "Beat Saber could not load this song's full audio.");
                 BigScreen::BigScreenLogger.error(
@@ -5589,7 +5581,7 @@ namespace BigScreen {
         previewMediaData_ = selected_->__cordl_internal_get_previewMediaData();
         if(!previewMediaData_)
         {
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishPreviewNotice("This song does not provide preview audio.");
             return;
         }
@@ -5601,7 +5593,7 @@ namespace BigScreen {
         if(!audioLoadTask_)
         {
             audioLoadTaskRoot_.reset();
-            terminalDownloadProgressLevelId_.clear();
+            terminalDownloadProgress_.Reset();
             PublishPreviewNotice(
                 "Beat Saber could not start loading preview audio.");
         }
@@ -5647,14 +5639,13 @@ namespace BigScreen {
 
         bool completedPlaybackNeedsRestart = false;
 
-        if(playWhenVideoReady_)
+        if(previewTransport_.Is(PreviewTransportState::WaitingForVideo))
         {
             // A second press while the decoder is preparing is a stop request,
             // just like pressing Pause after ordinary playback has begun.
-            playWhenVideoReady_ = false;
             ClearPreviewPreRoll();
-            previewPaused_ = true;
-            previewClockValid_ = false;
+            previewTransport_.Set(PreviewTransportState::Paused);
+            previewTransport_.ClearClock();
             DiagnosticSessionLogger::Instance().MenuEvent(
                 "preview_paused", "VideoLibraryMenu", {
                     {"reason", "preparing_cancelled"}});
@@ -5663,7 +5654,7 @@ namespace BigScreen {
             return;
         }
 
-        if(previewPlaying_)
+        if(previewTransport_.Is(PreviewTransportState::Playing))
         {
             const bool channelIsStillPlaying = IsAlive(previewAudioSource_) &&
                 IsAlive(previewAudioClip_) &&
@@ -5673,11 +5664,9 @@ namespace BigScreen {
                ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
             {
                 songPreviewPlayer_->PauseCurrentChannel();
-                previewPlaying_ = false;
-                previewPaused_ = true;
-                playWhenAudioReady_ = false;
+                previewTransport_.Set(PreviewTransportState::Paused);
                 ClearPreviewPreRoll();
-                previewClockValid_ = false;
+                previewTransport_.ClearClock();
                 DiagnosticSessionLogger::Instance().MenuEvent(
                     "preview_paused", "VideoLibraryMenu", {
                         {"songTime", std::to_string(previewSongTime_)}});
@@ -5689,8 +5678,7 @@ namespace BigScreen {
             // "playing" flag here and continue into the explicit EOF restart
             // path. Unpausing an exhausted AudioSource cannot revive either
             // its audio or the drained video decoder.
-            previewPlaying_ = false;
-            previewPaused_ = false;
+            previewTransport_.Set(PreviewTransportState::Stopped);
             completedPlaybackNeedsRestart = true;
         }
 
@@ -5708,8 +5696,8 @@ namespace BigScreen {
         RequestSelectedAudio();
         if(!IsAlive(previewAudioClip_) || !IsAlive(songPreviewPlayer_))
         {
-            playWhenAudioReady_ = true;
-            terminalDownloadProgressLevelId_.clear();
+            previewTransport_.Set(PreviewTransportState::WaitingForAudio);
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             PublishPreviewNotice("Loading song audio...");
             return;
@@ -5718,7 +5706,8 @@ namespace BigScreen {
         // Resume the paused Beat Saber channel when it is still ours. If the
         // menu music or another preview reclaimed the channel, rebuild the
         // crossfade at the requested scrub position instead.
-        if(previewPaused_ && IsAlive(previewAudioSource_) &&
+        if(previewTransport_.Is(PreviewTransportState::Paused) &&
+           IsAlive(previewAudioSource_) &&
            previewAudioSource_->get_clip().unsafePtr() == previewAudioClip_.unsafePtr() &&
            ActiveSongClipMatches(songPreviewPlayer_, previewAudioClip_))
         {
@@ -5730,9 +5719,9 @@ namespace BigScreen {
             if(!playback.SynchronizedAudioReady(previewSongTime_) ||
                !PreviewPreRollComplete())
             {
-                playWhenVideoReady_ = true;
-                playWhenAudioReady_ = false;
-                terminalDownloadProgressLevelId_.clear();
+                previewTransport_.Set(
+                    PreviewTransportState::WaitingForVideo);
+                terminalDownloadProgress_.Reset();
                 RefreshDetails();
                 RefreshPlaybackControls();
                 PublishPreviewNotice(
@@ -5748,10 +5737,7 @@ namespace BigScreen {
             songPreviewPlayer_->UnPauseCurrentChannel();
             ClearPreviewPreRoll();
             ResetPreviewClock(previewSongTime_);
-            previewPlaying_ = true;
-            previewPaused_ = false;
-            playWhenAudioReady_ = false;
-            playWhenVideoReady_ = false;
+            previewTransport_.Set(PreviewTransportState::Playing);
             DiagnosticSessionLogger::Instance().MenuEvent(
                 "preview_started", "VideoLibraryMenu", {
                     {"mode", "resume"},
@@ -5775,7 +5761,7 @@ namespace BigScreen {
         if(!selected_ || !IsAlive(previewAudioClip_) ||
            !IsAlive(songPreviewPlayer_))
         {
-            playWhenAudioReady_ = true;
+            previewTransport_.Set(PreviewTransportState::WaitingForAudio);
             return;
         }
 
@@ -5798,9 +5784,8 @@ namespace BigScreen {
             StartSelectedPreview();
         if(!playback.IsLibraryPreviewActive())
         {
-            playWhenAudioReady_ = false;
-            playWhenVideoReady_ = false;
-            terminalDownloadProgressLevelId_.clear();
+            previewTransport_.Stop();
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             RefreshPlaybackControls();
             PublishPreviewNotice("Video preview could not be prepared.");
@@ -5810,10 +5795,9 @@ namespace BigScreen {
         if(!playback.SynchronizedAudioReady(previewSongTime_) ||
            !PreviewPreRollComplete())
         {
-            previewPlaying_ = false;
-            playWhenAudioReady_ = false;
-            playWhenVideoReady_ = true;
-            terminalDownloadProgressLevelId_.clear();
+            previewTransport_.Set(
+                PreviewTransportState::WaitingForVideo);
+            terminalDownloadProgress_.Reset();
             RefreshDetails();
             RefreshPlaybackControls();
             PublishPreviewNotice(
@@ -5867,10 +5851,7 @@ namespace BigScreen {
             previewAudioSource_->set_time(static_cast<float>(previewSongTime_));
         ClearPreviewPreRoll();
         ResetPreviewClock(previewSongTime_);
-        previewPlaying_ = true;
-        previewPaused_ = false;
-        playWhenAudioReady_ = false;
-        playWhenVideoReady_ = false;
+        previewTransport_.Set(PreviewTransportState::Playing);
         DiagnosticSessionLogger::Instance().MenuEvent(
             "preview_started", "VideoLibraryMenu", {
                 {"mode", "play"},
@@ -5891,9 +5872,7 @@ namespace BigScreen {
         // in this Unity update.
         previewSongTime_ = 0.0;
         ResetPreviewClock(previewSongTime_);
-        previewPlaying_ = false;
-        previewPaused_ = false;
-        playWhenAudioReady_ = false;
+        previewTransport_.Set(PreviewTransportState::Stopped);
         // Treat every loop as a fresh start. Restart clears the old reserve;
         // this timer lets the worker rebuild it before audio advances again.
         BeginPreviewPreRoll();
@@ -5923,13 +5902,8 @@ namespace BigScreen {
         // media state and attempt to use it again.
         auto player = songPreviewPlayer_;
         auto clip = previewAudioClip_;
-        playWhenAudioReady_ = false;
-        playWhenVideoReady_ = false;
-        ClearPreviewPreRoll();
+        previewTransport_.Stop();
         previewMeasurementStarted_ = false;
-        previewClockValid_ = false;
-        previewPlaying_ = false;
-        previewPaused_ = false;
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
@@ -5968,8 +5942,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RecoverInvalidPreviewAudio(const char* context)
     {
-        const bool shouldResume =
-            previewPlaying_ || playWhenAudioReady_ || playWhenVideoReady_;
+        const bool shouldResume = previewTransport_.WantsPlayback();
         previewAudioSource_ = nullptr;
         previewAudioClip_ = nullptr;
         audioLoadTask_ = nullptr;
@@ -5977,13 +5950,10 @@ namespace BigScreen {
         previewMediaData_ = nullptr;
         audioLoadLevelId_.clear();
         ReleaseOfficialSongAudio();
-        previewPlaying_ = false;
-        previewPaused_ = false;
-        playWhenAudioReady_ = shouldResume;
-        playWhenVideoReady_ = false;
-        ClearPreviewPreRoll();
-        previewClockValid_ = false;
-        terminalDownloadProgressLevelId_.clear();
+        previewTransport_.Stop();
+        if(shouldResume)
+            previewTransport_.Set(PreviewTransportState::WaitingForAudio);
+        terminalDownloadProgress_.Reset();
         PublishPreviewNotice(shouldResume
             ? "Beat Saber replaced the preview audio. Reloading it..."
             : "Beat Saber replaced the preview audio. Press Play to reload.");
@@ -6001,7 +5971,9 @@ namespace BigScreen {
         // focus even when SongPreviewPlayer had explicitly paused that source.
         // Big Screen's transport state remains paused, so without this guard
         // the song can become audible while the video correctly stays frozen.
-        if(!editorVisible_ || !previewPaused_ || !IsAlive(previewAudioClip_) ||
+        if(!editorVisible_ ||
+           !previewTransport_.Is(PreviewTransportState::Paused) ||
+           !IsAlive(previewAudioClip_) ||
            !IsAlive(songPreviewPlayer_))
             return;
 
@@ -6038,51 +6010,48 @@ namespace BigScreen {
 
     void VideoLibraryMenu::BeginPreviewPreRoll()
     {
-        if(previewPreRollPending_)
-            return;
-        previewPreRollPending_ = true;
-        previewPreRollReadyRealtime_ =
+        previewTransport_.ArmPreRoll(
             static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup()) +
-            PreviewDecoderPreRollSeconds;
+            PreviewDecoderPreRollSeconds);
     }
 
     void VideoLibraryMenu::ClearPreviewPreRoll()
     {
-        previewPreRollPending_ = false;
-        previewPreRollReadyRealtime_ = 0.0;
+        previewTransport_.ClearPreRoll();
     }
 
     bool VideoLibraryMenu::PreviewPreRollComplete() const
     {
-        return !previewPreRollPending_ ||
-            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup()) >=
-                previewPreRollReadyRealtime_;
+        return previewTransport_.PreRollComplete(
+            static_cast<double>(
+                UnityEngine::Time::get_realtimeSinceStartup()));
     }
 
     void VideoLibraryMenu::ResetPreviewClock(double songTimeSeconds)
     {
-        smoothedPreviewSongTime_ = std::max(0.0, songTimeSeconds);
-        previewClockRealtime_ =
-            static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup());
-        previewClockValid_ = true;
+        previewTransport_.ResetClock(
+            std::max(0.0, songTimeSeconds),
+            static_cast<double>(
+                UnityEngine::Time::get_realtimeSinceStartup()));
     }
 
     double VideoLibraryMenu::AdvancePreviewClock(double rawAudioSongTimeSeconds)
     {
         const double now =
             static_cast<double>(UnityEngine::Time::get_realtimeSinceStartup());
-        if(!previewClockValid_)
+        const auto clock = previewTransport_.CurrentClock();
+        if(!clock)
         {
             ResetPreviewClock(rawAudioSongTimeSeconds);
-            return smoothedPreviewSongTime_;
+            return previewTransport_.CurrentClock()->songTime;
         }
 
-        smoothedPreviewSongTime_ = CoreLogic::AdvanceSmoothedPreviewClock(
-            smoothedPreviewSongTime_,
+        const double smoothedSongTime = CoreLogic::AdvanceSmoothedPreviewClock(
+            clock->songTime,
             rawAudioSongTimeSeconds,
-            now - previewClockRealtime_);
-        previewClockRealtime_ = now;
-        return smoothedPreviewSongTime_;
+            now - clock->realtime);
+        previewTransport_.UpdateClock(smoothedSongTime, now);
+        return smoothedSongTime;
     }
 
     void VideoLibraryMenu::SeekPreview(float songTimeSeconds)
@@ -6108,16 +6077,16 @@ namespace BigScreen {
                 previewAudioClip_->get_length() - 0.01f);
             previewAudioSource_->set_time(static_cast<float>(
                 std::min(previewSongTime_, clipEnd)));
-            if(previewPlaying_ && !sourceWasPlaying)
+            if(previewTransport_.Is(PreviewTransportState::Playing) &&
+               !sourceWasPlaying)
             {
                 // Seeking a naturally completed AudioSource changes its time
                 // but does not restart it. Mark the transport ready so the
                 // next Play action uses StartPreviewAudio rather than Pause.
-                previewPlaying_ = false;
-                previewPaused_ = false;
+                previewTransport_.Set(PreviewTransportState::Stopped);
             }
         }
-        else if(previewPlaying_)
+        else if(previewTransport_.Is(PreviewTransportState::Playing))
         {
             StartPreviewAudio();
         }
@@ -6149,8 +6118,9 @@ namespace BigScreen {
         if(playPauseButton_)
             BSML::Lite::SetButtonText(
                 playPauseButton_,
-                (playWhenAudioReady_ || playWhenVideoReady_) ? "…" :
-                    previewPlaying_ ? "Ⅱ" : "▶");
+                previewTransport_.IsWaiting() ? "…" :
+                    previewTransport_.Is(PreviewTransportState::Playing)
+                        ? "Ⅱ" : "▶");
         if(playbackScrubber_)
         {
             const double normalizedPosition = duration > 0.0
@@ -6238,7 +6208,8 @@ namespace BigScreen {
         if((previewAudioClip_.unsafePtr() && !IsAlive(previewAudioClip_)) ||
            (previewAudioSource_.unsafePtr() && !IsAlive(previewAudioSource_)))
             RecoverInvalidPreviewAudio("menu update");
-        if(editorVisible_ && playWhenAudioReady_ &&
+        if(editorVisible_ &&
+           previewTransport_.Is(PreviewTransportState::WaitingForAudio) &&
            !IsAlive(previewAudioClip_) && !audioLoadTask_ &&
            !levelDataLoadTask_)
             RequestSelectedAudio();
@@ -6269,7 +6240,9 @@ namespace BigScreen {
             auto* completedTask = levelDataLoadTask_;
             levelDataLoadTask_ = nullptr;
             const bool selectionStillMatches = selected_ && selected_->levelID &&
-                audioLoadLevelId_ == std::string(selected_->levelID);
+                audioLoadLevelId_ == std::string(selected_->levelID) &&
+                audioLoadCatalogGeneration_ == selectedCatalogGeneration_ &&
+                selectedCatalogGeneration_ == catalogGeneration_;
             if(completedTask->get_IsCompletedSuccessfully() &&
                selectionStillMatches && officialSongAudioLoader_)
             {
@@ -6285,11 +6258,12 @@ namespace BigScreen {
                     if(!audioLoadTask_)
                     {
                         audioLoadTaskRoot_.reset();
-                        terminalDownloadProgressLevelId_.clear();
+                        terminalDownloadProgress_.Reset();
                         PublishPreviewNotice(
                             "Beat Saber could not start loading full song audio.");
                         ReleaseOfficialSongAudio();
-                        playWhenAudioReady_ = false;
+                        previewTransport_.Set(
+                            PreviewTransportState::Stopped);
                     }
                 }
                 else
@@ -6300,11 +6274,12 @@ namespace BigScreen {
                         audioLoadLevelId_,
                         result.isError,
                         result.beatmapLevelData != nullptr);
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     PublishPreviewNotice(
                         "Beat Saber could not load this song's level data.");
                     officialSongAudioLoader_ = nullptr;
-                    playWhenAudioReady_ = false;
+                    previewTransport_.Set(
+                        PreviewTransportState::Stopped);
                 }
             }
             else if(selectionStillMatches)
@@ -6316,11 +6291,11 @@ namespace BigScreen {
                     completedTask->get_IsCompletedSuccessfully(),
                     completedTask->get_IsCanceled(),
                     completedTask->get_IsFaulted());
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 PublishPreviewNotice(
                     "Beat Saber could not load this song's level data.");
                 officialSongAudioLoader_ = nullptr;
-                playWhenAudioReady_ = false;
+                previewTransport_.Set(PreviewTransportState::Stopped);
             }
             RefreshDetails();
           }
@@ -6331,9 +6306,13 @@ namespace BigScreen {
             (void)completedTaskRoot;
             auto* completedTask = audioLoadTask_;
             audioLoadTask_ = nullptr;
-            if(completedTask->get_IsCompletedSuccessfully() && selected_ &&
-               selected_->levelID &&
-               audioLoadLevelId_ == std::string(selected_->levelID))
+            const bool selectionStillMatches = selected_ &&
+                selected_->levelID &&
+                audioLoadLevelId_ == std::string(selected_->levelID) &&
+                audioLoadCatalogGeneration_ == selectedCatalogGeneration_ &&
+                selectedCatalogGeneration_ == catalogGeneration_;
+            if(completedTask->get_IsCompletedSuccessfully() &&
+               selectionStillMatches)
             {
                 auto clip = completedTask->get_Result();
                 previewAudioClip_ =
@@ -6342,7 +6321,7 @@ namespace BigScreen {
                         : nullptr;
                 if(!IsAlive(previewAudioClip_))
                 {
-                    terminalDownloadProgressLevelId_.clear();
+                    terminalDownloadProgress_.Reset();
                     PublishPreviewNotice(
                         "Beat Saber returned no audio for this song.");
                 }
@@ -6353,18 +6332,30 @@ namespace BigScreen {
                         audioLoadLevelId_,
                         previewAudioClip_->get_length(),
                         selected_->songDuration);
-                    if(playWhenAudioReady_)
+                    if(previewTransport_.Is(
+                           PreviewTransportState::WaitingForAudio))
                         StartPreviewAudio();
                     else
                         ClearPreviewNotice();
                 }
             }
-            else
+            else if(selectionStillMatches)
             {
-                terminalDownloadProgressLevelId_.clear();
+                terminalDownloadProgress_.Reset();
                 PublishPreviewNotice(
                     "Beat Saber could not load this song's audio.");
-                playWhenAudioReady_ = false;
+                previewTransport_.Set(PreviewTransportState::Stopped);
+                ReleaseOfficialSongAudio();
+            }
+            else
+            {
+                // A SongCore refresh or map change superseded this request.
+                // Its result is not an error for the current editor and must
+                // never stop or repaint the newer selection's transport.
+                BigScreen::BigScreenLogger.debug(
+                    "Discarded stale Video Library audio completion for '{}' from catalog generation {}",
+                    audioLoadLevelId_,
+                    audioLoadCatalogGeneration_);
                 ReleaseOfficialSongAudio();
             }
             RefreshDetails();
@@ -6379,7 +6370,9 @@ namespace BigScreen {
           // Poll the stationary external clock while FFmpeg prepares the first
           // frame. Audio begins only after that picture has reached Unity, so
           // the library session starts from the same ready state as gameplay.
-          if(editorVisible_ && playWhenVideoReady_ &&
+          if(editorVisible_ &&
+             previewTransport_.Is(
+                 PreviewTransportState::WaitingForVideo) &&
              IsAlive(previewAudioClip_))
           {
             auto& playback = PlaybackSession::Instance();
@@ -6394,7 +6387,9 @@ namespace BigScreen {
             }
           }
 
-          if(editorVisible_ && previewPlaying_ && IsAlive(previewAudioClip_))
+          if(editorVisible_ &&
+             previewTransport_.Is(PreviewTransportState::Playing) &&
+             IsAlive(previewAudioClip_))
           {
             if(!IsAlive(previewAudioSource_) ||
                previewAudioSource_->get_clip().unsafePtr() != previewAudioClip_.unsafePtr())
@@ -6454,10 +6449,8 @@ namespace BigScreen {
                     LoopPreviewPlayback();
                     return;
                 }
-                previewPlaying_ = false;
-                previewPaused_ = false;
-                playWhenAudioReady_ = false;
-                previewClockValid_ = false;
+                previewTransport_.Set(PreviewTransportState::Stopped);
+                previewTransport_.ClearClock();
             }
             // TMP text, slider layout, and native setting notifications are UI
             // work, not part of the playback clock. Fifteen updates per second
@@ -6580,7 +6573,7 @@ namespace BigScreen {
         CloseEditorNotice();
         editorVisible_ = false;
         pendingDownloadRefreshLevelId_.clear();
-        terminalDownloadProgressLevelId_.clear();
+        terminalDownloadProgress_.Reset();
         const std::string selectedLevelId =
             selected_ && selected_->levelID
                 ? std::string(selected_->levelID)
@@ -6616,6 +6609,8 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RequestCatalogRefresh()
     {
+        catalogGeneration_ =
+            NextCatalogGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
         catalogRefreshRequested_ = true;
         // A SongCore refresh can arrive while startup prewarming is between
         // slices. Discard the partial index so the rebuilt model and its level
@@ -6632,6 +6627,24 @@ namespace BigScreen {
         catalogBuildPackIndex_ = 0;
         catalogBuildLevelIndex_ = 0;
         catalogBuildSongCoreIndex_ = 0;
+
+        // The stable level ID survives SongCore's refresh; the managed wrapper
+        // does not. Re-resolve immediately so an open editor never continues
+        // to dereference a wrapper owned by the preceding generation. Any
+        // asynchronous audio completion still in flight is rejected by the
+        // generation captured when that request began.
+        if(!selectedLevelId_.empty())
+        {
+            selected_ = ResolveInstalledLevel(selectedLevelId_);
+            selectedLevelRoot_ = RootManagedObject(selected_);
+            selectedCatalogGeneration_ = catalogGeneration_;
+        }
+        else
+        {
+            selected_ = nullptr;
+            selectedLevelRoot_.reset();
+            selectedCatalogGeneration_ = catalogGeneration_;
+        }
     }
 
     void VideoLibraryMenu::StopActivePreview()

@@ -60,8 +60,8 @@ without mixing unrelated unfinished work.
 | 4 | Deployment, removal, and ownership parity | Host and focused Quest verification passed | Stage 4 checkpoint on `codex/fable-review-stage-4` | Source deploy/update/removal/reinstall, device selection, and support helpers verified; destructive user-data choices remain intentionally untested |
 | 5 | Downloader operation cleanup and diagnostics | Quest validated | Stage 5 working tree on `codex/fable-review-stage-5` | User reported no issues in the focused downloader and URL-entry pass |
 | 6 | Packaging, CI, and dependency reproducibility | Automated verification passed; final MBF test deferred | `b848661` on `codex/fable-review-stage-6` | Final clean MBF/package validation intentionally deferred until all remediation stages are complete |
-| 7 | GPU presentation-path overhead | Quest validated | `dd48f1d` plus the managed-wrapper lifetime correction on `codex/fable-review-stage-7` | The corrected build remained stable during extended Quest 2 use, including live-streamed testing alongside the user's other mod; no Stage 7 regression was found |
-| 8 | Catalog lifetime and transport-state consolidation | Planned | — | Pending |
+| 7 | GPU presentation-path overhead | Quest validated | `439464e` (`dd48f1d` plus the managed-wrapper lifetime correction) on `codex/fable-review-stage-7` | The corrected build remained stable during extended Quest 2 use, including live-streamed testing alongside the user's other mod; no Stage 7 regression was found |
+| 8 | Catalog lifetime and transport-state consolidation | Awaiting combined Stage 8/9 Quest test | Stage 8 working tree on `codex/fable-review-stage-8` | Source deployment and hash verification passed; user elected to combine the time-consuming Stage 8 and Stage 9 headset passes |
 | 9 | Documentation and contained low-risk cleanup | Planned | — | Pending |
 
 ## Verified findings and disposition
@@ -847,7 +847,40 @@ from the extracted Native Logger Quest integration, Stage 7 is Quest validated.
 
 ### Result
 
-Pending implementation and Quest testing.
+Implemented on September 2, 2026, on `codex/fable-review-stage-8`:
+
+- Catalog rows now carry the globally unique generation in which their native
+  metadata snapshot was captured. SongCore refresh advances that generation,
+  re-resolves the selected managed level by stable ID, rejects clicks from
+  obsolete visible rows, and rejects late official/custom audio completions
+  from a preceding catalog generation without repainting the current editor.
+- The six overlapping preview-playing, pause, audio-wait, video-wait,
+  pre-roll, and clock-valid booleans were replaced by one explicit preview
+  transport state plus transport-owned pre-roll and clock state. Stop now
+  clears those three pieces of state as one operation.
+- Descriptor timing/URL controls are populated through one helper for initial
+  selection, mapper refresh, video removal, and persistence rollback.
+- Terminal download-progress retention now has a map-scoped owner type rather
+  than a free-floating level-ID string, preventing one map from claiming
+  another map's terminal progress bar.
+- The Video Library and Solo/Campaign shortcut now build download requests
+  through one shared policy, including timing, requested resolution, FPS cap,
+  origin, and explicit-content policy.
+- A new host test exercises mutually exclusive transport transitions,
+  pre-roll/clock teardown, per-map terminal ownership, and shared download
+  request construction. Repository invariants reject restoration of the old
+  transport flags or duplicate request policy.
+
+Automated verification passed: all 15 host tests, real FFmpeg decoder fixtures,
+repository invariants, canonical pipeline checks, dual-FFmpeg ELF isolation,
+the ARM64 Quest build, and complete QMOD validation. The resulting QMOD was
+19,729,588 bytes with SHA-256
+`f0723c853dbfabb68477fc848bda683f36f77c5e77186a702bc2a3b910405370`.
+The source-managed deployment then verified the installed Quest library against
+the local ARM64 build at SHA-256
+`990252318110322e4474c0c675135645dd1f560d2f0a2645f89c8c63a128c6a4`.
+The user elected to implement Stage 9 before performing the long end-to-end
+headset pass so Stages 8 and 9 can be validated together once.
 
 ## Stage 9 — Documentation and contained low-risk cleanup
 
