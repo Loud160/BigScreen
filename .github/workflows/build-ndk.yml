@@ -63,7 +63,9 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       id: version
       run: |
-        echo "TAG=${GITHUB_REF#refs/tags/}" >> ${GITHUB_OUTPUT}
+        tag="${GITHUB_REF#refs/tags/}"
+        echo "TAG=${tag}" >> ${GITHUB_OUTPUT}
+        echo "VERSION=${tag#v}" >> ${GITHUB_OUTPUT}
 
     - name: Validate release tag against tracked package metadata
       if: startsWith(github.ref, 'refs/tags/v')
@@ -114,6 +116,7 @@ jobs:
       uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
       with:
         tag_name: ${{ steps.version.outputs.TAG }}
+        name: Big Screen ${{ steps.version.outputs.VERSION }}
         draft: false
         generate_release_notes: true
         files: |

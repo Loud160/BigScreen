@@ -3626,6 +3626,8 @@ assert "permissions:\n  contents: write" in build_workflow
 assert 'library="lib${module_id}.so"' in build_workflow
 assert "validate-release --tag" in build_workflow
 assert "--qmod \"./Big Screen.qmod\"" in build_workflow
+assert 'echo "VERSION=${tag#v}" >> ${GITHUB_OUTPUT}' in build_workflow
+assert "name: Big Screen ${{ steps.version.outputs.VERSION }}" in build_workflow
 assert "Big-Screen-native-debug-symbols-${{ github.sha }}" in build_workflow
 assert "./build/debug/libbigscreen.so" in build_workflow
 assert "retention-days: 14" in build_workflow
