@@ -872,8 +872,11 @@ namespace BigScreen {
         // arrows, switches, and handles.
         constexpr float TimingControlHeight = 8.0f;
         constexpr float TimingControlSpacing = -2.0f;
-        constexpr float TimingControlCount = 4.0f;
+        constexpr float TimingControlCount = 3.0f;
         constexpr float TimingControlRightExtension = 2.0f;
+        constexpr float TimingControlRightAlignmentNudge = 1.0f;
+        constexpr float FitTimingToggleWidth = 33.0f;
+        constexpr float LeadInTimingToggleWidth = 42.0f;
         constexpr float TimingResetGlyphTextSize = 6.0f;
         constexpr float TimingResetButtonSize = 7.0f;
 
@@ -922,6 +925,18 @@ namespace BigScreen {
             control->set_anchoredPosition({
                 currentPosition.x +
                     (pivot.x * TimingControlRightExtension),
+                currentPosition.y});
+        }
+
+        /// Moves a value-side control to the established right-edge reference
+        /// without resizing it. The playback-offset slider is that reference;
+        /// only controls which render slightly left of it receive this nudge.
+        void NudgeTimingControlRight(UnityEngine::RectTransform* control)
+        {
+            if(!control) return;
+            const auto currentPosition = control->get_anchoredPosition();
+            control->set_anchoredPosition({
+                currentPosition.x + TimingControlRightAlignmentNudge,
                 currentPosition.y});
         }
 
@@ -1795,10 +1810,9 @@ namespace BigScreen {
         }
         downloadProgressTrack_->get_gameObject()->SetActive(false);
 
-        // Keep all four synchronization settings in one full-width group. The
-        // group overlaps the unused row margins while each native control
-        // retains its complete height. This is intentionally different from the old
-        // one-control wrapper that caused Fit to Song to size differently.
+        // Keep the four synchronization settings in one full-width group. The
+        // two compact toggles share the first row, followed by the two native
+        // setting rows. Each control retains its complete interactive height.
         auto* timingControlsGroup =
             BSML::Lite::CreateVerticalLayoutGroup(editorBody);
         ConfigureGroup(timingControlsGroup);
@@ -1812,8 +1826,22 @@ namespace BigScreen {
             timingLayout->set_minHeight(timingControlsHeight);
         const BSML::Lite::TransformWrapper timingControlsBody(timingControlsGroup);
 
+        // The two toggles share the complete native setting width. Each fixed
+        // segment is wide enough for its full label and adjacent switch; the
+        // flexible center spacer anchors Fit to Song to the slider-label edge
+        // and Lead-In Background to the slider-control edge.
+        auto* timingToggleRow =
+            BSML::Lite::CreateHorizontalLayoutGroup(timingControlsBody);
+        ConfigureGroup(timingToggleRow);
+        timingToggleRow->set_spacing(0.0f);
+        timingToggleRow->set_childForceExpandWidth(false);
+        ConfigureLayout(timingToggleRow, -1.0f, TimingControlHeight, 1.0f);
+        if(auto* toggleRowLayout = EnsureLayout(timingToggleRow))
+            toggleRowLayout->set_minHeight(TimingControlHeight);
+        const BSML::Lite::TransformWrapper timingToggleBody(timingToggleRow);
+
         fitToggle_ = BSML::Lite::CreateToggle(
-            timingControlsBody,
+            timingToggleBody,
             "Fit to Song",
             false,
             [this](bool enabled)
@@ -1850,14 +1878,54 @@ namespace BigScreen {
                         "Fit to Song disabled. Playback speed reset to 1.00x.");
                 }
             });
-        EnforceTimingControlHeight(fitToggle_);
+        ConfigureLayout(
+            fitToggle_, FitTimingToggleWidth, TimingControlHeight, 0.0f);
+        if(auto* fitLayout = EnsureLayout(fitToggle_))
+            fitLayout->set_minHeight(TimingControlHeight);
         StyleToggleRow(fitToggle_, "Fit to Song");
-        ExtendTimingControlRight(
-            fitToggle_->toggle->get_transform()
-                .cast<UnityEngine::RectTransform>());
         fitTimingHint_ = BSML::Lite::AddHoverHint(
             fitToggle_,
             std::string(FitTimingHint));
+
+        auto* timingToggleSpacer = BSML::Lite::CreateText(
+            timingToggleBody, "", 1.0f);
+        ConfigureLayout(
+            timingToggleSpacer, 0.0f, TimingControlHeight, 1.0f);
+
+        blackLeadInToggle_ = BSML::Lite::CreateToggle(
+            timingToggleBody,
+            "Lead-In Background",
+            false,
+            [this](bool enabled)
+            {
+                if(suppressTimingCallbacks_) return;
+                CancelPendingTimingCommit();
+                blackDuringLeadIn_ = enabled;
+                if(SaveTiming())
+                {
+                    terminalDownloadProgress_.Reset();
+                    ApplyTimingToActivePreview();
+                    RefreshDetails();
+                    PublishEditorNotice(enabled
+                        ? "Lead-in background set to black."
+                        : "Lead-in background set to transparent.");
+                }
+            });
+        ConfigureLayout(
+            blackLeadInToggle_, LeadInTimingToggleWidth,
+            TimingControlHeight, 0.0f);
+        if(auto* leadInLayout = EnsureLayout(blackLeadInToggle_))
+            leadInLayout->set_minHeight(TimingControlHeight);
+        StyleToggleRow(blackLeadInToggle_, "Lead-In Background");
+        ExtendTimingControlRight(
+            blackLeadInToggle_->toggle->get_transform()
+                .cast<UnityEngine::RectTransform>());
+        NudgeTimingControlRight(
+            blackLeadInToggle_->toggle->get_transform()
+                .cast<UnityEngine::RectTransform>());
+        leadInTimingHint_ = BSML::Lite::AddHoverHint(
+            blackLeadInToggle_,
+            std::string(LeadInTimingHint));
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
             timingControlsBody, "Playback Speed", 2, 0.01f, 1.0f,
@@ -1914,6 +1982,10 @@ namespace BigScreen {
         // right edges now share the playback scrubber's visual endpoint.
         ExtendTimingControlRight(IncrementControl(rateSetting_));
         ExtendTimingControlRight(SliderControl(offsetSetting_));
+        // The offset slider remains the fixed alignment reference. BSML's
+        // increment template starts one unit farther left, so move only the
+        // Playback Speed control to meet that unchanged right edge.
+        NudgeTimingControlRight(IncrementControl(rateSetting_));
 
         constexpr const char* RateResetHint =
             "Resets playback speed to the map author's Cinema value, or to 1.00x when the map has no Cinema timing.";
@@ -1955,36 +2027,17 @@ namespace BigScreen {
                     OffsetResetHint);
         }
 
-        blackLeadInToggle_ = BSML::Lite::CreateToggle(
-            timingControlsBody,
-            "Lead-In Background",
-            false,
-            [this](bool enabled)
-            {
-                if(suppressTimingCallbacks_) return;
-                CancelPendingTimingCommit();
-                blackDuringLeadIn_ = enabled;
-                if(SaveTiming())
-                {
-                    terminalDownloadProgress_.Reset();
-                    ApplyTimingToActivePreview();
-                    RefreshDetails();
-                    PublishEditorNotice(enabled
-                        ? "Lead-in background set to black."
-                        : "Lead-in background set to transparent.");
-                }
-            });
-        EnforceTimingControlHeight(blackLeadInToggle_);
-        StyleToggleRow(blackLeadInToggle_, "Lead-In Background");
-        ExtendTimingControlRight(
-            blackLeadInToggle_->toggle->get_transform()
-                .cast<UnityEngine::RectTransform>());
-        leadInTimingHint_ = BSML::Lite::AddHoverHint(
-            blackLeadInToggle_,
-            std::string(LeadInTimingHint));
         // RefreshDetails hides the complete group so its reserved height also
         // collapses when no downloaded or local video is available.
         timingRows_.push_back(timingControlsGroup->get_gameObject());
+
+        // Preserve a small gap between the final timing row and the title that
+        // overlaps the Playback Position panel's top edge. This spacing is
+        // video-only so it collapses with the rest of the playback controls.
+        auto* playbackTopSpacer = BSML::Lite::CreateText(
+            editorBody, "", 1.0f);
+        ConfigureLayout(playbackTopSpacer, -1.0f, 0.75f, 1.0f);
+        videoOnlyRows_.push_back(playbackTopSpacer->get_gameObject());
 
         // Visually separate audition controls from settings that permanently
         // alter video synchronization. The title, scrubber, transport button,
@@ -2001,7 +2054,7 @@ namespace BigScreen {
         ConfigureGroup(playbackPanel);
         playbackPanel->set_spacing(0.15f);
         playbackPanel->set_childForceExpandWidth(true);
-        ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);
+        ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);
         videoOnlyRows_.push_back(playbackPanel->get_gameObject());
         auto* playbackPanelBackground = playbackPanel->get_gameObject()
             ->GetComponent<HMUI::ImageView*>();
@@ -2022,7 +2075,7 @@ namespace BigScreen {
         // Fix the top allocation at the measured on-headset position. The
         // flexible spacer below Playback absorbs any parent height variation,
         // preventing Unity from expanding this spacer and undoing the offset.
-        ConfigureLayout(playbackTitleSpacer, -1.0f, 3.60f, 0.0f);
+        ConfigureLayout(playbackTitleSpacer, -1.0f, 2.85f, 0.0f);
         auto* playbackGroupTitle = BSML::Lite::CreateText(
             playbackPanel->get_transform(),
             "Playback Position",
@@ -2037,7 +2090,7 @@ namespace BigScreen {
             titleRect->set_anchorMin({0.0f, 1.0f});
             titleRect->set_anchorMax({1.0f, 1.0f});
             titleRect->set_pivot({0.5f, 0.5f});
-            titleRect->set_anchoredPosition({0.0f, 0.5f});
+            titleRect->set_anchoredPosition({0.0f, 0.0f});
             titleRect->set_sizeDelta({-2.0f, 3.0f});
             titleRect->SetAsLastSibling();
         }
@@ -2449,15 +2502,30 @@ namespace BigScreen {
             }
         const BSML::Lite::TransformWrapper storageBody(storagePanel);
 
+        // Reserve only enough top space to keep the metric row clear of the
+        // heading. Reducing the old allocation raises all three metrics and
+        // the removal action together without altering their internal layout.
+        auto* storageTitleSpacer = BSML::Lite::CreateText(
+            storageBody, "", 1.0f);
+        ConfigureLayout(storageTitleSpacer, -1.0f, 2.0f, 0.0f);
         auto* storageGroupTitle = BSML::Lite::CreateText(
-            storageBody,
+            storagePanel->get_transform(),
             "Video Storage",
             3.0f);
-        // Reducing only the title's allocation raises it slightly and moves
-        // the value row upward, containing its descenders without making the
-        // panel larger or changing any interactive control.
-        ConfigureLayout(storageGroupTitle, -1.0f, 3.4f, 1.0f);
+        if(auto* storageTitleLayout = EnsureLayout(storageGroupTitle))
+            storageTitleLayout->set_ignoreLayout(true);
         storageGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);
+        storageGroupTitle->set_enableWordWrapping(false);
+        if(auto storageTitleRect = storageGroupTitle->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            storageTitleRect->set_anchorMin({0.0f, 1.0f});
+            storageTitleRect->set_anchorMax({1.0f, 1.0f});
+            storageTitleRect->set_pivot({0.5f, 0.5f});
+            storageTitleRect->set_anchoredPosition({0.0f, -0.35f});
+            storageTitleRect->set_sizeDelta({-2.0f, 3.0f});
+            storageTitleRect->SetAsLastSibling();
+        }
 
         // The button occupies the far-right edge. Local Videos participates in
         // this layout only when one or more MP4 files physically exist in the
@@ -2465,6 +2533,8 @@ namespace BigScreen {
         auto* storageRow = BSML::Lite::CreateHorizontalLayoutGroup(storageBody);
         ConfigureGroup(storageRow);
         storageRow->set_spacing(0.6f);
+        storageRow->set_padding(UnityEngine::RectOffset::New_ctor(0, 3, 0, 0));
+        storageRow->set_childAlignment(UnityEngine::TextAnchor::MiddleLeft);
         ConfigureLayout(storageRow, -1.0f, 7.0f, 1.0f);
         detailMapStorage_ = BSML::Lite::CreateText(
             storageRow, StorageMetricText("Downloaded Video", "0.0 MB"), 2.15f);
@@ -2484,8 +2554,15 @@ namespace BigScreen {
                 detailMapStorage_, detailLocalStorage_, detailLibraryStorage_,
                 detailFreeStorage_})
             if(storageText) storageText->set_richText(true);
+        // Reserve the existing right-hand column so the four storage metrics
+        // retain their widths. The actual button is parented to the complete
+        // storage panel below, allowing it to be centered over that background
+        // instead of being vertically constrained by this short metrics row.
+        auto* removeButtonSlot = BSML::Lite::CreateText(
+            storageRow, "", 1.0f);
+        ConfigureLayout(removeButtonSlot, 13.5f, 7.0f, 0.0f);
         removeButton_ = BSML::Lite::CreateUIButton(
-            storageRow,
+            storagePanel->get_transform(),
             "<color=#FF3838>Remove Video</color>",
             {0.0f, 0.0f},
             {13.5f, 6.5f},
@@ -2495,6 +2572,21 @@ namespace BigScreen {
                     ShowModalInFront(removeConfirmModal_);
             });
         ConfigureLayout(removeButton_, 13.5f, 6.5f, 0.0f);
+        if(auto* removeLayout = EnsureLayout(removeButton_))
+            removeLayout->set_ignoreLayout(true);
+        if(auto removeRect = removeButton_->get_transform()
+               .cast<UnityEngine::RectTransform>())
+        {
+            // The panel already has 0.8 units of internal padding. Add the
+            // established three-unit storage-row inset while pinning the
+            // button's center to the panel's vertical midpoint.
+            removeRect->set_anchorMin({1.0f, 0.5f});
+            removeRect->set_anchorMax({1.0f, 0.5f});
+            removeRect->set_pivot({1.0f, 0.5f});
+            removeRect->set_anchoredPosition({-3.8f, 0.0f});
+            removeRect->set_sizeDelta({13.5f, 6.5f});
+            removeRect->SetAsLastSibling();
+        }
         BSML::Lite::SetButtonTextSize(removeButton_, 2.15f);
         if(auto* removeText = removeButton_->get_gameObject()
                ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())

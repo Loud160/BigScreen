@@ -2346,20 +2346,31 @@ namespace BigScreen {
 
         nightlyWarningModal_ = BSML::Lite::CreateModal(
             viewController,
-            {64.0f, 31.0f},
+            {72.0f, 39.0f},
             nullptr,
             false);
         auto* nightlyWarningText = BSML::Lite::CreateText(
             nightlyWarningModal_,
             "Check for a nightly yt-dlp build?\n\nNightly builds contain the newest changes, but they are more likely to include bugs than stable releases. The switch will change only after a verified nightly package is installed and activated on restart.",
             TMPro::FontStyles::Normal,
-            {0.0f, 6.0f});
-        nightlyWarningText->set_fontSize(2.9f);
+            3.0f,
+            {0.0f, 4.0f},
+            {66.0f, 26.0f});
+        // This is distinct from the updater-result modal below. Give its long
+        // explanatory copy an explicit bounded text area; the short CreateText
+        // overload otherwise produces a single unconstrained TMP line that
+        // extends beyond both sides of the modal on Quest.
+        nightlyWarningText->set_enableWordWrapping(true);
+        nightlyWarningText->set_enableAutoSizing(true);
+        nightlyWarningText->set_fontSizeMin(2.25f);
+        nightlyWarningText->set_fontSizeMax(3.0f);
+        nightlyWarningText->set_overflowMode(
+            TMPro::TextOverflowModes::Ellipsis);
         nightlyWarningText->set_alignment(TMPro::TextAlignmentOptions::Center);
         BSML::Lite::CreateUIButton(
             nightlyWarningModal_->get_transform(),
             "Stay on Stable",
-            {16.0f, -22.5f},
+            {20.0f, -31.5f},
             {24.0f, 8.0f},
             [this]()
             {
@@ -2372,7 +2383,7 @@ namespace BigScreen {
         BSML::Lite::CreateUIButton(
             nightlyWarningModal_->get_transform(),
             "Check Nightly",
-            {43.0f, -22.5f},
+            {51.0f, -31.5f},
             {24.0f, 8.0f},
             [this]()
             {
@@ -2802,7 +2813,7 @@ namespace BigScreen {
 
         localVideoInstructionsModal_ = BSML::Lite::CreateModal(
             viewController,
-            {70.0f, 46.0f},
+            {76.0f, 54.0f},
             nullptr,
             true);
         auto* localVideoInstructions = BSML::Lite::CreateText(
@@ -2810,12 +2821,13 @@ namespace BigScreen {
             "<size=3.8><b>Add Your Own Video</b></size>\n\n"
             "For a custom or WIP map, copy a compatible MP4 or WebM video into that map's folder.\n\n"
             "For any song—including OST and DLC—copy the video into:\n"
-            "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Video Import\n\n"
+            "/sdcard/ModData/com.beatgames.beatsaber/\n"
+            "BigScreen/Video Import\n\n"
             "Open Video Library, choose the song, and press SET beside the file. You can then adjust timing normally. Big Screen only registers these user-owned files; Remove Video never deletes them.",
             TMPro::FontStyles::Normal,
             3.1f,
             {0.0f, 3.0f},
-            {64.0f, 34.0f});
+            {70.0f, 42.0f});
         // BSML text defaults to a zero-sized rectangle and permits glyphs to
         // overflow it. Give the instructions a real content box inside the
         // modal, wrap long lines, and allow a small automatic font reduction
@@ -2829,7 +2841,7 @@ namespace BigScreen {
         BSML::Lite::CreateUIButton(
             localVideoInstructionsModal_->get_transform(),
             "Close",
-            {35.0f, -39.0f},
+            {38.0f, -47.0f},
             {22.0f, 7.0f},
             [this]()
             {

@@ -1814,6 +1814,19 @@ assert "Switching now will install an older yt-dlp release" in download_manager_
 assert "current_channel == 'nightly'" in download_manager_source
 assert '"Check Stable Release"' in settings_menu_source
 assert '"Use Nightly yt-dlp"' in settings_menu_source
+assert "nightlyWarningText->set_enableWordWrapping(true);" in (
+    settings_menu_source
+)
+assert "nightlyWarningText->set_enableAutoSizing(true);" in (
+    settings_menu_source
+)
+assert "{66.0f, 26.0f}" in settings_menu_source
+assert '"/sdcard/ModData/com.beatgames.beatsaber/\\n"' in (
+    settings_menu_source
+)
+assert '"BigScreen/Video Import\\n\\n"' in settings_menu_source
+assert "{76.0f, 54.0f}" in settings_menu_source
+assert "{70.0f, 42.0f}" in settings_menu_source
 assert "void SettingsMenu::RefreshYtDlpChannelState()" in settings_menu_source
 assert "void SettingsMenu::RequestYtDlpChannel(bool nightly)" in (
     settings_menu_source
@@ -1989,6 +2002,10 @@ assert "const bool showTierButtons = validatedProbe" in library_menu_source
 assert 'name + " — " + author' in library_menu_source
 assert "detailTitle_->set_maxVisibleLines(1);" in library_menu_source
 assert "constexpr float TimingControlHeight = 8.0f;" in library_menu_source
+assert "constexpr float TimingControlCount = 3.0f;" in library_menu_source
+assert "constexpr float TimingControlRightAlignmentNudge = 1.0f;" in (
+    library_menu_source
+)
 assert "timingControlsGroup->set_spacing(TimingControlSpacing);" in (
     library_menu_source
 )
@@ -2013,10 +2030,10 @@ assert "ConfigureLayout(transportBottomSpacer, 8.5f, 1.25f, 0.0f);" in (
     library_menu_source
 )
 assert "titleLayout->set_ignoreLayout(true);" in library_menu_source
-assert "titleRect->set_anchoredPosition({0.0f, 0.5f});" in (
+assert "titleRect->set_anchoredPosition({0.0f, 0.0f});" in (
     library_menu_source
 )
-assert "ConfigureLayout(playbackTitleSpacer, -1.0f, 3.60f, 0.0f);" in (
+assert "ConfigureLayout(playbackTitleSpacer, -1.0f, 2.85f, 0.0f);" in (
     library_menu_source
 )
 assert "ConfigureLayout(playbackBottomSpacer, -1.0f, 0.0f, 1.0f, 1.0f);" in (
@@ -2025,13 +2042,42 @@ assert "ConfigureLayout(playbackBottomSpacer, -1.0f, 0.0f, 1.0f, 1.0f);" in (
 assert "playbackGroupTitle->set_alignment(TMPro::TextAlignmentOptions::Center);" in (
     library_menu_source
 )
-assert "ConfigureLayout(playbackPanel, -1.0f, 12.5f, 1.0f);" in (
+assert "ConfigureLayout(playbackTopSpacer, -1.0f, 0.75f, 1.0f);" in (
+    library_menu_source
+)
+assert "videoOnlyRows_.push_back(playbackTopSpacer->get_gameObject());" in (
+    library_menu_source
+)
+assert "ConfigureLayout(playbackPanel, -1.0f, 13.5f, 1.0f);" in (
     library_menu_source
 )
 assert "ConfigureLayout(storagePanel, -1.0f, 17.5f, 1.0f);" in (
     library_menu_source
 )
-assert "ConfigureLayout(storageGroupTitle, -1.0f, 3.4f, 1.0f);" in (
+assert "ConfigureLayout(storageTitleSpacer, -1.0f, 2.0f, 0.0f);" in (
+    library_menu_source
+)
+assert "storageTitleLayout->set_ignoreLayout(true);" in (
+    library_menu_source
+)
+assert "storageTitleRect->set_anchoredPosition({0.0f, -0.35f});" in (
+    library_menu_source
+)
+assert "storageRow->set_padding(UnityEngine::RectOffset::New_ctor(0, 3, 0, 0));" in (
+    library_menu_source
+)
+assert "storageRow->set_childAlignment(UnityEngine::TextAnchor::MiddleLeft);" in (
+    library_menu_source
+)
+assert 'storageRow, "", 1.0f' in library_menu_source
+assert "ConfigureLayout(removeButtonSlot, 13.5f, 7.0f, 0.0f);" in (
+    library_menu_source
+)
+assert "removeLayout->set_ignoreLayout(true);" in library_menu_source
+assert "removeRect->set_anchorMin({1.0f, 0.5f});" in library_menu_source
+assert "removeRect->set_anchorMax({1.0f, 0.5f});" in library_menu_source
+assert "removeRect->set_pivot({1.0f, 0.5f});" in library_menu_source
+assert "removeRect->set_anchoredPosition({-3.8f, 0.0f});" in (
     library_menu_source
 )
 assert 'StorageMetricLineHeight = "70%";' in library_menu_source
@@ -2041,6 +2087,14 @@ assert 'StyleToggleRow(fitToggle_, "Fit to Song");' in library_menu_source
 assert (
     'StyleToggleRow(blackLeadInToggle_, "Lead-In Background");'
     in library_menu_source
+)
+assert "CreateHorizontalLayoutGroup(timingControlsBody);" in library_menu_source
+assert library_menu_source.count(
+    "BSML::Lite::TransformWrapper timingToggleBody(timingToggleRow)"
+) == 1
+assert library_menu_source.count("timingToggleBody,") == 3
+assert "timingToggleSpacer, 0.0f, TimingControlHeight, 1.0f" in (
+    library_menu_source
 )
 assert "SetBrightButtonLabel(mapperRefreshButton_, 6.0f);" in (
     library_menu_source
@@ -2347,7 +2401,7 @@ assert '"Video timing was not saved"' in library_menu_source
 # status line only after the slider has settled.
 fit_toggle_callback = library_menu_source.split(
     'fitToggle_ = BSML::Lite::CreateToggle(', 1
-)[1].split('rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1)[0]
+)[1].split('blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1)[0]
 assert "PublishEditorNotice(" in fit_toggle_callback
 rate_callback = library_menu_source.split(
     'rateSetting_ = BSML::Lite::CreateIncrementSetting(', 1
@@ -2356,7 +2410,7 @@ assert "ScheduleTimingCommit(message.str());" in rate_callback
 assert '"Playback Speed", 2, 0.01f' in rate_callback
 offset_callback = library_menu_source.split(
     'offsetSetting_ = BSML::Lite::CreateSliderSetting(', 1
-)[1].split('blackLeadInToggle_ = BSML::Lite::CreateToggle(', 1)[0]
+)[1].split('// RefreshDetails hides the complete group', 1)[0]
 assert "ScheduleTimingCommit(message.str());" in offset_callback
 assert '"Video Playback Offset", 0.001f' in offset_callback
 assert "offsetSetting_->digits = 2;" in offset_callback
@@ -2374,7 +2428,8 @@ assert "FlushPendingTimingCommit(false);" in library_menu_source
 assert "MatchIncrementControlWidthToSlider(rateSetting_, offsetSetting_);" in (
     library_menu_source
 )
-assert library_menu_source.count("ExtendTimingControlRight(") >= 5
+assert library_menu_source.count("NudgeTimingControlRight(") == 3
+assert library_menu_source.count("ExtendTimingControlRight(") >= 4
 assert "void VideoLibraryMenu::ResetPlaybackRate()" in library_menu_source
 assert "void VideoLibraryMenu::ResetVideoOffset()" in library_menu_source
 assert "bool VideoLibraryMenu::ApplyTimingToActivePreview()" in library_menu_source
