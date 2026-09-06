@@ -551,7 +551,8 @@ licenses/               Redistributable third-party license texts
 
 ## Development status
 
-Big Screen remains alpha software. The 0.7.0-alpha.13 candidate completed the
+The main branch is now developing Big Screen 0.7.0-alpha.14. The published
+0.7.0-alpha.13 release completed the
 nine-stage code-review remediation pass, the host and ARM64/QMOD validation
 pipeline, focused Quest 2 regression testing, and several days of combined use
 with Saber Stage and Qavatars without a reported regression. Community testing

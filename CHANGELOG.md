@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.0-alpha.14 — In development
+
+Development after the published 0.7.0-alpha.13 release is recorded here.
 
 ## 0.7.0-alpha.13 — Reliability, performance, and compatibility hardening
 
