@@ -22,7 +22,7 @@ This index separates ordinary player instructions from mapper and developer mate
 - [Building and packaging](BUILDING.md) — the shared Windows/WSL and native Linux build, QMOD-only versus direct-deploy workflows, toolchain, validation, package contents, and CI.
 - [Building on Linux](BUILDING-LINUX.md) — native x86-64 QMOD builds for MBF or SideQuest, direct Quest deployment, ownership-safe removal, support-log collection, Bazzite/Distrobox setup, caches, and troubleshooting.
 - [Release checklist](RELEASE_CHECKLIST.md) — the minimum checks before publishing a build.
-- [Current development checkpoint](KNOWN_ISSUES.md) — unverified behavior and the required Quest retest matrix for the current preservation checkpoint.
+- [Alpha status and known limitations](KNOWN_ISSUES.md) — validated release-candidate scope, deliberately disabled experiments, compatibility boundaries, and ongoing alpha coverage.
 - [AI-assisted development records](ai-assisted-development/README.md) — retained prompts, implementation contracts, planning notes, and external reviews. These are historical engineering records rather than canonical runtime documentation.
 - [Future work](FUTURE_WORK.md) — intentionally deferred ideas and known areas for wider testing.
 - [Third-party notices](../THIRD_PARTY_NOTICES.md) and [provenance](../PROVENANCE.md).

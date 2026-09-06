@@ -40,7 +40,7 @@ video part of the map's visual presentation instead of a passive background.
 | **Frame the picture** | Rotate, zoom, pan, perspective-tilt, stretch, letterbox, or crop the video without changing the screen canvas. |
 | **Blend it into the map** | Control video opacity and letterbox transparency, retain map lighting, or hide environmental objects and light groups that obstruct large screens. |
 | **Save five layouts** | Keep five independent screen configurations and switch layouts from Big Screen or song selection. Beat Saber 1.40.8 does not currently expose Big Screen pause-menu controls. |
-| **Respect authored visuals** | The current development tree can parse Cinema-authored placement, curvature, additional screens, color correction, vignette, environment selection, and object changes—or retain only mapper media/timing. This new compatibility path still requires complete on-device regression testing. |
+| **Respect authored visuals** | Parse Cinema-authored placement, curvature, additional screens, color correction, vignette, environment selection, and object changes—or retain only mapper media/timing. This compatibility path has been exercised on Quest, with its remaining boundaries documented for alpha testers. |
 
 ### A proof of concept for animated video choreography
 
@@ -455,9 +455,9 @@ the embedded `BigScreen/Video` shader, which provides explicit alpha blending
 and depth writes. If the requested shader cannot
 be loaded, the implementation follows a documented fallback ladder and records
 the selected tier in the log. These source-level checks establish how the two
-paths are wired; their complete current behavior with Bloom on and off still
-requires the on-device matrix in
-[Current development checkpoint](docs/KNOWN_ISSUES.md).
+paths are wired. Both active material paths have been exercised on Quest; the
+disabled mapper-bloom behavior and other alpha boundaries are recorded under
+[known limitations](docs/KNOWN_ISSUES.md).
 
 Beat Saber's bloom composite reads
 the framebuffer's **alpha channel as a per-pixel emission weight**. A shader
@@ -546,16 +546,18 @@ licenses/               Redistributable third-party license texts
 - [Building and packaging](docs/BUILDING.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [Known limitations and future work](docs/FUTURE_WORK.md)
-- [Current development checkpoint and required retesting](docs/KNOWN_ISSUES.md)
+- [Alpha status and known limitations](docs/KNOWN_ISSUES.md)
 - [Complete documentation index](docs/README.md)
 
 ## Development status
 
-Big Screen is an unreleased alpha. This checkpoint contains substantial recent
-work and is **not** release-ready even when host tests, the ARM64 Quest build,
-dependency/ELF checks, and QMOD validation pass. Everything requires a fresh
-on-device regression pass; see
-[current development checkpoint](docs/KNOWN_ISSUES.md) and the
+Big Screen remains alpha software. The 0.7.0-alpha.13 candidate completed the
+nine-stage code-review remediation pass, the host and ARM64/QMOD validation
+pipeline, focused Quest 2 regression testing, and several days of combined use
+with Saber Stage and Qavatars without a reported regression. Community testing
+on Quest 3 and Quest 3S has not identified a headset-specific problem. Alpha
+status still means that wider map and mod combinations may expose defects; see
+[known limitations](docs/KNOWN_ISSUES.md) and the
 [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ## License

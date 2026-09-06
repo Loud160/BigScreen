@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0-alpha.13 — Reliability, performance, and compatibility hardening
+
 - Corrected performance reporting after Practice/Replay clock jumps by starting
   a new presentation-measurement epoch instead of counting deadlines from the
   abandoned timeline. Reported video FPS is now bounded by the source cadence,
@@ -44,8 +46,6 @@
   first, and a pinned x264 software fallback. Failed conversion never replaces
   the map's existing video, and detailed diagnostics retain the actual decoder
   or transcoder failure.
-
-## 0.7.0-alpha.13 — First-party logging and dependency resilience
 
 - Replaced Big Screen's direct Paper2 logging dependency with a private,
   bounded asynchronous logger that retains crash-tail records, logcat output,

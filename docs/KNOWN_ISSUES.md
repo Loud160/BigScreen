@@ -1,85 +1,86 @@
-# Current development checkpoint
+# Alpha status and known limitations
 
-> **Serious development warning:** the current feature set has substantial
-> unresolved quality concerns. It is a preservation checkpoint, not a release
-> candidate. Everything must be retested on Quest before release.
+Big Screen 0.7.0-alpha.13 is an alpha release candidate for Beat Saber
+1.40.8 (`1.40.8_7379`). It completed the nine-stage independent code-review
+remediation pass, the complete host and ARM64/QMOD validation pipeline, focused
+Quest 2 regression testing, and several days of combined use with Saber Stage
+and Qavatars without a reported regression. Community testing on Quest 3 and
+Quest 3S has not identified a headset-specific problem.
 
-Last reviewed: August 29, 2026
+This is sufficient for another public alpha. It is not a claim that every map,
+video, mod combination, or long-running headset session has been tested.
 
-## Experimental GPU conversion status
+Last reviewed: September 6, 2026
 
-GPU Video Conversion now defaults on after Quest 2 A/B testing confirmed the
-corrected picture matches the CPU path while materially reducing frame
-preparation time. Existing settings files are promoted once through the
-versioned settings migration ledger; users may still turn the option off after
-that migration. Quest 2 remains the primary local acceptance headset, while
-community testing on Quest 3 and Quest 3S has not identified a headset-specific
-regression. The complete stable-release matrix is still required. Its supported
-scope is 8-bit SDR YUV420P,
-YUVJ420P, and NV12. Unsupported pixel layouts, color matrices, or Unity GPU
-resources are designed to fall back permanently to CPU RGBA for that playback
-session.
+## Known limitations
 
-## Video screen and Bloom status
+- The QMOD is specific to Beat Saber 1.40.8 (`1.40.8_7379`). It must not be
+  installed on another game version.
+- Multiplayer integration is intentionally deferred. Big Screen does not claim
+  to coordinate videos, screen state, or downloads between multiplayer users.
+- Mapper `bloom` and `colorBlending` fields are parsed but intentionally have
+  no runtime effect. Both active video-material paths suppress video bloom
+  emission to avoid the solid-white screen failure seen during the earlier
+  Cinema bloom experiment.
+- The disabled Cinema bloom renderer, camera hook, soft-additive path, and
+  diagnostic controls remain preserved behind the default-off
+  `BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM` build gate. They do not run or
+  appear in release builds and must not be re-enabled without a separate branch
+  and a complete Bloom-on/Bloom-off headset matrix.
+- GPU Video Conversion supports the tested 8-bit SDR YUV420P, YUVJ420P, and NV12
+  paths. Unsupported pixel layouts, color matrices, or unavailable Unity GPU
+  resources fall back to CPU RGBA for that playback session.
+- Cinema placement, curvature, additional screens, color correction, vignette,
+  environment instructions, and Chroma cooperation are implemented and have
+  received focused Quest testing. Wider mapper coverage is still needed before
+  Big Screen can claim complete PC Cinema visual parity.
+- YouTube can change its extraction and anti-bot requirements independently of
+  Big Screen. The bundled yt-dlp updater, stable/nightly channel controls, HLS
+  recovery, remuxing, and last-resort transcoding reduce failures but cannot
+  guarantee that every public video remains downloadable.
+- Hardware decoding remains dependent on the video's codec, profile, container,
+  and Quest MediaCodec support. Big Screen reports fallback or preparation
+  failures and can use software paths where supported, but high-resolution or
+  high-frame-rate video may still exceed a headset's practical performance.
+- **Frames Skipped is a presentation-deadline measurement, not a count of
+  decoder failures.** Big Screen compares actual uploaded pictures with
+  source-aware deadlines derived from song time, source FPS, playback speed,
+  and the active FPS cap. Beat Saber's Unity render loop runs independently of
+  that video cadence, and its effective frame rate can vary during a session.
+  A decoded and queued picture can therefore become available between game
+  frames and miss its exact presentation opportunity before Unity can upload
+  it. The cadence mismatch is more visible with 60 FPS video because its
+  deadlines are only about 16.67 ms apart; they do not consistently align with
+  72, 80, 90, 120, or temporarily reduced game-frame timing. This can produce a
+  higher skipped-frame total even when decoder CPU time is low and playback
+  appears smooth. Buffering and bounded late-frame tolerance reduce the effect,
+  but Big Screen cannot eliminate it without control of Beat Saber's render
+  schedule. Judge the counter together with visible smoothness, gameplay FPS,
+  queue state, and decoder/presentation timing rather than treating it alone as
+  proof that decoding failed.
 
-The two selectable visible video-material paths remain available. The August
-18 Cinema bloom renderer, camera hook, soft-additive map path, and two diagnostic
-bloom sliders are preserved behind the default-off
-`BIGSCREEN_ENABLE_EXPERIMENTAL_CINEMA_BLOOM` build gate and do not
-run or appear in the menu. Mapper `bloom` and `colorBlending` fields are parsed
-but intentionally ignored. Both active material paths instead suppress the
-video's bloom-emission weight. Explicit mapper transparency/vignette and the
-player's opacity/letterbox settings remain supported.
+## Validated alpha scope
 
-The previous experiment produced white screens, state that changed only after
-moving a slider, and broken showcase backing. Do not re-enable it without a
-separate branch and a complete Bloom-on/Bloom-off headset matrix.
+The alpha-13 remediation and regression work covered:
 
-## Cinema compatibility status
+- repeated Video Library entry, filtering, letter jumps, editor return,
+  thumbnail arrival, selection reuse, and incremental large-catalog loading;
+- YouTube checking and downloads, cancellation, direct-DASH validation,
+  HLS/MPEG-TS recovery, remuxing, transcoding prompts, local assignment, storage,
+  and error recovery;
+- menu preview, natural completion and looping, seeking, offset, playback speed,
+  Fit to Song, lead-in, and non-disruptive screen/timing adjustments;
+- flat, curved, mapper-authored, additional, Chroma, and Showcase surfaces,
+  including GPU conversion and buffered presentation paths;
+- Solo and Campaign entry, restart, map completion/exit, Practice/Replay clock
+  changes, and corrected performance reporting;
+- both FFmpeg runtimes and hardware/software fallback behavior where compatible
+  test media was available;
+- first-party logging, dependency diagnostics, source deployment/removal,
+  deterministic packaging, and support-log collection; and
+- coexistence testing with Saber Stage and Qavatars, plus community use on
+  Quest 3 and Quest 3S.
 
-The current code contains a new Cinema-compatibility parser and implementation
-for mapper geometry, additional screens, color correction, vignette, and
-environment instructions. This work compiles and has host-side parser coverage,
-but the complete feature set has not passed a clean on-device regression pass.
-
-In particular:
-
-- the PC Cinema `bloom` and `colorBlending` fields are parsed but intentionally
-  have no runtime effect while the failed glow experiment's named build gate
-  remains off;
-- opaque/transparency presentation depends on the selected video material and
-  therefore belongs in the same on-device test matrix;
-- environment cloning, requested environments, additional screens, Chroma
-  cooperation, selected-difficulty `CinemaScreen` preview placement, gameplay
-  precreation/reuse, restart behavior, and the Respect Mapper Settings switch
-  all require wider map testing before their behavior can be called compatible
-  with PC Cinema.
-
-Unknown mapper fields are ignored rather than treated as fatal errors, so the
-absence of a particular Cinema feature should not by itself prevent ordinary
-media/timing metadata from loading.
-
-## Required retest scope
-
-At minimum, retest all of the following before this checkpoint is advanced:
-
-- Video Library preview and gameplay with Bloom on and off;
-- the normal and embedded material selections;
-- flat, curved, undocked, mapper-authored, and additional screens;
-- opacity, letterboxing, lead-in, vignette, color correction, and
-  `colorBlending`;
-- OST, DLC, custom, WIP, campaign, Showcase, Chroma/Noodle, and Replay paths;
-- repeated menu entry, map restart, map exit/failure, and decoder fallback;
-- both FFmpeg runtimes and hardware/software decoding where supported;
-- GPU Video Conversion off/on, including automatic fallback and the complete
-  Showcase crack/shatter path;
-- YouTube download, local assignment, refresh, unlink/delete, storage, reset,
-  direct-DASH validation, HLS/alternate recovery, approved hardware/software
-  transcoding, cancellation, error recovery, and settings migration;
-- large Video Libraries across initial load, search/filter/jump, thumbnail
-  arrival, hover, editor return, repeated selection, and SongCore refresh;
-- Practice/Replay clock jumps and the resulting performance-panel/results
-  deadline, missed-frame, and delivered-FPS statistics.
-
-Host tests and a successful Quest build remain necessary, but they cannot
-replace the visual and lifecycle checks above.
+The permanent [release checklist](RELEASE_CHECKLIST.md) remains the publication
+gate for each tagged build. New defects should be reported with the generated
+Big Screen support archive whenever possible.

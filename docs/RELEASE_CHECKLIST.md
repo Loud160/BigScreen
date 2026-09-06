@@ -154,4 +154,6 @@
 - [ ] Release notes distinguish features, fixes, compatibility, and known limitations.
 - [ ] QMOD SHA-256 is recorded in the release notes.
 - [ ] Source corresponding to the released binary and third-party notices are published with the release.
-- [ ] Release remains draft until a second clean-headset install is confirmed.
+- [ ] Do not push the release tag until a second clean-headset install is
+      confirmed; the tag workflow publishes immediately rather than creating a
+      draft release.

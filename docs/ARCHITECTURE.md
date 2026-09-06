@@ -367,8 +367,8 @@ The reusable pool may retain enough YUV frame sets to refill the configured
 queue after a scrub or restart, but queue plus pool is bounded by the same
 byte-derived frame capacity. Planar Y/U/V growth is counted as one frame-set
 allocation rather than three independent plane allocations. Queue and depth behavior depends on the active video material. Both selectable
-paths are included in the current on-device regression matrix; see
-`KNOWN_ISSUES.md`.
+paths have received focused on-device testing; their supported scope and
+remaining alpha limitations are maintained in `KNOWN_ISSUES.md`.
 
 Video Library looping is an explicit decoder transition, not an ordinary clock
 seek. `Restart` clears all prepared decoder output, invalidates the previous pass's
@@ -411,8 +411,9 @@ original full-picture `pow`, ellipse-distance, or smooth-step calculations.
 Authored vignette alpha removes the independent rectangular backing and requires
 the active video material to consume the generated alpha. Additional Cinema
 screens reuse the primary screen's uploaded video texture without another
-decode or texture upload. The parser/worker paths have host coverage, but the
-complete presentation path still requires the on-device checks listed in
+decode or texture upload. The parser/worker paths have host coverage and the
+presentation path has received focused Quest testing. It is not claimed as
+complete PC Cinema parity; remaining boundaries are listed in
 `KNOWN_ISSUES.md`.
 
 Menu preview has no gameplay Chroma controller, so a narrow compatibility pass

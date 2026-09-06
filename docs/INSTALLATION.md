@@ -27,7 +27,7 @@ The package installs its native libraries through the mod loader and places the 
 
 ## Recommended first-run setup
 
-Keep the defaults initially: native source resolution, 30 FPS, hardware decoding, FFmpeg 9, Big Mirror override, Respect Mapper Settings, Chroma override, Disable Rotation and Motion, and the obstruction-hiding controls. Use the Screen tab to place Layout 1. Test one known 8-bit SDR H.264 video before enabling 60 FPS, transparency, experimental shader/material work, or map-specific authored environments. The current development checkpoint requires a complete on-device regression pass; read [Current development checkpoint](KNOWN_ISSUES.md) before testing it.
+Keep the defaults initially: native source resolution, 30 FPS, hardware decoding, FFmpeg 9, Big Mirror override, Respect Mapper Settings, Chroma override, Disable Rotation and Motion, and the obstruction-hiding controls. Use the Screen tab to place Layout 1. Test one known 8-bit SDR H.264 video before enabling 60 FPS, transparency, experimental shader/material work, or map-specific authored environments. Read [Alpha status and known limitations](KNOWN_ISSUES.md) before testing less common mapper, format, or mod combinations.
 
 ## Updating Big Screen
 

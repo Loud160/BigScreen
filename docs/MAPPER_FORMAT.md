@@ -4,9 +4,9 @@ Big Screen reads a documented subset of the PC Cinema JSON format as an
 interoperability input. A map may provide a local MP4/WebM filename or a
 supported download URL plus timing, screen, image-effect, and environment
 fields. A player assignment takes precedence without changing the map;
-unlinking it reveals the mapper's video. The new presentation implementation
-still requires its complete Quest regression pass; see
-[Current development checkpoint](KNOWN_ISSUES.md).
+unlinking it reveals the mapper's video. The presentation implementation has
+been exercised on Quest but is not claimed as complete PC Cinema parity; see
+[Alpha status and known limitations](KNOWN_ISSUES.md).
 
 The recognized map-folder filenames, in priority order, are `bigscreen.json`,
 `cinema-video.json`, and `video.json`. Big Screen also reads a `cinema` object
@@ -156,5 +156,7 @@ environment entries, 32 additional screens, and bounded strings. Unknown JSON
 fields are ignored, so newer metadata remains playable. `bundledConfig` and
 `userSettings` are PC Cinema bookkeeping/UI state rather than mapper
 presentation controls and have no Quest runtime effect. Environment cloning,
-requested environments, additional screens, and Chroma cooperation still need
-the full on-device matrix in `KNOWN_ISSUES.md` before being called PC-equivalent.
+requested environments, additional screens, and Chroma cooperation are
+implemented and have received focused Quest testing, but wider mapper coverage
+is still needed before they can be called PC-equivalent. The current boundaries
+are maintained in `KNOWN_ISSUES.md`.
