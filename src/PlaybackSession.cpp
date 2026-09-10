@@ -461,6 +461,14 @@ namespace BigScreen {
         RebuildEffectiveConfig();
     }
 
+    void PlaybackSession::ApplyLibraryPreviewCutoff(std::optional<double> cutoff)
+    {
+        if(context_ != PlaybackContext::LibraryPreview) return;
+        if(config_) config_->stopAtVideoSecond=cutoff;
+        if(baseConfig_) baseConfig_->stopAtVideoSecond=cutoff;
+        if(chromaPreviewBaseConfig_) chromaPreviewBaseConfig_->stopAtVideoSecond=cutoff;
+    }
+
     bool PlaybackSession::ApplyLibraryPreviewTiming(
         double offsetSeconds,
         double playbackRate,

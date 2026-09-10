@@ -10,6 +10,7 @@
 #include "BigScreen/Utility.hpp"
 #include "BigScreen/CoreLogic.hpp"
 #include "BigScreen/ErrorManager.hpp"
+#include "BigScreen/AudioSyncReader.hpp"
 
 #include <algorithm>
 #include <array>
@@ -42,6 +43,17 @@ namespace BigScreen {
     namespace {
         constexpr auto LibraryRoot =
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen";
+
+        // Publish intent before acquiring the manifest mutex. Scope ownership
+        // balances every return/exception, and overlapping download/sync saves
+        // cannot clear each other's "do not refresh on Unity yet" indication.
+        struct BackgroundPublication final {
+            explicit BackgroundPublication(std::atomic<unsigned>& count) : count(count) { ++count; }
+            ~BackgroundPublication() { --count; }
+            BackgroundPublication(const BackgroundPublication&) = delete;
+            BackgroundPublication& operator=(const BackgroundPublication&) = delete;
+            std::atomic<unsigned>& count;
+        };
 
         const rapidjson::Value* Member(
             const rapidjson::Value& value, const char* name);
@@ -268,6 +280,10 @@ namespace BigScreen {
             video.fileName = StringOr(value, "fileName");
             video.title = StringOr(value, "title");
             video.codec = StringOr(value, "codec");
+            video.audioFileName = StringOr(value, "audioFileName");
+            if(std::filesystem::path(video.audioFileName).filename().string() != video.audioFileName ||
+               video.audioFileName == "." || video.audioFileName == "..")
+                video.audioFileName.clear();
             const auto sourceType = StringOr(value, "sourceType");
             video.mapLocal = sourceType == "mapFile";
             video.importFile = sourceType == "importFile";
@@ -321,6 +337,7 @@ namespace BigScreen {
             addString("fileName", video.fileName);
             addString("title", video.title);
             addString("codec", video.codec);
+            addString("audioFileName", video.audioFileName);
             addString("sourceType", video.mapLocal
                 ? "mapFile"
                 : (video.importFile
@@ -863,6 +880,34 @@ namespace BigScreen {
                 descriptor.levelId, VideoOrigin::Mapper);
         }
 
+        if(descriptor.playableConfig)
+        {
+            descriptor.syncAudioPath = descriptor.playableConfig->videoPath;
+            const StoredVideo* active = descriptor.hasUserOverride ? &*saved->user
+                : (!descriptor.hasMapperLocalFile && descriptor.hasMapperDownload ? &*saved->mapper : nullptr);
+            if(active && !IsUserOwnedFile(*active) && !active->audioFileName.empty())
+                descriptor.syncAudioPath = videoPath_ / active->audioFileName;
+        }
+
+        // Only maps with a saved advanced profile need the extra fingerprint
+        // check. The cached descriptor is reused by ordinary UI refreshes;
+        // do not add audio probing to the thousands-of-rows catalog path.
+        if(descriptor.playableConfig && saved && saved->advancedSync)
+        {
+            descriptor.syncSourceKey = AudioSync::SourceFingerprint(descriptor.playableConfig->videoPath);
+            if(!descriptor.syncSourceKey.empty() && descriptor.syncSourceKey == saved->advancedSync->sourceKey)
+            {
+                descriptor.advancedSync = saved->advancedSync;
+                if(saved->advancedSync->enabled)
+                {
+                    auto& config = *descriptor.playableConfig;
+                    config.offsetSeconds = saved->advancedSync->profile.timing.offsetSeconds;
+                    config.playbackRate = saved->advancedSync->profile.timing.playbackRate;
+                    config.fitToSong = false;
+                    config.stopAtVideoSecond = AudioSync::EffectiveCutoff(*saved->advancedSync, config.stopAtVideoSecond);
+                }
+            }
+        }
         descriptorCache_.insert_or_assign(descriptor.levelId, descriptor);
         return descriptor;
     }
@@ -1002,8 +1047,7 @@ namespace BigScreen {
         // This method runs on the downloader operation thread. Advertise the
         // persistence window before taking mutex_ so Unity never queues behind
         // JSON serialization, backup rotation, or shared-storage replacement.
-        backgroundCommitInProgress_ = true;
-        try
+        const BackgroundPublication publication(backgroundCommitCount_);
         {
             std::scoped_lock lock(mutex_);
             auto found = FindRecord(records_, levelId);
@@ -1023,17 +1067,15 @@ namespace BigScreen {
             // erase the user's last working video.
             const auto previous = target;
             target = std::move(video);
+            found->second.advancedSync.reset();
             SaveLocked(levelId);
             if(previous && !IsUserOwnedFile(*previous) &&
                previous->fileName != target->fileName)
                 RemoveManagedFile(videoPath_, previous->fileName);
+            if(previous && !previous->audioFileName.empty() &&
+               previous->audioFileName != target->audioFileName)
+                RemoveManagedFile(videoPath_, previous->audioFileName);
         }
-        catch(...)
-        {
-            backgroundCommitInProgress_ = false;
-            throw;
-        }
-        backgroundCommitInProgress_ = false;
     }
 
     std::vector<LocalVideoFile> VideoLibrary::DiscoverLocalVideos(
@@ -1162,12 +1204,15 @@ namespace BigScreen {
             ? std::string(level->songAuthorName) : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
+        found->second.advancedSync.reset();
         SaveLocked(levelId);
 
         // Only Big Screen-managed downloads are deleted on replacement. Every
         // browser-picked file remains exactly where the user placed it.
         if(previous && !IsUserOwnedFile(*previous))
             RemoveManagedFile(videoPath_, previous->fileName);
+        if(previous && !previous->audioFileName.empty())
+            RemoveManagedFile(videoPath_, previous->audioFileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         BigScreen::BigScreenLogger.info(
@@ -1247,6 +1292,7 @@ namespace BigScreen {
             : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
+        found->second.advancedSync.reset();
         SaveLocked(levelId);
 
         // A map-local file is never owned or deleted by Big Screen. A managed
@@ -1254,6 +1300,8 @@ namespace BigScreen {
         // inaccessible orphan consuming the headset's storage.
         if(previous && !IsUserOwnedFile(*previous))
             RemoveManagedFile(videoPath_, previous->fileName);
+        if(previous && !previous->audioFileName.empty())
+            RemoveManagedFile(videoPath_, previous->audioFileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         BigScreen::BigScreenLogger.info(
@@ -1327,12 +1375,15 @@ namespace BigScreen {
             ? std::string(level->songAuthorName) : std::string{};
         const auto previous = found->second.user;
         found->second.user = std::move(video);
+        found->second.advancedSync.reset();
         SaveLocked(levelId);
 
         // Import files remain user-owned. Only a replaced Big Screen download
         // is deleted; another import or map-folder file is merely unregistered.
         if(previous && !IsUserOwnedFile(*previous))
             RemoveManagedFile(videoPath_, previous->fileName);
+        if(previous && !previous->audioFileName.empty())
+            RemoveManagedFile(videoPath_, previous->audioFileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         BigScreen::BigScreenLogger.info("Assigned imported video '{}' to '{}'", probe.fileName, levelId);
@@ -1347,9 +1398,12 @@ namespace BigScreen {
             return false;
         const auto removed = *found->second.user;
         found->second.user.reset();
+        found->second.advancedSync.reset();
         SaveLocked(levelId);
         if(deleteFile && !IsUserOwnedFile(removed))
             RemoveManagedFile(videoPath_, removed.fileName);
+        if(!removed.audioFileName.empty())
+            RemoveManagedFile(videoPath_, removed.audioFileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-user.jpg"));
         return true;
@@ -1370,6 +1424,7 @@ namespace BigScreen {
         // This is deliberately a metadata-only operation. The file belongs to
         // the map/user and may be relinked later through Show File Browser.
         found->second.mapperLocalSuppressed = true;
+        found->second.advancedSync.reset();
         SaveLocked(levelId);
         BigScreen::BigScreenLogger.info("Unlinked mapper-local video for '{}'", levelId);
         return true;
@@ -1385,9 +1440,14 @@ namespace BigScreen {
             return false;
         const auto removed = *found->second.mapper;
         found->second.mapper.reset();
+        // Removing a hidden mapper download must not erase the profile of an
+        // active user override. The latter has its own source identity.
+        if(!found->second.user) found->second.advancedSync.reset();
         SaveLocked(levelId);
         if(deleteFile)
             RemoveManagedFile(videoPath_, removed.fileName);
+        if(!removed.audioFileName.empty())
+            RemoveManagedFile(videoPath_, removed.audioFileName);
         std::filesystem::remove(
             thumbnailPath_ / (StableKey(levelId) + "-mapper.jpg"));
         return true;
@@ -1454,6 +1514,18 @@ namespace BigScreen {
     {
         std::scoped_lock lock(mutex_);
         auto found = FindRecord(records_, levelId);
+        // Basic controls retain their own values while Advanced Sync is on.
+        // Enforce this at the persistence boundary too: an old deferred UI
+        // callback must not bypass the disabled controls and overwrite them.
+        if(found != records_.end() && found->second.advancedSync && found->second.advancedSync->enabled)
+        {
+            const auto cached = descriptorCache_.find(levelId);
+            // A changed local file invalidates the source-bound overlay.
+            // Describe then deliberately exposes basic mode; do not let a
+            // stale retained profile prevent those basic controls saving.
+            if(cached == descriptorCache_.end() || cached->second.advancedSync)
+                return false;
+        }
         if(found == records_.end())
         {
             records_.emplace_back(levelId, LevelVideoRecords{});
@@ -1502,6 +1574,35 @@ namespace BigScreen {
         return true;
     }
 
+    bool VideoLibrary::UpdateAdvancedSync(const std::string& levelId, const AudioSync::Record& record)
+    {
+        // Validate serialization before advertising a persistence window.
+        // This throws for programming-invalid data; UI owners use Guard and
+        // distinguish storage errors via VideoLibraryPersistenceError.
+        AudioSync::SerializeRecord(record);
+        const BackgroundPublication publication(backgroundCommitCount_);
+        {
+            std::scoped_lock lock(mutex_);
+            const auto descriptor = descriptorCache_.find(levelId);
+            if(descriptor == descriptorCache_.end() || !descriptor->second.playableConfig ||
+               AudioSync::SourceFingerprint(descriptor->second.playableConfig->videoPath) != record.sourceKey)
+            {
+                return false;
+            }
+            auto found = FindRecord(records_, levelId);
+            if(found == records_.end())
+            {
+                records_.emplace_back(levelId, LevelVideoRecords{});
+                found = std::prev(records_.end());
+            }
+            found->second.advancedSync = record;
+            SaveLocked(levelId);
+        }
+        BigScreenLogger.info("Saved Advanced Sync for '{}': enabled {}, offset {:.4f}s, rate {:.4f}x",
+            levelId, record.enabled, record.profile.timing.offsetSeconds, record.profile.timing.playbackRate);
+        return true;
+    }
+
     std::vector<std::pair<std::string, LevelVideoRecords>> VideoLibrary::Records() const
     {
         std::scoped_lock lock(mutex_);
@@ -1530,6 +1631,11 @@ namespace BigScreen {
             {
                 total += bytes;
                 countedFile = video->fileName;
+            }
+            if(!video->audioFileName.empty())
+            {
+                const auto audioBytes = std::filesystem::file_size(videoPath_ / video->audioFileName, error);
+                if(!error) total += audioBytes;
             }
         };
         addManagedFile(found->second.mapper);
@@ -1615,6 +1721,16 @@ namespace BigScreen {
             level.mapperLocalSuppressed = BoolOr(
                 member->value, "mapperLocalSuppressed", false);
             level.localThumbnail = StringOr(member->value, "localThumbnail");
+            if(const auto* sync = Member(member->value, "advancedSync"); sync && sync->IsObject())
+            {
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                sync->Accept(writer);
+                std::string problem;
+                level.advancedSync = AudioSync::ParseRecord({buffer.GetString(), buffer.GetSize()}, problem);
+                if(!problem.empty())
+                    BigScreenLogger.warn("Ignoring invalid Advanced Sync settings: {}", problem);
+            }
             output.emplace_back(
                 std::string(member->name.GetString(), member->name.GetStringLength()),
                 std::move(level));
@@ -1728,9 +1844,10 @@ namespace BigScreen {
         auto durableCandidate = records_;
         rapidjson::Document document(rapidjson::kObjectType);
         auto& allocator = document.GetAllocator();
-        // Schema 5 adds the per-map picked-thumbnail filename. Older
-        // libraries remain readable because every added field is optional.
-        document.AddMember("version", 5, allocator);
+        // Schema 6 adds an optional source-bound Advanced Sync profile. Old
+        // records remain in basic mode; neither basic timing nor mapper data
+        // is overwritten when an advanced overlay is enabled or disabled.
+        document.AddMember("version", 6, allocator);
         rapidjson::Value levels(rapidjson::kObjectType);
         for(const auto& [levelId, record] : records_)
         {
@@ -1775,6 +1892,14 @@ namespace BigScreen {
                 timing.AddMember(
                     "blackDuringLeadIn", record.mapperTiming->blackDuringLeadIn, allocator);
                 level.AddMember("mapperTiming", timing.Move(), allocator);
+            }
+            if(record.advancedSync)
+            {
+                rapidjson::Document sync;
+                sync.Parse(AudioSync::SerializeRecord(*record.advancedSync).c_str());
+                rapidjson::Value copy;
+                copy.CopyFrom(sync, allocator);
+                level.AddMember("advancedSync", copy.Move(), allocator);
             }
             levels.AddMember(
                 rapidjson::Value(levelId.c_str(),

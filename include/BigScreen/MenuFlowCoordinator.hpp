@@ -21,6 +21,11 @@ namespace BigScreen {
     void RestoreDistractionFreeMenu();
     /// True only while Big Screen's own flow is the active menu hierarchy.
     bool IsBigScreenMenuActive();
+    /// Updates the shared black backing plate behind every retained Big Screen
+    /// menu page. The neutral center controller and modal dialogs are excluded:
+    /// the former is the unobstructed preview workspace and the latter retain
+    /// their purpose-built contrast and input behavior.
+    void ApplyMenuBackgroundOpacity();
     /// Services deferred error dismissal and a fail-safe for an interrupted
     /// HMUI close. Normal re-entry is released directly by DidDeactivate; this
     /// update path never polls destroyed parent coordinators or gates prewarming.
@@ -79,6 +84,7 @@ DECLARE_CLASS_CODEGEN(BigScreen, MenuFlowCoordinator, HMUI::FlowCoordinator) {
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, showcaseViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, localVideoBrowserViewController);
     DECLARE_INSTANCE_FIELD(HMUI::ViewController*, thumbnailPickerViewController);
+    DECLARE_INSTANCE_FIELD(HMUI::ViewController*, audioSyncViewController);
     // Set only after every retained controller and its BSML hierarchy has been
     // constructed. A prewarmed coordinator still receives firstActivation on
     // its first presentation, so that callback must use this explicit marker

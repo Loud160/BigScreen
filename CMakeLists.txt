@@ -201,6 +201,8 @@ add_library(
 
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         NativeLoggerQuest::NativeLoggerQuest)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/audio-sync-sonic.cmake)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE bigscreen_sync_pitch)
 native_logger_quest_enable_paper2_abort_bridge(${CMAKE_PROJECT_NAME})
 
 # Preserve the incomplete Cinema bloom/color-blending implementation without
@@ -371,6 +373,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
         ${BIGSCREEN_FFMPEG44_DIR}/lib/libavcodec-bigscreen44.so
         ${BIGSCREEN_FFMPEG44_DIR}/lib/libavutil-bigscreen44.so
         ${BIGSCREEN_FFMPEG44_DIR}/lib/libswscale-bigscreen44.so
+        ${BIGSCREEN_FFMPEG44_DIR}/lib/libswresample-bigscreen44.so
 )
 
 # Package both complete sets. Distinct suffixes and symbol namespaces are what
@@ -379,7 +382,8 @@ foreach(BIGSCREEN_FFMPEG_LIBRARY IN ITEMS
         libavformat-bigscreen44.so
         libavcodec-bigscreen44.so
         libavutil-bigscreen44.so
-        libswscale-bigscreen44.so)
+        libswscale-bigscreen44.so
+        libswresample-bigscreen44.so)
         add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         ${BIGSCREEN_FFMPEG44_DIR}/lib/${BIGSCREEN_FFMPEG_LIBRARY}

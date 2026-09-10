@@ -22,6 +22,10 @@ this archive were changed, deferred, rejected, or superseded after testing.
 
 ## Planning records
 
+- [Advanced video/audio synchronization workspace plan V3](planning/ADVANCED_VIDEO_AUDIO_SYNC_WORKSPACE_PLAN_V3.md) —
+  revised design for a tabbed center workspace, automatic audio matching,
+  manual auditioning, source-timing preservation, and staged Quest validation.
+  Planning only; implementation has not started.
 - [Movement-authoring planning](planning/bigscreen-movement-authoring-planning.md)
 - [Buffered decoder design](planning/BUFFERED_DECODER_DESIGN.md) — deferred
   bounded-frame-queue proposal with memory, synchronization, and measurement
@@ -46,6 +50,10 @@ this archive were changed, deferred, rejected, or superseded after testing.
 
 ## Independent reviews
 
+- [Beat Saber Hook 6.4.2 original-hook chaining investigation](reviews/BEATSABER_HOOK_6_4_2_ORIG_HOOK_CHAINING_INVESTIGATION.md) —
+  September 2026 crash evidence, source-level analysis, compatibility risks,
+  validation requirements, and maintainer questions for a multi-mod hook-chain
+  failure involving Big Screen, Tracks, and Chroma.
 - [Claude Code Opus 4.8 review](reviews/BigScreen-Code-Review_1.md) — external
   review input retained for provenance; its findings are guidance and are not
   automatically accepted as current repository truth.

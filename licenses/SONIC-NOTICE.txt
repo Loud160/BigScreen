@@ -1,0 +1,8 @@
+Sonic audio speed and pitch library
+Copyright 2010 Bill Cox; additional contributors as identified upstream.
+Source: https://github.com/waywardgeek/sonic
+Revision: b93885dcb70aae50c6f76b0fe4e0868f029a077e
+Licensed under Apache License 2.0; see SONIC-APACHE-2.0.txt.
+Big Screen compiles sonic.c unmodified as a private hidden static library.
+Only manual synchronization audition uses this component. It is not a
+replacement for Beat Saber's gameplay audio and exposes no shared mod ABI.

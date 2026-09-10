@@ -116,6 +116,19 @@ namespace BigScreen {
         /// defer one presentation pass instead of polling and rewriting text
         /// every few frames (which made titles jump under the pointer).
         void NotifySongListCellBound(HMUI::TableView* source);
+        // Center audio workspace integration. These are main-thread operations;
+        // no worker may retain the returned Unity objects.
+        void RefreshAudioSyncState();
+        void ApplyAudioSyncPreview(const AudioSync::Profile& profile);
+        UnityEngine::AudioSource* PauseForSyncAudition();
+        void SyncAuditionClock(double songTime, bool showPicture);
+        void EndSyncAudition();
+        double SyncSongTime() const { return previewSongTime_; }
+        // Reuse the ordinary audio/video seek transaction when the two-track
+        // audition does not own the clock. Updating only the displayed time
+        // would leave SongPreviewPlayer running at its previous position.
+        void SeekSyncPreview(double seconds);
+        UnityEngine::AudioClip* SyncSongClip();
 
     private:
         enum class EditorTransferKind { None, Probe, Download };
@@ -295,6 +308,10 @@ namespace BigScreen {
         BSML::SliderSetting* playbackScrubber_ = nullptr;
         BSML::ToggleSetting* fitToggle_ = nullptr;
         BSML::ToggleSetting* blackLeadInToggle_ = nullptr;
+        BSML::ToggleSetting* advancedSyncToggle_ = nullptr;
+        UnityEngine::UI::Button* configureSyncButton_ = nullptr;
+        bool syncOwnsAudio_ = false;
+        bool syncPictureHidden_ = false;
         TMPro::TextMeshProUGUI* browserTitle_ = nullptr;
         TMPro::TextMeshProUGUI* browserStorage_ = nullptr;
         TMPro::TextMeshProUGUI* filterText_ = nullptr;

@@ -881,4 +881,86 @@ assert probe["diagnostic_code"](actual_signin_requirement) == \
 assert "runtimeRolledBack" not in source
 assert "Retry after rollback:" not in source
 
-print("Embedded downloader scripts and HTTP explanations passed.")
+# Execute matching-audio acquisition in the production embedded script. Only
+# yt-dlp/network I/O is substituted: ordering, identity checks, progress,
+# partial cleanup and terminal state remain the real implementation.
+for scenario in ("success", "audio-error", "wrong-id", "no-audio", "oversized", "cancel"):
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        video = root / "video.mp4"
+        audio = root / "video.mp4.audio"
+        cancel = root / "cancel"
+        status = root / "status.json"
+        video_format = dict(format_id="137", ext="mp4", vcodec="avc1.640028",
+                            acodec="none", width=1920, height=1080, fps=30,
+                            filesize=32, protocol="https")
+        audio_format = dict(format_id="140", ext="m4a", vcodec="none",
+                            acodec="mp4a.40.2", abr=128, protocol="https", filesize=32)
+        info = dict(id="abcdefghijk", title="Generated companion test", duration=10,
+                    age_limit=0, formats=[video_format] + ([] if scenario=="no-audio" else [audio_format]))
+        transfers=[]
+
+        class CompanionYoutubeDL:
+            def __init__(self, options):
+                self.options=options
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def extract_info(self, url, download=False):
+                if not download:
+                    return dict(info)
+                transfers.append(self.options["format"])
+                destination=pathlib.Path(self.options["outtmpl"])
+                if self.options["format"]=="140":
+                    assert video.exists(), "companion precedes video"
+                    assert url=="https://www.youtube.com/watch?v=abcdefghijk"
+                    current=json.loads(status.read_text())
+                    assert current["message"]=="Downloading matching audio" and current["state"]!="completed"
+                    pathlib.Path(str(destination)+".part").write_bytes(b"partial-audio")
+                    if scenario=="audio-error":
+                        raise RuntimeError("Audio stream refused the request")
+                    if scenario=="cancel":
+                        cancel.write_text("cancel")
+                    for hook in self.options["progress_hooks"]:
+                        hook({"status":"downloading","downloaded_bytes":
+                              128*1024*1024+1 if scenario=="oversized" else 12})
+                    pathlib.Path(str(destination)+".part").unlink()
+                destination.write_bytes(b"complete-fixture")
+                return dict(info, id="differentid" if scenario=="wrong-id" and self.options["format"]=="140" else info["id"])
+
+        old_modules={name:sys.modules.get(name) for name in ("yt_dlp","bigscreen_jsc_provider")}
+        old_urlopen=urllib.request.urlopen
+        def no_thumbnail(*_, **__):
+            raise OSError("Offline test thumbnail")
+        try:
+            fake=types.ModuleType("yt_dlp")
+            fake.YoutubeDL=CompanionYoutubeDL
+            sys.modules["yt_dlp"]=fake
+            sys.modules["bigscreen_jsc_provider"]=types.ModuleType("bigscreen_jsc_provider")
+            urllib.request.urlopen=no_thumbnail
+            job=dict(sourceUrl="https://youtu.be/abcdefghijk",finalPath=str(video),
+                     audioPath=str(audio),thumbnailPath=str(root/"thumbnail.jpg"),
+                     statusPath=str(status),cancelPath=str(cancel),explicitContentAllowed=True,
+                     requestedHeight=1080,maximumSourceFps=60,reserveBytes=0,unknownRequiredBytes=0)
+            exec(compile(download_script,"<companion-acquisition-test>","exec"),
+                 {"BIGSCREEN_JOB":json.dumps(job)})
+        finally:
+            urllib.request.urlopen=old_urlopen
+            for name,module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name,None)
+                else:
+                    sys.modules[name]=module
+        terminal=json.loads(status.read_text())
+        if scenario=="cancel":
+            assert terminal["state"]=="cancelled",terminal
+        else:
+            assert terminal["state"]=="completed" and video.exists(),terminal
+            if scenario=="success":
+                assert transfers==["137","140"] and terminal["audioReady"] and audio.exists()
+            else:
+                assert terminal["audioWarning"] and not terminal["audioReady"],terminal
+                assert not audio.exists() and not pathlib.Path(str(audio)+".part").exists()
+
+print("Embedded downloader scripts, companion acquisition and HTTP explanations passed.")

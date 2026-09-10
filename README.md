@@ -118,6 +118,11 @@ corresponding-source assets.
 Beat Saber must already be patched for mods, and the Big Screen release must
 match the Beat Saber version installed on the headset.
 
+### Advanced audio synchronization (alpha 14 development)
+
+Alpha 14 development also includes an [Advanced Audio Sync workspace](docs/AUDIO_SYNC.md).
+See its guide for per-map controls, audio requirements, and current validation limits.
+
 ### Create a crash support bundle
 
 Windows users can double-click **[Collect-BigScreen-Logs.bat](Collect-BigScreen-Logs.bat)**;
@@ -284,7 +289,7 @@ packages with `apt`. The equivalent manual package command is:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential ca-certificates cmake curl ffmpeg \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
   ninja-build pkg-config python3 unzip xz-utils
 ```
 

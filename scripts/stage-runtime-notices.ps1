@@ -32,6 +32,11 @@ $noticeSources = @{
     "QUICKJS-NG-MIT.txt" = Join-Path $repositoryRoot "licenses/QUICKJS-NG-MIT.txt"
     "OPENSSL-APACHE-2.0.txt" = Join-Path $repositoryRoot "licenses/OPENSSL-APACHE-2.0.txt"
     "SQLITE-PUBLIC-DOMAIN.txt" = Join-Path $repositoryRoot "licenses/SQLITE-PUBLIC-DOMAIN.txt"
+    # Audio Sync links Sonic privately into libbigscreen.so. Direct Windows
+    # deployment must carry its notices just like the shared QMOD builder;
+    # no separately installed Sonic runtime is required.
+    "SONIC-APACHE-2.0.txt" = Join-Path $repositoryRoot "licenses/SONIC-APACHE-2.0.txt"
+    "SONIC-NOTICE.txt" = Join-Path $repositoryRoot "licenses/SONIC-NOTICE.txt"
 }
 
 if (-not (Test-Path -LiteralPath $runtimeStage)) {

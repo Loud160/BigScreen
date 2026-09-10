@@ -20,6 +20,7 @@
 #include <unordered_map>
 
 #include "BigScreen/MapVideoConfig.hpp"
+#include "BigScreen/AudioSyncModel.hpp"
 
 namespace GlobalNamespace {
     class BeatmapLevel;
@@ -44,6 +45,10 @@ namespace BigScreen {
         std::string fileName;
         std::string title;
         std::string codec;
+        // Privately owned downloaded audio companion. Persist only a basename;
+        // this must never grant deletion authority outside Videos/. Local
+        // audio stays in the user's video and is not copied or deleted.
+        std::string audioFileName;
         // Managed files are owned by Big Screen under Videos/. Map-local
         // files are user-owned assets referenced by a relative filename and
         // must never be deleted when their assignment is removed.
@@ -91,6 +96,10 @@ namespace BigScreen {
         // restores the artwork) and is deleted only with the video file or
         // through Storage Maintenance after this reference is gone.
         std::string localThumbnail;
+        // Basic timing stays in its existing records. Advanced Sync is an
+        // overlay for one exact media assignment, so turning it off never has
+        // to reconstruct or overwrite the user's previous basic controls.
+        std::optional<AudioSync::Record> advancedSync;
     };
 
     struct VideoDescriptor {
@@ -121,6 +130,12 @@ namespace BigScreen {
         // playing.
         std::optional<std::string> mapperMetadataIssue;
         bool mapperMetadataRecovered = false;
+        std::string syncSourceKey;
+        // No probing on the UI thread: this is only a candidate. The worker
+        // validates audio before enabling Advanced Sync. Without a companion,
+        // locally supplied media can still contain an embedded audio stream.
+        std::filesystem::path syncAudioPath;
+        std::optional<AudioSync::Record> advancedSync;
 
         bool CanDownload() const { return downloadUrl.has_value(); }
         bool CanPlay() const { return playableConfig.has_value(); }
@@ -245,6 +260,11 @@ namespace BigScreen {
             double playbackRate,
             bool fitToSong,
             bool blackDuringLeadIn);
+        /// Worker-only durable save. The expected source fingerprint must
+        /// still match the cached selected assignment; an obsolete completion
+        /// cannot apply a draft to a replacement video. Existing rollback and
+        /// background-commit signaling remain authoritative.
+        bool UpdateAdvancedSync(const std::string& levelId, const AudioSync::Record& record);
 
         std::vector<std::pair<std::string, LevelVideoRecords>> Records() const;
         /// Returns only Big Screen-owned downloads associated with one map.
@@ -258,11 +278,11 @@ namespace BigScreen {
         std::vector<std::string> ReferencedThumbnailFileNames() const;
         /// Returns and clears a one-time startup recovery message for the UI.
         std::optional<std::string> TakeRecoveryNotice();
-        /// True only while a background download is publishing new library
+        /// True while any background download or sync save is publishing library
         /// metadata. Menu refreshes use this narrow signal to avoid waiting on
         /// the manifest mutex while shared-storage I/O is in progress.
         bool BackgroundCommitInProgress() const {
-            return backgroundCommitInProgress_.load();
+            return backgroundCommitCount_.load() != 0;
         }
         /// Rebuilds manifest entries for managed MP4s after all backups failed.
         /// Level metadata is supplied only after SongCore has completed loading.
@@ -315,7 +335,10 @@ namespace BigScreen {
         mutable std::uint64_t cachedFreeBytes_ = 0;
         mutable std::chrono::steady_clock::time_point libraryBytesCacheTime_{};
         mutable std::chrono::steady_clock::time_point freeBytesCacheTime_{};
-        std::atomic<bool> backgroundCommitInProgress_{false};
+        // Count queued publishers as well as the one holding mutex_. Otherwise
+        // one completion could falsely advertise idle while a second save is
+        // still doing storage I/O, causing the menu to wait on that save.
+        std::atomic<unsigned> backgroundCommitCount_{0};
         bool recoveryScanNeeded_ = false;
         std::optional<std::string> recoveryNotice_;
     };

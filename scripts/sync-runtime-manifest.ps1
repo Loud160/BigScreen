@@ -63,7 +63,12 @@ function Sync-BigScreenRuntimeManifest {
         "YT-DLP-UNLICENSE.txt",
         "QUICKJS-NG-MIT.txt",
         "OPENSSL-APACHE-2.0.txt",
-        "SQLITE-PUBLIC-DOMAIN.txt"
+        "SQLITE-PUBLIC-DOMAIN.txt",
+        # Keep the direct-install payload aligned with build_pipeline.py.
+        # Merely staging notices does not install them: this explicit list
+        # controls both the manifest and the source-ownership receipt.
+        "SONIC-APACHE-2.0.txt",
+        "SONIC-NOTICE.txt"
     )
 
     if (-not (Test-Path -LiteralPath $ModJsonPath -PathType Leaf)) {

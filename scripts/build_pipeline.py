@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -107,6 +108,8 @@ RUNTIME_FILES = (
     "QUICKJS-NG-MIT.txt",
     "OPENSSL-APACHE-2.0.txt",
     "SQLITE-PUBLIC-DOMAIN.txt",
+    "SONIC-APACHE-2.0.txt",
+    "SONIC-NOTICE.txt",
 )
 
 
@@ -374,6 +377,39 @@ def prepare_native_logger(force: bool = False) -> tuple[pathlib.Path, dict]:
         f"at revision {revision[:12]} in {source}"
     )
     return source, manifest
+
+
+def prepare_sonic() -> pathlib.Path:
+    """One verified source cache for native builds AND host tests; no extra tool install."""
+    revision = "b93885dcb70aae50c6f76b0fe4e0868f029a077e"
+    digest = "b76d832649306b53e716c271014c0b8f89f6bcefc43e5068a2eca3cf1946324c"
+    root = DEPENDENCIES / "sonic"
+    source = root / "source"
+    archive = root / f"sonic-{revision}.tar.gz"
+    root.mkdir(parents=True, exist_ok=True)
+    # Preserve the initial CMake prototype's already verified development
+    # archive. Clean source builds download once; no user's tools are changed.
+    legacy = BUILD / "_deps/bigscreen_sonic_source-subbuild/bigscreen_sonic_source-populate-prefix/src/archive.tar"
+    if not archive.exists() and legacy.is_file() and sha256(legacy) == digest:
+        shutil.copyfile(legacy, archive)
+    download(f"https://codeload.github.com/waywardgeek/sonic/tar.gz/{revision}", archive, digest, "Sonic audio DSP source (about 5 MB)")
+    source.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:gz") as bundle:
+        for name in ("sonic.c", "sonic.h", "LICENSE"):
+            member = bundle.getmember(f"sonic-{revision}/{name}")
+            if not member.isfile() or member.size > 1024 * 1024:
+                raise BuildError(f"Unexpected Sonic source entry: {name}")
+            stream = bundle.extractfile(member)
+            if stream is None:
+                raise BuildError(f"Missing Sonic source entry: {name}")
+            data = stream.read()
+            target = source / name
+            if not target.is_file() or target.read_bytes() != data:
+                temporary = source / f"{name}.{os.getpid()}.tmp"
+                temporary.write_bytes(data)
+                os.replace(temporary, target)
+    write_json(root / "resolved.json", {"revision": revision, "sha256": digest})
+    return source
 
 
 def prepare_quickjs(force: bool = False) -> pathlib.Path:
@@ -1018,6 +1054,8 @@ def stage_notices() -> None:
         "QUICKJS-NG-MIT.txt": ROOT / "licenses" / "QUICKJS-NG-MIT.txt",
         "OPENSSL-APACHE-2.0.txt": ROOT / "licenses" / "OPENSSL-APACHE-2.0.txt",
         "SQLITE-PUBLIC-DOMAIN.txt": ROOT / "licenses" / "SQLITE-PUBLIC-DOMAIN.txt",
+        "SONIC-APACHE-2.0.txt": ROOT / "licenses" / "SONIC-APACHE-2.0.txt",
+        "SONIC-NOTICE.txt": ROOT / "licenses" / "SONIC-NOTICE.txt",
     }
     if not RUNTIME_STAGE.is_dir():
         raise BuildError(f"Downloader runtime must be staged before notices: {RUNTIME_STAGE}")
@@ -1095,6 +1133,19 @@ def validate_elf(build_directory: pathlib.Path = BUILD) -> None:
     for backend in ("libbigscreen-ffmpeg44-backend.so", "libbigscreen-ffmpeg9-backend.so"):
         if backend not in main_dynamic:
             raise BuildError(f"libbigscreen.so does not require {backend}.")
+    # Audio Sync uses the private 4.4 resampler in the main native service,
+    # independently of the selected video decoder backend. Check the extra
+    # library itself: adding it to libraryFiles alone does not prove another
+    # mod's generic FFmpeg symbols cannot interpose on these audio calls.
+    audio_runtime = build_directory / "libswresample-bigscreen44.so"
+    audio_dynamic = readelf(build_directory, audio_runtime, "-d")
+    audio_versions = readelf(build_directory, audio_runtime, "--version-info")
+    if ("libavutil-bigscreen44.so" not in audio_dynamic or
+            "BIGSCREEN44_LIBSWRESAMPLE" not in audio_versions or
+            "BIGSCREEN44_LIBAVUTIL" not in audio_versions or
+            re.search(r"\[lib(?:avutil|swresample)\.so", audio_dynamic) or
+            "BIGSCREEN9_LIB" in audio_versions):
+        raise BuildError("Audio Sync resampler is not isolated to Big Screen FFmpeg 4.4.")
     runtimes = (
         ("44", "9", "BIGSCREEN44_LIB", "BIGSCREEN9_LIB",
          ("CreateFrameDecoder44Backend",)),
@@ -1282,6 +1333,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("prepare-quickjs")
+    subcommands.add_parser("prepare-sonic")
     native_logger_parser = subcommands.add_parser("prepare-native-logger")
     native_logger_parser.add_argument("--force", action="store_true")
     subcommands.add_parser("prepare-runtime")
@@ -1301,6 +1353,8 @@ def main() -> int:
     try:
         if args.command == "prepare-quickjs":
             prepare_quickjs()
+        elif args.command == "prepare-sonic":
+            prepare_sonic()
         elif args.command == "prepare-native-logger":
             prepare_native_logger(args.force)
         elif args.command == "prepare-runtime":

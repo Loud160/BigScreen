@@ -282,6 +282,96 @@ namespace BigScreen {
         }
     }
 
+    void ErrorManager::BeginCrashSensitiveOperation(
+        const std::string& context) noexcept
+    {
+        try
+        {
+            const std::filesystem::path marker(CrashOperationMarker);
+            std::filesystem::create_directories(marker.parent_path());
+            std::ofstream output(marker, std::ios::binary | std::ios::trunc);
+            if(!output)
+                throw std::runtime_error(
+                    "the native-operation marker could not be opened");
+            output << context << '\n';
+            output.flush();
+            if(!output)
+                throw std::runtime_error(
+                    "the native-operation marker could not be written");
+        }
+        catch(const std::exception& exception)
+        {
+            // This marker is a last-resort recovery aid, not a prerequisite
+            // for normal mod operation. Reporting its own storage failure as
+            // an internal error would recursively invoke the circuit breaker
+            // while it is trying to protect another operation.
+            BigScreen::BigScreenLogger.error(
+                "Could not arm Big Screen's native crash marker: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not arm Big Screen's native crash marker");
+        }
+    }
+
+    void ErrorManager::FinishCrashSensitiveOperation() noexcept
+    {
+        try
+        {
+            std::error_code error;
+            std::filesystem::remove(CrashOperationMarker, error);
+            if(error)
+                BigScreen::BigScreenLogger.error(
+                    "Could not clear Big Screen's native crash marker: {}",
+                    error.message());
+        }
+        catch(...)
+        {
+            // Never let recovery bookkeeping turn a successfully completed
+            // Unity operation into a new crash.
+        }
+    }
+
+    std::optional<std::string>
+    ErrorManager::ConsumeInterruptedCrashOperation() noexcept
+    {
+        try
+        {
+            const std::filesystem::path marker(CrashOperationMarker);
+            std::error_code error;
+            if(!std::filesystem::is_regular_file(marker, error) || error)
+                return std::nullopt;
+
+            std::ifstream input(marker, std::ios::binary);
+            std::string context;
+            std::getline(input, context);
+            if(context.empty())
+                context = "an unidentified native Big Screen operation";
+
+            error.clear();
+            std::filesystem::remove(marker, error);
+            if(error)
+                BigScreen::BigScreenLogger.error(
+                    "Could not consume Big Screen's interrupted-operation marker: {}",
+                    error.message());
+            return context;
+        }
+        catch(const std::exception& exception)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not inspect Big Screen's interrupted-operation marker: {}",
+                exception.what());
+        }
+        catch(...)
+        {
+            BigScreen::BigScreenLogger.error(
+                "Could not inspect Big Screen's interrupted-operation marker");
+        }
+        return std::nullopt;
+    }
+
     std::string ErrorManager::RecordError(
         const std::string& context,
         const std::string& detail) noexcept

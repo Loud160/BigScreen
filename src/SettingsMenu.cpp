@@ -290,6 +290,7 @@ namespace BigScreen {
         selectedTab_ = 0;
         modEnabledToggle_ = nullptr;
         distractionFreeMenuToggle_ = nullptr;
+        menuBackgroundOpacitySlider_ = nullptr;
         showMenuEnvironmentToggle_ = nullptr;
         showLaneGuidesToggle_ = nullptr;
         advancedOptionsToggle_ = nullptr;
@@ -1271,6 +1272,33 @@ namespace BigScreen {
         BSML::Lite::AddHoverHint(
             distractionFreeMenuToggle_,
             "While the Big Screen menu is open, hides the neon Beat Saber sign and any supported clock or battery display it detects. Everything is restored when you leave.");
+
+        menuBackgroundOpacitySlider_ = BSML::Lite::CreateSliderSetting(
+            generalContainer,
+            "Menu Background Opacity",
+            0.05f,
+            settings.MenuBackgroundOpacity(),
+            0.0f,
+            1.0f,
+            0.15f,
+            true,
+            {0.0f, 0.0f},
+            [](float value)
+            {
+                Settings::Instance().SetMenuBackgroundOpacity(value);
+                // Only eight retained ImageViews change color. No controller,
+                // layout, preview, or decoder is recreated while dragging.
+                ApplyMenuBackgroundOpacity();
+            });
+        menuBackgroundOpacitySlider_->digits = 0;
+        menuBackgroundOpacitySlider_->formatter = [](float value) -> StringW
+        {
+            return fmt::format("{:.0f}%", value * 100.0f);
+        };
+        menuBackgroundOpacitySlider_->slider->UpdateVisuals();
+        BSML::Lite::AddHoverHint(
+            menuBackgroundOpacitySlider_,
+            "Sets the shared black background behind every Big Screen menu. 0% keeps the original transparent appearance; 100% is solid black for maximum readability. Changes apply immediately without restarting a preview. Confirmation and error dialogs keep their own contrast backgrounds.");
 
         showMenuEnvironmentToggle_ = BSML::Lite::CreateToggle(
             generalContainer,
@@ -3050,6 +3078,8 @@ namespace BigScreen {
         SetToggleWithoutNotification(
             distractionFreeMenuToggle_,
             settings.DistractionFreeMenu());
+        setSliderIfChanged(
+            menuBackgroundOpacitySlider_, settings.MenuBackgroundOpacity());
         SetToggleWithoutNotification(
             showMenuEnvironmentToggle_, settings.ShowMenuEnvironment());
         SetToggleWithoutNotification(
@@ -3195,6 +3225,8 @@ namespace BigScreen {
         // affecting Beat Saber is explicitly locked while the mod is off.
         if(distractionFreeMenuToggle_)
             distractionFreeMenuToggle_->set_interactable(enabled);
+        if(menuBackgroundOpacitySlider_)
+            menuBackgroundOpacitySlider_->set_interactable(enabled);
         if(showMenuEnvironmentToggle_)
             showMenuEnvironmentToggle_->set_interactable(enabled);
         if(showLaneGuidesToggle_)
@@ -3773,6 +3805,7 @@ namespace BigScreen {
         SelectionVideoToggle::Instance().MenuPreviewPreferenceChanged();
         ScreenPreview::Instance().SetEnabled(settings.ModEnabled());
         ApplyDistractionFreeMenu();
+        ApplyMenuBackgroundOpacity();
         ErrorManager::Instance().Guard(
             "resetting menu placement visuals", []()
             {

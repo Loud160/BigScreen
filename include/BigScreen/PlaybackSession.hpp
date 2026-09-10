@@ -131,6 +131,7 @@ namespace BigScreen {
             bool fitToSong,
             bool blackDuringLeadIn,
             double songTimeSeconds);
+        void ApplyLibraryPreviewCutoff(std::optional<double> cutoff);
         /// Temporarily applies the free-position editor's unsaved geometry to
         /// an active Video Library preview without restarting its decoder or
         /// audio. Returns false when the library preview does not own a live

@@ -428,7 +428,7 @@ def classification(adb: Adb, game_version: str) -> dict:
 def exclusive_library(name: str) -> bool:
     return name.startswith((
         "libbigscreen-", "libavformat-bigscreen", "libavcodec-bigscreen",
-        "libavutil-bigscreen", "libswscale-bigscreen",
+        "libavutil-bigscreen", "libswscale-bigscreen", "libswresample-bigscreen",
     )) or name in {
         "libpython3.14.so", "libssl_python.so", "libcrypto_python.so", "libsqlite3_python.so"
     }

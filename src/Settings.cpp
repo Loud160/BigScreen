@@ -257,6 +257,10 @@ namespace BigScreen {
             document,
             "distractionFreeMenu",
             true);
+        menuBackgroundOpacity_ = std::clamp(
+            ReadFloat(document, "menuBackgroundOpacity", 0.0f),
+            0.0f,
+            1.0f);
         showMenuEnvironment_ = ReadBool(
             document,
             "showMenuEnvironment",
@@ -489,6 +493,27 @@ namespace BigScreen {
             document, "detailedDiagnosticLoggingEnabled", true);
         nightlyDownloaderUpdates_ = ReadBool(document, "nightlyDownloaderUpdates", false);
 
+        if(const auto interrupted =
+               ErrorManager::Instance().ConsumeInterruptedCrashOperation())
+        {
+            // C++ catch blocks cannot regain control after a native SIGSEGV.
+            // The prewarm scope writes its marker before touching IL2CPP and
+            // removes it on every normal return. Finding it here therefore
+            // means the prior process ended inside that protected operation.
+            // Disable before any main-menu update can retry the same work, and
+            // persist the change so repeated startup crashes cannot trap the
+            // player outside Big Screen's own master switch.
+            modEnabled_ = false;
+            Replace(document, "modEnabled", false);
+            ErrorManager::Instance().ReportUserVisible(
+                "Big Screen disabled itself",
+                "The previous game session ended while Big Screen was "
+                "performing " + *interrupted +
+                ". Big Screen has been turned off before that operation can "
+                "run again. Review the error and crash logs before turning "
+                "the mod back on from its General tab.");
+        }
+
         // Preview decoding is an avoidable performance cost when videos are
         // globally switched off. Persist the dependency so the disabled state
         // is also honored on the next launch, before any menu exists.
@@ -545,6 +570,15 @@ namespace BigScreen {
     void Settings::SetDistractionFreeMenu(bool value)
     {
         SetLoggedBoolean("Distraction Free Menu", distractionFreeMenu_, value);
+        Save();
+    }
+
+    void Settings::SetMenuBackgroundOpacity(float value)
+    {
+        SetLoggedSlider(
+            "Menu Background Opacity",
+            menuBackgroundOpacity_,
+            std::clamp(value, 0.0f, 1.0f));
         Save();
     }
 
@@ -1144,6 +1178,7 @@ namespace BigScreen {
 
         Replace(document, "modEnabled", modEnabled_);
         Replace(document, "distractionFreeMenu", distractionFreeMenu_);
+        Replace(document, "menuBackgroundOpacity", menuBackgroundOpacity_);
         Replace(document, "showMenuEnvironment", showMenuEnvironment_);
         // Development builds briefly exposed a second floor switch. The
         // environment switch now owns scenery, lighting, and floor together.

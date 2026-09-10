@@ -86,8 +86,13 @@ Versions and resolved sources are recorded in `qpm.json` and
 - **Quest Mod Template** — Unlicense. It supplied the initial empty project
   scaffold; see `PROVENANCE.md`.
 
+- **Sonic** — Apache-2.0. The unmodified `sonic.c` from revision
+  `b93885dcb70aae50c6f76b0fe4e0868f029a077e` is compiled privately into Big
+  Screen for optional audio-sync audition pitch adjustment. See
+  `licenses/SONIC-NOTICE.txt` and `licenses/SONIC-APACHE-2.0.txt`.
+
 The QMOD installs this notice, Big Screen's license/additional terms/attribution,
-and the CPython, OpenSSL, SQLite, yt-dlp, QuickJS-NG, certifi, FFmpeg, and x264
+and the CPython, OpenSSL, SQLite, yt-dlp, QuickJS-NG, certifi, FFmpeg, x264, and Sonic
 license/build records beside the embedded runtime under Big Screen's ModData
 folder. This summary is informational and does not replace those complete
 terms.

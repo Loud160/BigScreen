@@ -89,7 +89,7 @@ Inside Ubuntu/WSL, install the required Linux packages once:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential ca-certificates cmake curl ffmpeg \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
   ninja-build pkg-config python3 unzip xz-utils
 ```
 
@@ -157,11 +157,12 @@ archives are rejected if their committed checksum does not match.
 | Component | Pinned version | Official source | Local cache/output | Integrity and use |
 |---|---:|---|---|---|
 | Linux Android NDK | r27d (`27.3.13750724`) | `https://dl.google.com/android/repository/android-ndk-r27d-linux.zip` | `~/.cache/bigscreen-toolchains/android-ndk-r27d` inside WSL | Pinned SHA-256 in `install-pinned-ndk.sh`. Build-only. |
-| FFmpeg comparison runtime | 4.4.8 | `https://ffmpeg.org/releases/ffmpeg-4.4.8.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl` outputs | Pinned SHA-256; configured as isolated LGPL-only decoding/scaling libraries and packaged for the experimental runtime comparison toggle. |
+| FFmpeg comparison runtime | 4.4.8 | `https://ffmpeg.org/releases/ffmpeg-4.4.8.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl` outputs | Pinned SHA-256; isolated LGPL-only decoding/scaling libraries for the video comparison path, plus audio decoders and private `libswresample-bigscreen44.so` for the in-development Audio Sync service. |
 | FFmpeg default runtime | 9.0.1 | `https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz` | WSL source cache plus `.cache/dependencies/ffmpeg-lgpl-9.0.1` outputs | Pinned SHA-256; configured as the default isolated GPL runtime with MediaCodec decoding/encoding and the pinned x264 software-encode fallback. Packaged in the QMOD. |
 | x264 software H.264 encoder | commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` | `https://github.com/mirror/x264/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz` | Linux/WSL source cache; statically linked into the FFmpeg 9 `libavcodec` runtime | Pinned SHA-256; GPL-2.0-or-later; 8-bit 4:2:0 library build with CLI/OpenCL disabled. Used only after the player approves last-resort conversion and Android's hardware path cannot complete it. |
 | CPython Android runtime | 3.14.7 ARM64 | `https://www.python.org/ftp/python/3.14.7/python-3.14.7-aarch64-linux-android.tar.gz` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 and required-file validation; runtime libraries and standard library are packaged. |
 | QuickJS-NG amalgamation | 0.16.1 | `https://github.com/quickjs-ng/quickjs/releases/download/v0.16.1/quickjs-amalgam.zip` | `.cache/dependencies/quickjs-ng` | Pinned SHA-256; compiled into Big Screen for yt-dlp's JavaScript challenge solver. |
+| Sonic audition DSP | commit `b93885dcb70aae50c6f76b0fe4e0868f029a077e` | `https://github.com/waywardgeek/sonic` | `.cache/dependencies/sonic` shared by native and host-test builds | About 5 MB once; pinned archive SHA-256 and exact source-byte checks. Apache-2.0; private static code, not a new installed program or shared Quest dependency. Used only for optional sync-audition pitch correction. |
 | Native Logger Quest | Current published source manifest | `https://github.com/Loud160/NativeLoggerQuest` | `.cache/dependencies/native-logger-quest` | The official current manifest selects an immutable commit archive and SHA-256. The source is statically compiled into `libbigscreen.so`; no logger QMOD or shared runtime is installed. A verified cached revision remains usable when GitHub is temporarily unavailable. |
 | miniz deterministic compressor source | 3.1.2 | Tracked snapshot from `https://github.com/richgel999/miniz/releases/tag/3.1.2` | `tools/deterministic-zip/vendor/miniz-3.1.2`; compiled utility cached under `.cache/build-tools/deterministic-zip` | MIT-licensed source and notice are included in the repository. Build-only; produces standard ZIP/DEFLATE streams for `python314.zip` and the QMOD, and is not packaged. No separate download or installation. |
 | yt-dlp | stable 2026.08.19 | `https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp` | `.cache/dependencies/downloader` and `build/downloader` | Pinned SHA-256 plus archive-content validation. Stable 2026.08.19 contains the YouTube recovery that temporarily required nightly 2026.08.18.122307. |

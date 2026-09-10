@@ -18,6 +18,7 @@
     "libavcodec-bigscreen44.so",
     "libavutil-bigscreen44.so",
     "libswscale-bigscreen44.so",
+    "libswresample-bigscreen44.so",
     "libavformat-bigscreen9.so",
     "libavcodec-bigscreen9.so",
     "libavutil-bigscreen9.so",

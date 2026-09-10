@@ -51,11 +51,19 @@ android_api="24"
 # Increment the affected runtime only when its recipe changes. Revision 2
 # removed host paths from both builds; FFmpeg 9 revision 3 adds the two explicit
 # H.264 transcoders while revision 4 records their complete license/source
-# metadata. The comparison FFmpeg 4 runtime remains unchanged.
+# metadata. FFmpeg 4 revision 3 adds bounded audio decode/resampling for the
+# Advanced Sync worker. FFmpeg 9's video backend remains unchanged.
+audio_options=(--disable-swresample)
 if [[ "${runtime_tag}" == "9" ]]; then
     build_recipe_revision="4"
 else
-    build_recipe_revision="2"
+    build_recipe_revision="3"
+    audio_options=(
+        --enable-swresample
+        --enable-decoder=aac,opus,vorbis,mp3float,flac,pcm_s16le,pcm_f32le
+        --enable-demuxer=ogg,mp3,aac,flac,wav
+        --enable-parser=aac,opus,vorbis,mpegaudio,flac
+    )
 fi
 
 # FFmpeg contains no native software H.264 encoder. The FFmpeg 9 runtime uses
@@ -118,6 +126,9 @@ required_outputs=(
     "libavformat${build_suffix}.so"
     "libswscale${build_suffix}.so"
 )
+if [[ "${runtime_tag}" == "44" ]]; then
+    required_outputs+=("libswresample${build_suffix}.so")
+fi
 
 is_complete_install() {
     [[ -f "${stamp_path}" ]] || return 1
@@ -265,6 +276,9 @@ sed -i "s/^LIBAVCODEC_/${symbol_namespace}_LIBAVCODEC_/" "${source_root}/libavco
 sed -i "s/^LIBAVFORMAT_/${symbol_namespace}_LIBAVFORMAT_/" "${source_root}/libavformat/libavformat.v"
 sed -i "s/^LIBAVUTIL_/${symbol_namespace}_LIBAVUTIL_/" "${source_root}/libavutil/libavutil.v"
 sed -i "s/^LIBSWSCALE_/${symbol_namespace}_LIBSWSCALE_/" "${source_root}/libswscale/libswscale.v"
+if [[ "${runtime_tag}" == "44" ]]; then
+    sed -i "s/^LIBSWRESAMPLE_/${symbol_namespace}_LIBSWRESAMPLE_/" "${source_root}/libswresample/libswresample.v"
+fi
 
 mkdir -p "${build_root}"
 # Expose the real NDK through a fixed build-local name. The relative compiler,
@@ -344,9 +358,9 @@ PKG_CONFIG_PATH="${ffmpeg_pkg_config_path}" "${source_root}/configure" \
     --disable-autodetect \
     --disable-avdevice \
     --disable-avfilter \
-    --disable-swresample \
     ${postproc_option} \
     --disable-everything \
+    "${audio_options[@]}" \
     --enable-avcodec \
     --enable-avformat \
     --enable-avutil \
@@ -478,6 +492,9 @@ emit_stable_diff() {
     emit_stable_diff "libavformat/libavformat.v"
     emit_stable_diff "libavutil/libavutil.v"
     emit_stable_diff "libswscale/libswscale.v"
+    if [[ "${runtime_tag}" == "44" ]]; then
+        emit_stable_diff "libswresample/libswresample.v"
+    fi
 } > "${install_root}/bigscreen-ffmpeg-changes.diff"
 cp "${build_root}/config.h" "${install_root}/bigscreen-ffmpeg-config.h"
 cp "${build_root}/ffbuild/config.mak" "${config_record_path}"
@@ -497,7 +514,7 @@ for library in "${required_outputs[@]}"; do
     }
     dynamic_metadata="$("${toolchain_bin}/llvm-readelf" -d "${library_path}")"
     version_metadata="$("${toolchain_bin}/llvm-readelf" --version-info "${library_path}")"
-    if grep -Eq 'Shared library: \[lib(avcodec|avformat|avutil|swscale)\.so' <<<"${dynamic_metadata}"; then
+    if grep -Eq 'Shared library: \[lib(avcodec|avformat|avutil|swscale|swresample)\.so' <<<"${dynamic_metadata}"; then
         printf 'Unisolated FFmpeg dependency found in %s\n' "${library_path}" >&2
         exit 1
     fi

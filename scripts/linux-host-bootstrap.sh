@@ -21,7 +21,7 @@ BIGSCREEN_OSTREE_MARKER="${BIGSCREEN_OSTREE_MARKER:-/run/ostree-booted}"
 
 BIGSCREEN_UBUNTU_BUILD_PACKAGES=(
     build-essential ca-certificates cmake curl ffmpeg
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
     ninja-build pkg-config python3 unzip xz-utils
 )
 
@@ -56,7 +56,7 @@ bigscreen_native_build_commands_ready() {
         sed sha256sum tar unzip xz; do
         command -v "${command_name}" >/dev/null 2>&1 || return 1
     done
-    pkg-config --exists libavformat libavcodec libavutil libswscale \
+    pkg-config --exists libavformat libavcodec libavutil libswscale libswresample \
         >/dev/null 2>&1
 }
 
@@ -166,7 +166,7 @@ bigscreen_distrobox_build_packages_ready() {
             for command_name in bash cmake curl make ninja nproc pkg-config python3 sed sha256sum tar unzip xz; do
                 command -v "$command_name" >/dev/null 2>&1 || exit 1
             done
-            pkg-config --exists libavformat libavcodec libavutil libswscale
+            pkg-config --exists libavformat libavcodec libavutil libswscale libswresample
         ' >/dev/null 2>&1
 }
 

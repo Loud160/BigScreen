@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/StorageManager.hpp"
+#include "BigScreen/AudioSyncPcm.hpp"
 #include "BigScreen/Utility.hpp"
 #include "BigScreen/CoreLogic.hpp"
 
@@ -215,6 +216,7 @@ namespace BigScreen {
                        video->importFile || video->externalFile)
                         return;
                     usedVideos.emplace(video->fileName);
+                    if(!video->audioFileName.empty()) usedVideos.emplace(video->audioFileName);
                     usedThumbnails.emplace(
                         library.AllocateThumbnailPath(
                             levelId,
@@ -252,6 +254,8 @@ namespace BigScreen {
             // or Thumbnails. Its active `.incoming` siblings are incomplete
             // transaction state, never abandoned cleanup candidates.
             const auto downloaderSnapshot = DownloadManager::Instance().Snapshot();
+            for(const auto& path : AudioSync::PcmCache::Unused(library.RootPath()/"Audio Sync Cache"))
+                add(path, "Disposable audio sync cache");
             std::error_code iteratorError;
             for(std::filesystem::directory_iterator it(videos, iteratorError), end;
                 !iteratorError && it != end; it.increment(iteratorError))
@@ -263,7 +267,8 @@ namespace BigScreen {
                 if(IsAbandonedTemporary(*it))
                     add(it->path(), "Abandoned download");
                 else if((it->path().extension() == ".mp4" ||
-                         it->path().extension() == ".webm") &&
+                         it->path().extension() == ".webm" ||
+                         it->path().extension() == ".audio") &&
                         !usedVideos.contains(it->path().filename().string()))
                     add(it->path(), "Unassigned Big Screen download");
                 else if(IsAbandonedReplacementBackup(*it))
@@ -343,7 +348,10 @@ namespace BigScreen {
                        item.path, VideoLibrary::Instance().ImportPath()))
                     continue;
                 std::error_code error;
-                if(std::filesystem::remove(item.path, error) && !error)
+                const bool didRemove = item.category == "Disposable audio sync cache"
+                    ? AudioSync::PcmCache::RemoveUnused(item.path)
+                    : std::filesystem::remove(item.path, error) && !error;
+                if(didRemove)
                 {
                     ++removed;
                     removedPaths.emplace(item.path.lexically_normal().string());

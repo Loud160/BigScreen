@@ -80,7 +80,7 @@ For manual setup on Ubuntu, Debian, or Linux Mint, install:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential ca-certificates cmake curl ffmpeg \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
   ninja-build pkg-config python3 unzip xz-utils
 ```
 

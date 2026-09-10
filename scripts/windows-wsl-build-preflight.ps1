@@ -50,6 +50,7 @@ $linuxPackages = @(
     "libavformat-dev",
     "libavutil-dev",
     "libswscale-dev",
+    "libswresample-dev",
     "ninja-build",
     "pkg-config",
     "python3",
@@ -321,6 +322,7 @@ function Get-PrerequisiteState {
         YtDlpReady = (Test-RepositoryPath ".cache\dependencies\downloader\yt-dlp-2026.08.19")
         CertifiReady = (Test-RepositoryPath ".cache\dependencies\downloader\certifi-2026.7.22-py3-none-any.whl")
         QuickJsReady = (Test-RepositoryPath ".cache\dependencies\quickjs-ng\quickjs-0.16.1.ready")
+        SonicReady = (Test-RepositoryPath ".cache\dependencies\sonic\resolved.json")
         NativeLoggerReady = (
             (Test-RepositoryPath ".cache\dependencies\native-logger-quest\resolved.json") -and
             (Test-RepositoryPath ".cache\dependencies\native-logger-quest\source\CMakeLists.txt")
@@ -392,6 +394,8 @@ function Show-PrerequisiteState {
         "download the pinned Python Package Index wheel into .cache"
     Write-StateLine $State.QuickJsReady "QuickJS-NG 0.16.1 source (.cache/dependencies/quickjs-ng)" `
         "download the pinned GitHub archive into .cache"
+    Write-StateLine $State.SonicReady "Sonic audio DSP source (.cache/dependencies/sonic)" `
+        "download about 5 MB of pinned source into .cache; no additional program installation"
     Write-StateLine $State.NativeLoggerReady "Native Logger Quest verified source (.cache/dependencies/native-logger-quest)" `
         "check the official current manifest and download its immutable SHA-256-verified source archive"
     if ($State.DeploymentRequested) {
@@ -417,7 +421,7 @@ function Show-PrerequisiteState {
         $State.QpmInputsReady -and $State.Ffmpeg44Ready -and
         $State.Ffmpeg9Ready -and $State.PythonReady -and
         $State.YtDlpReady -and $State.CertifiReady -and
-        $State.QuickJsReady -and $State.NativeLoggerReady -and
+        $State.QuickJsReady -and $State.SonicReady -and $State.NativeLoggerReady -and
         (-not $State.DeploymentRequested -or $State.AdbPath))
 
     Write-Host ""

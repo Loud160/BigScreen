@@ -27,6 +27,16 @@ namespace BigScreen {
         /// subsystem loads. Unlike the per-session general log, this history
         /// survives game restarts.
         void InitializePersistentLog() noexcept;
+        /// Writes a tiny durable marker before entering native/IL2CPP work
+        /// whose abrupt process termination cannot be caught by C++.
+        /// FinishCrashSensitiveOperation removes it on every normal return,
+        /// including an ordinary C++ exception unwinding through an RAII
+        /// scope. If SIGSEGV terminates Beat Saber first, the marker survives
+        /// for the next launch and lets Big Screen disable itself before the
+        /// same operation is attempted again.
+        void BeginCrashSensitiveOperation(const std::string& context) noexcept;
+        void FinishCrashSensitiveOperation() noexcept;
+        std::optional<std::string> ConsumeInterruptedCrashOperation() noexcept;
         /// Records an expected or handled failure that does not need to count
         /// toward the internal-error circuit breaker.
         std::string RecordError(
@@ -79,6 +89,8 @@ namespace BigScreen {
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/error-history.log";
         static constexpr const char* PerformanceLog =
             "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/performance-history.log";
+        static constexpr const char* CrashOperationMarker =
+            "/sdcard/ModData/com.beatgames.beatsaber/BigScreen/Logs/native-operation.in-progress";
 
     private:
         ErrorManager() = default;

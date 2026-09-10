@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/VideoLibraryMenu.hpp"
+#include "BigScreen/AudioSyncMenu.hpp"
 #include "BigScreen/MenuModal.hpp"
 #include "BigScreen/UiSettingsUtility.hpp"
 #include "BigScreen/UiUtility.hpp"
@@ -74,6 +75,7 @@
 #include "UnityEngine/AndroidJavaObject.hpp"
 #include "UnityEngine/AudioClip.hpp"
 #include "UnityEngine/AudioSource.hpp"
+#include "UnityEngine/CanvasGroup.hpp"
 #include "UnityEngine/GUIUtility.hpp"
 #include "UnityEngine/Color.hpp"
 #include "UnityEngine/Object.hpp"
@@ -264,6 +266,8 @@ namespace BigScreen {
         }
         constexpr std::string_view MapperTimingLockedHint =
             "This timing comes from the map author's Cinema configuration. Download or assign the video before changing it.";
+        constexpr std::string_view AdvancedTimingLockedHint =
+            "Advanced Sync is controlling this map's video timing. Select Configure to edit it, or turn Advanced Sync off to use these basic controls.";
         constexpr std::string_view FitTimingHint =
             "Automatically calculates playback speed so the video ends with the song after Video Playback Offset is applied. Changing the offset recalculates the fitted speed; turning Fit to Song off restores normal 1.00x playback.";
         constexpr std::string_view RateTimingHint =
@@ -872,7 +876,14 @@ namespace BigScreen {
         // arrows, switches, and handles.
         constexpr float TimingControlHeight = 8.0f;
         constexpr float TimingControlSpacing = -2.0f;
-        constexpr float TimingControlCount = 3.0f;
+        // Fit/lead-in share row one, Advanced Sync owns row two, and the
+        // playback-speed and offset controls occupy rows three and four.
+        // This count must match the actual child rows: under-allocating the
+        // parent lets the following Playback Position panel overlap the
+        // timing hierarchy's raycast area even though every control still
+        // appears to render. The visible symptom is an enabled Advanced Sync
+        // switch beside a Configure button that cannot receive pointer input.
+        constexpr float TimingControlCount = 4.0f;
         constexpr float TimingControlRightExtension = 2.0f;
         constexpr float TimingControlRightAlignmentNudge = 1.0f;
         constexpr float FitTimingToggleWidth = 33.0f;
@@ -957,6 +968,31 @@ namespace BigScreen {
                 ? setting->slider->get_transform()
                     .cast<UnityEngine::RectTransform>()
                 : nullptr;
+        }
+
+        void SetIncrementInteractable(
+            BSML::IncrementSetting* setting,
+            bool interactable)
+        {
+            if(!setting)
+                return;
+            setting->set_interactable(interactable);
+
+            // BSML's IncrementSetting only forwards its interactable state to
+            // the two arrow Buttons. Unlike SliderSetting, its complete value
+            // control has no Selectable transition and therefore remains
+            // visually bright while disabled. Dim only the value/arrow area
+            // (not the label) so Playback Speed communicates the same disabled
+            // state as Video Playback Offset when Advanced Sync owns timing.
+            if(auto* control = IncrementControl(setting))
+            {
+                auto* group = control->get_gameObject()
+                    ->GetComponent<UnityEngine::CanvasGroup*>();
+                if(!group)
+                    group = control->get_gameObject()
+                        ->AddComponent<UnityEngine::CanvasGroup*>();
+                group->set_alpha(interactable ? 1.0f : 0.5f);
+            }
         }
 
         void ConfigureTimingResetButton(
@@ -1926,6 +1962,60 @@ namespace BigScreen {
         leadInTimingHint_ = BSML::Lite::AddHoverHint(
             blackLeadInToggle_,
             std::string(LeadInTimingHint));
+
+        auto* advancedRow =
+            BSML::Lite::CreateHorizontalLayoutGroup(timingControlsBody);
+        ConfigureGroup(advancedRow);
+        advancedRow->set_spacing(1);
+        ConfigureLayout(
+            advancedRow, -1.0f, TimingControlHeight, 1.0f);
+        if(auto* advancedLayout = EnsureLayout(advancedRow))
+            advancedLayout->set_minHeight(TimingControlHeight);
+        advancedSyncToggle_ = BSML::Lite::CreateToggle(
+            advancedRow, "Advanced Sync", false, [this](bool enabled)
+            {
+                ErrorManager::Instance().Guard("Advanced Sync toggle", [&]
+                {
+                    if(suppressTimingCallbacks_ || !selected_)
+                        return;
+                    FlushPendingTimingCommit();
+                    const auto descriptor =
+                        VideoLibrary::Instance().Describe(selected_);
+                    const bool committed = descriptor.advancedSync &&
+                        descriptor.advancedSync->enabled;
+                    AudioSyncMenu::Instance().SetEnabled(descriptor, enabled);
+
+                    // Enabling performs real audio probing on a worker before
+                    // it can be persisted. Keep the switch bound to the last
+                    // committed map state during that transaction. Tick
+                    // publishes the new value on success; failure therefore
+                    // rolls back naturally instead of leaving a visually-on
+                    // switch that cannot be turned off.
+                    UiUtility::SetToggleWithoutNotification(
+                        advancedSyncToggle_, committed);
+                    RefreshDetails();
+                });
+            });
+        ConfigureLayout(advancedSyncToggle_, 37, 7, 0);
+        configureSyncButton_ = BSML::Lite::CreateUIButton(
+            advancedRow, "Configure", UnityEngine::Vector2{0, 0},
+            UnityEngine::Vector2{16, 7}, [this]
+            {
+                ErrorManager::Instance().Guard("Opening Audio Sync", [&]
+                {
+                    if(!selected_)
+                        return;
+                    std::filesystem::path songDirectory;
+                    if(auto* custom = SongCore::API::Loading::GetLevelByLevelID(
+                           std::string(selected_->levelID)))
+                        songDirectory = custom->get_customLevelPath();
+                    AudioSyncMenu::Instance().Open(
+                        VideoLibrary::Instance().Describe(selected_),
+                        songDirectory);
+                });
+            });
+        ConfigureLayout(configureSyncButton_, 16, 7, 0);
+        BSML::Lite::SetButtonTextSize(configureSyncButton_, 2.8f);
 
         rateSetting_ = BSML::Lite::CreateIncrementSetting(
             timingControlsBody, "Playback Speed", 2, 0.01f, 1.0f,
@@ -3124,6 +3214,7 @@ namespace BigScreen {
         GlobalNamespace::BeatmapLevel* level,
         bool navigateToEditor)
     {
+        if(AudioSyncMenu::Instance().IsOpen())return;
         if(!level)
             return;
         FlushPendingTimingCommit(false);
@@ -3210,6 +3301,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::ShowBrowser()
     {
+        if(!AudioSyncMenu::Instance().ConfirmNavigation([this]{ShowBrowser();}))return;
         FlushPendingTimingCommit(false);
         DownloadManager::Instance().SetForegroundLevel({});
         if(DownloadManager::Instance().Snapshot().state ==
@@ -3311,6 +3403,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::BeginUrlProbe()
     {
+        if(AudioSyncMenu::Instance().IsOpen())return;
         ClearThumbnail();
         if(!selected_ || !selected_->levelID)
         {
@@ -4107,6 +4200,7 @@ namespace BigScreen {
 
     void VideoLibraryMenu::RemoveOverride(bool deleteFile)
     {
+        if(AudioSyncMenu::Instance().IsOpen())return;
         if(!selected_) return;
         // The assignment about to be removed owns any pending timing edit.
         // Discard that edit instead of recreating or mutating a fallback video
@@ -4613,6 +4707,8 @@ namespace BigScreen {
     {
         if(!selected_ || !selected_->levelID)
             return false;
+        if(const auto descriptor=VideoLibrary::Instance().Describe(selected_);
+           descriptor.advancedSync&&descriptor.advancedSync->enabled)return false;
         const auto restorePersistedTiming = [this]()
         {
             const auto descriptor =
@@ -5220,8 +5316,8 @@ namespace BigScreen {
                 (!descriptor.hasUserOverride && descriptor.hasMapperLocalFile);
             removeConfirmationText_->set_text(
                 activeLocalFile
-                    ? "Remove this local video assignment?\n\nUnlink keeps the video file on the Quest and only stops this map from using it. Delete File permanently removes it. You can also delete it later with the Quest file browser."
-                    : "Remove this downloaded video assignment?\n\nUnlink keeps the downloaded file on the Quest. Delete Video permanently removes it. An unlinked download can be reassigned with Show File Browser or removed later with Storage Maintenance.");
+                    ? "Remove this local video assignment?\n\nUnlink keeps the video file. Delete File permanently removes it. Both choices reset this map's advanced audio sync settings and remove any Big Screen-owned companion audio. Embedded audio stays with an unlinked video."
+                    : "Remove this downloaded video assignment?\n\nUnlink keeps the video file. Delete Video permanently removes it. Both choices remove matching companion audio and reset this map's advanced audio sync settings. An unlinked video can be reassigned later.");
             if(deleteVideoButton_)
                 if(auto* label = deleteVideoButton_->get_gameObject()
                        ->GetComponentInChildren<TMPro::TextMeshProUGUI*>())
@@ -5494,37 +5590,54 @@ namespace BigScreen {
         for(auto* row : videoOnlyRows_)
             if(row) row->SetActive(
                 descriptor.CanPlay() && !videoTransferPending);
+        const bool advanced=descriptor.advancedSync&&descriptor.advancedSync->enabled;
+        const bool syncOpen=AudioSyncMenu::Instance().IsOpen();
+        if(advancedSyncToggle_){UiUtility::SetToggleWithoutNotification(advancedSyncToggle_,advanced);advancedSyncToggle_->set_interactable(descriptor.CanPlay()&&!videoTransferPending&&!syncOpen&&!AudioSyncMenu::Instance().IsBusy());}
+        if(configureSyncButton_)configureSyncButton_->set_interactable(advanced&&!syncOpen&&!videoTransferPending&&!AudioSyncMenu::Instance().IsBusy());
+        if(backToListButton_)backToListButton_->set_interactable(!syncOpen);
+        for(auto*button:{mapperRefreshButton_,searchYouTubeButton_,pasteUrlButton_})
+            if(button)button->set_interactable(!syncOpen&&!videoTransferPending);
+        if(syncOpen){if(showFileBrowserButton_)showFileBrowserButton_->set_interactable(false);if(setThumbnailButton_)setThumbnailButton_->set_interactable(false);}
+        if(syncOpen){if(checkUrlButton_)checkUrlButton_->set_interactable(false);if(downloadButton_)downloadButton_->set_interactable(false);}
         if(offsetSetting_) offsetSetting_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending);
-        if(rateSetting_) rateSetting_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending && !fitToSong_);
+            descriptor.CanPlay() && !videoTransferPending && !advanced);
+        SetIncrementInteractable(
+            rateSetting_,
+            descriptor.CanPlay() && !videoTransferPending &&
+                !fitToSong_ && !advanced);
         if(offsetResetButton_) offsetResetButton_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending);
+            descriptor.CanPlay() && !videoTransferPending && !advanced);
         if(rateResetButton_) rateResetButton_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending && !fitToSong_);
+            descriptor.CanPlay() && !videoTransferPending && !fitToSong_ && !advanced);
         if(fitToggle_) fitToggle_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending);
+            descriptor.CanPlay() && !videoTransferPending && !advanced);
         if(blackLeadInToggle_) blackLeadInToggle_->set_interactable(
-            descriptor.CanPlay() && !videoTransferPending);
+            descriptor.CanPlay() && !videoTransferPending && !advanced);
         if(playbackScrubber_) playbackScrubber_->set_interactable(
             descriptor.CanPlay() && !videoTransferPending);
         if(playPauseButton_) playPauseButton_->set_interactable(
             descriptor.CanPlay() && !videoTransferPending);
         if(removeButton_) removeButton_->set_interactable(
-            !videoTransferPending &&
+            !videoTransferPending && !syncOpen &&
             (descriptor.hasUserOverride || descriptor.hasMapperDownload ||
              descriptor.hasMapperLocalFile));
-        const auto timingHint = mapperTimingWaitingForVideo
-            ? std::string(MapperTimingLockedHint)
-            : std::string{};
+        const auto timingHint = advanced
+            ? std::string(AdvancedTimingLockedHint)
+            : mapperTimingWaitingForVideo
+                ? std::string(MapperTimingLockedHint)
+                : std::string{};
         if(fitTimingHint_) fitTimingHint_->set_text(
-            mapperTimingWaitingForVideo ? timingHint : std::string(FitTimingHint));
+            advanced || mapperTimingWaitingForVideo ? timingHint
+                                                    : std::string(FitTimingHint));
         if(rateTimingHint_) rateTimingHint_->set_text(
-            mapperTimingWaitingForVideo ? timingHint : std::string(RateTimingHint));
+            advanced || mapperTimingWaitingForVideo ? timingHint
+                                                    : std::string(RateTimingHint));
         if(offsetTimingHint_) offsetTimingHint_->set_text(
-            mapperTimingWaitingForVideo ? timingHint : std::string(OffsetTimingHint));
+            advanced || mapperTimingWaitingForVideo ? timingHint
+                                                    : std::string(OffsetTimingHint));
         if(leadInTimingHint_) leadInTimingHint_->set_text(
-            mapperTimingWaitingForVideo ? timingHint : std::string(LeadInTimingHint));
+            advanced || mapperTimingWaitingForVideo ? timingHint
+                                                    : std::string(LeadInTimingHint));
         // Completion deliberately does not auto-open the new decoder. The
         // explicit Play button starts preview initialization after file and
         // manifest publication are fully separate from this Unity update.
@@ -5533,6 +5646,17 @@ namespace BigScreen {
 
     void VideoLibraryMenu::StartSelectedPreview()
     {
+        if(const auto* profile=AudioSyncMenu::Instance().PreviewProfile();
+           profile && !profile->showPicture)
+        {
+            // Misc/pipeline changes can also reach this entry point. Keep the
+            // audio-only contract across those routes, not only the toggle's
+            // immediate callback, without pausing the map's audio channel.
+            syncPictureHidden_=true;
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())
+                PlaybackSession::Instance().Stop();
+            return;
+        }
         // Source replacement and explicit pipeline changes can rebuild the
         // preview while its audition is running. Pause the owned audio channel
         // before discarding the warmed decoder, then resume only after the
@@ -5727,6 +5851,9 @@ namespace BigScreen {
 
     void VideoLibraryMenu::TogglePreviewPlayback()
     {
+        if(AudioSyncMenu::Instance().IsOpen()&&AudioSyncMenu::Instance().Ready()&&
+           (AudioSyncMenu::Instance().OwnsAudition()||!previewTransport_.Is(PreviewTransportState::Playing)))
+        {AudioSyncMenu::Instance().ToggleAudition();return;}
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
             return;
 
@@ -6147,8 +6274,15 @@ namespace BigScreen {
         return smoothedSongTime;
     }
 
+    void VideoLibraryMenu::SeekSyncPreview(double seconds)
+    {
+        SeekPreview(static_cast<float>(seconds));
+    }
+
     void VideoLibraryMenu::SeekPreview(float songTimeSeconds)
     {
+        if(AudioSyncMenu::Instance().OwnsAudition())
+        {AudioSyncMenu::Instance().Seek(songTimeSeconds);return;}
         if(!selected_ || !VideoLibrary::Instance().Describe(selected_).CanPlay())
             return;
         const double duration = std::max(0.0f, selected_->songDuration);
@@ -6185,6 +6319,15 @@ namespace BigScreen {
         }
 
         auto& playback = PlaybackSession::Instance();
+        if(const auto* profile = AudioSyncMenu::Instance().PreviewProfile();
+           profile && !profile->showPicture)
+        {
+            // Audio-only synchronization must not recreate the decoder merely
+            // because either timeline was scrubbed while audition was paused.
+            playback.Stop();
+            RefreshPlaybackControls();
+            return;
+        }
         if(!playback.IsLibraryPreviewActive())
             StartSelectedPreview();
         else
@@ -6211,6 +6354,7 @@ namespace BigScreen {
         if(playPauseButton_)
             BSML::Lite::SetButtonText(
                 playPauseButton_,
+                AudioSyncMenu::Instance().OwnsAudition() ? "Ⅱ" :
                 previewTransport_.IsWaiting() ? "…" :
                     previewTransport_.Is(PreviewTransportState::Playing)
                         ? "Ⅱ" : "▶");
@@ -6246,6 +6390,8 @@ namespace BigScreen {
     {
         if(!active_) return;
         songPreviewPlayer_ = songPreviewPlayer;
+        if(!ErrorManager::Instance().Guard("Audio Sync update",[]{AudioSyncMenu::Instance().Tick();}))
+            ErrorManager::Instance().Guard("Recovering Audio Sync",[]{AudioSyncMenu::Instance().Abort();});
 
         if(timingCommitPending_ &&
            UnityEngine::Time::get_realtimeSinceStartup() >=
@@ -6481,6 +6627,7 @@ namespace BigScreen {
           }
 
           if(editorVisible_ &&
+             !syncOwnsAudio_ &&
              previewTransport_.Is(PreviewTransportState::Playing) &&
              IsAlive(previewAudioClip_))
           {
@@ -6653,10 +6800,87 @@ namespace BigScreen {
         StartSelectedPreview();
     }
 
+    void VideoLibraryMenu::RefreshAudioSyncState()
+    {
+        if(!active_||!selected_)return;
+        CancelPendingTimingCommit();
+        const auto descriptor=VideoLibrary::Instance().Describe(selected_);
+        ApplyDescriptorToEditor(descriptor,false);
+        RefreshLocalVideoStatus();
+        RefreshDetails();
+        if(!AudioSyncMenu::Instance().IsOpen())
+        {
+            if(syncPictureHidden_){syncPictureHidden_=false;StartSelectedPreview();}
+            if(PlaybackSession::Instance().IsLibraryPreviewActive())ApplyTimingToActivePreview();
+            if(descriptor.playableConfig)PlaybackSession::Instance().ApplyLibraryPreviewCutoff(descriptor.playableConfig->stopAtVideoSecond);
+        }
+    }
+    void VideoLibraryMenu::ApplyAudioSyncPreview(const AudioSync::Profile& profile)
+    {
+        if(!selected_)return;
+        auto& playback=PlaybackSession::Instance();
+        if(playback.IsLibraryPreviewActive())
+        {
+            playback.ApplyLibraryPreviewTiming(profile.timing.offsetSeconds,profile.timing.playbackRate,false,false,previewSongTime_);
+            const auto descriptor=VideoLibrary::Instance().Describe(selected_);
+            const auto mapperCutoff=descriptor.mapperDefinition?descriptor.mapperDefinition->stopAtVideoSecond:std::nullopt;
+            playback.ApplyLibraryPreviewCutoff(profile.stopAtEndMarker?std::optional<double>{profile.markers.videoEnd}:mapperCutoff);
+        }
+        if(!profile.showPicture&&!syncPictureHidden_)
+        {
+            syncPictureHidden_=true;
+            if(playback.IsLibraryPreviewActive())playback.Stop();
+        }
+        else if(profile.showPicture&&syncPictureHidden_)
+        {
+            syncPictureHidden_=false;StartSelectedPreview();
+            ApplyAudioSyncPreview(profile);
+        }
+    }
+    UnityEngine::AudioSource* VideoLibraryMenu::PauseForSyncAudition()
+    {
+        syncOwnsAudio_=true;ClearPreviewPreRoll();
+        if(IsAlive(songPreviewPlayer_))songPreviewPlayer_->PauseCurrentChannel();
+        previewTransport_.Set(PreviewTransportState::Paused);
+        return IsAlive(previewAudioSource_)?previewAudioSource_.unsafePtr():ActiveSongAudioSource(songPreviewPlayer_);
+    }
+    UnityEngine::AudioClip* VideoLibraryMenu::SyncSongClip()
+    {RequestSelectedAudio();return IsAlive(previewAudioClip_)?previewAudioClip_.unsafePtr():nullptr;}
+    void VideoLibraryMenu::SyncAuditionClock(double time,bool showPicture)
+    {
+        previewSongTime_=time;ResetPreviewClock(time);
+        if(showPicture)
+        {
+            if(syncPictureHidden_||!PlaybackSession::Instance().IsLibraryPreviewActive())
+            {
+                syncPictureHidden_=false;StartSelectedPreview();
+                if(const auto*profile=AudioSyncMenu::Instance().PreviewProfile())ApplyAudioSyncPreview(*profile);
+            }
+            PlaybackSession::Instance().Tick(time);
+        }
+        else if(!syncPictureHidden_)
+        {syncPictureHidden_=true;if(PlaybackSession::Instance().IsLibraryPreviewActive())PlaybackSession::Instance().Stop();}
+        if(++playbackControlsTickCounter_>=6)
+        {playbackControlsTickCounter_=0;RefreshPlaybackControls();}
+    }
+    void VideoLibraryMenu::EndSyncAudition()
+    {
+        if(!syncOwnsAudio_)return;
+        syncOwnsAudio_=false;previewTransport_.Set(PreviewTransportState::Paused);
+        ResetPreviewClock(previewSongTime_);RefreshPlaybackControls();
+    }
+
     void VideoLibraryMenu::Deactivate()
     {
-        FlushPendingTimingCommit(false);
+        // Stop advertising a live editor before aborting its center draft.
+        // Closing an audio-only draft normally restores the saved picture;
+        // deactivation must not create a new decoder merely to tear it down
+        // immediately afterward. RefreshAudioSyncState observes active_.
         active_ = false;
+        ErrorManager::Instance().Guard("Stopping Audio Sync on menu exit", []{
+            AudioSyncMenu::Instance().Abort();
+        });
+        FlushPendingTimingCommit(false);
         browserTableReloadPending_ = false;
         // The retained browser survives ordinary menu exits. Do not carry its
         // selected index into the next visit, where clicking that same song

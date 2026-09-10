@@ -74,6 +74,7 @@ function Test-BigScreenExclusiveLibraryName([string]$Name) {
         $Name.StartsWith("libavcodec-bigscreen") -or
         $Name.StartsWith("libavutil-bigscreen") -or
         $Name.StartsWith("libswscale-bigscreen") -or
+        $Name.StartsWith("libswresample-bigscreen") -or
         $Name -in @(
             "libpython3.14.so",
             "libssl_python.so",

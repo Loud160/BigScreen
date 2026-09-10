@@ -16,6 +16,10 @@ Master switch. Off stops previews, downloads, screens, and environment changes w
 
 While the Big Screen menu is open, temporarily hides the neon Beat Saber sign and supported clock/battery overlays it can detect. Objects are restored on exit. Detection is defensive: stock installations and installations without those optional UI objects remain supported.
 
+### Menu Background Opacity — default: 0%
+
+Controls one shared black background behind every Big Screen menu page. At 0% the menus keep their original transparent appearance; intermediate values improve contrast while retaining some view of the environment or playing video; 100% produces a solid black background. The change is applied live without recreating menu pages or interrupting video playback. Error and confirmation dialogs keep their own purpose-built backgrounds, and the otherwise empty center preview workspace remains unobstructed until a Big Screen center page is opened.
+
 ### Show Menu Environment — default: On
 
 Shows Beat Saber's normal menu scenery, lighting, and floor behind Big Screen. Off provides an unlit, unobstructed placement space and leaves screens visible below gameplay floor height while preserving the environment hierarchy, menu cameras, controller input, Big Screen UI, preview screen, and optional lane guides. The complete environment is restored on focus loss, mod disable, menu exit, and errors.

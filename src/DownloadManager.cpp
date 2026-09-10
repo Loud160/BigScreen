@@ -31,6 +31,7 @@
 #include "BigScreen/QuickJsEngine.hpp"
 #include "BigScreen/QuickJsPythonModule.hpp"
 #include "BigScreen/VideoContainerNormalizer.hpp"
+#include "BigScreen/AudioSyncReader.hpp"
 #include "BigScreen/VideoTranscoderBackend.hpp"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
@@ -675,6 +676,7 @@ def publish(state, message='', durable=True, **values):
     os.replace(temporary, status_path)
 
 last_progress_publish = 0.0
+downloading_audio = False
 
 def cancelled():
     if os.path.exists(cancel_path):
@@ -683,6 +685,8 @@ def cancelled():
 def progress(data):
     global last_progress_publish
     cancelled()
+    if downloading_audio and int(data.get('downloaded_bytes') or 0) > 128 * 1024 * 1024:
+        raise RuntimeError('The matching audio exceeds the 128 MB per-track safety limit.')
     if data.get('status') == 'downloading':
         now = time.monotonic()
         # yt-dlp can call progress hooks for every downloaded block. Publishing
@@ -693,7 +697,7 @@ def progress(data):
         last_progress_publish = now
         publish(
             'downloading',
-            'Downloading video',
+            'Downloading matching audio' if downloading_audio else 'Downloading video',
             durable=False,
             downloadedBytes=data.get('downloaded_bytes') or 0,
             totalBytes=data.get('total_bytes') or data.get('total_bytes_estimate') or 0,
@@ -1042,6 +1046,62 @@ try:
     cancelled()
     size = os.path.getsize(job['finalPath'])
 
+    # Audio is acquired in this same cancellable transfer, BEFORE publishing
+    # completion. It is not downloaded on editor-open, and its signed stream
+    # URL is never persisted. Pin both requests to the canonical YouTube ID;
+    # search results/redirects must not pair unrelated music with this video.
+    # Direct AAC/Opus companions share YouTube's original content timeline.
+    # HLS audio is deliberately excluded: it may carry an independent segment
+    # origin and cannot safely be paired by subtracting its first timestamp.
+    audio_warning = ''
+    audio_path = job.get('audioPath', '')
+    audio_ready = False
+    if audio_path:
+        try:
+            cancelled()
+            canonical_id = str(result.get('id') or info.get('id') or '')
+            if not re.fullmatch(r'[A-Za-z0-9_-]{11}', canonical_id):
+                raise RuntimeError('YouTube did not identify the video for matching audio.')
+            candidates = [f for f in (info.get('formats') or [])
+                if f.get('vcodec') == 'none'
+                and (str(f.get('acodec') or '').startswith('mp4a') or f.get('acodec') == 'opus')
+                and f.get('protocol') == 'https']
+            candidates.sort(key=lambda f: (
+                not str(f.get('acodec') or '').startswith('mp4a'),
+                abs(float(f.get('abr') or 128) - 128)))
+            if not candidates:
+                raise RuntimeError('YouTube supplied no compatible direct AAC or Opus audio stream.')
+            expected_audio = int(candidates[0].get('filesize') or candidates[0].get('filesize_approx') or 0)
+            if expected_audio > 128 * 1024 * 1024:
+                raise RuntimeError('The matching audio exceeds the 128 MB per-track safety limit.')
+            if shutil.disk_usage(os.path.dirname(audio_path)).free < int(job['reserveBytes']) + max(expected_audio, 32 * 1024 * 1024):
+                raise OSError('Not enough free storage for the matching audio.')
+            downloading_audio = True
+            last_progress_publish = 0.0
+            publish('downloading', 'Downloading matching audio', downloadedBytes=0, totalBytes=expected_audio)
+            with yt_dlp.YoutubeDL(dict(common, outtmpl=audio_path,
+                    format=candidates[0]['format_id'], continuedl=False)) as downloader:
+                audio_result = downloader.extract_info('https://www.youtube.com/watch?v=' + canonical_id, download=True)
+            cancelled()
+            if str(audio_result.get('id') or '') != canonical_id:
+                raise RuntimeError('The downloaded audio does not belong to the selected video.')
+            audio_ready = os.path.isfile(audio_path) and os.path.getsize(audio_path) > 0
+            if not audio_ready:
+                raise RuntimeError('The audio download produced an empty file.')
+        except BaseException as audio_error:
+            # Cancellation is never converted into success. A genuine audio
+            # failure, however, must not throw away an otherwise valid video.
+            cancelled()
+            audio_warning = clean_error(audio_error)
+            for leftover in (audio_path, audio_path + '.part', audio_path + '.ytdl'):
+                try:
+                    if os.path.isfile(leftover):
+                        os.remove(leftover)
+                except OSError:
+                    pass
+        finally:
+            downloading_audio = False
+
     # Keep the video's own YouTube artwork beside Big Screen's durable video
     # library. Derive the pinned image host from YouTube's validated video id
     # instead of trusting a metadata-provided arbitrary URL. A transient image
@@ -1090,6 +1150,8 @@ try:
         formatId=chosen.get('format_id') or '',
         protocol=chosen.get('protocol') or '',
         transport=('direct' if direct_transport(chosen) else 'hls'),
+        audioReady=audio_ready,
+        audioWarning=audio_warning,
         thumbnailPath=published_thumbnail,
         diagnostic=retry_detail.strip(),
         bytes=size,
@@ -2414,12 +2476,16 @@ os.replace(temporary, job['destination'])
     {
         const auto incomingVideo = IncomingSibling(finalPath);
         const auto incomingThumbnail = IncomingSibling(thumbnailPath);
+        const auto incomingAudio = IncomingSibling(std::filesystem::path(finalPath.string() + ".audio"));
         const auto preparedVideo = std::filesystem::path(
             incomingVideo.string() + ".prepared.mp4");
         IncompleteTransfer next{
             levelId,
             {
                 incomingVideo,
+                incomingAudio,
+                std::filesystem::path(incomingAudio.string() + ".part"),
+                std::filesystem::path(incomingAudio.string() + ".ytdl"),
                 std::filesystem::path(incomingVideo.string() + ".part"),
                 ResumeIdentitySibling(incomingVideo),
                 incomingThumbnail,
@@ -3334,6 +3400,8 @@ os.replace(temporary, job['destination'])
                     request.levelId, request.origin);
             const auto incomingVideoPath = IncomingSibling(finalPath);
             const auto incomingThumbnailPath = IncomingSibling(thumbnailPath);
+            const auto audioPath = std::filesystem::path(finalPath.string() + ".audio");
+            const auto incomingAudioPath = IncomingSibling(audioPath);
             const auto resumeIdentityPath =
                 ResumeIdentitySibling(incomingVideoPath);
             // The downloader's selected container normally matches finalPath,
@@ -3346,6 +3414,7 @@ os.replace(temporary, job['destination'])
             auto& allocator = document.GetAllocator();
             AddString(document, "levelId", request.levelId, allocator);
             AddString(document, "sourceUrl", request.sourceUrl, allocator);
+            AddString(document, "audioPath", incomingAudioPath.string(), allocator);
             AddString(
                 document, "finalPath", incomingVideoPath.string(), allocator);
             AddString(
@@ -3464,6 +3533,7 @@ os.replace(temporary, job['destination'])
                 AddString(
                     fallbackDocument, "finalPath", incomingVideoPath.string(),
                     fallbackAllocator);
+                AddString(fallbackDocument, "audioPath", incomingAudioPath.string(), fallbackAllocator);
                 AddString(
                     fallbackDocument, "thumbnailPath",
                     incomingThumbnailPath.string(), fallbackAllocator);
@@ -4070,6 +4140,24 @@ os.replace(temporary, job['destination'])
                     stored.bytes = publishedProbe.bytes;
                     stored.width = publishedProbe.width;
                     stored.height = publishedProbe.height;
+                    std::string audioWarning = ReadString(status, "audioWarning");
+                    // Native probing is a worker operation. A format label from
+                    // yt-dlp is not proof that the installed decoder can read
+                    // it. The companion joins the same rollback transaction
+                    // as video/thumbnail and library.json, never an orphaned
+                    // reference committed before the media exists.
+                    std::optional<StagedFileReplacement> audioReplacement;
+                    if(Utility::IsRegularFile(incomingAudioPath) && audioWarning.empty())
+                    {
+                        const auto audio = AudioSync::ProbeAudio(incomingAudioPath, {});
+                        if(audio.available)
+                        {
+                            stored.audioFileName = audioPath.filename().string();
+                            audioReplacement.emplace(incomingAudioPath, audioPath);
+                            audioReplacement->Promote();
+                        }
+                        else audioWarning = audio.error;
+                    }
 
                     BigScreen::BigScreenLogger.info(
                         "Publishing downloaded video file for {}",
@@ -4097,6 +4185,7 @@ os.replace(temporary, job['destination'])
                         "Committed downloaded video manifest for {}",
                         request.levelId);
                     videoReplacement.Commit();
+                    if(audioReplacement) audioReplacement->Commit();
                     if(thumbnailReplacement)
                         thumbnailReplacement->Commit();
                     terminalSnapshot.thumbnailPath =
@@ -4128,6 +4217,15 @@ os.replace(temporary, job['destination'])
                             "Big Screen could not prepare this video for hardware decoding. "
                             "It can still play using software decoding, but the video frame rate "
                             "or gameplay performance may be reduced."};
+                    }
+                    if(!audioWarning.empty())
+                    {
+                        ErrorManager::Instance().RecordError("BS-AUDIO-DOWNLOAD-001", audioWarning);
+                        std::scoped_lock lock(mutex_);
+                        const auto prior = downloadNotice_ ? downloadNotice_->message + "\n\n" : std::string{};
+                        downloadNotice_ = DownloadNotice{"Video ready; audio unavailable",
+                            prior + "The video can still use basic playback controls, but Advanced Sync needs matching audio. "
+                            "Audio could not be prepared: " + audioWarning};
                     }
                 }
             }

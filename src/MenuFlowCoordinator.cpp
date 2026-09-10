@@ -6,6 +6,7 @@
 // section 7(b)/(c) and an interoperability permission under section 7;
 // see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
 #include "BigScreen/MenuFlowCoordinator.hpp"
+#include "BigScreen/AudioSyncMenu.hpp"
 
 #include "BigScreen/MenuModal.hpp"
 #include "BigScreen/DiagnosticSessionLogger.hpp"
@@ -26,10 +27,13 @@
 #include "GlobalNamespace/MainMenuViewController.hpp"
 #include "GlobalNamespace/OVRManager.hpp"
 #include "GlobalNamespace/SoloFreePlayFlowCoordinator.hpp"
+#include "HMUI/ImageView.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Object.hpp"
+#include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/Time.hpp"
 #include "UnityEngine/Transform.hpp"
+#include "bsml/shared/BSML/Components/Backgroundable.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "bsml/shared/Helpers/getters.hpp"
 #include "bsml/shared/BSML/Components/ModalView.hpp"
@@ -60,6 +64,12 @@ namespace BigScreen {
         // the menu scene, so retain weak Unity handles and rescan only after a
         // scene rebuild invalidates one of them.
         std::vector<UnityW<UnityEngine::GameObject>> knownDistractionObjects;
+        // Every visible Big Screen page owns one non-interactive black plate.
+        // Keeping weak image handles here gives the General slider one O(page)
+        // update path and avoids duplicating transparency state in each menu.
+        // The handles are discarded at the same scene boundary as the retained
+        // controllers, so they can never point into a rebuilt MenuCore scene.
+        std::vector<UnityW<HMUI::ImageView>> menuBackgroundImages;
         // Main-menu and Solo shortcuts share one retained flow. Every menu
         // page is backed by process-lifetime native singletons, so creating a
         // second coordinator would let two Unity hierarchies point at and
@@ -94,6 +104,70 @@ namespace BigScreen {
         // between stages give Unity time to process layout/mesh work instead
         // of converting several smaller operations back into one long spike.
         constexpr int MenuPrewarmStageSpacingFrames = 3;
+
+        class PersistentPrewarmCrashScope final {
+        public:
+            explicit PersistentPrewarmCrashScope(int stage)
+            {
+                ErrorManager::Instance().BeginCrashSensitiveOperation(
+                    "retained menu prewarm stage " + std::to_string(stage));
+            }
+
+            ~PersistentPrewarmCrashScope()
+            {
+                // This destructor runs for successful completion and ordinary
+                // C++ exceptions. A fatal signal cannot unwind it, deliberately
+                // leaving the durable marker for Settings::Load on next launch.
+                ErrorManager::Instance().FinishCrashSensitiveOperation();
+            }
+
+            PersistentPrewarmCrashScope(
+                const PersistentPrewarmCrashScope&) = delete;
+            PersistentPrewarmCrashScope& operator=(
+                const PersistentPrewarmCrashScope&) = delete;
+        };
+
+        void CreateMenuBackground(HMUI::ViewController* controller)
+        {
+            if(!controller)
+                return;
+
+            auto* backgroundObject =
+                UnityEngine::GameObject::New_ctor("Big Screen Menu Background");
+            backgroundObject->get_transform()->SetParent(
+                controller->get_transform(), false);
+            if(auto* backgroundable =
+                   backgroundObject->AddComponent<BSML::Backgroundable*>())
+            {
+                const float opacity =
+                    Settings::Instance().MenuBackgroundOpacity();
+                backgroundable->ApplyBackground("round-rect-panel");
+                backgroundable->ApplyColor({0.0f, 0.0f, 0.0f, 1.0f});
+                backgroundable->ApplyAlpha(opacity);
+                if(auto* image = backgroundable->background)
+                {
+                    image->set_gradient(false);
+                    image->set_raycastTarget(false);
+                    menuBackgroundImages.emplace_back(image);
+                }
+            }
+            if(auto backgroundRect = backgroundObject->get_transform()
+                   .try_cast<UnityEngine::RectTransform>().value_or(nullptr))
+            {
+                // Stretch to the controller itself rather than assuming the
+                // dimensions of a side or center panel. This makes one helper
+                // cover both 60-wide side menus and the larger Audio Sync page.
+                backgroundRect->set_anchorMin({0.0f, 0.0f});
+                backgroundRect->set_anchorMax({1.0f, 1.0f});
+                backgroundRect->set_pivot({0.5f, 0.5f});
+                backgroundRect->set_anchoredPosition({0.0f, 0.0f});
+                backgroundRect->set_offsetMin({0.0f, 0.0f});
+                backgroundRect->set_offsetMax({0.0f, 0.0f});
+            }
+            // UI construction adds controls afterward, but explicitly keeping
+            // the plate first also protects against pages that rebuild content.
+            backgroundObject->get_transform()->SetAsFirstSibling();
+        }
 
         void RaiseModalRoot(BSML::ModalView* modal)
         {
@@ -878,6 +952,11 @@ namespace BigScreen {
         if(!coordinator)
             throw std::runtime_error(
                 "Big Screen could not allocate its retained menu coordinator");
+        // ErrorManager::Guard catches C++ exceptions, but neither C++ nor the
+        // current two-error circuit breaker can run after IL2CPP dereferences
+        // an invalid Unity object and raises SIGSEGV. The durable scope closes
+        // that gap: only an abrupt process death can leave its marker behind.
+        PersistentPrewarmCrashScope crashScope(coordinator->menuPrewarmStage);
         if(!coordinator->PrewarmNextMenuStage())
             return;
 
@@ -888,6 +967,7 @@ namespace BigScreen {
 
     void MenuFlowCoordinator::PrepareForDismissal()
     {
+        AudioSyncMenu::Instance().Abort();
         ShowcaseMenu::Instance().DismissTransientUi();
         ThumbnailPickerMenu::Instance().Hide();
         LocalVideoBrowserMenu::Instance().CancelScan();
@@ -986,6 +1066,18 @@ namespace BigScreen {
             hiddenMenuObjects.size());
     }
 
+    void ApplyMenuBackgroundOpacity()
+    {
+        const float opacity = std::clamp(
+            Settings::Instance().MenuBackgroundOpacity(), 0.0f, 1.0f);
+        for(auto image : menuBackgroundImages)
+        {
+            if(!UnityW<HMUI::ImageView>::isAlive(image.unsafePtr()))
+                continue;
+            image->set_color({0.0f, 0.0f, 0.0f, opacity});
+        }
+    }
+
     bool MenuFlowCoordinator::PrewarmNextMenuStage()
     {
         if(menuUiConstructed)
@@ -1009,6 +1101,8 @@ namespace BigScreen {
                 ShowcaseMenu::Instance().ForgetUi();
                 LocalVideoBrowserMenu::Instance().ForgetUi();
                 ThumbnailPickerMenu::Instance().ForgetUi();
+                AudioSyncMenu::Instance().ForgetUi();
+                menuBackgroundImages.clear();
                 centerViewController =
                     BSML::Helpers::CreateViewController<HMUI::ViewController*>();
                 settingsViewController =
@@ -1025,15 +1119,28 @@ namespace BigScreen {
                     BSML::Helpers::CreateViewController<HMUI::ViewController*>();
                 thumbnailPickerViewController =
                     BSML::Helpers::CreateViewController<HMUI::ViewController*>();
+                audioSyncViewController = BSML::Helpers::CreateViewController<HMUI::ViewController*>();
                 if(!centerViewController || !settingsViewController ||
                    !libraryBrowserViewController || !libraryEditorViewController ||
                    !storageViewController || !showcaseViewController ||
                    !localVideoBrowserViewController ||
-                   !thumbnailPickerViewController)
+                   !thumbnailPickerViewController || !audioSyncViewController)
                 {
                     throw std::runtime_error(
                         "one or more retained Big Screen view controllers could not be created");
                 }
+                // The neutral center controller deliberately stays empty so
+                // ordinary screen previews remain unobstructed. Every actual
+                // side page and full-size center workspace gets the same live,
+                // persisted backing opacity.
+                CreateMenuBackground(settingsViewController);
+                CreateMenuBackground(libraryBrowserViewController);
+                CreateMenuBackground(libraryEditorViewController);
+                CreateMenuBackground(storageViewController);
+                CreateMenuBackground(showcaseViewController);
+                CreateMenuBackground(localVideoBrowserViewController);
+                CreateMenuBackground(thumbnailPickerViewController);
+                CreateMenuBackground(audioSyncViewController);
                 break;
             }
             case 1:
@@ -1046,6 +1153,7 @@ namespace BigScreen {
                         DiagnosticSessionLogger::Instance().MenuEvent(
                             "page_opened", "SettingsMenu",
                             {{"page", "storage_maintenance"}});
+                        if(AudioSyncMenu::Instance().IsOpen())return;
                         VideoLibraryMenu::Instance().StopActivePreview();
                         StorageMaintenanceMenu::Instance().Show();
                         restoreCenterOnActivation = true;
@@ -1060,6 +1168,7 @@ namespace BigScreen {
                         DiagnosticSessionLogger::Instance().MenuEvent(
                             "page_opened", "SettingsMenu",
                             {{"page", "showcase"}});
+                        if(AudioSyncMenu::Instance().IsOpen())return;
                         VideoLibraryMenu::Instance().StopActivePreview();
                         ShowcaseMenu::Instance().Show();
                         restoreCenterOnActivation = true;
@@ -1093,6 +1202,7 @@ namespace BigScreen {
                         DiagnosticSessionLogger::Instance().MenuEvent(
                             "page_opened", "VideoLibraryMenu",
                             {{"page", "local_video_browser"}});
+                        if(AudioSyncMenu::Instance().IsOpen())return;
                         VideoLibraryMenu::Instance().StopActivePreview();
                         LocalVideoBrowserMenu::Instance().Show(level);
                         restoreCenterOnActivation = true;
@@ -1107,6 +1217,7 @@ namespace BigScreen {
                         DiagnosticSessionLogger::Instance().MenuEvent(
                             "page_opened", "VideoLibraryMenu",
                             {{"page", "thumbnail_picker"}});
+                        if(AudioSyncMenu::Instance().IsOpen())return;
                         VideoLibraryMenu::Instance().StopActivePreview();
                         ThumbnailPickerMenu::Instance().Show(level);
                         restoreCenterOnActivation = true;
@@ -1207,6 +1318,32 @@ namespace BigScreen {
             case 9:
                 stageName = "distraction-object cache";
                 PrewarmDistractionFreeCache();
+                break;
+            case 10:
+                stageName = "audio synchronization workspace";
+                stageComplete = AudioSyncMenu::Instance().CreateUi(
+                    audioSyncViewController,
+                    libraryEditorViewController,
+                    [this](bool show)
+                    {
+                        restoreCenterOnActivation = show;
+                        // The native FlowCoordinator header is part of the full-size center
+                        // workspace contract used by Saber Stage. Advanced Sync previously
+                        // hid it, which made the center page look no taller than a side menu
+                        // and also removed the obvious close affordance. BackButtonWasPressed
+                        // already routes this header button through AudioSyncMenu::RequestClose,
+                        // preserving the editor's save/discard confirmation instead of bypassing
+                        // draft ownership.
+                        SetTitle(show ? "BIG SCREEN | ADVANCED VIDEO SYNC" : "",
+                                 HMUI::ViewController::AnimationType::None);
+                        set_showBackButton(show);
+                        ReplaceTopViewController(
+                            show ? audioSyncViewController : centerViewController,
+                            nullptr,
+                            show ? HMUI::ViewController::AnimationType::In
+                                 : HMUI::ViewController::AnimationType::Out,
+                            HMUI::ViewController::AnimationDirection::Horizontal);
+                    });
                 break;
             default:
                 stageName = "completion marker";
@@ -1551,6 +1688,9 @@ namespace BigScreen {
         try
         {
         (void)topViewController;
+        if(AudioSyncMenu::Instance().IsOpen())
+        {AudioSyncMenu::Instance().RequestClose();return;}
+        if(!AudioSyncMenu::Instance().ConfirmNavigation([this]{BackButtonWasPressed(centerViewController);}))return;
         // The custom left-panel Back button routes through the same prompt,
         // but Beat Saber's controller/back action can call this override
         // directly. Cover both paths so no normal menu exit silently drops an

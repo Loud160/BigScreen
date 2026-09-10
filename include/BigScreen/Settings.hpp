@@ -80,6 +80,7 @@ namespace BigScreen {
 
         bool ModEnabled() const { return modEnabled_; }
         bool DistractionFreeMenu() const { return distractionFreeMenu_; }
+        float MenuBackgroundOpacity() const { return menuBackgroundOpacity_; }
         bool ShowMenuEnvironment() const { return showMenuEnvironment_; }
         // Scenery, lighting, and floor visibility share one user preference.
         // Keep this accessor so the focused floor-discovery component remains
@@ -175,6 +176,7 @@ namespace BigScreen {
 
         void SetModEnabled(bool value);
         void SetDistractionFreeMenu(bool value);
+        void SetMenuBackgroundOpacity(float value);
         void SetShowMenuEnvironment(bool value);
         void SetShowLaneGuidesEnabled(bool value);
         void SetVideoEnabled(bool value);
@@ -258,6 +260,10 @@ namespace BigScreen {
         // world. This affects only Big Screen's own menu lifetime and restores
         // every stock or optional-mod object when the player leaves.
         bool distractionFreeMenu_ = true;
+        // Retained menu pages share this black backing opacity. Zero preserves
+        // Big Screen's original transparent panels; one provides maximum
+        // contrast without changing text, controls, previews, or modal cards.
+        float menuBackgroundOpacity_ = 0.0f;
         // This positive-logic switch describes what remains visible. The
         // environment implementation disables only visual/light components;
         // the menu hierarchy, input systems, and Big Screen surfaces stay live.

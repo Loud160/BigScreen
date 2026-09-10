@@ -10,6 +10,17 @@ project(BigScreenCoreTests LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 enable_testing()
+add_executable(bigscreen-audio-sync-model-tests
+    AudioSyncModelTests.cpp ../src/AudioSyncModel.cpp)
+target_compile_features(bigscreen-audio-sync-model-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-audio-sync-model-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include"
+    "${CMAKE_CURRENT_LIST_DIR}/../extern/includes/rapidjson/rapidjson/include")
+if(NOT MSVC)
+    target_compile_options(bigscreen-audio-sync-model-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME bigscreen-audio-sync-model-tests COMMAND bigscreen-audio-sync-model-tests)
+
 add_executable(bigscreen-core-tests CoreLogicTests.cpp)
 target_compile_features(bigscreen-core-tests PRIVATE cxx_std_20)
 target_include_directories(bigscreen-core-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
@@ -31,6 +42,18 @@ if(NOT MSVC)
 endif()
 
 find_package(Threads REQUIRED)
+add_executable(bigscreen-audio-sync-analysis-tests
+    AudioSyncAnalysisTests.cpp ../src/AudioSyncModel.cpp ../src/AudioSyncAnalysis.cpp)
+target_compile_features(bigscreen-audio-sync-analysis-tests PRIVATE cxx_std_20)
+target_include_directories(bigscreen-audio-sync-analysis-tests PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../include"
+    "${CMAKE_CURRENT_LIST_DIR}/../extern/includes/rapidjson/rapidjson/include")
+target_link_libraries(bigscreen-audio-sync-analysis-tests PRIVATE Threads::Threads)
+if(NOT MSVC)
+    target_compile_options(bigscreen-audio-sync-analysis-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME bigscreen-audio-sync-analysis-tests COMMAND bigscreen-audio-sync-analysis-tests)
+
 set(BIGSCREEN_NATIVE_LOGGER_SOURCE
     "${CMAKE_CURRENT_LIST_DIR}/../.cache/dependencies/native-logger-quest/source")
 if(NOT EXISTS "${BIGSCREEN_NATIVE_LOGGER_SOURCE}/CMakeLists.txt")
@@ -199,8 +222,56 @@ endif()
 # Host FFmpeg is intentionally optional for ordinary Windows contributors.
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
+    pkg_check_modules(HOST_AUDIO_FFMPEG QUIET IMPORTED_TARGET
+        libavformat libavcodec libavutil libswresample)
     pkg_check_modules(HOST_FFMPEG QUIET IMPORTED_TARGET
         libavformat libavcodec libavutil libswscale)
+endif()
+if(HOST_AUDIO_FFMPEG_FOUND AND Python3_Interpreter_FOUND)
+    add_executable(bigscreen-audio-sync-capture-tests AudioSyncCaptureTests.cpp
+        ../src/AudioSyncPcm.cpp ../src/AudioSyncReader.cpp)
+    target_compile_features(bigscreen-audio-sync-capture-tests PRIVATE cxx_std_20)
+    target_compile_options(bigscreen-audio-sync-capture-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_include_directories(bigscreen-audio-sync-capture-tests PRIVATE ../include)
+    target_link_libraries(bigscreen-audio-sync-capture-tests PRIVATE PkgConfig::HOST_AUDIO_FFMPEG Threads::Threads)
+    add_test(NAME bigscreen-audio-sync-capture-tests COMMAND bigscreen-audio-sync-capture-tests "${CMAKE_CURRENT_BINARY_DIR}/capture-cache")
+    add_executable(bigscreen-audio-sync-service-tests AudioSyncServiceTests.cpp
+        ../src/AudioSyncService.cpp ../src/AudioSyncReader.cpp ../src/AudioSyncPcm.cpp ../src/AudioSyncAnalysis.cpp ../src/AudioSyncModel.cpp ../src/AudioSyncVisualization.cpp)
+    include(${CMAKE_CURRENT_LIST_DIR}/../cmake/audio-sync-sonic.cmake)
+    add_executable(bigscreen-audio-sync-audition-tests AudioSyncAuditionTests.cpp
+        ../src/AudioSyncAudition.cpp ../src/AudioSyncService.cpp ../src/AudioSyncReader.cpp
+        ../src/AudioSyncPcm.cpp ../src/AudioSyncAnalysis.cpp ../src/AudioSyncModel.cpp ../src/AudioSyncVisualization.cpp)
+    target_compile_features(bigscreen-audio-sync-audition-tests PRIVATE cxx_std_20)
+    target_include_directories(bigscreen-audio-sync-audition-tests PRIVATE ../include ../extern/includes/rapidjson/rapidjson/include)
+    target_link_libraries(bigscreen-audio-sync-audition-tests PRIVATE bigscreen_sync_pitch PkgConfig::HOST_AUDIO_FFMPEG Threads::Threads)
+    target_compile_options(bigscreen-audio-sync-audition-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_features(bigscreen-audio-sync-service-tests PRIVATE cxx_std_20)
+    target_include_directories(bigscreen-audio-sync-service-tests PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../include"
+        "${CMAKE_CURRENT_LIST_DIR}/../extern/includes/rapidjson/rapidjson/include")
+    target_link_libraries(bigscreen-audio-sync-service-tests PRIVATE PkgConfig::HOST_AUDIO_FFMPEG Threads::Threads)
+    target_compile_options(bigscreen-audio-sync-service-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_executable(bigscreen-audio-sync-reader-tests AudioSyncReaderTests.cpp ../src/AudioSyncReader.cpp)
+    target_compile_features(bigscreen-audio-sync-reader-tests PRIVATE cxx_std_20)
+    target_include_directories(bigscreen-audio-sync-reader-tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../include")
+    target_link_libraries(bigscreen-audio-sync-reader-tests PRIVATE PkgConfig::HOST_AUDIO_FFMPEG)
+    target_compile_options(bigscreen-audio-sync-reader-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    set(AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/audio-sync-fixtures")
+    add_test(NAME bigscreen-generate-audio-sync-fixtures
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/GenerateAudioSyncFixtures.py" "${AUDIO_FIXTURE_DIR}")
+    set_tests_properties(bigscreen-generate-audio-sync-fixtures PROPERTIES FIXTURES_SETUP audio_sync_media)
+    add_test(NAME bigscreen-audio-sync-reader-tests COMMAND bigscreen-audio-sync-reader-tests "${AUDIO_FIXTURE_DIR}")
+    set_tests_properties(bigscreen-audio-sync-reader-tests PROPERTIES FIXTURES_REQUIRED audio_sync_media)
+    add_test(NAME bigscreen-audio-sync-service-tests COMMAND bigscreen-audio-sync-service-tests "${AUDIO_FIXTURE_DIR}")
+    set_tests_properties(bigscreen-audio-sync-service-tests PROPERTIES FIXTURES_REQUIRED audio_sync_media TIMEOUT 70)
+    foreach(sync_case matching-video.m4a aligned-mastered.wav silent.wav unrelated.wav repeated.wav cut.wav)
+        add_test(NAME bigscreen-audio-sync-${sync_case}
+            COMMAND bigscreen-audio-sync-service-tests "${AUDIO_FIXTURE_DIR}" "${sync_case}")
+        set_tests_properties(bigscreen-audio-sync-${sync_case} PROPERTIES
+            FIXTURES_REQUIRED audio_sync_media TIMEOUT 90)
+    endforeach()
+    add_test(NAME bigscreen-audio-sync-audition-tests COMMAND bigscreen-audio-sync-audition-tests "${AUDIO_FIXTURE_DIR}")
+    set_tests_properties(bigscreen-audio-sync-audition-tests PROPERTIES FIXTURES_REQUIRED audio_sync_media TIMEOUT 40)
 endif()
 if(HOST_FFMPEG_FOUND AND Python3_Interpreter_FOUND)
     add_executable(

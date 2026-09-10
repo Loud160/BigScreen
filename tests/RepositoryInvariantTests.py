@@ -179,6 +179,9 @@ library_menu_header = (
 library_menu_source = (root / "src/VideoLibraryMenu.cpp").read_text(
     encoding="utf-8"
 )
+audio_sync_menu_source = (root / "src/AudioSyncMenu.cpp").read_text(
+    encoding="utf-8"
+)
 video_editor_notice_model = (
     root / "include/BigScreen/VideoEditorNoticeModel.hpp"
 ).read_text(encoding="utf-8")
@@ -1076,7 +1079,7 @@ assert 'config_record_path=' in ffmpeg_build
 assert "^CONFIG_HEVC_DECODER=yes$" in ffmpeg_build
 assert "! grep -q '^CONFIG_HEVC_DECODER=yes$'" in ffmpeg_build
 for path_safe_ffmpeg_marker in (
-    'build_recipe_revision="2"',
+    'build_recipe_revision="3"',
     'portable_install_prefix=".bigscreen-install"',
     'portable_toolchain_root=".bigscreen-toolchain"',
     '--prefix="${portable_install_prefix}"',
@@ -1110,7 +1113,13 @@ assert "archive_sha256=" in ndk_install
 assert "sha256sum --check --strict" in ndk_install
 assert "archive_sha1=" not in ndk_install
 
-# FFmpeg 4 remains the decoder/remux-only LGPL comparison runtime. FFmpeg 9 is
+# FFmpeg 4 adds private audio decoding/resampling for Audio Sync while remaining
+# LGPL-only. Its recipe revision must invalidate old video-only cached outputs.
+assert "libswresample-bigscreen44.so" in mod_template["libraryFiles"]
+assert "--enable-swresample" in ffmpeg_build
+assert "${symbol_namespace}_LIBSWRESAMPLE_" in ffmpeg_build
+assert "libswresample" in linux_test
+# FFmpeg 9 is
 # deliberately GPL-configured because its explicit last-resort software H.264
 # encoder is the pinned x264 implementation. Version-3 and nonfree components
 # remain forbidden in both recipes.
@@ -1453,6 +1462,14 @@ assert 'Deploying with a stale shader bundle is refused' in copy_script
 assert 'Waiting for Beat Saber to report the active video shader tier' not in copy_script
 assert 'Start-Sleep -Seconds 3' not in copy_script
 assert "bool showMenuEnvironment_ = true;" in settings_header
+assert "float menuBackgroundOpacity_ = 0.0f;" in settings_header
+assert 'ReadFloat(document, "menuBackgroundOpacity", 0.0f)' in settings_source
+assert 'Replace(document, "menuBackgroundOpacity", menuBackgroundOpacity_)' in settings_source
+assert "void Settings::SetMenuBackgroundOpacity(float value)" in settings_source
+assert '"Menu Background Opacity"' in settings_menu_source
+assert "ApplyMenuBackgroundOpacity();" in settings_menu_source
+assert menu_flow_source.count("CreateMenuBackground(") == 9
+assert "CreateMenuBackground(centerViewController);" not in menu_flow_source
 assert '"showMenuEnvironment",\n            true' in settings_source
 assert 'Replace(document, "showMenuEnvironment", showMenuEnvironment_)' in settings_source
 assert 'document.RemoveMember("showMenuFloor")' in settings_source
@@ -2002,7 +2019,11 @@ assert "const bool showTierButtons = validatedProbe" in library_menu_source
 assert 'name + " — " + author' in library_menu_source
 assert "detailTitle_->set_maxVisibleLines(1);" in library_menu_source
 assert "constexpr float TimingControlHeight = 8.0f;" in library_menu_source
-assert "constexpr float TimingControlCount = 3.0f;" in library_menu_source
+assert "constexpr float TimingControlCount = 4.0f;" in library_menu_source
+assert (
+    "advancedLayout->set_minHeight(TimingControlHeight);"
+    in library_menu_source
+)
 assert "constexpr float TimingControlRightAlignmentNudge = 1.0f;" in (
     library_menu_source
 )
@@ -3118,7 +3139,173 @@ assert "bool externalFile = false;" in video_library_header
 assert "bool mapperLocalSuppressed = false;" in video_library_header
 assert 'member->value, "mapperLocalSuppressed", false' in video_library_source
 assert 'level.AddMember("mapperLocalSuppressed", true, allocator)' in video_library_source
-assert 'document.AddMember("version", 5, allocator)' in video_library_source
+assert 'document.AddMember("version", 6, allocator)' in video_library_source
+assert "AudioSync::ParseRecord" in video_library_source
+assert "AudioSync::SerializeRecord" in video_library_source
+# The enable transaction is asynchronous: the right-side switch remains at
+# the persisted value until its audio probe and save succeed. All expected
+# media failures stay on that right-side editor rather than falling through to
+# ErrorManager's left-side host after the center workspace has opened.
+advanced_sync_toggle = library_menu_source.split(
+    'advancedSyncToggle_ = BSML::Lite::CreateToggle(', 1
+)[1].split('configureSyncButton_ = BSML::Lite::CreateUIButton(', 1)[0]
+assert "const bool committed" in advanced_sync_toggle
+assert "SetToggleWithoutNotification(" in advanced_sync_toggle
+assert "SetIncrementInteractable(" in library_menu_source
+assert "s.enableError = BSML::Lite::CreateModal(s.editor" in audio_sync_menu_source
+assert "ShowModalInFront(enableError);" in audio_sync_menu_source
+assert "else if(enableError && enableErrorText)" in audio_sync_menu_source
+# Applying one small per-map record normally finishes too quickly to justify a
+# modal. Guard both halves of the UX contract: wait 250 ms before showing it,
+# then retain an already-visible success message for at least three seconds.
+# The timer is evaluated before the waveform paint divider so low-frequency
+# visualization updates cannot stretch or shorten either boundary.
+assert "ApplySaveProgressDelaySeconds = .25" in audio_sync_menu_source
+assert "ApplySaveProgressMinimumVisibleSeconds = 3.0" in audio_sync_menu_source
+assert "delayedApplySaveProgress = !close" in audio_sync_menu_source
+assert "if(close)\n            ShowProgress();" in audio_sync_menu_source
+assert "s.UpdateDelayedApplySaveProgress();\n    if(!IsOpen())" in audio_sync_menu_source
+assert "Synchronization settings saved." in audio_sync_menu_source
+assert "!s.delayedApplySaveProgress" in audio_sync_menu_source
+for center_workspace_contract in (
+    "constexpr float FullWidth = 116.0f",
+    "constexpr float HalfWidth",
+    "CenterPageInset = 5.0f",
+    "CenterScrollHorizontalInset = 3.0f",
+    "CenterTabStripHeight = 10.0f",
+    "RectOffset::New_ctor(1, 1, 0, 0)",
+    "nativeScroll->_joystickQuickSnapMaxTime = 0.0f",
+    'transport, "▶", "PlayButton"',
+    'SetButtonText(s.transport, "Ⅱ")',
+):
+    assert center_workspace_contract in audio_sync_menu_source
+# The colored development plates were useful for measuring the inherited
+# center geometry, but the released workspace must match Big Screen's
+# transparent side-menu treatment.
+assert "DEBUG Audio Sync" not in audio_sync_menu_source
+# Unity allows only one LayoutGroup-derived component on a GameObject. The
+# graph layout uses separate permanent row objects and reparents the second
+# graph instead of attaching incompatible horizontal/vertical groups together.
+assert "->AddComponent<UnityEngine::UI::VerticalLayoutGroup*>()" not in (
+    audio_sync_menu_source
+)
+assert "std::array<UnityEngine::UI::HorizontalLayoutGroup*, 2> overviewRows" in (
+    audio_sync_menu_source
+)
+for audio_sync_layout_contract in (
+    'topActions, "Audio Monitoring"',
+    'Button(topActions, "Apply Changes"',
+    'topActions, "Reset Track"',
+    'Button(modeRow, "Analyze Audio"',
+    'Header(content, "Audio Overview")',
+    '"Side by side", "Stacked", "Overlay"',
+    'overviewControls, "Wave Zoom"',
+    'overviewControls, "Wave Height"',
+    '"Full Track", "2x"',
+    '"Default", "2x", "4x", "8x"',
+    'AddComponent<WaveformScrubber*>()',
+    'FitDropdownSetting(overviewLayout, 40.0f, .43f, true)',
+    'FitDropdownSetting(waveZoom, 38.0f, .45f, true)',
+    'FitDropdownSetting(waveHeight, 34.0f, .54f, true)',
+    'TimingResetButtonSize + TimingResetGap',
+    'ConfigureTimingResetButton(reset, slider)',
+    'DecimalPlaces(profile.timePrecision)',
+    'fmt::format("Reset {}", label)',
+    'row, "Video Offset"',
+    'row, "Video Speed"',
+    'row, "Map Audio Start"',
+    'row, "Map Audio End"',
+    'row, "Video Audio Start"',
+    'row, "Video Audio End"',
+    'transport, "Playback Speed"',
+    'CreateModal(s.center, {76, 52}',
+    'DialogButton(buttons, "Discard"',
+    'DialogButton(buttons, "Apply"',
+    '"Loop Matched Section"',
+    '"Hide After Video End"',
+):
+    assert audio_sync_layout_contract in audio_sync_menu_source
+assert 'Header(content, "Preview Audio")' not in audio_sync_menu_source
+assert audio_sync_menu_source.index('Header(content, "Audio Overview")') < (
+    audio_sync_menu_source.index('transport, "▶", "PlayButton"')
+)
+assert "constexpr float PairedSettingGap = 4.0f" in audio_sync_menu_source
+assert "constexpr float PairedSettingLabelFraction = .36f" in audio_sync_menu_source
+assert audio_sync_menu_source.count(
+    "PairedSettingWidth, PairedSettingLabelFraction"
+) == 8
+assert "Preview proposed timing" not in audio_sync_menu_source
+assert "profile.mode == Mode::Automatic" in audio_sync_menu_source
+assert "p.waveformLayout = layout" in audio_sync_menu_source
+assert "p.waveformZoom = zoom" in audio_sync_menu_source
+assert "p.waveformHeightScale = height" in audio_sync_menu_source
+# BSML 0.4.55's DropdownListSetting prefab calls its caption object "Label",
+# not "Title" (the name used by SliderSetting). Compact Advanced Sync rows must
+# style that actual caption or TextMeshPro retains stock word wrapping and turns
+# short labels such as Wave Zoom into two vertical lines.
+assert 'row->get_transform()->Find("Label")' in audio_sync_menu_source
+assert "text->set_enableWordWrapping(false);" in audio_sync_menu_source
+assert "text->set_maxVisibleLines(1);" in audio_sync_menu_source
+# Analysis effort is a compact, Automatic-only row immediately beneath the
+# workflow selector. Sample Duration is intentionally discrete; a native
+# slider made the four supported choices look more precise than they are.
+assert "s.autoAnalysisSettingsRow = analysisSettings->get_gameObject()" in (
+    audio_sync_menu_source
+)
+assert '"4", "8", "12", "16"' in audio_sync_menu_source
+assert "EditWithoutPlaybackChange(" in audio_sync_menu_source
+assert 'Header(automatic, "Automatic Matching")' not in audio_sync_menu_source
+assert "Automatic analysis proposes timing for review" not in audio_sync_menu_source
+assert "Yellow: playback." not in audio_sync_menu_source
+# SliderSetting::increments is consumed only during BSML Setup. Advanced Sync
+# changes precision at runtime, so the native step count must be refreshed too
+# or its arrow buttons continue moving by an invisible 0.0001 construction step.
+assert "slider->slider->set_numberOfSteps(steps + 1);" in audio_sync_menu_source
+assert "FitDropdownSetting(timePrecision, PrecisionWidth, .56f, true)" in (
+    audio_sync_menu_source
+)
+assert "FitDropdownSetting(speedPrecision, PrecisionWidth, .56f, true)" in (
+    audio_sync_menu_source
+)
+assert "std::array<HMUI::ImageView*, 2> overviewViewports" in audio_sync_menu_source
+assert "std::array<WaveformScrubber*, 2> overviewScrubbers" in audio_sync_menu_source
+assert "overviewGraphHeight = defaultHeight * heightMultiplier" in audio_sync_menu_source
+assert "const float preferredHeight = uiContent->get_preferredHeight()" in (
+    audio_sync_menu_source
+)
+assert "uiScroll->SetContentSize(preferredHeight)" in audio_sync_menu_source
+assert "pendingScrollLayoutPasses = 2" in audio_sync_menu_source
+assert "markerRect->set_anchorMin({.5f, 0.0f})" in audio_sync_menu_source
+assert "markerRect->set_anchorMax({.5f, 1.0f})" in audio_sync_menu_source
+assert "markerRect->set_pivot({.5f, .5f})" in audio_sync_menu_source
+assert "markerRect->set_sizeDelta({.65f, 0.0f})" in audio_sync_menu_source
+assert "marker->set_preserveAspect(false)" in audio_sync_menu_source
+assert "marker->get_transform()->SetAsLastSibling()" in audio_sync_menu_source
+assert "constexpr float MarkerHalfWidth = .325f" in audio_sync_menu_source
+assert "profile.mode == Mode::Manual &&" in audio_sync_menu_source
+assert "profile.method == TimingMethod::FitMarkers" in audio_sync_menu_source
+assert "setStartMarker_(lastMarkerSeconds_, finished)" in (
+    root / "src/WaveformScrubber.cpp"
+).read_text(encoding="utf-8")
+assert "Map Audio (cyan)" in audio_sync_menu_source
+assert "Video Audio (magenta)" in audio_sync_menu_source
+assert "The lower strip is a peak waveform" not in (
+    root / "include/BigScreen/AudioSyncVisualization.hpp"
+).read_text(encoding="utf-8")
+audio_sync_visualization = (
+    root / "src/AudioSyncVisualization.cpp"
+).read_text(encoding="utf-8")
+assert "for(const int sign : {-1, 1})" not in audio_sync_visualization
+assert "bottom - peaks[x] * range" in audio_sync_visualization
+assert "Listen slower (both tracks)" not in audio_sync_menu_source
+assert "Loop marked map range" not in audio_sync_menu_source
+assert "Stop video at end marker" not in audio_sync_menu_source
+assert 'SetTitle(show ? "BIG SCREEN | ADVANCED VIDEO SYNC"' in menu_flow_source
+assert "set_showBackButton(show);" in menu_flow_source
+assert "AV_CODEC_ID_VORBIS ? .015 : .005" in (
+    root / "src/AudioSyncReader.cpp"
+).read_text(encoding="utf-8")
+assert "backgroundCommitCount_" in video_library_header
 assert "DeleteLocalVideoFile" in video_library_source
 assert 'extension != ".mp4" && extension != ".webm"' in video_library_source
 assert 'sourceType == "externalFile"' in video_library_source
@@ -3283,6 +3470,24 @@ assert "TickMenuPrewarm();" in main_source
 assert "MenuPrewarmStableFrameRequirement = 90" in menu_flow_source
 assert "if(!settings.ModEnabled() ||" in menu_flow_source
 assert "ErrorManager::Instance().MenuRecoveryActive())" in menu_flow_source
+# Native IL2CPP faults cannot unwind ErrorManager::Guard. Menu prewarming must
+# therefore leave a durable in-progress marker and consume it during the next
+# settings load before the same startup work can run again.
+assert "PersistentPrewarmCrashScope crashScope" in menu_prewarm_tick
+assert "BeginCrashSensitiveOperation(" in menu_flow_source
+assert "FinishCrashSensitiveOperation();" in menu_flow_source
+assert "ConsumeInterruptedCrashOperation()" in settings_source
+assert 'Replace(document, "modEnabled", false);' in settings_source
+# A recoverable staged-UI exception must not remove the failed stage first.
+# Pop-before-run advances into child rows whose parent was never created and
+# turns an ordinary setup error into an uncatchable IL2CPP null dereference.
+audio_sync_step_runner = audio_sync_menu_source.split(
+    "auto& step = s.uiSteps.front();", 1
+)[1].split("return s.uiSteps.empty();", 1)[0]
+assert audio_sync_step_runner.index("step();") < audio_sync_step_runner.index(
+    "s.uiSteps.pop_front();")
+assert "external->Get<BSML::ScrollView*>()" in audio_sync_menu_source
+assert "RequireUiParent(parent, \"create a row\")" in audio_sync_menu_source
 assert "PrewarmCache();" in prewarm_builder
 assert "GetSongsLoadedEvent().addCallback(HandleSongsLoaded)" in main_source
 assert "songCatalogRefreshPending.exchange(" in main_source

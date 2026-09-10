@@ -35,7 +35,7 @@ if (( ${#missing_commands[@]} > 0 )); then
     exit 1
 fi
 
-if ! pkg-config --exists libavformat libavcodec libavutil libswscale; then
+if ! pkg-config --exists libavformat libavcodec libavutil libswscale libswresample; then
     printf 'Linux FFmpeg development packages are missing.\n' >&2
     bigscreen_print_missing_packages
     exit 1
